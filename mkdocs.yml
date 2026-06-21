@@ -1,0 +1,37 @@
+site_name: kvdlra
+site_url: https://hkrishna42.github.io/kvdlra/
+repo_url:  https://github.com/hkrishna42/kvdlra
+theme:
+  name: material
+  features: [navigation.tabs, navigation.sections, content.code.copy, search.suggest]
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle: { icon: material/brightness-7, name: Dark }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle: { icon: material/brightness-4, name: Light }
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_source: true
+            members_order: source
+  - mkdocs-jupyter: { include_source: true }
+markdown_extensions:
+  - admonition
+  - attr_list
+  - toc: { permalink: true }
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+nav:
+  - Home: index.md
+  - Notes: notes/
+  - API: reference.md

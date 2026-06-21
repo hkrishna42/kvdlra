@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kvdlra"
+version = "0.1.0"
+description = "Dynamical low-rank approximation for streaming KV-cache compression in LLMs."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Hari Krishnan", email = "harikrishnangirikumar@gmail.com" }]
+dependencies = [
+  "torch==2.11.0",
+  "transformers==5.8.0",
+  "accelerate==1.13.0",
+  "datasets==2.21.0",  # substituted: 4.8.5 -> 2.21.0 (kvpress==0.5.1 caps datasets>=2.21.0,<3)
+  "huggingface_hub==1.14.0",
+  "kvpress==0.5.1",
+  "hydra-core==1.3.2",
+  "omegaconf>=2.3",
+  "wandb==0.26.1",
+  "python-dotenv",
+  "matplotlib>=3.8",
+  "numpy>=1.26",
+  "scipy>=1.13",
+  "tqdm",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.0.3", "pytest-cov",
+  "ruff==0.15.12", "mypy==2.0.0", "pre-commit",
+  "mkdocs-material==9.7.6",  # substituted: 9.8.0 -> 9.7.6 (9.8.0 not published on PyPI; 9.7.6 is newest)
+  "mkdocstrings[python]==1.0.4",
+  "mkdocs-jupyter", "pymdown-extensions",
+]
+eval  = ["lm-eval[vllm]==0.4.11"]
+flash = ["flash-attn"]            # install with --no-build-isolation separately
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kvdlra"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "N", "C4"]
+
+[tool.ruff.lint.per-file-ignores]
+# Numerical code follows the source papers' notation (U, S, V, B, F, K, L, Y).
+# pep8-naming (N802/N803/N806) would force unreadable lowercase; waiver is
+# scoped to the math modules and their tests, where matching the paper matters.
+"src/kvdlra/integrators/*" = ["N802", "N803", "N806"]
+"tests/*" = ["N802", "N803", "N806"]
+
+[tool.ruff.format]
+quote-style = "double"
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["wandb.*", "kvpress.*", "flash_attn.*", "transformers.*", "datasets.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q --strict-markers"

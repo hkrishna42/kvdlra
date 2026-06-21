@@ -1,0 +1,34 @@
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.env
+.env.*
+wandb/
+dumps/*.pt
+dumps/**/*.pt
+*.ckpt
+*.safetensors
+results/*.csv
+figs/*.pdf
+figs/*.png
+!figs/.gitkeep
+!dumps/.gitkeep
+!results/.gitkeep
+
+# macOS
+.DS_Store
+
+# Raw planning artifact lives in the repo as docs/PLAN.md; keep the original
+# on disk but out of the published tree.
+compass_artifact_*.md
+
+# .env.* (above) would also swallow the committed template; keep it tracked.
+!.env.example
+
+# uv lockfile: platform-specific (Mac-CPU here vs. the CUDA pod) and large;
+# pyproject.toml's exact pins are the source of truth. Keeps the large-files
+# pre-commit guard tight for catching stray tensors/checkpoints.
+uv.lock

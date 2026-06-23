@@ -40,7 +40,7 @@ jobs:
           uv run ruff format --check .
 
       - name: Mypy (strict)
-        run: uv run mypy src tests
+        run: uv run mypy src tests scripts
 
       - name: Pytest
         run: uv run pytest -q

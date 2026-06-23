@@ -15,8 +15,14 @@ repos:
       - id: ruff-check
         args: [--fix]
       - id: ruff-format
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.0.0
+  - repo: local
     hooks:
+      # Run mypy from the project venv so it sees the real (typed) transformers /
+      # torch / numpy, not an isolated env where they collapse to Any. Keeps
+      # pre-commit, CI, and local `mypy` consistent.
       - id: mypy
-        additional_dependencies: ["torch==2.11.0", "types-PyYAML"]
+        name: mypy (project venv, strict)
+        entry: uv run mypy src tests scripts
+        language: system
+        types: [python]
+        pass_filenames: false

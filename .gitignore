@@ -7,8 +7,7 @@ __pycache__/
 .env
 .env.*
 wandb/
-dumps/*.pt
-dumps/**/*.pt
+dumps/**
 *.ckpt
 *.safetensors
 results/*.csv

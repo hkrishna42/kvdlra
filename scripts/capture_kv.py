@@ -107,8 +107,8 @@ def main() -> None:
         "--model",
         default="meta-llama/Llama-3.2-1B-Instruct",
         help="HF model id. If the gated meta-llama repo is not allowlisted for "
-        "your account, pass the ungated verbatim mirror "
-        "unsloth/Llama-3.2-1B-Instruct (identical weights and config).",
+        "your account, pass the ungated mirror unsloth/Llama-3.2-1B-Instruct "
+        "(verbatim weights; config-identical -- 8 KV heads, head_dim 64, 16 layers).",
     )
     parser.add_argument("--seq_len", type=int, default=4096)
     parser.add_argument("--doc_idx", type=int, default=0)

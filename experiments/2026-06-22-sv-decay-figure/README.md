@@ -25,7 +25,7 @@ n/a — no `WANDB_API_KEY` provided this session. Metrics recorded under Result;
 - Truncated-SVD oracle rel-Frobenius error (all 3 layers): r=32 ≈ 0.34–0.36, r=64 ≈ 0.22–0.25, r=128 ≈ 0.16–0.17.
 - Incremental SVD ≈ oracle + ~0.01–0.02 (near-optimal streaming baseline).
 - BUG (1 sweep, random init): ≈ 0.57–0.96 — the plan's placeholder, not the streaming integrator.
-- SV spectrum: sharp knee at index ~30–40 (down to σ_i/σ_1 ~ 0.05), then a heavy tail to ~1e-2 by ~index 300.
+- SV spectrum: σ_i/σ_1 drops below ~0.05 by index ~40–55 (per layer: 43/55/53), then a heavy tail to ~1e-2 by ~index 300.
 
 ## Interpretation
 Post-RoPE K is **not cleanly low-rank**: the oracle needs rank ≈128/512 for ~17% Frobenius

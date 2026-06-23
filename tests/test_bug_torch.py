@@ -155,8 +155,53 @@ def test_bug_pure_bfloat16_qr_is_worse() -> None:
     )
 
 
+def test_bf16_orthogonalization_loses_precision() -> None:
+    """bf16 orthogonalization loses orthogonality vs. fp32 -- pitfall #4's mechanism.
+
+    The integration test above (``test_bug_pure_bfloat16_qr_is_worse``) skips on
+    CPU because LAPACK has no bf16 ``geqrf`` -- and CI is CPU-only, so that test
+    never actually runs. This test exercises the *same mechanism* on CPU with a
+    manual classical Gram-Schmidt (elementwise ops only, bf16-capable on CPU):
+    orthonormalizing an ill-conditioned matrix in bf16 leaves a far larger
+    ``||Q^T Q - I||`` than fp32, which is exactly why the BUG core's QR must stay
+    in fp32 regardless of bf16 storage.
+    """
+    torch.manual_seed(0)
+    n, r = 128, 16
+    # Build an ill-conditioned (cond ~ 1e3, typical for KV streams) tall matrix.
+    base = torch.randn(n, r, dtype=torch.float64)
+    q0, _ = torch.linalg.qr(base)
+    sigma = torch.logspace(0, -3, r, dtype=torch.float64)
+    a = q0 * sigma  # columns scaled to a 1e3 condition number
+
+    def gram_schmidt(mat: torch.Tensor) -> torch.Tensor:
+        """Classical Gram-Schmidt in ``mat.dtype`` (no LAPACK; bf16-safe on CPU)."""
+        q = torch.zeros_like(mat)
+        for j in range(mat.shape[1]):
+            v = mat[:, j].clone()
+            for i in range(j):
+                v = v - (q[:, i] @ v) * q[:, i]
+            q[:, j] = v / v.norm()
+        return q
+
+    def orth_error(dtype: torch.dtype) -> float:
+        q = gram_schmidt(a.to(dtype)).to(torch.float64)
+        eye = torch.eye(r, dtype=torch.float64)
+        return float((q.mT @ q - eye).norm())
+
+    err_fp32 = orth_error(torch.float32)
+    err_bf16 = orth_error(torch.bfloat16)
+    print(f"orthogonality ||Q^T Q - I||: fp32={err_fp32:.2e}  bf16={err_bf16:.2e}")
+    # bf16's 8-bit mantissa loses orthogonality by orders of magnitude here.
+    assert err_bf16 > 10.0 * err_fp32, (
+        f"expected bf16 Gram-Schmidt much worse than fp32, got "
+        f"fp32={err_fp32:.2e}, bf16={err_bf16:.2e}"
+    )
+
+
 if __name__ == "__main__":
     test_bug_torch_float32()
     test_bug_torch_bfloat16_fp32core()
     test_bug_pure_bfloat16_qr_is_worse()
+    test_bf16_orthogonalization_loses_precision()
     print("OK")

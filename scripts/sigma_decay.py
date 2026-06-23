@@ -39,6 +39,7 @@ The output PDF is written under ``figures/`` (the project's tracked figures dir;
 from __future__ import annotations
 
 import argparse
+import json
 from collections.abc import Callable
 from pathlib import Path
 
@@ -197,6 +198,8 @@ def main() -> None:
 
     fig, axes = plt.subplots(len(layers), 2, figsize=(11, 4 * len(layers)), squeeze=False)
 
+    layer_metrics: dict[str, dict[str, object]] = {}
+
     for row, layer in enumerate(layers):
         m = load_layer_matrix(dump_dir, layer, args.keep_sinks)
         sigma = np.linalg.svd(m, compute_uv=False)
@@ -212,9 +215,11 @@ def main() -> None:
         ax_sigma.set_title(f"layer {layer} K-cache singular values ({sinks})")
         ax_sigma.grid(True, alpha=0.3)
 
+        errors: dict[str, list[float]] = {}
         ax_err = axes[row][1]
         for label, style, fn in recon_fns:
             errs = [fn(m, r) for r in ranks]
+            errors[label] = errs
             ax_err.semilogy(ranks, errs, style, label=label)
             pairs = ", ".join(f"r={r}:{e:.3e}" for r, e in zip(ranks, errs, strict=True))
             print(f"  {label}: {pairs}")
@@ -224,11 +229,30 @@ def main() -> None:
         ax_err.legend()
         ax_err.grid(True, alpha=0.3)
 
+        layer_metrics[str(layer)] = {
+            "shape": list(m.shape),
+            "ranks": ranks,
+            "sigma_normalized": (sigma / sigma[0]).tolist(),
+            "errors": errors,
+        }
+
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
     fig.savefig(out_path)
     print(f"wrote figure {out_path}")
+
+    # Sidecar metrics so the figure's numbers are reproducible / auditable from the
+    # repo without re-running the model (the raw KV dump is gitignored).
+    metrics: dict[str, object] = {
+        "dump": str(dump_dir),
+        "keep_sinks": bool(args.keep_sinks),
+        "n_sink": n_sink,
+        "layers": layer_metrics,
+    }
+    metrics_path = out_path.with_suffix(".json")
+    metrics_path.write_text(json.dumps(metrics, indent=2) + "\n")
+    print(f"wrote metrics {metrics_path}")
 
 
 if __name__ == "__main__":

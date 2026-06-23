@@ -61,3 +61,15 @@ BUG < incremental SVD at every budget.
 beats incremental SVD, and pre-RoPE keys give meaningfully better compression. Proceed to **Week
 3** — integrate `BUGPress` into kvpress, generation-correctness on pre-RoPE keys, and a perplexity
 sweep — then **Week 4** TurboQuant residual quantization. Tagged `v0.2-w2-pilot`.
+
+## Supplements (Week 2)
+- **BUG vs Oja (OjaKV).** At matched memory on Layer-8 K, BUG sits on the SVD oracle (1.01–1.03×)
+  while a fairly-tuned single-pass Oja's-rule tracker is **1.3–3.0× worse than BUG** (the gap
+  widens with rank). BUG decisively beats the online-subspace baseline.
+  See `figures/week2/oja_vs_bug.png`, `scripts/week2_oja_vs_bug.py`.
+- **Rank policies.** Fixed r=32 beats fixed r=16 (~22% lower error); rank-adaptive θ grows its rank
+  with context (2→16) and lands at fixed-r=16-level error at matched final rank.
+  See `figures/week2/rank_policy.png`, `experiments/2026-w2-rank-policy/`.
+- **Honesty audit.** The go/no-go was independently critic-audited (numbers reproduced to 16
+  digits, comparison metric verified = Eckart–Young, no leakage); the doc-selection rule is
+  committed as `scripts/week2_select_docs.py` + `figures/week2/pilot_docs.json`.

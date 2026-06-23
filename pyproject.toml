@@ -72,3 +72,6 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra -q --strict-markers"
+# src layout: import kvdlra from src/ even if the editable install's import hook
+# is dropped by an env re-sync. No-op when the package is properly installed.
+pythonpath = ["src"]

@@ -8,8 +8,10 @@ baseline everywhere**. Pre-RoPE keys roughly **halve** the reconstruction error 
 ![go/no-go pilot](../figures/week2/pilot.png)
 
 ## Setup
-5 C4 documents (idx 63, 411, 454, 637, 718) @ 4096 tokens; **Layer 8** K; first 4 sink tokens
-dropped → `M = (512 features, 4092 tokens)`. fp32/CPU, ungated `unsloth/Llama-3.2-1B-Instruct`
+5 C4 documents @ 4096 tokens, chosen by a **pre-registered deterministic rule** — the first 5 C4
+(en, streaming, default order) docs reaching ≥4096 tokens: **idx 63, 411, 454, 637, 718**
+(reproduce: `python scripts/week2_select_docs.py`; manifest `figures/week2/pilot_docs.json`).
+**Layer 8** K; first 4 sink tokens dropped → `M = (512 features, 4092 tokens)`. fp32/CPU, ungated `unsloth/Llama-3.2-1B-Instruct`
 (config-identical). Memory budget = per-token compression ratio `r/512` (`r = round(budget·512)`),
 giving rank `r = 26 / 51 / 102 / 205` for budgets `0.05 / 0.10 / 0.20 / 0.40`. Three methods at
 each budget: truncated SVD (Eckart–Young **oracle**), **incremental SVD** (Brand), **streaming
@@ -26,7 +28,8 @@ BUG** (`StreamingBUG`, rank cap = budget rank). Reproduce: `python scripts/week2
 | 0.40 | 205 | 0.128 | 0.131 | 1.025 | 0.063 | 0.064 | 1.017 |
 
 **post-RoPE: GO** (5/5 at every budget). **pre-RoPE: GO** (5/5 at every budget). Max BUG/oracle
-across the whole sweep = **1.025**; BUG < incremental SVD at every budget.
+over the pass region (budgets ≥0.10) = **1.026** (1.028 including the sub-criterion budget 0.05);
+BUG < incremental SVD at every budget.
 
 ## Interpretation
 - **The integrator is near-optimal *and* streaming.** BUG's per-token subspace update matches the

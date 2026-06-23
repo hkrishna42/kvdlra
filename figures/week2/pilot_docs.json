@@ -1,0 +1,29 @@
+{
+  "selection_rule": "first 5 C4 (en, streaming train split, default order) documents whose unsloth/Llama-3.2-1B-Instruct tokenization reaches >= 4096 tokens",
+  "model": "unsloth/Llama-3.2-1B-Instruct",
+  "seq_len": 4096,
+  "n": 5,
+  "scan_limit": 2000,
+  "documents": [
+    {
+      "doc_idx": 63,
+      "n_tokens": 5384
+    },
+    {
+      "doc_idx": 411,
+      "n_tokens": 7775
+    },
+    {
+      "doc_idx": 454,
+      "n_tokens": 5031
+    },
+    {
+      "doc_idx": 637,
+      "n_tokens": 7517
+    },
+    {
+      "doc_idx": 718,
+      "n_tokens": 4899
+    }
+  ]
+}

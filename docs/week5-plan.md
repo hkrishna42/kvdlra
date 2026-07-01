@@ -11,30 +11,40 @@ own terms — one that shares our mechanism and one that doesn't — and report
 honestly where we win, tie, and lose. This is the "is it actually competitive
 with the field?" week.
 
-## The two competitors (and why)
+## The competitor landscape (low-rank is a crowded field in 2025–26)
 
-1. **Palu** — ICLR 2025, [arXiv:2407.21118](https://arxiv.org/abs/2407.21118),
-   [code](https://github.com/shadowpa0327/Palu). **Our closest rival: low-rank.**
-   Palu SVD-decomposes the K/V *projection* layers offline (with calibration),
-   caches the low-dim latent states, and reconstructs K/V on the fly — and
-   composes with quantization (they report ~11× at ~91% compression). This is the
-   sharpest scientific question of the whole project: **is a streaming DLRA
-   subspace tracker a better low-rank KV compressor than offline SVD projection?**
-   We already know streaming BUG ≈ the truncated-SVD oracle within 1–3% (Week 2);
-   Palu is a *real, tuned* low-rank system to test that against.
+BUG/DLRA sits inside a fast-growing family of **low-rank** KV methods. The whole
+point of Week 5 is to place it in that field and name its differentiators:
+**streaming/online** (per-token updates with a σ_min-robust DLRA error bound),
+**rank-adaptive** (Frobenius-tail θ), and **composes with quantization** (Week 4).
+Most rivals are *offline SVD*; a few are online; one is a benchmark; one needs
+pretraining. The map:
 
-2. **MorphKV** — ICML 2025, [arXiv:2503.00979](https://arxiv.org/abs/2503.00979).
-   **A different mechanism, in its home setting: constant-size cache during long
-   generation.** MorphKV keeps a *fixed-size* cache while generating extended
-   responses by adaptively retaining tokens correlated with recent context. This
-   pushes kvdlra into the **generation/decode** phase — which is BUG's natural
-   home (it is a *streaming* tracker that updates per token), a strength we have
-   not yet used (Weeks 3–4 only compressed the pre-fill). Comparing a constant-
-   *rank* streaming BUG against a constant-*token* MorphKV is on-thesis and novel.
+| Method | Venue | Family / key idea | vs. BUG | Plan |
+|---|---|---|---|---|
+| **Palu** | ICLR'25 ([2407.21118](https://arxiv.org/abs/2407.21118), [code](https://github.com/shadowpa0327/Palu)) | offline SVD of K/V **projections**; cache latents; GPU fusion kernels; +quant | offline vs streaming | **RUN** (primary low-rank rival) |
+| **LoRC** | NeurIPS'24 ([2410.03111](https://arxiv.org/abs/2410.03111)) | low-rank of KV **weight matrices**, progressive per-layer rank, plug-and-play | offline, weight-space | **RUN** (simple reimpl) |
+| **MorphKV** | ICML'25 ([2503.00979](https://arxiv.org/abs/2503.00979)) | **constant-size** cache during long **generation**, adaptive token retention | different axis (eviction/gen) | **RUN** (Axis B) |
+| **STAR-KV** | ICML'26 ([2606.08382](https://arxiv.org/abs/2606.08382)) | **differentiable soft-threshold** adaptive rank (head+block) + hybrid decomp + MP quant; ≤75% (20× w/ quant) | *offline* adaptive-rank; BUG's θ is the *online* analog | cite; **RUN if code** (strongest adaptive rival) |
+| **KV-CoRE** | 2026 ([2602.05929](https://arxiv.org/abs/2602.05929)) | **benchmark** of data-dependent low-rank compressibility (Frobenius-optimal SVD, layer-wise) | not a compressor — a measuring stick | **USE its methodology** to characterize our KV compressibility |
+| **EchoKV** | 2026 ([2603.22910](https://arxiv.org/abs/2603.22910)) | reversible: lossless switch full↔compressed; lightweight net reconstructs residual KV | reversibility angle | cite |
+| **LRKV** | 2026 ([2601.11471](https://arxiv.org/abs/2601.11471)) | head-dim low-rank residuals **learned during pretraining** | **not post-hoc** — needs training | cite only (can't run on a pretrained Llama without retraining) |
+| **OjaKV** | 2025 ([2509.21623](https://arxiv.org/abs/2509.21623)) | **online** low-rank via Oja's rule | online rival — **already beaten in Week 2 (BUG 1.3–3×)** | cite our Week-2 result |
+| ShadowKV / ReCalKV / KQ-SVD | 2024–25 | low-rank pre-RoPE keys / head-reorder+calib / provable attn fidelity | offline variants | cite; ShadowKV = Palu fallback |
 
-(Alternative to Palu if its code won't run cleanly: **ShadowKV** — low-rank
-*pre-RoPE* keys, even closer to BUG, but heavier on systems/offloading. Keep as
-fallback.)
+**What we RUN head-to-head** (feasible in a week): **Palu** (token/projection SVD,
+has code), **LoRC** (weight-matrix SVD, easy reimpl), **MorphKV** (constant-size
+generation). These span the three sub-families that matter. **STAR-KV** is the
+stretch target if its code is released. Everything else is cited related work with
+an explicit "how BUG differs" line — and **KV-CoRE's compressibility metric is a
+tool we adopt** to quantify, honestly, how low-rank our KV actually is (it caps
+what *any* low-rank method — us included — can achieve).
+
+**BUG's honest niche in this table:** the only member that is *both* streaming
+(online per-token, deployable during decode) *and* rank-adaptive *and* carries a
+DLRA robustness guarantee independent of σ_min. Palu/LoRC/STAR-KV are offline;
+OjaKV is online but weaker; LRKV needs pretraining; KV-CoRE only measures. Whether
+that niche translates into a win at matched memory is exactly what we measure.
 
 ## Two comparison axes
 
@@ -74,11 +84,11 @@ attention sees the running low-rank reconstruction.
 
 | Day | Focus | Concrete output |
 |---|---|---|
-| **Mon** | Read Palu (§ method + calibration) and MorphKV (§ constant-size update rule). Decide integrate-their-code vs faithful reimplementation; check kvpress (neither is in it as of 0.5.1). | `docs/notes/palu-morphkv.md`: mechanisms + integration decision. |
-| **Tue** | **Palu** in our harness: run their repo, or a faithful `PaluPress` (offline SVD of K/V projections, cache latents, reconstruct). Validate its reconstruction error vs our SVD oracle. | `PaluPress` (or their runner) producing perplexity-vs-memory points. |
-| **Wed** | **Axis A**: extend `w4_fair.py` with Palu + Palu×TurboQuant; rerun the fair perplexity-vs-memory + needle. | `figures/week5/lowrank_fair.png`; verdict: BUG vs Palu at matched memory. |
-| **Thu** | **Streaming-decode `BUGPress`** (constant-rank decode updates via `StreamingBUG`/blocked torch). Correctness: generation parity + constant-memory check. | Decode-time BUG; `docs`-level note on the constant-size mechanism. |
-| **Fri** | **Axis B**: `MorphKVPress` (or their code) vs streaming-BUG on the long-generation task at matched cache size (GPU pod). Write `docs/week5.md` + critic pass. | `figures/week5/longgen.png`; `docs/week5.md` verdict. Tag `v0.4-w5-compare`. |
+| **Mon** | Read Palu, LoRC, MorphKV (+ skim STAR-KV/EchoKV/KV-CoRE). Decide code-vs-reimpl per method; check kvpress (none present in 0.5.1). Adopt KV-CoRE's Frobenius-optimal metric to report our KV's intrinsic compressibility ceiling. | `docs/notes/lowrank-landscape.md`: mechanisms, integration decision, KV-CoRE compressibility numbers for our layers. |
+| **Tue** | **LoRC** (`LoRCPress`: low-rank of K/V weight matrices, progressive per-layer rank — quick reimpl) + **Palu** (their repo, else a faithful `PaluPress`). Validate each vs our SVD oracle. | `LoRCPress`, Palu runner; per-method reconstruction sanity. |
+| **Wed** | **Axis A**: extend `w4_fair.py` with Palu, LoRC (+ their ×TurboQuant); rerun fair perplexity-vs-memory + needle. | `figures/week5/lowrank_fair.png`; verdict: BUG vs Palu vs LoRC at matched memory. |
+| **Thu** | **Streaming-decode `BUGPress`** (constant-rank decode updates via `StreamingBUG`/blocked torch — reuse `.update()`). Correctness: generation parity + constant-memory check over long decode. | Decode-time BUG; note on the constant-size mechanism. |
+| **Fri** | **Axis B**: `MorphKVPress` (or their code) vs streaming-BUG on a long-generation task at matched cache size (GPU pod). Write `docs/week5.md` + critic pass. STAR-KV as stretch if code exists. | `figures/week5/longgen.png`; `docs/week5.md` verdict. Tag `v0.4-w5-compare`. |
 
 ## Reuse
 - `StreamingBUG.update()` / `blocked_bug_subspace` — the decode-time streaming update (already built + validated).

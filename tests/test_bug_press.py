@@ -122,6 +122,35 @@ def test_constructor_guards() -> None:
         BUGPress(rank=8, n_sink=-1)
 
 
+def test_quant_path_runs_and_is_lossier_than_fp() -> None:
+    # TurboQuant on the coordinates: same shape, and (on full-rank data) lossier
+    # than the un-quantized fp reconstruction but still a sane approximation.
+    x = _random_kv(bsz=1, t=200, seed=11).to(torch.float32)
+    fp = BUGPress(rank=32)
+    q4 = BUGPress(rank=32, quant_bits=4)
+    out_fp, out_q = fp._compress_tensor(x), q4._compress_tensor(x)
+    assert out_q.shape == x.shape
+    err_fp = (out_fp - x).norm() / x.norm()
+    err_q = (out_q - x).norm() / x.norm()
+    assert err_fp < err_q < 1.0  # quantization adds loss, but not garbage
+
+
+def test_quant_more_bits_less_error() -> None:
+    x = _random_kv(bsz=1, t=200, seed=12).to(torch.float32)
+    errs = []
+    for b in (2, 3, 5):
+        out = BUGPress(rank=32, quant_bits=b)._compress_tensor(x)
+        errs.append(float((out - x).norm() / x.norm()))
+    assert errs[0] > errs[1] > errs[2]
+
+
+def test_quant_requires_torch_backend() -> None:
+    with pytest.raises(ValueError, match="quant_bits requires backend='torch'"):
+        BUGPress(rank=16, quant_bits=4, backend="numpy")
+    with pytest.raises(ValueError, match="quant_bits must be"):
+        BUGPress(rank=16, quant_bits=0)
+
+
 def test_compress_rejects_partial_cache_forward() -> None:
     # Guard against silent keys/values desync: if a q_len>1 forward does not
     # cover the whole cache (chunked/continued prefill), compress must raise

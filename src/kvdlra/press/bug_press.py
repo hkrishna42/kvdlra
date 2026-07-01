@@ -64,7 +64,8 @@ from transformers import PreTrainedModel
 from transformers.models.llama.modeling_llama import rotate_half
 
 from kvdlra.integrators.streaming import StreamingBUG
-from kvdlra.integrators.streaming_torch import blocked_bug_project
+from kvdlra.integrators.streaming_torch import blocked_bug_project, blocked_bug_subspace
+from kvdlra.quant import PolarQuant
 
 try:  # kvpress is an optional heavy dependency; keep import errors legible.
     from kvpress.presses.base_press import BasePress
@@ -123,9 +124,16 @@ class BUGPress(BasePress):  # type: ignore[misc]
     n_sink: int = 4
     backend: str = "torch"
     block_size: int = 128
+    # TurboQuant (Week 4): if set, quantize the per-token BUG coordinate vectors
+    # with PolarQuant at ``quant_bits`` bits/coord (torch backend only). ``None``
+    # keeps fp factors. See docs/notes/turboquant-rope-interaction.md.
+    quant_bits: int | None = None
     # ``head_dim * num_kv_heads``; set from the model in ``post_init_from_model``
     # but defaulted to the Llama-3.2-1B value so the press is usable stand-alone.
     n_features: int = field(default=512)
+    _pq_cache: dict[tuple[int, str], PolarQuant] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         if self.rank < 1:
@@ -136,6 +144,11 @@ class BUGPress(BasePress):  # type: ignore[misc]
             raise ValueError(f"backend must be 'torch' or 'numpy', got {self.backend!r}")
         if self.block_size < 1:
             raise ValueError(f"block_size must be >= 1, got {self.block_size}")
+        if self.quant_bits is not None:
+            if self.quant_bits < 1:
+                raise ValueError(f"quant_bits must be >= 1, got {self.quant_bits}")
+            if self.backend != "torch":
+                raise ValueError("quant_bits requires backend='torch'")
 
     def post_init_from_model(self, model: PreTrainedModel) -> None:
         """Pin ``n_features = head_dim * num_kv_heads`` from the model config."""
@@ -175,7 +188,10 @@ class BUGPress(BasePress):  # type: ignore[misc]
 
         payload = mat[:, self.n_sink :]
         if self.backend == "torch":
-            payload_hat = blocked_bug_project(payload, self.rank, self.block_size)
+            if self.quant_bits is None:
+                payload_hat = blocked_bug_project(payload, self.rank, self.block_size)
+            else:
+                payload_hat = self._torch_quantized_reconstruct(payload)
             out = mat.clone()
             out[:, self.n_sink :] = payload_hat
             return out
@@ -187,6 +203,32 @@ class BUGPress(BasePress):  # type: ignore[misc]
         tracker.update_many(payload_np)
         mat_np[:, self.n_sink :] = tracker.project(payload_np)
         return torch.from_numpy(mat_np).to(dtype=mat.dtype, device=mat.device)
+
+    def _get_polar_quant(self, dim: int, device: torch.device) -> PolarQuant:
+        """Lazily build + cache a :class:`PolarQuant` for coordinate dim ``dim``."""
+        assert self.quant_bits is not None
+        key = (dim, str(device))
+        pq = self._pq_cache.get(key)
+        if pq is None:
+            pq = PolarQuant(dim=dim, bits=self.quant_bits, device=device)
+            self._pq_cache[key] = pq
+        return pq
+
+    def _torch_quantized_reconstruct(self, payload: torch.Tensor) -> torch.Tensor:
+        """BUG subspace + PolarQuant-quantized coordinates -> reconstruction.
+
+        ``payload`` is ``(n_features, T')``. We take the BUG basis ``U``
+        (``n x r``), the coordinates ``C = U^T payload`` (``r x T'``), quantize the
+        **per-token coordinate vectors** (columns of ``C``) with PolarQuant, and
+        reconstruct ``U Chat``. This is the BUG->TurboQuant composition (the factors
+        are pre-RoPE, so RoPE re-application downstream is unaffected).
+        """
+        u = blocked_bug_subspace(payload, self.rank, self.block_size)  # (n, r) fp32
+        coords = u.mT @ payload.to(u.dtype)  # (r, T')
+        pq = self._get_polar_quant(coords.shape[0], payload.device)
+        codes, norm = pq.quantize(coords.mT)  # rows = per-token coord vecs (T', r)
+        coords_hat = pq.dequantize(codes, norm).mT  # (r, T')
+        return (u @ coords_hat).to(payload.dtype)
 
     def _compress_tensor(self, x: torch.Tensor) -> torch.Tensor:
         """Apply :meth:`_lowrank_reconstruct` per batch element.

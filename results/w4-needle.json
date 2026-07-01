@@ -1,0 +1,66 @@
+{
+  "model": "unsloth/Llama-3.2-1B-Instruct",
+  "context_len": 1600,
+  "depths": [
+    0.1,
+    0.3,
+    0.5,
+    0.7,
+    0.9
+  ],
+  "passcodes": [
+    "48213",
+    "91072",
+    "35864"
+  ],
+  "results": [
+    {
+      "method": "baseline",
+      "memory": 1.0,
+      "accuracy": 1.0,
+      "n": 15
+    },
+    {
+      "method": "BUG r64",
+      "memory": 0.1671875,
+      "accuracy": 0.6,
+      "n": 15
+    },
+    {
+      "method": "BUG+TQ r64/4b",
+      "memory": 0.0756201171875,
+      "accuracy": 0.4666666666666667,
+      "n": 15
+    },
+    {
+      "method": "BUG+TQ r128/4b",
+      "memory": 0.1467919921875,
+      "accuracy": 1.0,
+      "n": 15
+    },
+    {
+      "method": "SnapKV keep0.20",
+      "memory": 0.2,
+      "accuracy": 0.2,
+      "n": 15
+    },
+    {
+      "method": "SnapKV keep0.50",
+      "memory": 0.5,
+      "accuracy": 0.2,
+      "n": 15
+    },
+    {
+      "method": "ExpectedAttn keep0.20",
+      "memory": 0.2,
+      "accuracy": 1.0,
+      "n": 15
+    },
+    {
+      "method": "ExpectedAttn keep0.50",
+      "memory": 0.5,
+      "accuracy": 1.0,
+      "n": 15
+    }
+  ]
+}

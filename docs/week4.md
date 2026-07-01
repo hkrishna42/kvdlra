@@ -81,6 +81,36 @@ spending the bit budget on 4-bit quantization of a *higher-rank* factorization
 beats an fp16 *lower-rank* one. Quantization and low-rank genuinely compose rather
 than substitute — the core Week-4 thesis, confirmed.
 
+## Needle-in-a-haystack retrieval (SnapKV's home turf)
+Eviction methods are built for long-context *retrieval*, so we tested it directly:
+hide a needle ("The secret passcode is NNNNN.") at depth `d` in a haystack,
+compress it, then ask for it **after** compression (chat-templated, question fed
+post-compression so the answer attends to the compressed cache). 1B baseline
+retrieves 15/15. Accuracy over 5 depths × 3 codes (`figures/week4/needle.png`):
+
+| method | memory | retrieval acc |
+|---|---|---|
+| baseline | 1.0× | 15/15 |
+| **BUG+TurboQuant** r128/4b | **0.147×** | **15/15** |
+| Expected Attention | 0.20× / 0.50× | 15/15 / 15/15 |
+| BUG r64 | 0.167× | 9/15 |
+| BUG+TurboQuant r64/4b | 0.076× | 7/15 |
+| **SnapKV** | 0.20× / 0.50× | **3/15 / 3/15** |
+
+**Surprising, honest result — it partly *reverses* the naïve expectation.** We
+expected eviction to dominate retrieval and low-rank to "smear" the needle. In
+fact: **Expected Attention and BUG+TurboQuant (r128) both retrieve perfectly**,
+BUG+TQ at *less* memory (0.147× vs 0.20×). **SnapKV fails badly (3/15) and more
+memory does not help** — in the compress-then-query setting it scores tokens by
+the prompt's *own* recent-window attention (the question is not yet present), so a
+non-salient needle is evicted regardless of budget. BUG's *uniform* low-rank
+reconstruction instead preserves every token — but only at **sufficient rank**:
+rank-128 retrieves 15/15, rank-64 drops to 9/15 and aggressive rank-64/4-bit to
+7/15 (the reconstruction blurs a sharp fact when the rank is too low). So on
+retrieval: Expected Attention and adequately-ranked BUG+TurboQuant win; SnapKV is
+the weak baseline here; and BUG's rank is the knob that governs whether a sharp
+fact survives.
+
 ### A fairness fix (honest note)
 Our first head-to-head was **invalid**: the prefill-then-score harness let the
 model derive target positions from the cache length, but eviction presses shrink

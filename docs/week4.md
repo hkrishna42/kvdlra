@@ -150,6 +150,29 @@ retrieval: Expected Attention and adequately-ranked BUG+TurboQuant win; SnapKV i
 the weak baseline here; and BUG's rank is the knob that governs whether a sharp
 fact survives.
 
+## 8B scale-up (Llama-3.1-8B, bf16, ctx 1024, 8 windows; baseline ppl 6.88)
+Runs on a GPU pod (`figures/week4/hybrid-8b.png`, `fair-8b.png`). **Does BUG's
+low-rank do better at scale?** Two findings:
+
+1. **BUG alone improves markedly at 8B.** The perplexity penalty is ~5× smaller
+   than at 1B for the same compression: BUG+TurboQuant r128/4b **+0.20** at
+   0.161× (1B was +0.94 at 0.19×), r256/4b **+0.05** (near-lossless) at 0.317×.
+   The larger model tolerates low-rank far better and the fixed-`U` basis
+   amortizes more favourably (n_features 1024).
+2. **But the *fair ranking is unchanged*.** With every mechanism quantized,
+   **ExpectedAttention×TurboQuant still leads the frontier at 8B** (7.18 @ 0.075×,
+   7.01 @ 0.125×, near-lossless 6.94 @ 0.176×); BUG×TurboQuant is competitive but
+   behind (7.09 @ 0.161×); SnapKV×TurboQuant is close at 4-bit but its 2-bit points
+   break (10.7). Scale **narrowed** BUG's relative gap to EA (~+2.9% vs +0.9% at
+   0.16× on 8B, vs +7.4% vs +3% at 1B) — everything is near-lossless at 8B — but
+   did **not** flip the order. Same honest conclusion as 1B: BUG is a competitive
+   low-rank compressor; eviction (EA) leads on short-context perplexity.
+
+(Infra note: this took several vast.ai attempts — SSH key-injection, container,
+and throttled-download failures; the working recipe is onstart-batch + an HF token
+for the download + results emitted to `vastai logs`. See
+`[[vastai-pod-flakiness-jul2026]]`.)
+
 ### A fairness fix (honest note)
 Our first head-to-head was **invalid**: the prefill-then-score harness let the
 model derive target positions from the cache length, but eviction presses shrink
@@ -168,19 +191,10 @@ ordering is now sane. Numbers here are post-fix.
   scale. The eviction baselines are designed for long-context retrieval; a short
   fixed-window perplexity is not their home turf, so read the head-to-head as
   indicative, not a leaderboard result.
-- **8B scale-up: ran, but full results were lost to pod infra; one point survived.**
-  On Llama-3.1-8B (bf16, ctx 1024, `--dtype bfloat16`) the sweep **completed on the
-  pod**, but four vast.ai pods misbehaved that day (SSH key injection, container
-  create, stuck-loading, and finally a pod whose SSH dropped mid-run while the
-  `vastai execute` CLI was broken and the stopped instance could not be restarted —
-  GPU reclaimed). The one data point recovered from the progress log:
-  **8B baseline ppl ≈ 6.88; BUG+TurboQuant rank-256 / 2-bit at 0.286× memory →
-  ppl 7.11 (+0.23), i.e. near-lossless** — the composition holds at 8B scale
-  (baseline much lower than 1B's 12.65, as expected). The full 8B curve is a clean
-  follow-up: it runs end-to-end (blocked-BUG torch + `--dtype bfloat16`); it just
-  needs a stable pod, **an HF token (or `hf_transfer`) so the 16 GB download isn't
-  rate-throttled** (a retry stalled >80 min on an unauthenticated download, GPU
-  idle), and results emitted to `vastai logs` rather than fetched over SSH.
+- **8B scale-up: DONE** (hybrid + fair; see the *8B scale-up* section above). Took
+  ~7 vast.ai attempts across a bad infra day; the working recipe was onstart-batch
+  + HF token (download) + results via `vastai logs`. Verdict: BUG improves a lot at
+  8B but the fair ranking is unchanged (EA×TurboQuant still leads).
 - **QJL Mode B (estimator-at-attention)** is implemented + tested but not wired
   into the reconstruct-then-attend press; it needs a custom attention kernel and is
   future work.

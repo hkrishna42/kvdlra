@@ -81,7 +81,9 @@ MSE-optimal per-coordinate Lloyd--Max quantizer then achieves distortion within
 $\approx 2.7\times$ the information-theoretic floor, and a 1-bit QJL residual
 gives unbiased inner-product estimates. Because BUG factors are \emph{pre}-RoPE,
 the fixed quantization rotation and RoPE never need to commute (RoPE is applied
-last, to the reconstruction).
+last, to the reconstruction). Our reconstruct-then-attend press uses the
+PolarQuant scalar stage; the 1-bit QJL residual de-biases an
+estimator-at-attention path we implement and test but leave to future work.
 
 \section{Experiments}
 \paragraph{Setup.} Llama-3.2-1B (ungated \texttt{unsloth} mirror, config-identical),
@@ -103,16 +105,26 @@ rank~32 $+3.57$, rank~16 $+5.47$. Pre-RoPE beats post-RoPE across the useful
 compression range (rank~$\le 64$).
 
 \paragraph{Memory--perplexity frontier (Week 4).}
-% TODO: fill from results/w4-hybrid.json + results/w4-head-to-head.json
-Figure~\ref{fig:hero} plots perplexity against stored-cache memory for BUG,
-BUG+TurboQuant, SnapKV, and Expected~Attention. \emph{[Hero figure and the
-win/loss summary to be inserted from the Week-4 sweep.]}
+Quantizing the BUG coordinates at 4 bits roughly halves the stored cache for a
+negligible perplexity cost (rank~64: $0.191\times/{+}1.17 \to 0.099\times/{+}1.20$;
+rank~128: $0.378\times/{+}0.83 \to 0.193\times/{+}0.94$); 2 bits is the cliff.
+Crucially, at a fixed memory budget the composition beats pure low-rank:
+rank-64/4-bit ($0.099\times$, ppl $13.86$) versus rank-32/fp16 ($0.097\times$, ppl
+$16.22$) --- quantization and low-rank multiply rather than substitute.
+Figure~\ref{fig:hero} compares all methods on one axis. \textbf{In the
+aggressive-compression regime ($\approx 0.10\times$ memory, $10\times$),
+BUG+TurboQuant (13.86) beats Expected~Attention (14.49) and SnapKV (15.57).}
+Around $0.2$--$0.25\times$ the methods are comparable; at mild compression
+($0.5\times$) eviction wins (Expected~Attention near-lossless at $12.99$), as
+expected when most exact keys are retained. BUG+TurboQuant is thus the method of
+choice when the cache must be \emph{small}.
 
 \begin{figure}[t]
 \centering
-% \includegraphics[width=0.7\linewidth]{../figures/week4/hero.pdf}
+\includegraphics[width=0.7\linewidth]{../figures/week4/hero.pdf}
 \caption{Perplexity vs.\ stored KV-cache memory (fraction of full fp16 cache) for
-BUG, BUG+TurboQuant, and the SnapKV / Expected~Attention eviction baselines.}
+BUG, BUG+TurboQuant (with the BUG-family Pareto frontier), and the SnapKV /
+Expected~Attention eviction baselines. Llama-3.2-1B, WikiText-2, ctx~1024.}
 \label{fig:hero}
 \end{figure}
 

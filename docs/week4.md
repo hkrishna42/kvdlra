@@ -27,6 +27,11 @@ baseline ppl **12.65**. Torch backend, fp32 core.
   reconstruct `UĈ`. Factors are **pre-RoPE**, so the fixed rotation Π and RoPE
   never need to commute (RoPE is applied last to the reconstruction) — see
   `docs/notes/turboquant-rope-interaction.md`.
+  **Precision note:** "BUG+TurboQuant" here uses TurboQuant's *PolarQuant* scalar
+  stage only. The QJL 1-bit residual de-biases *inner-product estimates* (Mode B,
+  estimator-at-attention); in our reconstruct-then-attend press (Mode A) keys are
+  rebuilt explicitly and QJL is not applied — it is implemented and tested
+  standalone as a drop-in for a future Mode-B kernel.
 - **`press/compat.py`** — shim so stock kvpress presses run on transformers ≥5.8
   (same `cache_position` issue fixed for BUGPress in Week 3).
 - Scripts `w4_hybrid_sweep.py` (BUG vs BUG+TurboQuant on an honest memory axis)

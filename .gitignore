@@ -31,3 +31,7 @@ compass_artifact_*.md
 # pyproject.toml's exact pins are the source of truth. Keeps the large-files
 # pre-commit guard tight for catching stray tensors/checkpoints.
 uv.lock
+
+# Local handoff / internal notes — keep out of the (public) repo entirely.
+handover.md
+explanation_week_1_2.md

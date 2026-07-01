@@ -1,0 +1,140 @@
+% kvdlra --- arXiv-style preprint draft (v0.1).
+% Uses \documentclass{article} so it compiles without the NeurIPS style file;
+% swap in \usepackage{neurips_2024} (final,preprint) for submission.
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{url}
+
+\title{Dynamical Low-Rank Approximation as a Streaming KV-Cache Compressor}
+\author{Hari Krishnan \\ \texttt{github.com/hkrishna42/kvdlra}}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We test whether the \emph{basis-update \& Galerkin} (BUG) integrator for
+dynamical low-rank approximation (DLRA) --- a tool from numerical analysis for
+evolving low-rank factorizations of matrix ODEs --- is a good \emph{streaming}
+compressor for the key/value (KV) cache of autoregressive transformers. We show
+that a rank-adaptive BUG subspace tracker applied to the (pre-RoPE) KV stream is
+a \emph{near-oracle} low-rank approximator: on real Llama-3.2-1B KV it matches
+the truncated-SVD (Eckart--Young) optimum to within $1.01$--$1.03\times$ and beats
+incremental SVD and Oja's rule at matched rank. Wired into NVIDIA's
+\texttt{kvpress} as \texttt{BUGPress}, it preserves greedy generation and
+degrades perplexity gracefully with rank (near-baseline at $4\times$ per-token
+compression). Because low-rank compresses the \emph{feature} axis and
+quantization the \emph{bit} axis, the two compose: we combine BUG with TurboQuant
+residual quantization and sweep the memory--perplexity frontier against SnapKV
+and Expected~Attention. We report honestly where BUG wins and where the
+heavy-tailed KV spectrum limits pure low-rank compression.
+\end{abstract}
+
+\section{Introduction}
+The KV cache dominates memory in long-context LLM inference. Most compressors
+either \emph{evict} tokens (SnapKV, H2O, Expected~Attention) or \emph{quantize}
+per-element (KIVI, KVQuant, TurboQuant). We instead ask whether the cache's
+low-rank structure can be tracked \emph{online} with a principled integrator
+rather than a heuristic. DLRA's BUG integrator \cite{ceruti2022unconventional,
+ceruti2022rankadaptive} evolves an orthonormal basis and a small core under a
+matrix flow with robust error guarantees; we specialize it to the data-fitting
+flow of a column-streamed KV matrix.
+
+\paragraph{Contributions.}
+(i) A streaming rank-adaptive BUG subspace tracker for KV, shown near-oracle on
+real KV streams; (ii) \texttt{BUGPress}, a \texttt{kvpress}-compatible press with
+a pre-RoPE operating point and a GPU-capable blocked-BUG kernel; (iii) a
+composition of BUG with TurboQuant quantization and a memory--perplexity study
+against eviction baselines; (iv) an honest account of the regime where pure
+low-rank compression is limited by the KV spectrum.
+
+\section{Method}
+\paragraph{Convention.} A per-layer key tensor of shape
+$(H, T, D)$ is factored as $M \in \mathbb{R}^{HD \times T}$ (rows $=$ features
+$HD{=}512$, columns $=$ tokens $T$); a new token is a new column.
+
+\paragraph{Streaming BUG tracker.} We maintain an orthonormal basis
+$U \in \mathbb{R}^{n \times r}$ and a square-root core $B$ with $BB^\top =
+U^\top M M^\top U$. Each new column (or block of columns) triggers an augmented
+BUG step: range-augment $U$ with the residual direction, Galerkin-project the
+grown data onto the augmented basis, and truncate by a Frobenius-tail criterion
+(rank cap $r$ or tolerance $\theta$). The reconstruction is the orthogonal
+projection $\hat M = U U^\top M$. A \emph{blocked} variant processes $b$ columns
+per step ($b{=}1$ recovers the per-token tracker; $b{=}T$ recovers the SVD
+oracle), enabling batched QR/SVD on GPU. All core linear algebra is fp32 even
+when storage is bf16.
+
+\paragraph{Pre-RoPE operating point.} HuggingFace caches \emph{post}-RoPE keys,
+which are markedly less low-rank. \texttt{BUGPress} factors the recomputed
+pre-RoPE keys and re-applies RoPE to the reconstruction, roughly halving the
+reconstruction error at matched rank.
+
+\paragraph{Composition with TurboQuant.} The low-rank model stores $U$
+($n\times r$) and per-token coordinates $C = U^\top M$ ($r \times T$). We
+quantize the coordinate columns with TurboQuant \cite{zandieh2025turboquant}: a
+fixed random rotation makes coordinates near-independent and Beta-distributed, an
+MSE-optimal per-coordinate Lloyd--Max quantizer then achieves distortion within
+$\approx 2.7\times$ the information-theoretic floor, and a 1-bit QJL residual
+gives unbiased inner-product estimates. Because BUG factors are \emph{pre}-RoPE,
+the fixed quantization rotation and RoPE never need to commute (RoPE is applied
+last, to the reconstruction).
+
+\section{Experiments}
+\paragraph{Setup.} Llama-3.2-1B (ungated \texttt{unsloth} mirror, config-identical),
+fp32, WikiText-2. Perplexity uses a \emph{prefill-then-score} protocol: the
+context cache is compressed, then continuation tokens are scored against the
+compressed cache (necessary because \texttt{kvpress} compresses in a
+post-attention hook).
+
+\paragraph{Near-oracle reconstruction (Week 2).} Streaming BUG is within
+$1.01$--$1.03\times$ of the truncated-SVD oracle at every rank and beats
+incremental SVD everywhere; pre-RoPE roughly halves the error at matched budget;
+BUG beats Oja's rule by $1.3$--$3.0\times$.
+
+\paragraph{Generation \& perplexity (Week 3).} \texttt{BUGPress} preserves greedy
+generation (byte-identical at moderate rank; coherent, on-topic drift at
+aggressive rank; no divergence). WikiText-2 perplexity (ctx 1024, 16 windows,
+baseline $12.65$): rank~128 $+0.83$ ($4\times$), rank~64 $+1.17$ ($8\times$),
+rank~32 $+3.57$, rank~16 $+5.47$. Pre-RoPE beats post-RoPE across the useful
+compression range (rank~$\le 64$).
+
+\paragraph{Memory--perplexity frontier (Week 4).}
+% TODO: fill from results/w4-hybrid.json + results/w4-head-to-head.json
+Figure~\ref{fig:hero} plots perplexity against stored-cache memory for BUG,
+BUG+TurboQuant, SnapKV, and Expected~Attention. \emph{[Hero figure and the
+win/loss summary to be inserted from the Week-4 sweep.]}
+
+\begin{figure}[t]
+\centering
+% \includegraphics[width=0.7\linewidth]{../figures/week4/hero.pdf}
+\caption{Perplexity vs.\ stored KV-cache memory (fraction of full fp16 cache) for
+BUG, BUG+TurboQuant, and the SnapKV / Expected~Attention eviction baselines.}
+\label{fig:hero}
+\end{figure}
+
+\section{Limitations (honest)}
+Absolute low-rank compression is moderate: even pre-RoPE, the heavy-tailed KV
+spectrum limits pure low-rank to a few dozen--hundred useful rank; aggressive
+ranks cost real perplexity. Reported memory for the in-place press is
+\emph{nominal} unless factors are stored explicitly; the fixed basis $U$
+amortizes only for long context. Perplexity on WikiText-2 is not a long-context
+benchmark (LongBench/RULER) and results are at 1B scale.
+
+\bibliographystyle{plain}
+\begin{thebibliography}{9}
+\bibitem{ceruti2022unconventional} G.\ Ceruti, C.\ Lubich. An unconventional
+robust integrator for dynamical low-rank approximation. \emph{BIT} 62 (2022).
+arXiv:2010.02022.
+\bibitem{ceruti2022rankadaptive} G.\ Ceruti, J.\ Kusch, C.\ Lubich. A
+rank-adaptive robust integrator for dynamical low-rank approximation.
+\emph{BIT} 62 (2022). arXiv:2104.05247.
+\bibitem{zandieh2025turboquant} A.\ Zandieh, M.\ Daliri, M.\ Hadian, V.\
+Mirrokni. TurboQuant: Online Vector Quantization with Near-optimal Distortion
+Rate. arXiv:2504.19874.
+\end{thebibliography}
+
+\end{document}

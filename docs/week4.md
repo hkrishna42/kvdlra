@@ -129,10 +129,17 @@ ordering is now sane. Numbers here are post-fix.
   scale. The eviction baselines are designed for long-context retrieval; a short
   fixed-window perplexity is not their home turf, so read the head-to-head as
   indicative, not a leaderboard result.
-- **8B scale-up: deferred.** The plan calls for an 8B validation. Two vast.ai pods
-  failed at the infrastructure level today (SSH key injection; container create) —
-  not our code. The blocked-BUG torch backend + `--dtype bfloat16` make 8B ready
-  to run on a working pod; recorded as a clean follow-up.
+- **8B scale-up: ran, but full results were lost to pod infra; one point survived.**
+  On Llama-3.1-8B (bf16, ctx 1024, `--dtype bfloat16`) the sweep **completed on the
+  pod**, but four vast.ai pods misbehaved that day (SSH key injection, container
+  create, stuck-loading, and finally a pod whose SSH dropped mid-run while the
+  `vastai execute` CLI was broken and the stopped instance could not be restarted —
+  GPU reclaimed). The one data point recovered from the progress log:
+  **8B baseline ppl ≈ 6.88; BUG+TurboQuant rank-256 / 2-bit at 0.286× memory →
+  ppl 7.11 (+0.23), i.e. near-lossless** — the composition holds at 8B scale
+  (baseline much lower than 1B's 12.65, as expected). The full 8B curve is a clean
+  follow-up: it runs end-to-end (blocked-BUG torch + `--dtype bfloat16`); it just
+  needs a stable pod (write results to `vastai logs` rather than depend on SSH).
 - **QJL Mode B (estimator-at-attention)** is implemented + tested but not wired
   into the reconstruct-then-attend press; it needs a custom attention kernel and is
   future work.

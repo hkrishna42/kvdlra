@@ -73,8 +73,19 @@ def main() -> None:
     parser.add_argument("--n-windows", type=int, default=16)
     parser.add_argument("--out-json", default="results/w4-hybrid.json")
     parser.add_argument("--out-fig", default="figures/week4/hybrid")
+    parser.add_argument(
+        "--plot-only", action="store_true", help="re-plot from --out-json without loading the model"
+    )
     args = parser.parse_args()
     args.stride = args.context_len + args.target_len
+
+    if args.plot_only:
+        meta = json.loads(Path(args.out_json).read_text())
+        args.model = meta.get("model", args.model)
+        args.context_len = meta.get("context_len", args.context_len)
+        _plot(meta["results"], float(meta["baseline_ppl"]), args)
+        print(f"[replotted {args.out_fig}.{{pdf,png}}]")
+        return
 
     model, tokenizer = load_model(args.model, args.device, args.dtype)
     ids = load_wikitext_ids(tokenizer, args.device)

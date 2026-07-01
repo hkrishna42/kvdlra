@@ -74,8 +74,15 @@ def load_model(model_id: str, device: str) -> tuple[PreTrainedModel, PreTrainedT
 
 
 def load_wikitext_ids(tokenizer: PreTrainedTokenizerBase, device: str) -> torch.Tensor:
-    """Tokenize the concatenated WikiText-2 raw test split into one 1-D tensor."""
-    ds = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
+    """Tokenize the concatenated WikiText-2 raw test split into one 1-D tensor.
+
+    Uses the **namespaced** ``Salesforce/wikitext`` repo id, not the bare
+    ``wikitext`` alias: the legacy alias makes ``datasets==2.21`` build an
+    ``hf://datasets/wikitext@...`` URI that newer ``huggingface_hub`` (>=1.2x, as
+    resolved on the GPU pod) rejects with ``HfUriError`` (repo id must be
+    ``namespace/name``). The namespaced id works under both hub versions.
+    """
+    ds = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="test")
     text = "\n\n".join(line for line in ds["text"] if line.strip())
     ids = tokenizer(text, return_tensors="pt").input_ids.to(device)
     return cast(torch.Tensor, ids[0])

@@ -54,6 +54,7 @@ select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "N", "C4"]
 # pep8-naming (N802/N803/N806) would force unreadable lowercase; waiver is
 # scoped to the math modules and their tests, where matching the paper matters.
 "src/kvdlra/integrators/*" = ["N802", "N803", "N806"]
+"src/kvdlra/quant/*" = ["N802", "N803", "N806"]
 "tests/*" = ["N802", "N803", "N806"]
 
 [tool.ruff.format]

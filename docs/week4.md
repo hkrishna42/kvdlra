@@ -139,7 +139,9 @@ ordering is now sane. Numbers here are post-fix.
   ppl 7.11 (+0.23), i.e. near-lossless** — the composition holds at 8B scale
   (baseline much lower than 1B's 12.65, as expected). The full 8B curve is a clean
   follow-up: it runs end-to-end (blocked-BUG torch + `--dtype bfloat16`); it just
-  needs a stable pod (write results to `vastai logs` rather than depend on SSH).
+  needs a stable pod, **an HF token (or `hf_transfer`) so the 16 GB download isn't
+  rate-throttled** (a retry stalled >80 min on an unauthenticated download, GPU
+  idle), and results emitted to `vastai logs` rather than fetched over SSH.
 - **QJL Mode B (estimator-at-attention)** is implemented + tested but not wired
   into the reconstruct-then-attend press; it needs a custom attention kernel and is
   future work.

@@ -65,9 +65,16 @@ from kvdlra.utils.seed import seed_everything
 DEFAULT_MODEL = "unsloth/Llama-3.2-1B-Instruct"
 
 
-def load_model(model_id: str, device: str) -> tuple[PreTrainedModel, PreTrainedTokenizerBase]:
+_DTYPES = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}
+
+
+def load_model(
+    model_id: str, device: str, dtype: str = "float32"
+) -> tuple[PreTrainedModel, PreTrainedTokenizerBase]:
+    # BUG's core is fp64 numpy regardless of storage dtype (PLAN §8 #4), so bf16
+    # storage is safe and is required to fit an 8B model on a 24 GB card.
     tokenizer = AutoTokenizer.from_pretrained(model_id)
-    model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float32)
+    model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=_DTYPES[dtype])
     model.to(device)  # type: ignore[arg-type]
     model.eval()  # type: ignore[no-untyped-call]
     return model, tokenizer
@@ -144,6 +151,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
+    parser.add_argument("--dtype", default="float32", choices=list(_DTYPES))
     parser.add_argument("--ranks", type=int, nargs="+", default=[16, 32, 64])
     parser.add_argument("--context-len", type=int, default=1024)
     parser.add_argument("--target-len", type=int, default=512)
@@ -161,7 +169,7 @@ def main() -> None:
         args.stride = args.context_len + args.target_len
 
     seed_everything(args.seed)
-    model, tokenizer = load_model(args.model, args.device)
+    model, tokenizer = load_model(args.model, args.device, args.dtype)
     ids = load_wikitext_ids(tokenizer, args.device)
 
     rope = "pre" if args.pre_rope else "post"
@@ -189,6 +197,7 @@ def main() -> None:
 
     meta = {
         "model": args.model,
+        "dtype": args.dtype,
         "rope": rope,
         "compress_values": not args.no_values,
         "context_len": args.context_len,

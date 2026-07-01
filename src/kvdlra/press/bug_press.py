@@ -231,7 +231,26 @@ class BUGPress(BasePress):  # type: ignore[misc]
 
         Called once per layer at the end of pre-fill (see
         :meth:`kvpress.BasePress.forward_hook`). Returns same-shape tensors.
+
+        Only **single-shot pre-fill** is supported: the compressed forward must
+        cover the whole cache. In the pre-RoPE path the reconstruction is built
+        from ``hidden_states``/``position_embeddings``, which span only the
+        *current* forward's tokens; if that forward does not cover the entire
+        cache (chunked or continued pre-fill), the returned keys would be shorter
+        than the values and the cache would silently desync. We detect that and
+        raise rather than corrupt. (Supporting streaming across forwards would
+        require carrying per-layer :class:`StreamingBUG` state between calls -- a
+        later extension.)
         """
+        q_len = hidden_states.shape[1]
+        cache_len = keys.shape[2]
+        if q_len != cache_len:
+            raise NotImplementedError(
+                "BUGPress supports only single-shot pre-fill: the compressed forward "
+                f"must cover the whole cache, but q_len={q_len} != cache_len={cache_len}. "
+                "Chunked/continued pre-fill would desync keys and values."
+            )
+
         if self.pre_rope:
             # Factor the pre-RoPE keys (Week-2 operating point), then re-rotate.
             cos, sin = kwargs["position_embeddings"]

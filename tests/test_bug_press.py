@@ -117,3 +117,16 @@ def test_constructor_guards() -> None:
         BUGPress(rank=0)
     with pytest.raises(ValueError, match="n_sink"):
         BUGPress(rank=8, n_sink=-1)
+
+
+def test_compress_rejects_partial_cache_forward() -> None:
+    # Guard against silent keys/values desync: if a q_len>1 forward does not
+    # cover the whole cache (chunked/continued prefill), compress must raise
+    # rather than truncate. The check fires before any module access, so a
+    # dummy module/kwargs suffices.
+    press = BUGPress(rank=8)
+    hidden = torch.zeros(1, 8, 16)  # current forward: q_len = 8
+    keys = _random_kv(bsz=1, t=16)  # but the cache already holds 16 tokens
+    values = _random_kv(bsz=1, t=16)
+    with pytest.raises(NotImplementedError, match="single-shot"):
+        press.compress(cast(Any, None), hidden, keys, values, cast(Any, None), {})

@@ -100,6 +100,12 @@ each memory; baseline 12.65):
 | ~0.18× | EA×TQ **13.03** / SnapKV×TQ 13.08 | 13.59 | eviction ahead |
 | ~0.25× | **pure TurboQuant 12.70** (near-lossless) | — | just quantize — hard to beat |
 
+The figure also plots **BUG (fp16, no quant)** — and it is the *most dominated*
+frontier of all (far to the right: rank-r fp16 factors are memory-hungry). That is
+itself informative: **quantization is the dominant lever**; low-rank alone is the
+weakest mechanism here, and only *becomes* competitive once composed with
+TurboQuant. (This is the flip side of "the axes multiply.")
+
 **Honest verdict.** With fair (equal) quantization, **BUG×TurboQuant does not win
 the perplexity–memory frontier at ctx 1024** — Expected Attention×TurboQuant is on
 or ahead of it through the mid-aggressive band, and **pure 4-bit TurboQuant is a

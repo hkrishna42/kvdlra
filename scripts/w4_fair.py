@@ -64,6 +64,11 @@ def main() -> None:
     if args.plot_only:
         meta = json.loads(Path(args.out_json).read_text())
         loaded = {k: [(p["ratio"], p["ppl"]) for p in v] for k, v in meta["series"].items()}
+        # BUG-only (fp16, no quant) + BUG x TurboQuant from the hybrid sweep (no recompute).
+        hyb = json.loads(Path(args.hybrid_json).read_text())
+        loaded["BUG (fp16)"] = [
+            (float(r["ratio"]), float(r["ppl"])) for r in hyb["results"] if r["method"] == "BUG"
+        ]
         _plot(loaded, float(meta["baseline_ppl"]), args)
         print(f"[replotted {args.out_fig}.{{pdf,png}}]")
         return
@@ -83,16 +88,19 @@ def main() -> None:
     print(f"baseline: ppl={base_ppl:.4f} ({n_win} windows, {n_tok} tokens)")
 
     series: dict[str, list[tuple[float, float]]] = {
+        "BUG (fp16)": [],
         "BUG x TurboQuant": [],
         "SnapKV x TurboQuant": [],
         "ExpectedAttn x TurboQuant": [],
         "TurboQuant only": [],
     }
 
-    # BUG x TurboQuant: reuse the hybrid sweep's quantized points.
+    # BUG (fp16, no quant) + BUG x TurboQuant: reuse the hybrid sweep's points.
     hyb = json.loads(Path(args.hybrid_json).read_text())
     for r in hyb["results"]:
-        if r["method"] == "BUG+TurboQuant":
+        if r["method"] == "BUG":
+            series["BUG (fp16)"].append((float(r["ratio"]), float(r["ppl"])))
+        elif r["method"] == "BUG+TurboQuant":
             series["BUG x TurboQuant"].append((float(r["ratio"]), float(r["ppl"])))
 
     # Eviction x TurboQuant (evict, then quantize survivors) + pure TurboQuant.
@@ -149,6 +157,7 @@ def _plot(
 ) -> None:
     fig, ax = plt.subplots(figsize=(7.5, 5))
     styles = {
+        "BUG (fp16)": ("tab:blue", "o", "-"),
         "BUG x TurboQuant": ("tab:orange", "s", "-"),
         "SnapKV x TurboQuant": ("tab:green", "^", "--"),
         "ExpectedAttn x TurboQuant": ("tab:red", "v", "--"),

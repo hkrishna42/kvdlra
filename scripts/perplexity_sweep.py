@@ -114,8 +114,17 @@ def window_nll(
     with ctx_manager:
         model(ctx, past_key_values=cache, use_cache=True)
 
+    # Score the targets at their TRUE sequence positions. Eviction presses shrink
+    # the cache below context_len, so if we let the model derive positions from
+    # the (shrunken) cache length the targets would get wrong RoPE positions and
+    # wrong relative distances to the kept keys -- unfairly wrecking eviction
+    # baselines. Passing explicit position_ids fixes RoPE while the causal mask
+    # still lets targets attend to all kept cache entries. No-op for BUG (which
+    # keeps full seq_len) and for the uncompressed baseline.
     tgt = target_ids.unsqueeze(0)
-    out = model(tgt, past_key_values=cache, use_cache=True)
+    ctx_len, tgt_len = context_ids.shape[0], target_ids.shape[0]
+    position_ids = torch.arange(ctx_len, ctx_len + tgt_len, device=target_ids.device).unsqueeze(0)
+    out = model(tgt, past_key_values=cache, use_cache=True, position_ids=position_ids)
     logits = out.logits[0]  # (target_len, vocab)
     # Predict target[i+1] from the logits at target[i]; scores target_len-1
     # tokens, all attending to the (compressed) context cache.

@@ -38,6 +38,16 @@ def test_compression_ratio_is_zero_and_fixed() -> None:
         press.compression_ratio = 0.5
 
 
+def test_preserves_bf16_dtype() -> None:
+    # Regression (8B): output must match the input's storage dtype (bf16) so keys
+    # match the model's query dtype in attention; PolarQuant's fp32 core must be
+    # cast back.
+    press = TurboQuantPress(bits=4)
+    x = _kv(40).to(torch.bfloat16)
+    out = press._quant(x)
+    assert out.dtype == torch.bfloat16
+
+
 def test_bits_guard() -> None:
     with pytest.raises(ValueError, match="bits"):
         TurboQuantPress(bits=0)

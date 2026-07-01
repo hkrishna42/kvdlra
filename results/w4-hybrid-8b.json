@@ -1,0 +1,103 @@
+{
+  "model": "unsloth/Meta-Llama-3.1-8B-Instruct",
+  "dtype": "bfloat16",
+  "n_features": 1024,
+  "context_len": 1024,
+  "target_len": 512,
+  "n_windows": 8,
+  "scored_tokens": 4088,
+  "baseline_ppl": 6.879675110859334,
+  "results": [
+    {
+      "method": "baseline",
+      "rank": null,
+      "bits": null,
+      "ratio": 1.0,
+      "ppl": 6.879675110859334
+    },
+    {
+      "method": "BUG",
+      "rank": 64,
+      "bits": null,
+      "ratio": 0.128662109375,
+      "ppl": 7.646488901391826
+    },
+    {
+      "method": "BUG+TurboQuant",
+      "rank": 64,
+      "bits": 4,
+      "ratio": 0.08294296264648438,
+      "ppl": 7.683989998068146
+    },
+    {
+      "method": "BUG+TurboQuant",
+      "rank": 64,
+      "bits": 3,
+      "ratio": 0.07905197143554688,
+      "ppl": 7.699041883559669
+    },
+    {
+      "method": "BUG+TurboQuant",
+      "rank": 64,
+      "bits": 2,
+      "ratio": 0.07516098022460938,
+      "ppl": 7.9439214999002195
+    },
+    {
+      "method": "BUG",
+      "rank": 128,
+      "bits": null,
+      "ratio": 0.25341796875,
+      "ppl": 7.056941495343345
+    },
+    {
+      "method": "BUG+TurboQuant",
+      "rank": 128,
+      "bits": 4,
+      "ratio": 0.16100692749023438,
+      "ppl": 7.084615740320496
+    },
+    {
+      "method": "BUG+TurboQuant",
+      "rank": 128,
+      "bits": 3,
+      "ratio": 0.15322494506835938,
+      "ppl": 7.119361211505833
+    },
+    {
+      "method": "BUG+TurboQuant",
+      "rank": 128,
+      "bits": 2,
+      "ratio": 0.14544296264648438,
+      "ppl": 7.34580321148847
+    },
+    {
+      "method": "BUG",
+      "rank": 256,
+      "bits": null,
+      "ratio": 0.5029296875,
+      "ppl": 6.933739078200156
+    },
+    {
+      "method": "BUG+TurboQuant",
+      "rank": 256,
+      "bits": 4,
+      "ratio": 0.3171348571777344,
+      "ppl": 6.933739078200156
+    },
+    {
+      "method": "BUG+TurboQuant",
+      "rank": 256,
+      "bits": 3,
+      "ratio": 0.3015708923339844,
+      "ppl": 6.947321324749072
+    },
+    {
+      "method": "BUG+TurboQuant",
+      "rank": 256,
+      "bits": 2,
+      "ratio": 0.2860069274902344,
+      "ppl": 7.112398511609724
+    }
+  ]
+}

@@ -88,7 +88,9 @@ class TurboQuantPress(BasePress):  # type: ignore[misc]
         pq = self._get_pq(h * d, x.device)
         codes, norm = pq.quantize(vecs)
         rec = pq.dequantize(codes, norm)
-        return rec.reshape(bsz, t, h, d).permute(0, 2, 1, 3)
+        # PolarQuant computes in fp32; cast back to x's storage dtype so keys match
+        # the model's dtype (e.g. bf16 at 8B -- else attention dtype-mismatches).
+        return rec.reshape(bsz, t, h, d).permute(0, 2, 1, 3).to(x.dtype)
 
     def compress(
         self,

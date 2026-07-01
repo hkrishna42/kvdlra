@@ -38,14 +38,16 @@ def test_shape_preserved() -> None:
     assert out.dtype == x.dtype
 
 
-def test_full_rank_recovers_input() -> None:
+@pytest.mark.parametrize(("backend", "atol"), [("numpy", 1e-9), ("torch", 1e-4)])
+def test_full_rank_recovers_input(backend: str, atol: float) -> None:
     # rank_cap >= number of reconstructed columns => the tracked subspace spans
     # all payload columns => the projection is the identity (exact recovery).
+    # (torch backend computes in fp32, hence the looser tolerance.)
     t = 40
-    press = BUGPress(rank=t, n_sink=4)  # rank >= t - n_sink
+    press = BUGPress(rank=t, n_sink=4, backend=backend)  # rank >= t - n_sink
     x = _random_kv(bsz=1, t=t, seed=1)
     out = press._compress_tensor(x)
-    assert torch.allclose(out, x, atol=1e-9)
+    assert torch.allclose(out, x, atol=atol)
 
 
 def test_sinks_preserved_exactly_at_low_rank() -> None:
@@ -60,7 +62,8 @@ def test_sinks_preserved_exactly_at_low_rank() -> None:
     assert not torch.allclose(out[:, :, n_sink:, :], x[:, :, n_sink:, :])
 
 
-def test_exact_rank_r_input_reconstructed_exactly() -> None:
+@pytest.mark.parametrize(("backend", "atol"), [("numpy", 1e-8), ("torch", 1e-4)])
+def test_exact_rank_r_input_reconstructed_exactly(backend: str, atol: float) -> None:
     # An exactly rank-r feature-by-token matrix must be reconstructed exactly by
     # a rank-r tracker (mirrors tests/test_streaming.py).
     r, t = 5, 50
@@ -70,9 +73,9 @@ def test_exact_rank_r_input_reconstructed_exactly() -> None:
     mat = left @ right  # exactly rank r, shape (512, T)
     # Reshape into (1, H, T, D) using the inverse of the press's own reshape.
     x = torch.from_numpy(mat).reshape(H, D, t).permute(0, 2, 1).unsqueeze(0)
-    press = BUGPress(rank=r, n_sink=0)
+    press = BUGPress(rank=r, n_sink=0, backend=backend)
     out = press._compress_tensor(x)
-    assert torch.allclose(out, x, atol=1e-8)
+    assert torch.allclose(out, x, atol=atol)
 
 
 def test_low_rank_is_lossy_on_full_rank_input() -> None:

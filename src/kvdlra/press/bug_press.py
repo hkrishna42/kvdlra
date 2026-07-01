@@ -64,6 +64,7 @@ from transformers import PreTrainedModel
 from transformers.models.llama.modeling_llama import rotate_half
 
 from kvdlra.integrators.streaming import StreamingBUG
+from kvdlra.integrators.streaming_torch import blocked_bug_project
 
 try:  # kvpress is an optional heavy dependency; keep import errors legible.
     from kvpress.presses.base_press import BasePress
@@ -104,12 +105,24 @@ class BUGPress(BasePress):  # type: ignore[misc]
         untouched (keys-only compression).
     n_sink:
         Number of leading attention-sink token columns kept exact (default 4).
+    backend:
+        Which BUG tracker to use. ``"torch"`` (default) runs the blocked tracker
+        (:func:`kvdlra.integrators.streaming_torch.blocked_bug_project`)
+        **on-device** (GPU-capable, no CPU/numpy round-trip) -- the fast path.
+        ``"numpy"`` runs the per-token :class:`StreamingBUG` in fp64 on CPU (the
+        Week-2 tracker; slower but the reference). Both are parity-validated
+        (``tests/test_streaming_torch.py``).
+    block_size:
+        Columns per augmented-BUG step for the ``"torch"`` backend (ignored for
+        ``"numpy"``). Speed/fidelity knob; ``1`` == per-token, ``>= T`` == oracle.
     """
 
     rank: int = 32
     pre_rope: bool = True
     compress_values: bool = True
     n_sink: int = 4
+    backend: str = "torch"
+    block_size: int = 128
     # ``head_dim * num_kv_heads``; set from the model in ``post_init_from_model``
     # but defaulted to the Llama-3.2-1B value so the press is usable stand-alone.
     n_features: int = field(default=512)
@@ -119,6 +132,10 @@ class BUGPress(BasePress):  # type: ignore[misc]
             raise ValueError(f"rank must be >= 1, got {self.rank}")
         if self.n_sink < 0:
             raise ValueError(f"n_sink must be >= 0, got {self.n_sink}")
+        if self.backend not in ("torch", "numpy"):
+            raise ValueError(f"backend must be 'torch' or 'numpy', got {self.backend!r}")
+        if self.block_size < 1:
+            raise ValueError(f"block_size must be >= 1, got {self.block_size}")
 
     def post_init_from_model(self, model: PreTrainedModel) -> None:
         """Pin ``n_features = head_dim * num_kv_heads`` from the model config."""
@@ -144,28 +161,32 @@ class BUGPress(BasePress):  # type: ignore[misc]
         raise AttributeError(f"compression_ratio cannot be set for {type(self).__name__}")
 
     def _lowrank_reconstruct(self, mat: torch.Tensor) -> torch.Tensor:
-        """Rank-``rank`` streaming-BUG reconstruction of a ``(features, T)`` matrix.
+        """Rank-``rank`` BUG reconstruction of a ``(features, T)`` matrix.
 
         Keeps the first ``n_sink`` columns exact and reconstructs the rest via the
         orthogonal projection ``U Uᵀ M`` onto the tracked subspace. The BUG core
-        runs in numpy float64 (:class:`StreamingBUG`, PLAN §8 pitfall #4 -- keep
-        the core in high precision); the result is cast back to ``mat``'s dtype
-        and device.
+        runs in high precision (fp32 for the torch backend, fp64 numpy for the
+        numpy backend; PLAN §8 pitfall #4); the result matches ``mat``'s dtype and
+        device.
         """
         n_features, t = mat.shape
         if t <= self.n_sink:
             return mat  # only sinks present; nothing to compress
 
+        payload = mat[:, self.n_sink :]
+        if self.backend == "torch":
+            payload_hat = blocked_bug_project(payload, self.rank, self.block_size)
+            out = mat.clone()
+            out[:, self.n_sink :] = payload_hat
+            return out
+
+        # numpy backend: per-token StreamingBUG in fp64 on CPU (the reference).
         mat_np = mat.detach().to(torch.float64).cpu().numpy()
-        payload = np.ascontiguousarray(mat_np[:, self.n_sink :])
-
+        payload_np = np.ascontiguousarray(mat_np[:, self.n_sink :])
         tracker = StreamingBUG(n_features=n_features, rank_cap=self.rank)
-        tracker.update_many(payload)
-        payload_hat = tracker.project(payload)
-
-        out = mat_np.copy()
-        out[:, self.n_sink :] = payload_hat
-        return torch.from_numpy(out).to(dtype=mat.dtype, device=mat.device)
+        tracker.update_many(payload_np)
+        mat_np[:, self.n_sink :] = tracker.project(payload_np)
+        return torch.from_numpy(mat_np).to(dtype=mat.dtype, device=mat.device)
 
     def _compress_tensor(self, x: torch.Tensor) -> torch.Tensor:
         """Apply :meth:`_lowrank_reconstruct` per batch element.

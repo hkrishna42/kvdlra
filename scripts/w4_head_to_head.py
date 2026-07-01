@@ -54,7 +54,17 @@ def main() -> None:
     parser.add_argument("--hybrid-json", default="results/w4-hybrid.json")
     parser.add_argument("--out-json", default="results/w4-head-to-head.json")
     parser.add_argument("--out-fig", default="figures/week4/hero")
+    parser.add_argument(
+        "--plot-only", action="store_true", help="re-plot from --out-json without loading the model"
+    )
     args = parser.parse_args()
+
+    if args.plot_only:
+        meta = json.loads(Path(args.out_json).read_text())
+        loaded = {k: [(p["ratio"], p["ppl"]) for p in v] for k, v in meta["series"].items()}
+        plot_hero(loaded, float(meta["baseline_ppl"]), args)
+        print(f"[replotted {args.out_fig}.{{pdf,png}}]")
+        return
 
     install_kvpress_prefill_compat()  # stock presses need this on transformers>=5.8
     model, tokenizer = load_model(args.model, args.device, args.dtype)
@@ -92,21 +102,68 @@ def main() -> None:
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(meta, indent=2) + "\n")
 
+    plot_hero(series, base_ppl, args)
+    print(f"[wrote {out_json} and {args.out_fig}.{{pdf,png}}]")
+
+
+def _pareto_frontier(pts: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Lower-left envelope: points not dominated on (memory, ppl), sorted by memory."""
+    frontier: list[tuple[float, float]] = []
+    best_ppl = float("inf")
+    for ratio, ppl in sorted(pts):  # ascending memory
+        if ppl < best_ppl:  # cheaper points must be better to stay on the frontier
+            frontier.append((ratio, ppl))
+            best_ppl = ppl
+    return frontier
+
+
+def plot_hero(
+    series: dict[str, list[tuple[float, float]]], base_ppl: float, args: argparse.Namespace
+) -> None:
+    """Hero figure: perplexity vs. stored memory, four methods on one axis.
+
+    BUG-family points are scattered (they span rank x bits, not a single knob) with
+    their Pareto frontier drawn as a line; the single-knob eviction methods are
+    plotted as monotone lines.
+    """
     fig, ax = plt.subplots(figsize=(7.5, 5))
-    styles = {
-        "BUG": ("o", "-"),
-        "BUG+TurboQuant": ("s", "-"),
-        "SnapKV": ("^", "--"),
-        "ExpectedAttention": ("v", "--"),
-    }
-    for name, pts in series.items():
-        pts = sorted(pts)
+    for name, colour, marker in [("BUG", "tab:blue", "o"), ("BUG+TurboQuant", "tab:orange", "s")]:
+        pts = series.get(name, [])
         if not pts:
             continue
-        marker, ls = styles[name]
-        ax.plot(
-            [p[0] for p in pts], [p[1] for p in pts], marker=marker, ls=ls, label=name, alpha=0.85
+        ax.scatter(
+            [p[0] for p in pts],
+            [p[1] for p in pts],
+            c=colour,
+            marker=marker,
+            label=name,
+            alpha=0.8,
+            zorder=3,
         )
+    frontier = _pareto_frontier(series.get("BUG", []) + series.get("BUG+TurboQuant", []))
+    if frontier:
+        ax.plot(
+            [p[0] for p in frontier],
+            [p[1] for p in frontier],
+            c="tab:orange",
+            lw=1.5,
+            ls="-",
+            label="BUG family (Pareto)",
+            zorder=2,
+        )
+    evict = [("SnapKV", "tab:green", "^"), ("ExpectedAttention", "tab:red", "v")]
+    for name, colour, marker in evict:
+        pts = sorted(series.get(name, []))
+        if pts:
+            ax.plot(
+                [p[0] for p in pts],
+                [p[1] for p in pts],
+                c=colour,
+                marker=marker,
+                ls="--",
+                label=name,
+                alpha=0.85,
+            )
     ax.axhline(base_ppl, ls=":", c="grey", lw=1, label=f"baseline ({base_ppl:.2f})")
     ax.set_xlabel("stored KV memory / full fp16 cache")
     ax.set_ylabel("WikiText-2 perplexity")
@@ -118,7 +175,6 @@ def main() -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(f"{out}.pdf")
     fig.savefig(f"{out}.png", dpi=150)
-    print(f"[wrote {out_json} and {out}.{{pdf,png}}]")
 
 
 if __name__ == "__main__":

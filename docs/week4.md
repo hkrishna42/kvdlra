@@ -3,11 +3,20 @@
 **Summary.** We add TurboQuant vector quantization (arXiv:2504.19874) to the
 `kvdlra` stack and compose it with the streaming BUG low-rank compressor: BUG
 reduces the *rank* (feature axis), TurboQuant reduces the *bits* (per-coordinate
-axis), and the two **multiply**. Quantizing the BUG coordinate vectors at 4 bits
-roughly **halves the stored cache for a negligible perplexity cost**. On a fair
-head-to-head, **BUG+TurboQuant beats SnapKV and Expected Attention in the
-aggressive-compression regime (~10×, memory ≈0.10×): 13.86 vs 15.57 vs 14.49
-perplexity**; eviction methods win only at mild compression (≥0.5× memory).
+axis), and the two **multiply** (4-bit coordinates roughly halve the stored cache
+for a negligible perplexity cost).
+
+> **Correction (the honest headline).** An earlier version of this writeup claimed
+> "BUG+TurboQuant beats SnapKV/Expected Attention at ~10×." That comparison was
+> **unfair** — BUG was quantized but the eviction baselines were fp16. When *every*
+> mechanism is quantized equally (see **Fair comparison** below), the result flips:
+> at ctx 1024 **Expected Attention×TurboQuant and SnapKV×TurboQuant match or beat
+> BUG×TurboQuant** on perplexity across the mid-aggressive band (~0.08–0.18×). BUG
+> is competitive only at the **extreme edge (<0.07×)**, where it degrades more
+> gracefully than eviction. So on WikiText-2 perplexity at 1B, **BUG is a
+> competitive low-rank compressor, not the winner.** Its honest edges are elsewhere:
+> needle **retrieval** parity with the best (§ needle), graceful degradation at
+> extreme compression, and the **streaming/online** deployment niche (Week 5).
 
 All numbers: Llama-3.2-1B (ungated `unsloth` mirror), WikiText-2,
 prefill-then-score, ctx 1024 / target 512 / 16 windows (8176 scored tokens),
@@ -65,21 +74,45 @@ targets' true positions — see the fairness fix below). Hero figure:
 | ~0.25× | — | 14.18 | 13.58 |
 | ~0.50× | — | 13.26 | **12.99** |
 
-**Verdict — a real win in the high-compression regime, honest about the rest.**
-At **~0.10× memory (10× compression)** BUG+TurboQuant (13.86) beats both
-Expected Attention (14.49) and SnapKV (15.57) — the regime where you actually
-need compression. Around 0.19–0.25× the methods are comparable (BUG+TQ 13.59 at
-0.19× ≈ Expected Attention 13.58 at 0.25×, i.e. same quality at less memory). At
-**mild compression (0.5×)** eviction wins — Expected Attention is near-lossless
-(12.99) — which is unsurprising: with most tokens retained, exact keys beat any
-low-rank reconstruction. So BUG+TurboQuant is the method of choice when the cache
-must be small; eviction when it can be large.
+**This table compares BUG+TurboQuant (quantized) against fp16 eviction — which is
+NOT a fair comparison** (it gives BUG a ~4× quantization advantage the baselines
+don't get). Read it only as "low-rank+quant vs fp16-eviction." The fair version
+is next; it changes the conclusion.
 
 **Composition > pure low-rank at a fixed budget.** At the same ~0.10× memory,
 BUG+TurboQuant (r64, 4-bit → 13.86) massively beats BUG-alone (r32, fp16 → 16.22):
 spending the bit budget on 4-bit quantization of a *higher-rank* factorization
 beats an fp16 *lower-rank* one. Quantization and low-rank genuinely compose rather
 than substitute — the core Week-4 thesis, confirmed.
+
+## Fair comparison — every mechanism × TurboQuant (the honest control)
+Quantization is orthogonal to *how* you shrink the cache, so the fair question
+quantizes the eviction survivors too: `ComposedPress([SnapKV/EA, TurboQuantPress])`
+vs BUG×TurboQuant vs pure TurboQuant, all on one memory axis
+(`scripts/w4_fair.py`, `figures/week4/fair.png`). Pareto frontiers (best ppl at
+each memory; baseline 12.65):
+
+| memory band | best method | BUG×TQ | note |
+|---|---|---|---|
+| ~0.05× (extreme) | **BUG×TQ (16.2)** | 16.2 | eviction catastrophic here (EA 19.7, SnapKV 17.4); low-rank degrades gracefully |
+| ~0.08× | EA×TQ **13.77** | 13.86 (0.099×) | roughly tied |
+| ~0.13× | EA×TQ **13.31** / SnapKV×TQ 13.40 | ~13.9 | eviction ahead |
+| ~0.18× | EA×TQ **13.03** / SnapKV×TQ 13.08 | 13.59 | eviction ahead |
+| ~0.25× | **pure TurboQuant 12.70** (near-lossless) | — | just quantize — hard to beat |
+
+**Honest verdict.** With fair (equal) quantization, **BUG×TurboQuant does not win
+the perplexity–memory frontier at ctx 1024** — Expected Attention×TurboQuant is on
+or ahead of it through the mid-aggressive band, and **pure 4-bit TurboQuant is a
+remarkably strong baseline** (near-lossless at 0.25×). BUG is **best only at the
+extreme edge (<0.07×)**, where token eviction becomes catastrophic and low-rank
+still degrades gracefully. Two mitigating (honest) points, not excuses: (1) BUG's
+fixed `U` basis (512×r) is a real per-sequence overhead at ctx 1024 that
+**amortizes at longer context**, so BUG's relative standing should improve with
+context length / 8B (untested — a follow-up); (2) BUG ties the best on **needle
+retrieval** (next section) and is the only **streaming/online** member of the field
+(Week 5). Net: BUG is a *competitive* low-rank KV compressor whose case rests on
+the extreme-compression edge, retrieval, and streaming — not on beating eviction on
+short-context perplexity.
 
 ## Needle-in-a-haystack retrieval (SnapKV's home turf)
 Eviction methods are built for long-context *retrieval*, so we tested it directly:

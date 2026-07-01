@@ -12,16 +12,21 @@ ODE schemes, with a robust error bound *independent of the smallest singular val
 uses it as a principled, streaming, near-oracle alternative to greedy KV-cache eviction
 heuristics (H2O, SnapKV).
 
-## Hero result
+## Result (honestly)
 
-![Perplexity vs. KV-cache memory](figures/week4/hero.png)
+![Fair comparison: every mechanism × TurboQuant](figures/week4/fair.png)
 
-Perplexity vs. stored KV-cache memory (Llama-3.2-1B, WikiText-2, ctx 1024). **BUG+TurboQuant
-beats SnapKV and Expected Attention in the aggressive-compression regime** (~0.10× memory /
-10×: 13.86 vs 15.57 vs 14.49 perplexity); eviction methods win only at mild compression
-(≥0.5×). Low-rank (feature axis) and quantization (bit axis) **compose** — at a fixed ~0.10×
-budget, rank-64 @ 4-bit (13.86) beats rank-32 @ fp16 (16.22). Full writeup:
-[`docs/week4.md`](docs/week4.md).
+Perplexity vs. stored KV-cache memory (Llama-3.2-1B, WikiText-2, ctx 1024), **every
+mechanism quantized equally** (the fair control). Low-rank (feature axis) and quantization
+(bit axis) genuinely **compose** — 4-bit coordinates ~halve BUG's memory for a negligible
+perplexity cost. But with a fair comparison, **BUG×TurboQuant is a *competitive* low-rank
+compressor, not the winner**: Expected Attention×TurboQuant is on/ahead of BUG's Pareto
+frontier through the mid-aggressive band, and pure 4-bit TurboQuant is near-lossless at
+0.25×. **BUG wins only at the extreme edge (<0.07× memory)**, where token eviction turns
+catastrophic and low-rank degrades gracefully. BUG's real case: extreme-compression
+robustness, **needle-retrieval parity** with the best (SnapKV drops the needle; BUG doesn't),
+and the **streaming/online** niche (Week 5). Full accounting — including the retracted
+unfair-comparison claim — in [`docs/week4.md`](docs/week4.md).
 
 ## How it works
 

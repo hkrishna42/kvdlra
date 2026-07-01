@@ -111,13 +111,18 @@ rank~128: $0.378\times/{+}0.83 \to 0.193\times/{+}0.94$); 2 bits is the cliff.
 Crucially, at a fixed memory budget the composition beats pure low-rank:
 rank-64/4-bit ($0.099\times$, ppl $13.86$) versus rank-32/fp16 ($0.097\times$, ppl
 $16.22$) --- quantization and low-rank multiply rather than substitute.
-Figure~\ref{fig:hero} compares all methods on one axis. \textbf{In the
-aggressive-compression regime ($\approx 0.10\times$ memory, $10\times$),
-BUG+TurboQuant (13.86) beats Expected~Attention (14.49) and SnapKV (15.57).}
-Around $0.2$--$0.25\times$ the methods are comparable; at mild compression
-($0.5\times$) eviction wins (Expected~Attention near-lossless at $12.99$), as
-expected when most exact keys are retained. BUG+TurboQuant is thus the method of
-choice when the cache must be \emph{small}.
+Under a \emph{fair} comparison --- every mechanism quantized equally, since
+quantization is orthogonal to eviction (Fig.~\ref{fig:hero}) --- BUG+TurboQuant is
+\textbf{competitive but not dominant} on WikiText-2 perplexity at ctx~1024:
+Expected~Attention$\times$TurboQuant and SnapKV$\times$TurboQuant sit on or ahead
+of BUG's Pareto frontier through the mid-aggressive band ($0.08$--$0.18\times$),
+and pure 4-bit TurboQuant is near-lossless at $0.25\times$. BUG is best only at the
+\emph{extreme} edge ($<0.07\times$), where token eviction becomes catastrophic and
+low-rank degrades gracefully. (An earlier draft's "beats SOTA at $10\times$"
+compared quantized BUG against fp16 eviction and is retracted.) BUG's case rests on
+the extreme-compression edge, retrieval parity (\S\ref{fig:hero}), the streaming/
+online deployment niche, and the expectation that its fixed-basis overhead
+amortizes at longer context --- not on winning short-context perplexity.
 
 \begin{figure}[t]
 \centering

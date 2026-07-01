@@ -1,0 +1,42 @@
+{
+  "model": "unsloth/Llama-3.2-1B-Instruct",
+  "rope": "pre",
+  "compress_values": true,
+  "context_len": 512,
+  "target_len": 256,
+  "stride": 768,
+  "n_windows": 6,
+  "scored_tokens": 1530,
+  "results": [
+    {
+      "config": "baseline",
+      "rank": null,
+      "compression_ratio": 0.0,
+      "ppl": 14.285037751240026
+    },
+    {
+      "config": "bug-r16",
+      "rank": 16,
+      "compression_ratio": 0.96875,
+      "ppl": 22.657667557262986
+    },
+    {
+      "config": "bug-r32",
+      "rank": 32,
+      "compression_ratio": 0.9375,
+      "ppl": 20.197992954513204
+    },
+    {
+      "config": "bug-r64",
+      "rank": 64,
+      "compression_ratio": 0.875,
+      "ppl": 15.548850618196052
+    },
+    {
+      "config": "bug-r128",
+      "rank": 128,
+      "compression_ratio": 0.75,
+      "ppl": 14.591221510018322
+    }
+  ]
+}

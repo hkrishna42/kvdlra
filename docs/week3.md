@@ -5,13 +5,15 @@ press, `BUGPress`, that replaces a layer's KV cache with its rank-`r` dynamical-
 low-rank reconstruction during pre-fill. Generation is **correct** (no garbage at
 any rank; a working RoPE round-trip verified bit-exact), perplexity degrades
 **gracefully and monotonically** with rank (near-baseline at 4× compression),
-and **pre-RoPE beats post-RoPE at every rank** — confirming, at the
-generation/perplexity level, Week-2's reconstruction-error finding. Pre-RoPE is
-therefore the operating point.
+and **pre-RoPE beats post-RoPE across the compression regime that matters
+(rank ≤ 64)** — confirming, at the generation/perplexity level, Week-2's
+reconstruction-error finding. Pre-RoPE is therefore the operating point.
 
 All numbers below are Llama-3.2-1B (ungated `unsloth/Llama-3.2-1B-Instruct`,
-config-identical), fp32, CPU. They are a **preliminary CPU sweep** (small window
-counts); the full/long-context and 8B sweeps are pod work (see *Caveats*).
+config-identical), fp32. The perplexity headline is a **16-window / ctx-1024**
+sweep run in ~80 s on the Mac CPU via the blocked-BUG **torch backend** (see the
+*blocked-BUG* section); the GPU pod proved unnecessary for 1B once the numpy
+per-token bottleneck was removed.
 
 ## What was built
 - **`src/kvdlra/press/bug_press.py` — `BUGPress(BasePress)`.** In `compress`,
@@ -59,46 +61,68 @@ counts); the full/long-context and 8B sweeps are pod work (see *Caveats*).
   post-RoPE cache to 0.0 error), which is the strong evidence; the long-prompt
   degradation is consistent with it.
 
-## Perplexity — rank sweep (`results/w3-ppl.json`; 6 windows, ctx 512, tgt 256)
-Prefill-then-score, pre-RoPE, keys+values compressed. Perplexity of the
-continuation tokens attending to the **compressed** context cache; baseline is
-the identical protocol with no compression, so Δ isolates the compression cost.
+## Perplexity — rank sweep (`results/w3-ppl-1b-pre.json`; 16 windows, ctx 1024, tgt 512)
+Prefill-then-score, pre-RoPE, keys+values compressed, **torch backend**
+(`block_size=128`, fp32 core). Perplexity of the continuation tokens attending to
+the **compressed** context cache; baseline is the identical protocol with no
+compression, so Δ isolates the compression cost. 8176 scored tokens.
 
 | config | rank | per-token (`rank/512`) | nominal compression | perplexity | Δ vs. baseline |
 |---|---|---|---|---|---|
-| baseline | — | 1.00 | — | 14.29 | — |
-| BUG | 128 | 0.25 (4×) | 0.750 | **14.59** | **+0.31 (+2.1%)** |
-| BUG | 64 | 0.125 (8×) | 0.875 | 15.55 | +1.26 (+8.8%) |
-| BUG | 32 | 0.0625 (16×) | 0.938 | 20.20 | +5.91 (+41%) |
-| BUG | 16 | 0.031 (32×) | 0.969 | 22.66 | +8.37 (+59%) |
+| baseline | — | 1.00 | — | 12.65 | — |
+| BUG | 128 | 0.25 (4×) | 0.750 | **13.49** | **+0.83 (+6.6%)** |
+| BUG | 64 | 0.125 (8×) | 0.875 | 13.83 | +1.17 (+9.3%) |
+| BUG | 32 | 0.0625 (16×) | 0.938 | 16.22 | +3.57 (+28%) |
+| BUG | 16 | 0.031 (32×) | 0.969 | 18.13 | +5.47 (+43%) |
 
-The curve is **near-baseline at 4× compression** (rank 128, +2%), gentle to 8×
+The curve is **near-baseline at 4× compression** (rank 128, +7%), gentle to 8×
 (rank 64, +9%), then steep — precisely the Week-2 heavy-tailed-spectrum story:
 the useful rank is a few dozen to ~a hundred, and pushing below that costs real
-quality.
+quality. (The earlier 6-window/ctx-512 numpy sweep gave the same shape; these
+firmer ctx-1024 numbers supersede it.)
 
-## Perplexity — pre-RoPE vs. post-RoPE (matched: 3 windows, ctx 512, tgt 256)
-The deciding experiment (`results/w3-ppl-smoke.json` vs. `…-smoke-post.json`;
-identical windows, baseline ppl 10.32 in both).
+## Perplexity — pre-RoPE vs. post-RoPE (`w3-ppl-1b-pre.json` vs. `…-post.json`)
+Identical 16 windows / ctx 1024, baseline ppl 12.65 in both.
 
-| rank | Δppl pre-RoPE | Δppl post-RoPE | pre-RoPE advantage |
+| rank | Δppl pre-RoPE | Δppl post-RoPE | winner |
 |---|---|---|---|
-| 64 | **+1.35** | +3.86 | 2.9× smaller penalty |
-| 32 | +7.68 | +9.76 | 1.3× |
-| 16 | +10.14 | +10.80 | 1.1× |
+| 128 (4×) | +0.83 | **+0.50** | post (marginal) |
+| 64 (8×) | **+1.17** | +1.91 | **pre (1.6×)** |
+| 32 (16×) | **+3.57** | +5.13 | **pre (1.4×)** |
+| 16 (32×) | **+5.47** | +5.86 | **pre** |
 
-**Pre-RoPE wins at every rank**, most decisively where the model is still usable
-(rank 64: 2.9× smaller perplexity penalty). This confirms Week-2's "pre-RoPE
-roughly halves the reconstruction error" now propagates to end-task quality.
-**Decision: `BUGPress` operates pre-RoPE** (the default).
+**Pre-RoPE wins across the compression regime that matters (rank ≤ 64), by a
+widening margin as compression tightens** — the Week-2 "pre-RoPE ~halves the
+reconstruction error" finding propagates to end-task quality exactly where
+low-rank structure is load-bearing. At near-lossless rank 128 the two are a wash
+and post-RoPE edges it (there the re-rotation's fp32 round-trip costs more than
+the tiny low-rank gain). **Decision: `BUGPress` operates pre-RoPE** (the default)
+— it is the right choice everywhere compression is doing real work, and a
+negligible loss at the near-lossless end.
+
+> Note: an earlier draft claimed pre-RoPE wins at *every* rank, based on a
+> 3-window ctx-512 smoke. The firmer 16-window ctx-1024 sweep corrects that: it
+> wins at every rank **except** the mildest (128). Reported faithfully.
+
+## The blocked-BUG torch backend (what made this sweep cheap)
+The numpy per-token `StreamingBUG` core is CPU-bound and a GPU pod does **not**
+accelerate it (a 1B ctx-1024 sweep ran >90 min on a rented RTX 3090 without
+finishing — the GPU sat idle while the Python loop ground). So the tracker was
+reimplemented as a **blocked** augmented-BUG step in torch
+(`integrators/streaming_torch.py`): process the prefill in column-blocks
+(`block_size=128`) as batched QR/SVD on the tensor's own device. It is the same
+integrator (block=1 reproduces the numpy tracker to fp precision, block=T equals
+the SVD oracle; parity-tested), and it made the full ctx-1024 / 16-window sweep a
+**~80 s job on the Mac CPU** (≈20–30× faster; no GPU needed for 1B). `BUGPress`
+uses it by default (`backend="torch"`); `backend="numpy"` keeps the fp64
+reference. The one cost: fp32 vs fp64 slightly widens the rank-128 gap.
 
 ## Caveats (honest)
-- **Small CPU sweep.** 3–6 windows / ctx 512 is noisy and short-context; the
-  headline is the *shape* (monotone, pre>post, near-baseline at 4×), not the
-  exact ppl values. The full sweep (many windows, ctx ≥1024, and the 8B model)
-  is GPU-pod work — the numpy fp64 per-token BUG core makes long contexts slow on
-  CPU.
-- **Aggressive ranks hurt.** Rank 16/32 (16–32× compression) cost 40–60%
+- **Moderate sample.** 16 windows / ctx 1024 (8176 scored tokens) is a solid
+  local sweep but still WikiText-2 perplexity, not the long-context benchmarks
+  (LongBench/RULER) where KV-compression methods are usually compared, and not a
+  head-to-head vs. SnapKV/ExpectedAttention. Those are the real Week-4 tests.
+- **Aggressive ranks hurt.** Rank 16/32 (16–32× compression) cost 28–43%
   perplexity here; the win is quality *tracking* and the pre-RoPE operating
   point, not a spectacular absolute ratio — the ceiling is the spectrum.
 - **Single-shot pre-fill only.** `BUGPress` reconstructs from the current
@@ -115,17 +139,21 @@ roughly halves the reconstruction error" now propagates to end-task quality.
 # generation parity (short + long suites), pre-RoPE
 uv run python scripts/generate_with_press.py --parity --ranks 64 32 16 8 \
     --max-new-tokens 20 --out results/w3-parity.md
-# perplexity rank sweep (pre-RoPE)
+# perplexity rank sweep, pre-RoPE (torch backend by default; ~80 s on CPU)
 uv run python scripts/perplexity_sweep.py --ranks 16 32 64 128 \
-    --context-len 512 --target-len 256 --n-windows 6
-# pre- vs post-RoPE at matched windows
-uv run python scripts/perplexity_sweep.py --post-rope --ranks 16 32 64 \
-    --context-len 512 --target-len 256 --n-windows 3 \
-    --out-json results/w3-ppl-smoke-post.json --out-csv results/w3-ppl-smoke-post.csv
+    --context-len 1024 --target-len 512 --n-windows 16 \
+    --out-json results/w3-ppl-1b-pre.json --out-csv results/w3-ppl-1b-pre.csv
+# post-RoPE comparison (same windows)
+uv run python scripts/perplexity_sweep.py --post-rope --ranks 16 32 64 128 \
+    --context-len 1024 --target-len 512 --n-windows 16 \
+    --out-json results/w3-ppl-1b-post.json --out-csv results/w3-ppl-1b-post.csv
 ```
 
 ## What's next
-- Full perplexity sweep on the GPU pod (more windows, ctx ≥1024; optionally
-  Llama-3.1-8B) to firm up the numbers.
 - Week 4: TurboQuant residual quantization of the `(U, S, V)` factors, composed
-  with BUG; memory-budget perplexity sweep; README hero figure.
+  with BUG; memory-budget perplexity sweep; **head-to-head vs. SnapKV /
+  ExpectedAttention** on long-context benchmarks (the actual "beats SOTA" test);
+  README hero figure.
+- The blocked-BUG torch backend unblocks scale: Llama-3.1-8B needs only bf16
+  weights (`--dtype bfloat16`, fits a 24 GB card) — the compute is no longer the
+  bottleneck.

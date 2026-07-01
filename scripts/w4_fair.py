@@ -56,7 +56,17 @@ def main() -> None:
     parser.add_argument("--hybrid-json", default="results/w4-hybrid.json")
     parser.add_argument("--out-json", default="results/w4-fair.json")
     parser.add_argument("--out-fig", default="figures/week4/fair")
+    parser.add_argument(
+        "--plot-only", action="store_true", help="re-plot from --out-json without loading the model"
+    )
     args = parser.parse_args()
+
+    if args.plot_only:
+        meta = json.loads(Path(args.out_json).read_text())
+        loaded = {k: [(p["ratio"], p["ppl"]) for p in v] for k, v in meta["series"].items()}
+        _plot(loaded, float(meta["baseline_ppl"]), args)
+        print(f"[replotted {args.out_fig}.{{pdf,png}}]")
+        return
 
     install_kvpress_prefill_compat()
     model, tokenizer = load_model(args.model, args.device, args.dtype)
@@ -123,6 +133,17 @@ def main() -> None:
     print(f"[wrote {args.out_json} and {args.out_fig}.{{pdf,png}}]")
 
 
+def _pareto(pts: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Lower-left envelope: cheaper points kept only if strictly better (lower ppl)."""
+    out: list[tuple[float, float]] = []
+    best = float("inf")
+    for ratio, ppl in sorted(pts):
+        if ppl < best:
+            out.append((ratio, ppl))
+            best = ppl
+    return out
+
+
 def _plot(
     series: dict[str, list[tuple[float, float]]], base_ppl: float, args: argparse.Namespace
 ) -> None:
@@ -134,12 +155,19 @@ def _plot(
         "TurboQuant only": ("tab:purple", "D", ":"),
     }
     for name, pts in series.items():
-        pts = sorted(pts)
         if not pts:
             continue
         c, m, ls = styles[name]
+        ax.scatter([p[0] for p in pts], [p[1] for p in pts], c=c, marker=m, alpha=0.35, s=25)
+        front = _pareto(pts)  # plot each method's best-achievable (Pareto) frontier
         ax.plot(
-            [p[0] for p in pts], [p[1] for p in pts], c=c, marker=m, ls=ls, label=name, alpha=0.85
+            [p[0] for p in front],
+            [p[1] for p in front],
+            c=c,
+            marker=m,
+            ls=ls,
+            label=name,
+            alpha=0.9,
         )
     ax.axhline(base_ppl, ls=":", c="grey", lw=1, label=f"baseline ({base_ppl:.2f})")
     ax.set_xlabel("stored KV memory / full fp16 cache")

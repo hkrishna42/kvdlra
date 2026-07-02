@@ -72,6 +72,9 @@ def test_sign_hash_shapes_and_values() -> None:
 
 def test_estimate_inner_batched() -> None:
     # A batch of keys, one query: estimates should track the true inner products.
+    # Seed the draw so the single-sketch correlation is deterministic regardless
+    # of test order (the QJL sketch is seeded, but these operands were not).
+    torch.manual_seed(0)
     q = QJL(DIM, m=DIM, seed=0)
     y = torch.randn(DIM)
     x = torch.randn(50, DIM)

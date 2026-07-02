@@ -116,6 +116,31 @@ def test_operating_range_near_oracle() -> None:
     assert bug <= par + 1e-9
 
 
+def test_psi_is_fixed_rank() -> None:
+    # PSI is basic (fixed-rank) projector-splitting: it cannot exceed the seed
+    # rank, so at a streaming block size it is capped at rank <= block_size no
+    # matter how large rank_cap is. (This is why an ablation that sweeps rank past
+    # block_size must not read PSI's error as "instability" -- it is a rank cap.)
+    m = _heavy_tailed(256, 800, seed=7)
+    block = 64
+    for rank_cap in (64, 128, 256):
+        u = psi_subspace(m, rank_cap, block_size=block, compute_dtype=torch.float64)
+        assert u.shape[1] == min(rank_cap, block)
+
+
+def test_bug_and_parallel_are_rank_adaptive() -> None:
+    # BUG and parallel-BUG grow the basis across blocks, so they reach any
+    # rank_cap (up to rank_cap + block_size <= n_features) even when it exceeds the
+    # streaming block size -- PSI cannot. This rank-adaptivity is BUG's genuine
+    # streaming edge over fixed-rank projector-splitting.
+    m = _heavy_tailed(512, 900, seed=8)
+    block = 64
+    for rank_cap in (128, 192, 256):  # all > block, all with rank_cap + block <= 512
+        for fn in (blocked_bug_subspace, parallel_bug_subspace):
+            u = fn(m, rank_cap, block_size=block, compute_dtype=torch.float64)
+            assert u.shape[1] == rank_cap
+
+
 @pytest.mark.parametrize("name", list(VARIANTS))
 def test_guards(name: str) -> None:
     subspace_fn, _ = VARIANTS[name]

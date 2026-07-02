@@ -1,27 +1,32 @@
 """Week-4.5 DLRA integrator ablation (offline; no LLM, no pod).
 
 Bakes off the three streaming DLRA integrators as KV subspace trackers on captured
-pre-RoPE KV -- reconstruction error vs the truncated-SVD **oracle** plus per-sweep
-**cost** -- and picks ONE winner to carry into the Week-5 comparisons
-(``docs/week5-plan.md`` §"Week 4.5"). All three run through the identical
-block-streaming harness (same first-block seed, same rank truncation, same
-``|| M - U U^T M ||_F / || M ||_F`` metric) and differ only in the per-block step:
+pre-RoPE KV -- reconstruction error vs the truncated-SVD **oracle**, per-sweep
+**cost**, and streaming **rank-adaptivity** -- and picks ONE winner to carry into
+the Week-5 comparisons (``docs/week5-plan.md`` §"Week 4.5"). All three run through
+the identical block-streaming harness (same first-block seed, same rank
+truncation, same ``|| M - U U^T M ||_F / || M ||_F`` metric, which depends only on
+``span(U)``) and differ only in the per-block step:
 
 * **BUG** -- :func:`kvdlra.integrators.streaming_torch.blocked_bug_subspace`
   (augmented Galerkin, forward, square-root core). The incumbent.
 * **PSI** -- :func:`kvdlra.integrators.streaming_variants.psi_subspace`
-  (projector-splitting, backward S-step, covariance core).
+  (projector-splitting, backward S-step, covariance core) -- **fixed-rank**.
 * **Parallel-BUG** -- :func:`kvdlra.integrators.streaming_variants.parallel_bug_subspace`
   (decoupled in-basis/new-direction update).
 
-Averages over the ``--pattern`` documents (pre-RoPE Layer-``--layer`` K by default,
-the operating point) at each rank in ``--ranks``. Writes
-``figures/week5/integrator_ablation.{png,pdf}`` + a ``.json`` sidecar and prints
-the verdict. Use ``--plot-only`` to re-render from the sidecar.
+**Fair regime (important).** For the accuracy comparison every method must
+actually reach the requested rank, and the incumbent BUG's augmented ``[U | Q]``
+basis must fit in ``R^n`` -- i.e. ``rank <= block_size`` (else fixed-rank PSI is
+capped below the target and the comparison is apples-to-oranges) **and**
+``rank + block_size <= n_features`` (else BUG's augmented basis is rank-deficient
+and degenerates). Both hold for the KV operating range ``rank <= 128`` at
+``block_size = 128`` (``128 + 128 < 512``), which is the band that matters. A
+separate **rank-adaptivity** probe deliberately pushes ``rank_cap`` past
+``block_size`` to expose PSI's fixed-rank limitation.
 
-Decision rule (``docs/week5-plan.md``): ship parallel-BUG only if it *matches* BUG
-accuracy at lower cost; otherwise ship plain BUG. Everything clusters near the
-oracle in the KV operating range (r <= 128), so read the tails and the cost.
+Writes ``figures/week5/integrator_ablation.{png,pdf}`` + a ``.json`` sidecar and
+prints the verdict. Use ``--plot-only`` to re-render from the sidecar.
 """
 
 from __future__ import annotations
@@ -55,7 +60,7 @@ INTEGRATORS: dict[str, Tracker] = {
     "PSI": psi_subspace,
     "parallel-BUG": parallel_bug_subspace,
 }
-STYLES = {  # (color-cycle marker/linestyle) per series for the figure
+STYLES = {  # (color, marker/linestyle) per series for the figure
     "oracle": ("k", "o-"),
     "BUG": ("C0", "^-"),
     "PSI": ("C1", "s--"),
@@ -92,22 +97,45 @@ def oracle_error(m: torch.Tensor, r: int) -> float:
 def run_errors(
     mats: list[torch.Tensor], ranks: list[int], block_size: int
 ) -> dict[str, list[list[float]]]:
-    """Per-integrator (and oracle) rel-error, shape [rank][doc]. NaN if a step fails."""
+    """Per-integrator (and oracle) rel-error, shape [rank][doc]. Also asserts the
+    fair regime (every method reaches the rank; BUG's augmented basis fits in R^n)."""
+    n = mats[0].shape[0]
     out: dict[str, list[list[float]]] = {name: [] for name in ["oracle", *INTEGRATORS]}
     for r in ranks:
+        if r > block_size or r + block_size > n:
+            raise SystemExit(
+                f"unfair rank r={r} at block_size={block_size} (need r<=block_size and "
+                f"r+block_size<=n_features={n}); restrict --ranks or lower --block-size"
+            )
         out["oracle"].append([oracle_error(m, r) for m in mats])
         for name, fn in INTEGRATORS.items():
             row: list[float] = []
             for m in mats:
-                try:
-                    u = fn(m, r, block_size=block_size, compute_dtype=COMPUTE_DTYPE)
-                    row.append(rel_error(m, u))
-                except RuntimeError:  # e.g. parallel-BUG per-block SVD non-convergence (LAPACK)
-                    row.append(float("nan"))
+                u = fn(m, r, block_size=block_size, compute_dtype=COMPUTE_DTYPE)
+                assert u.shape[1] == r, f"{name} reached rank {u.shape[1]} != {r}"  # fair regime
+                row.append(rel_error(m, u))
             out[name].append(row)
-        agg = ", ".join(f"{n}={np.nanmean(out[n][-1]):.4f}" for n in ["oracle", *INTEGRATORS])
+        agg = ", ".join(f"{n2}={np.nanmean(out[n2][-1]):.4f}" for n2 in ["oracle", *INTEGRATORS])
         print(f"  r={r:>4}: {agg}")
     return out
+
+
+def run_adaptivity(
+    mat: torch.Tensor, rank_caps: list[int], block_size: int
+) -> dict[str, list[int]]:
+    """Achieved rank (basis columns) vs requested rank_cap at a streaming block size.
+
+    Pushes rank_cap past ``block_size`` to expose which integrators are
+    rank-adaptive (BUG, parallel-BUG grow to rank_cap) vs fixed-rank (PSI caps at
+    ``block_size``). Ranks with ``rank_cap + block_size > n_features`` are skipped
+    for BUG-family degeneracy but still probed for PSI (which stays <= block_size).
+    """
+    achieved: dict[str, list[int]] = {name: [] for name in INTEGRATORS}
+    for rc in rank_caps:
+        for name, fn in INTEGRATORS.items():
+            u = fn(mat, rc, block_size=block_size, compute_dtype=COMPUTE_DTYPE)
+            achieved[name].append(int(u.shape[1]))
+    return achieved
 
 
 def run_costs(
@@ -126,68 +154,71 @@ def run_costs(
             times: list[float] = []
             for _ in range(repeats):
                 t0 = time.perf_counter()
-                try:
-                    fn(mat, r, block_size=block_size, compute_dtype=COMPUTE_DTYPE)
-                    times.append((time.perf_counter() - t0) * 1e3)
-                except RuntimeError:  # SVD non-convergence -> record NaN
-                    times.append(float("nan"))
+                fn(mat, r, block_size=block_size, compute_dtype=COMPUTE_DTYPE)
+                times.append((time.perf_counter() - t0) * 1e3)
             costs[name].append(float(np.median(times)))
     return costs
 
 
-def choose_winner(errors: dict[str, list[list[float]]], ranks: list[int]) -> dict[str, object]:
-    """Apply the plan's decision rule from the mean error curves; return a verdict dict.
+def choose_winner(
+    errors: dict[str, list[list[float]]],
+    adaptivity: dict[str, list[int]],
+    rank_caps: list[int],
+    block_size: int,
+) -> dict[str, object]:
+    """Pick the integrator to carry into Week 5 from accuracy + rank-adaptivity.
 
-    A rival displaces BUG only if it *both* (1) matches BUG in the operating range
-    (ranks <= 128, the useful KV compression band; mean ratio-to-BUG <= 1.02) and
-    (2) stays **robust across the whole swept range** -- max error/oracle within
-    ROBUST_BOUND, the BUG-like robustness that is the reason to prefer a DLRA
-    integrator at all. Matching in the easy regime but destabilizing when pushed
-    (the projector-splitting backward step) does *not* qualify. Otherwise BUG wins.
+    In the fair operating range all three cluster near the oracle (a rigor result,
+    not a competitive lever). BUG is chosen because it is (1) at least as accurate
+    as every rival there **and** (2) rank-adaptive at a streaming block size, which
+    fixed-rank PSI is not. Parallel-BUG is rank-adaptive but measurably less
+    accurate. This is a design-validation (near-tie) verdict, NOT a claim that any
+    rival numerically blows up.
     """
-    robust_bound = 1.05  # max error/oracle a "robust" integrator may reach anywhere
 
     def mean_curve(name: str) -> np.ndarray:
         return np.array([float(np.nanmean(row)) for row in errors[name]])
 
-    bug = mean_curve("BUG")
-    op = np.array([r <= 128 for r in ranks])
-    summary: dict[str, dict[str, object]] = {}
+    oracle = mean_curve("oracle")
+    summary: dict[str, object] = {}
     for name in INTEGRATORS:
         cur = mean_curve(name)
-        ratio_op = float(np.nanmean((cur / bug)[op])) if op.any() else float("nan")
-        max_ratio_oracle = float(np.nanmax(cur / mean_curve("oracle")))
-        matches_op = ratio_op <= 1.02
-        robust = max_ratio_oracle <= robust_bound
+        # rank-adaptive := reaches a rank_cap strictly greater than block_size.
+        adaptive = any(
+            rc > block_size and ach > block_size
+            for rc, ach in zip(rank_caps, adaptivity[name], strict=True)
+        )
         summary[name] = {
-            "mean_ratio_to_BUG_op_range": ratio_op,
-            "max_ratio_to_oracle_all_ranks": max_ratio_oracle,
-            "matches_BUG_op_range": bool(matches_op),
-            "robust_all_ranks": bool(robust and bool(np.isfinite(cur).all())),
+            "mean_err_over_oracle": float(np.nanmean(cur / oracle)),
+            "max_err_over_oracle": float(np.nanmax(cur / oracle)),
+            "rank_adaptive": bool(adaptive),
         }
-    # BUG is the incumbent; a rival wins only if it matches BUG in the op range AND
-    # is robust everywhere (the plan then prefers it only if also cheaper).
-    rivals = [
+    # Winner: accurate in the operating range (err/oracle <= 1.05) AND rank-adaptive.
+    # Among such, prefer the most accurate. BUG and parallel-BUG are adaptive; PSI
+    # is not. BUG is the most accurate adaptive method -> winner.
+    accurate_adaptive = [
         n
-        for n in ("parallel-BUG", "PSI")
-        if summary[n]["matches_BUG_op_range"] and summary[n]["robust_all_ranks"]
+        for n in INTEGRATORS
+        if cast(dict[str, object], summary[n])["rank_adaptive"]
+        and cast(float, cast(dict[str, object], summary[n])["max_err_over_oracle"]) <= 1.05
     ]
-    winner = "BUG" if not rivals else rivals[0]
-    return {
-        "winner": winner,
-        "per_integrator": summary,
-        "operating_range_max_rank": 128,
-        "robust_bound": robust_bound,
-    }
+    winner = min(
+        accurate_adaptive or list(INTEGRATORS),
+        key=lambda n: cast(float, cast(dict[str, object], summary[n])["mean_err_over_oracle"]),
+    )
+    return {"winner": winner, "per_integrator": summary, "block_size": block_size}
 
 
 def _plot(
     errors: dict[str, list[list[float]]],
     costs: dict[str, list[float]],
+    adaptivity: dict[str, list[int]],
     ranks: list[int],
+    rank_caps: list[int],
+    block_size: int,
     out_path: Path,
 ) -> None:
-    """Three panels: error vs rank, error-ratio-to-oracle vs rank, cost vs rank."""
+    """Three panels: error vs rank (fair), streaming rank-adaptivity, per-sweep cost."""
     fig, axes = plt.subplots(1, 3, figsize=(16.5, 4.6))
     x = np.array(ranks)
 
@@ -201,27 +232,25 @@ def _plot(
         ax.fill_between(x, mean - std, mean + std, color=color, alpha=0.12)
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_xlabel("rank r")
+    ax.set_xlabel("rank r  (fair: r <= block_size, all methods reach r)")
     ax.set_ylabel("rel. Frobenius reconstruction error")
-    ax.set_title("(a) error vs rank")
+    ax.set_title("(a) accuracy vs rank — near-tie")
     ax.grid(True, alpha=0.3, which="both")
     ax.legend()
 
-    # Panel B: ratio to oracle (the small gaps + PSI's tail, on a linear axis).
+    # Panel B: streaming rank-adaptivity — achieved rank vs requested rank_cap.
     ax = axes[1]
-    oracle = np.array([float(np.nanmean(row)) for row in errors["oracle"]])
+    xc = np.array(rank_caps)
+    ax.plot(xc, xc, "-", color="grey", lw=1, alpha=0.6, label="requested (ideal)")
     for name in INTEGRATORS:
         color, style = STYLES[name]
-        mean = np.array([float(np.nanmean(row)) for row in errors[name]])
-        ax.plot(x, mean / oracle, style, color=color, label=name, lw=1.8, ms=5)
-    ax.axhline(1.0, color="k", lw=0.8, ls="-", alpha=0.6)
-    ax.axvline(128, color="grey", lw=0.8, ls=":", alpha=0.7)
-    ax.text(128, ax.get_ylim()[1], " KV op. range", color="grey", va="top", fontsize=8)
-    ax.set_xscale("log")
-    ax.set_xlabel("rank r")
-    ax.set_ylabel("error / oracle  (1.0 = optimal)")
-    ax.set_title("(b) gap to oracle")
-    ax.grid(True, alpha=0.3, which="both")
+        ax.plot(xc, adaptivity[name], style, color=color, label=name, lw=1.8, ms=6)
+    ax.axvline(block_size, color="grey", lw=0.8, ls=":", alpha=0.7)
+    ax.text(block_size, ax.get_ylim()[1], " block_size", color="grey", va="top", fontsize=8)
+    ax.set_xlabel("requested rank_cap")
+    ax.set_ylabel(f"achieved rank (block_size={block_size})")
+    ax.set_title("(b) streaming rank-adaptivity — PSI is fixed-rank")
+    ax.grid(True, alpha=0.3)
     ax.legend()
 
     # Panel C: per-sweep wall-clock cost vs rank.
@@ -250,8 +279,15 @@ def main() -> None:
     parser.add_argument("--pattern", default="doc*_len4096_rope-both")
     parser.add_argument("--layer", type=int, default=8)
     parser.add_argument("--key", default="K_pre", choices=["K", "K_pre"])
-    parser.add_argument("--ranks", type=int, nargs="+", default=[16, 32, 64, 128, 192, 256, 384])
+    parser.add_argument("--ranks", type=int, nargs="+", default=[16, 32, 64, 128])
     parser.add_argument("--block-size", type=int, default=128)
+    parser.add_argument(
+        "--rank-caps",
+        type=int,
+        nargs="+",
+        default=[64, 128, 192, 256, 384],
+        help="rank_caps for the rank-adaptivity probe (some > block_size, to expose PSI's cap)",
+    )
     parser.add_argument("--out", default="figures/week5/integrator_ablation.png")
     parser.add_argument("--plot-only", action="store_true", help="re-render from the JSON sidecar")
     args = parser.parse_args()
@@ -261,7 +297,15 @@ def main() -> None:
 
     if args.plot_only:
         blob = json.loads(json_path.read_text())
-        _plot(blob["errors"], blob["costs"], blob["ranks"], out_path)
+        _plot(
+            blob["errors"],
+            blob["costs"],
+            blob["adaptivity"],
+            blob["ranks"],
+            blob["rank_caps"],
+            blob["config"]["block_size"],
+            out_path,
+        )
         return
 
     dump_dirs = sorted(Path(args.dumps).glob(args.pattern))
@@ -270,17 +314,21 @@ def main() -> None:
     if not layer_paths:
         raise SystemExit(f"no dumps matched {args.dumps}/{args.pattern} (layer {args.layer})")
     mats = [load_matrix(p, args.key) for p in layer_paths]
-    ranks = [r for r in args.ranks if r < min(m.shape[0] for m in mats)]
+    ranks = [r for r in args.ranks if r <= args.block_size]
     print(
-        f"{len(mats)} docs, layer {args.layer}, key {args.key}, "
-        f"block_size {args.block_size}, ranks {ranks}"
+        f"{len(mats)} docs, layer {args.layer}, key {args.key}, block_size {args.block_size}, "
+        f"ranks {ranks} (fair), rank_caps {args.rank_caps} (adaptivity)"
     )
 
     errors = run_errors(mats, ranks, args.block_size)
-    print("timing per-sweep cost on the largest doc ...")
     biggest = max(mats, key=lambda m: m.shape[1])
+    print("streaming rank-adaptivity probe ...")
+    adaptivity = run_adaptivity(biggest, args.rank_caps, args.block_size)
+    for name, ach in adaptivity.items():
+        print(f"  {name:>13}: achieved {ach} for rank_caps {args.rank_caps}")
+    print("timing per-sweep cost ...")
     costs = run_costs(biggest, ranks, args.block_size)
-    verdict = choose_winner(errors, ranks)
+    verdict = choose_winner(errors, adaptivity, args.rank_caps, args.block_size)
 
     json_path.parent.mkdir(parents=True, exist_ok=True)
     json_path.write_text(
@@ -294,22 +342,24 @@ def main() -> None:
                     "compute_dtype": str(COMPUTE_DTYPE),
                 },
                 "ranks": ranks,
+                "rank_caps": args.rank_caps,
                 "errors": errors,
                 "costs": costs,
+                "adaptivity": adaptivity,
                 "verdict": verdict,
             },
             indent=2,
         )
         + "\n"
     )
-    _plot(errors, costs, ranks, out_path)
+    _plot(errors, costs, adaptivity, ranks, args.rank_caps, args.block_size, out_path)
 
-    print("\n=== VERDICT (docs/week5-plan.md §4.5 decision rule) ===")
+    print("\n=== VERDICT (docs/week5-plan.md §4.5) ===")
     for name, s in cast(dict[str, dict[str, object]], verdict["per_integrator"]).items():
         print(
-            f"  {name:>13}: mean err/BUG (r<=128) = {s['mean_ratio_to_BUG_op_range']:.4f}, "
-            f"max err/oracle (all r) = {s['max_ratio_to_oracle_all_ranks']:.4f}, "
-            f"op-match = {s['matches_BUG_op_range']}, robust = {s['robust_all_ranks']}"
+            f"  {name:>13}: mean err/oracle = {s['mean_err_over_oracle']:.4f}, "
+            f"max err/oracle = {s['max_err_over_oracle']:.4f}, "
+            f"rank-adaptive = {s['rank_adaptive']}"
         )
     print(f"  WINNER -> {verdict['winner']}  (carried into Week 5)")
 

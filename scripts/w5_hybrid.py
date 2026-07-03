@@ -69,16 +69,18 @@ N_SINK = 4
 def hybrid_memory_ratio(
     t: int, n_features: int, rank: int, n_exact: int, quant_bits: int, n_sink: int = N_SINK
 ) -> float:
-    """Stored memory / full fp16 for the hybrid: ``n_sink+n_exact`` exact tokens
-    (fp16, full features) + low-ranked rest (``U`` + quantized coords + norms)."""
-    exact = n_sink + n_exact
-    t_lr = max(0, t - exact)
+    """Stored memory / full fp16 for the hybrid. Sinks (``n_sink``) stay fp16-exact;
+    the ``n_exact`` kept tokens are PolarQuant-quantized to ``quant_bits`` (+ a
+    per-token fp16 norm), matching how eviction ``x TurboQuant`` stores ITS kept
+    tokens; the rest is the low-rank ``U`` + quantized coords + norms."""
+    t_lr = max(0, t - n_sink - n_exact)
     full = t * n_features * FP16
     u_bits = n_features * rank * FP16  # basis U (fp16), fixed -> amortizes with t
     coord_bits = rank * t_lr * quant_bits
     norm_bits = t_lr * FP16  # per-token coord-vector norm
-    exact_bits = exact * n_features * FP16  # exact tokens kept full precision
-    return (u_bits + coord_bits + norm_bits + exact_bits) / full
+    sink_bits = n_sink * n_features * FP16  # sinks kept fp16-exact
+    kept_bits = n_exact * (n_features * quant_bits + FP16)  # quantized + per-token norm
+    return (u_bits + coord_bits + norm_bits + sink_bits + kept_bits) / full
 
 
 def _fronts(rec: dict[str, Any]) -> dict[str, list[tuple[float, float]]]:

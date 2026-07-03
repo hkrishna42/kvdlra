@@ -115,9 +115,12 @@ class BUGPress(BasePress):  # type: ignore[misc]
         matches eviction's strength on the few important tokens and (b) makes the
         *remaining* columns more low-rank (outliers removed → the residual is
         easier to fit), so BUG spends its rank where it helps. This is the
-        "hybrid" (exact-tokens + low-rank-residual) press. Memory is then
-        ``T``-dependent (the exact tokens cost full precision); use the sweep's
-        hybrid memory model, not :attr:`compression_ratio`, for the honest axis.
+        "hybrid" (exact-tokens + low-rank-residual) press. When ``quant_bits`` is
+        set, the kept tokens are PolarQuant-quantized to ``quant_bits`` (like
+        eviction ``x TurboQuant`` quantizes ITS kept tokens -- a fair memory
+        accounting; only the ``n_sink`` sinks stay fp16). Memory is ``T``-dependent
+        (kept tokens cost per-token, not amortized); use the sweep's hybrid memory
+        model, not :attr:`compression_ratio`, for the honest axis.
     backend:
         Which BUG tracker to use. ``"torch"`` (default) runs the blocked tracker
         (:func:`kvdlra.integrators.streaming_torch.blocked_bug_project`)
@@ -226,23 +229,38 @@ class BUGPress(BasePress):  # type: ignore[misc]
         return torch.from_numpy(recon).to(dtype=cols.dtype, device=cols.device)
 
     def _lowrank_reconstruct(self, mat: torch.Tensor) -> torch.Tensor:
-        """Reconstruct a ``(features, T)`` matrix: exact columns kept, rest low-ranked.
+        """Reconstruct a ``(features, T)`` matrix: exact/kept columns + low-rank rest.
 
-        The exact set (sinks + the ``n_exact`` highest-norm columns) is left
-        untouched; the remaining columns are replaced by their orthogonal
-        projection ``U Uᵀ`` onto the BUG-tracked subspace, which is fit on *only*
-        those remaining columns. With ``n_exact = 0`` this reduces to the original
-        sinks-exact / low-rank-the-rest press (byte-identical).
+        The ``n_exact`` highest-norm columns are *kept* (not low-ranked); the rest
+        are replaced by their orthogonal projection ``U Uᵀ`` onto the BUG-tracked
+        subspace, which is fit on *only* those remaining columns. With ``n_exact =
+        0`` this reduces to the original sinks-exact / low-rank-the-rest press
+        (byte-identical).
+
+        **Fairness:** when ``quant_bits`` is set (the ``x TurboQuant`` operating
+        point), the kept ``n_exact`` columns are **PolarQuant-quantized** to
+        ``quant_bits`` -- exactly as eviction baselines (SnapKV/EA ``x TurboQuant``)
+        quantize the tokens *they* keep -- so the hybrid's kept set is not unfairly
+        stored at fp16. The ``n_sink`` sinks stay fp16-exact (a tiny fixed set,
+        known high-norm outliers). ``quant_bits = None`` keeps everything fp16.
         """
         t = mat.shape[1]
         if t <= self.n_sink:
             return mat  # only sinks present; nothing to compress
         mask = self._exact_mask(mat)
-        lowrank_cols = mat[:, ~mask]
-        if lowrank_cols.shape[1] == 0:
-            return mat  # everything kept exact
         out = mat.clone()
-        out[:, ~mask] = self._project_lowrank(lowrank_cols)
+        lowrank_cols = mat[:, ~mask]
+        if lowrank_cols.shape[1] > 0:
+            out[:, ~mask] = self._project_lowrank(lowrank_cols)
+        # Kept (non-sink) columns: quantize to match eviction's x TurboQuant fairness.
+        if self.quant_bits is not None and self.backend == "torch":
+            kept = mask.clone()
+            kept[: self.n_sink] = False  # sinks stay fp16-exact
+            if bool(kept.any()):
+                cols = mat[:, kept]  # (n_features, n_exact)
+                pq = self._get_polar_quant(int(cols.shape[0]), cols.device)
+                codes, norm = pq.quantize(cols.mT.to(torch.float32))
+                out[:, kept] = pq.dequantize(codes, norm).mT.to(out.dtype)
         return out
 
     def _get_polar_quant(self, dim: int, device: torch.device) -> PolarQuant:

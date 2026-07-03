@@ -93,6 +93,25 @@ def test_hybrid_keeps_high_norm_tokens_exact_and_helps() -> None:
     assert hyb_err <= pure_err + 1e-6
 
 
+def test_hybrid_quantizes_kept_tokens_when_quant_bits_set() -> None:
+    # With quant_bits, the kept (non-sink) exact tokens are PolarQuant-quantized to
+    # match eviction's xTurboQuant fairness -- so they are NO LONGER byte-exact, but
+    # stay a close (bounded) approximation of the originals; sinks remain fp16-exact.
+    g = torch.Generator().manual_seed(9)
+    mat = (torch.randn(N_FEATURES, 220, generator=g) * 0.3).to(torch.float32)
+    mat[:, torch.tensor([30, 90, 150])] *= 8.0  # high-norm kept tokens
+    press = BUGPress(rank=32, n_exact=3, quant_bits=4)
+    mask = press._exact_mask(mat)
+    out = press._lowrank_reconstruct(mat)
+    assert torch.equal(out[:, :4], mat[:, :4])  # sinks stay fp16-exact
+    kept = mask.clone()
+    kept[:4] = False
+    # kept tokens are quantized: changed from the original but a decent approximation
+    assert not torch.equal(out[:, kept], mat[:, kept])
+    rel = torch.linalg.norm(out[:, kept] - mat[:, kept]) / torch.linalg.norm(mat[:, kept])
+    assert rel < 0.35  # 4-bit PolarQuant keeps the kept tokens close
+
+
 @pytest.mark.parametrize(("backend", "atol"), [("numpy", 1e-8), ("torch", 1e-4)])
 def test_exact_rank_r_input_reconstructed_exactly(backend: str, atol: float) -> None:
     # An exactly rank-r feature-by-token matrix must be reconstructed exactly by

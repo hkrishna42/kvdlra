@@ -55,7 +55,7 @@ import matplotlib.pyplot as plt
 
 METHOD_STYLE = {
     "baseline": ("tab:blue", "o", "-"),
-    "BUG r128/4b": ("tab:orange", "s", "-"),
+    "BUG r128": ("tab:orange", "s", "-"),
     "BUG-hybrid r128/x0.05": ("tab:cyan", "*", "-"),
     "SnapKV keep0.15": ("tab:green", "^", "--"),
     "SnapKV keep0.05": ("tab:olive", "v", "--"),
@@ -116,40 +116,50 @@ def build_multikey_haystack(
     return ids[:, :-_TAIL_K], ids[:, -_TAIL_K:], target
 
 
-def build_methods(ctx: int, n_features: int, bits: int = 4) -> list[tuple[str, Any, float]]:
-    """Methods at aggressive matched memory. BUG (+hybrid) vs SnapKV/EA at keep 5-15%."""
+def build_methods(
+    ctx: int, n_features: int, bits: int = 4, no_quant: bool = False
+) -> list[tuple[str, Any, float]]:
+    """Methods at aggressive matched memory. BUG (+hybrid) vs SnapKV/EA at keep 5-15%.
+
+    ``no_quant=True`` runs BUG/hybrid at fp16 (``quant_bits=None``, block_size 512 to
+    curb per-block SVDs at long ctx); eviction is already fp16 (plain presses).
+    Eviction memory is then accounted at fp16 (``bits=16``).
+    """
+    qbits = None if no_quant else bits
+    kept_bits = 16 if no_quant else bits
     n_exact = round(0.05 * (ctx - 4))
+    kw: dict[str, Any] = {"block_size": 512} if no_quant else {}
 
     def bug_mem(rank: int) -> float:
-        return kv_memory_ratio(ctx, n_features, rank, bits)
+        return kv_memory_ratio(ctx, n_features, rank, qbits)
 
     return [
         ("baseline", None, 1.0),
-        ("BUG r128/4b", BUGPress(rank=128, quant_bits=bits), bug_mem(128)),
+        ("BUG r128", BUGPress(rank=128, quant_bits=qbits, **kw), bug_mem(128)),
         (
             "BUG-hybrid r128/x0.05",
-            BUGPress(rank=128, quant_bits=bits, n_exact=n_exact),
-            bug_mem(128) + n_exact * (n_features * bits + 16) / (ctx * n_features * 16),
+            BUGPress(rank=128, quant_bits=qbits, n_exact=n_exact, **kw),
+            bug_mem(128) + n_exact * (n_features * kept_bits + 16) / (ctx * n_features * 16),
         ),
         (
             "SnapKV keep0.15",
             SnapKVPress(compression_ratio=0.85),
-            evict_quant_memory(0.15, bits, n_features),
+            evict_quant_memory(0.15, kept_bits, n_features),
         ),
         (
             "SnapKV keep0.05",
             SnapKVPress(compression_ratio=0.95),
-            evict_quant_memory(0.05, bits, n_features),
+            evict_quant_memory(0.05, kept_bits, n_features),
         ),
         (
             "ExpectedAttn keep0.15",
             ExpectedAttentionPress(compression_ratio=0.85),
-            evict_quant_memory(0.15, bits, n_features),
+            evict_quant_memory(0.15, kept_bits, n_features),
         ),
         (
             "ExpectedAttn keep0.05",
             ExpectedAttentionPress(compression_ratio=0.95),
-            evict_quant_memory(0.05, bits, n_features),
+            evict_quant_memory(0.05, kept_bits, n_features),
         ),
     ]
 
@@ -158,7 +168,7 @@ def run_one_ctx(
     model: Any, tokenizer: Any, ctx: int, n_features: int, args: argparse.Namespace
 ) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
-    for name, press, mem in build_methods(ctx, n_features, args.bits):
+    for name, press, mem in build_methods(ctx, n_features, args.bits, args.no_quant):
         hits, total = 0, 0
         for seed in args.seeds:
             for q in range(args.n_queries):
@@ -218,6 +228,7 @@ def main() -> None:
     parser.add_argument("--n-queries", type=int, default=4, help="distinct keys queried per seed")
     parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
     parser.add_argument("--bits", type=int, default=4)
+    parser.add_argument("--no-quant", action="store_true", help="fp16 BUG (no TurboQuant)")
     parser.add_argument("--out-json", default="results/w5-ruler.json")
     parser.add_argument("--out-fig", default="figures/week5/ruler_longctx.png")
     parser.add_argument("--plot-only", action="store_true")
@@ -250,6 +261,7 @@ def main() -> None:
         "n_keys": args.n_keys,
         "n_queries": args.n_queries,
         "seeds": args.seeds,
+        "no_quant": args.no_quant,
         "per_ctx": per_ctx,
     }
     out_json = Path(args.out_json)

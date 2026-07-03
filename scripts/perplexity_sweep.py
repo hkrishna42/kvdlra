@@ -80,19 +80,68 @@ def load_model(
     return model, tokenizer
 
 
-def load_wikitext_ids(tokenizer: PreTrainedTokenizerBase, device: str) -> torch.Tensor:
-    """Tokenize the concatenated WikiText-2 raw test split into one 1-D tensor.
+def load_corpus_ids(
+    tokenizer: PreTrainedTokenizerBase,
+    device: str,
+    corpus: str = "wikitext-2",
+    max_tokens: int = 3_000_000,
+) -> torch.Tensor:
+    """Tokenize a held-out corpus into one 1-D token tensor (truncated to ``max_tokens``).
 
-    Uses the **namespaced** ``Salesforce/wikitext`` repo id, not the bare
-    ``wikitext`` alias: the legacy alias makes ``datasets==2.21`` build an
-    ``hf://datasets/wikitext@...`` URI that newer ``huggingface_hub`` (>=1.2x, as
-    resolved on the GPU pod) rejects with ``HfUriError`` (repo id must be
-    ``namespace/name``). The namespaced id works under both hub versions.
+    ``corpus``:
+
+    * ``"wikitext-2"`` -- the WikiText-2 raw test split (~280K tokens). Uses the
+      **namespaced** ``Salesforce/wikitext`` repo id, not the bare ``wikitext``
+      alias, so ``datasets==2.21`` + newer ``huggingface_hub`` (as resolved on the
+      GPU pod) does not build an ``hf://`` URI it rejects with ``HfUriError``.
+    * ``"wikitext-103"`` -- the WikiText-103 raw **train** split (same
+      ``Salesforce/wikitext`` repo, no remote code), **streamed** and concatenated
+      until ~``max_tokens`` tokens (>100M available). WikiText-2 yields only 8/4
+      non-overlapping windows at 32K/64K context; wikitext-103 gives hundreds, so
+      long-context perplexity is not noise. Using the train split is fine for a
+      *relative* method comparison (every method scores the identical text);
+      absolute ppl is not a held-out benchmark number.
+    * ``"pg19"`` -- PG19 test (long Project-Gutenberg books). Needs
+      ``trust_remote_code=True`` (legacy loader); kept as an option but not the
+      default (fragile on a fresh pod). Same streaming/concatenation.
+
+    Absolute ppl is not comparable across corpora -- only the relative method
+    frontier within one corpus is.
     """
-    ds = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="test")
-    text = "\n\n".join(line for line in ds["text"] if line.strip())
-    ids = tokenizer(text, return_tensors="pt").input_ids.to(device)
-    return cast(torch.Tensor, ids[0])
+    if corpus == "wikitext-2":
+        ds = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="test")
+        text = "\n\n".join(line for line in ds["text"] if line.strip())
+    elif corpus in ("wikitext-103", "pg19"):
+        if corpus == "wikitext-103":
+            stream = load_dataset(
+                "Salesforce/wikitext", "wikitext-103-raw-v1", split="train", streaming=True
+            )
+        else:
+            stream = load_dataset(
+                "deepmind/pg19", split="test", streaming=True, trust_remote_code=True
+            )
+        parts: list[str] = []
+        approx_tokens = 0
+        for example in stream:
+            chunk = cast(str, example["text"])
+            if not chunk.strip():
+                continue
+            parts.append(chunk)
+            approx_tokens += len(chunk) // 4  # ~4 chars/token; stop once we have enough
+            if approx_tokens >= max_tokens:
+                break
+        text = "\n\n".join(parts)
+    else:
+        raise ValueError(f"unknown corpus {corpus!r} (use 'wikitext-2', 'wikitext-103', 'pg19')")
+    ids = tokenizer(text, return_tensors="pt").input_ids.to(device)[0]
+    if ids.shape[0] > max_tokens:
+        ids = ids[:max_tokens]
+    return cast(torch.Tensor, ids)
+
+
+def load_wikitext_ids(tokenizer: PreTrainedTokenizerBase, device: str) -> torch.Tensor:
+    """WikiText-2 raw test split as one 1-D token tensor (see :func:`load_corpus_ids`)."""
+    return load_corpus_ids(tokenizer, device, "wikitext-2")
 
 
 @torch.no_grad()

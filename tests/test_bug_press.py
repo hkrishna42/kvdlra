@@ -62,6 +62,37 @@ def test_sinks_preserved_exactly_at_low_rank() -> None:
     assert not torch.allclose(out[:, :, n_sink:, :], x[:, :, n_sink:, :])
 
 
+def test_n_exact_zero_is_pure_lowrank() -> None:
+    # n_exact=0 (default) must be byte-identical to the original sinks-only press.
+    mat = torch.randn(N_FEATURES, 200, generator=torch.Generator().manual_seed(3))
+    a = BUGPress(rank=16, n_exact=0)._lowrank_reconstruct(mat)
+    b = BUGPress(rank=16)._lowrank_reconstruct(mat)
+    assert torch.equal(a, b)
+
+
+def test_hybrid_keeps_high_norm_tokens_exact_and_helps() -> None:
+    # The hybrid keeps the highest-norm columns exact and, by removing those
+    # spectral outliers from the low-rank fit, tracks the residual at least as well
+    # as pure low-rank at the same rank.
+    g = torch.Generator().manual_seed(4)
+    mat = torch.randn(N_FEATURES, 300, generator=g) * 0.3
+    outliers = torch.tensor([20, 77, 140, 210, 260])
+    mat[:, outliers] *= 10.0  # high-norm "important" tokens
+    press = BUGPress(rank=32, n_exact=len(outliers))
+    mask = press._exact_mask(mat)
+    # every injected outlier is selected into the exact set (plus the sinks)
+    kept = set(torch.nonzero(mask).flatten().tolist())
+    assert set(outliers.tolist()).issubset(kept)
+    out = press._lowrank_reconstruct(mat)
+    assert torch.equal(out[:, mask], mat[:, mask])  # exact columns byte-preserved
+    # residual (non-exact) reconstruction is no worse than pure low-rank there
+    nonx = ~mask
+    pure = BUGPress(rank=32)._lowrank_reconstruct(mat)
+    hyb_err = torch.linalg.norm(mat[:, nonx] - out[:, nonx])
+    pure_err = torch.linalg.norm(mat[:, nonx] - pure[:, nonx])
+    assert hyb_err <= pure_err + 1e-6
+
+
 @pytest.mark.parametrize(("backend", "atol"), [("numpy", 1e-8), ("torch", 1e-4)])
 def test_exact_rank_r_input_reconstructed_exactly(backend: str, atol: float) -> None:
     # An exactly rank-r feature-by-token matrix must be reconstructed exactly by
@@ -120,6 +151,8 @@ def test_constructor_guards() -> None:
         BUGPress(rank=0)
     with pytest.raises(ValueError, match="n_sink"):
         BUGPress(rank=8, n_sink=-1)
+    with pytest.raises(ValueError, match="n_exact"):
+        BUGPress(rank=8, n_exact=-1)
 
 
 def test_quant_path_runs_and_is_lossier_than_fp() -> None:

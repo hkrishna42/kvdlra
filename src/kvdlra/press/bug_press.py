@@ -106,6 +106,18 @@ class BUGPress(BasePress):  # type: ignore[misc]
         untouched (keys-only compression).
     n_sink:
         Number of leading attention-sink token columns kept exact (default 4).
+    n_exact:
+        Number of *additional* token columns kept exact (beyond the ``n_sink``
+        leading sinks), selected as the highest-L2-norm columns of the
+        feature-by-token matrix (default 0 = pure low-rank). High-norm tokens are
+        the spectral outliers the low-rank model fits worst **and** the
+        attention-attractors eviction methods keep; keeping them exact both (a)
+        matches eviction's strength on the few important tokens and (b) makes the
+        *remaining* columns more low-rank (outliers removed → the residual is
+        easier to fit), so BUG spends its rank where it helps. This is the
+        "hybrid" (exact-tokens + low-rank-residual) press. Memory is then
+        ``T``-dependent (the exact tokens cost full precision); use the sweep's
+        hybrid memory model, not :attr:`compression_ratio`, for the honest axis.
     backend:
         Which BUG tracker to use. ``"torch"`` (default) runs the blocked tracker
         (:func:`kvdlra.integrators.streaming_torch.blocked_bug_project`)
@@ -122,6 +134,7 @@ class BUGPress(BasePress):  # type: ignore[misc]
     pre_rope: bool = True
     compress_values: bool = True
     n_sink: int = 4
+    n_exact: int = 0
     backend: str = "torch"
     block_size: int = 128
     # TurboQuant (Week 4): if set, quantize the per-token BUG coordinate vectors
@@ -140,6 +153,8 @@ class BUGPress(BasePress):  # type: ignore[misc]
             raise ValueError(f"rank must be >= 1, got {self.rank}")
         if self.n_sink < 0:
             raise ValueError(f"n_sink must be >= 0, got {self.n_sink}")
+        if self.n_exact < 0:
+            raise ValueError(f"n_exact must be >= 0, got {self.n_exact}")
         if self.backend not in ("torch", "numpy"):
             raise ValueError(f"backend must be 'torch' or 'numpy', got {self.backend!r}")
         if self.block_size < 1:
@@ -173,36 +188,62 @@ class BUGPress(BasePress):  # type: ignore[misc]
     def compression_ratio(self, value: float) -> None:
         raise AttributeError(f"compression_ratio cannot be set for {type(self).__name__}")
 
-    def _lowrank_reconstruct(self, mat: torch.Tensor) -> torch.Tensor:
-        """Rank-``rank`` BUG reconstruction of a ``(features, T)`` matrix.
+    def _exact_mask(self, mat: torch.Tensor) -> torch.Tensor:
+        """Boolean ``(T,)`` mask of columns kept exact: the ``n_sink`` leading sinks
+        plus the top-``n_exact`` non-sink columns by L2 norm (the hybrid's exact set).
 
-        Keeps the first ``n_sink`` columns exact and reconstructs the rest via the
-        orthogonal projection ``U Uᵀ M`` onto the tracked subspace. The BUG core
-        runs in high precision (fp32 for the torch backend, fp64 numpy for the
-        numpy backend; PLAN §8 pitfall #4); the result matches ``mat``'s dtype and
-        device.
+        High-norm columns are the spectral outliers the low-rank model fits worst;
+        pulling them into the exact set both preserves them crisply and leaves a
+        more low-rank residual for BUG to track (see the ``n_exact`` docstring).
         """
-        n_features, t = mat.shape
-        if t <= self.n_sink:
-            return mat  # only sinks present; nothing to compress
+        t = mat.shape[1]
+        mask = torch.zeros(t, dtype=torch.bool, device=mat.device)
+        mask[: self.n_sink] = True
+        if self.n_exact > 0 and t > self.n_sink:
+            norms = torch.linalg.norm(mat[:, self.n_sink :].float(), dim=0)
+            k = min(self.n_exact, int(norms.shape[0]))
+            if k > 0:
+                top = torch.topk(norms, k).indices + self.n_sink
+                mask[top] = True
+        return mask
 
-        payload = mat[:, self.n_sink :]
+    def _project_lowrank(self, cols: torch.Tensor) -> torch.Tensor:
+        """Rank-``rank`` BUG reconstruction of a ``(features, k)`` column block.
+
+        The BUG core runs in high precision (fp32 for the torch backend, fp64 numpy
+        for the numpy backend; PLAN §8 pitfall #4); the result matches ``cols``'s
+        dtype and device. No sink/exact handling here -- that is the caller's job.
+        """
         if self.backend == "torch":
             if self.quant_bits is None:
-                payload_hat = blocked_bug_project(payload, self.rank, self.block_size)
-            else:
-                payload_hat = self._torch_quantized_reconstruct(payload)
-            out = mat.clone()
-            out[:, self.n_sink :] = payload_hat
-            return out
-
+                return blocked_bug_project(cols, self.rank, self.block_size)
+            return self._torch_quantized_reconstruct(cols)
         # numpy backend: per-token StreamingBUG in fp64 on CPU (the reference).
-        mat_np = mat.detach().to(torch.float64).cpu().numpy()
-        payload_np = np.ascontiguousarray(mat_np[:, self.n_sink :])
-        tracker = StreamingBUG(n_features=n_features, rank_cap=self.rank)
-        tracker.update_many(payload_np)
-        mat_np[:, self.n_sink :] = tracker.project(payload_np)
-        return torch.from_numpy(mat_np).to(dtype=mat.dtype, device=mat.device)
+        cols_np = np.ascontiguousarray(cols.detach().to(torch.float64).cpu().numpy())
+        tracker = StreamingBUG(n_features=int(cols.shape[0]), rank_cap=self.rank)
+        tracker.update_many(cols_np)
+        recon = tracker.project(cols_np)
+        return torch.from_numpy(recon).to(dtype=cols.dtype, device=cols.device)
+
+    def _lowrank_reconstruct(self, mat: torch.Tensor) -> torch.Tensor:
+        """Reconstruct a ``(features, T)`` matrix: exact columns kept, rest low-ranked.
+
+        The exact set (sinks + the ``n_exact`` highest-norm columns) is left
+        untouched; the remaining columns are replaced by their orthogonal
+        projection ``U Uᵀ`` onto the BUG-tracked subspace, which is fit on *only*
+        those remaining columns. With ``n_exact = 0`` this reduces to the original
+        sinks-exact / low-rank-the-rest press (byte-identical).
+        """
+        t = mat.shape[1]
+        if t <= self.n_sink:
+            return mat  # only sinks present; nothing to compress
+        mask = self._exact_mask(mat)
+        lowrank_cols = mat[:, ~mask]
+        if lowrank_cols.shape[1] == 0:
+            return mat  # everything kept exact
+        out = mat.clone()
+        out[:, ~mask] = self._project_lowrank(lowrank_cols)
+        return out
 
     def _get_polar_quant(self, dim: int, device: torch.device) -> PolarQuant:
         """Lazily build + cache a :class:`PolarQuant` for coordinate dim ``dim``."""

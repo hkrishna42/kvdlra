@@ -1,0 +1,85 @@
+{
+  "model": "unsloth/Meta-Llama-3.1-8B-Instruct",
+  "dtype": "bfloat16",
+  "corpus": "wikitext-103",
+  "n_features": 1024,
+  "ranks": [
+    64,
+    128,
+    256
+  ],
+  "evict_ratios": [
+    0.75,
+    0.875,
+    0.94
+  ],
+  "exact_fracs": [
+    0.03
+  ],
+  "per_ctx": [
+    {
+      "ctx": 32768,
+      "n_windows": 8,
+      "series": {
+        "BUG (fp16)": [
+          {
+            "mem": 0.065,
+            "ppl": 10.1518
+          },
+          {
+            "mem": 0.129,
+            "ppl": 8.5849
+          },
+          {
+            "mem": 0.258,
+            "ppl": 7.9528
+          }
+        ],
+        "BUG-hybrid (fp16)": [
+          {
+            "mem": 0.094,
+            "ppl": 9.9644
+          },
+          {
+            "mem": 0.156,
+            "ppl": 8.5429
+          },
+          {
+            "mem": 0.281,
+            "ppl": 7.9217
+          }
+        ],
+        "SnapKV (fp16)": [
+          {
+            "mem": 0.25,
+            "ppl": 7.662
+          },
+          {
+            "mem": 0.125,
+            "ppl": 7.7148
+          },
+          {
+            "mem": 0.06,
+            "ppl": 7.7908
+          }
+        ],
+        "ExpectedAttn (fp16)": [
+          {
+            "mem": 0.25,
+            "ppl": 7.677
+          },
+          {
+            "mem": 0.125,
+            "ppl": 7.7148
+          },
+          {
+            "mem": 0.06,
+            "ppl": 7.8521
+          }
+        ]
+      },
+      "baseline_ppl": 7.632
+    }
+  ],
+  "note": "ctx 65536 OOM'd on 48GB; RULER fp16 stalled on cusolver SVD -- not captured"
+}

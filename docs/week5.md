@@ -349,3 +349,61 @@ tasks — none produced a clean BUG-beats-the-field result; the strongest is the
 **streaming/online rank-adaptivity** (the untested-at-scale deployment niche),
 graceful degradation, and near-oracle tracking — not a headline perplexity or
 retrieval win over ExpectedAttention. Reported straight.
+
+---
+
+## Follow-up 3: clean fp16 (no TurboQuant) at long context — decisive negative
+
+**Motivation.** Every prior comparison composed each mechanism with 4-bit TurboQuant;
+that quant floor made eviction near-lossless and confounded low-rank-vs-eviction.
+This run strips quant entirely (all fp16): fp16 eviction can only keep a *fraction*
+of tokens (`keep_frac`), while fp16 BUG keeps a rank-`r` *summary of every* token at
+the same memory (`r/n_features`). Hypothesis: without quant, BUG's "summarize
+everything" finally beats eviction's "keep a fraction". 8B, ctx 32K (+64K attempted),
+WikiText-103 (streamed, 2.7M tokens, 8 windows), pure BUG / BUG-hybrid / SnapKV /
+ExpectedAttention, matched memory. `scripts/w5_fp16_longctx.py`.
+
+**Result — the hypothesis is FALSIFIED; eviction wins decisively (a stronger negative
+than the quantized runs).** 8B ctx 32768, ppl delta over baseline (7.632):
+
+| memory | BUG (fp16) | SnapKV (fp16) | ExpectedAttn (fp16) |
+|---:|---:|---:|---:|
+| ~0.06x | r64 **+2.520** | keep-6% **+0.159** | +0.220 |
+| ~0.125x | r128 **+0.953** | keep-12% **+0.083** | +0.083 |
+| ~0.25x | r256 **+0.321** | keep-25% **+0.030** | +0.045 |
+
+Eviction sits **flat near baseline across the entire frontier** (even keeping only
+**6% of tokens** -- ~2K of 32K -- costs +0.16 ppl), while fp16 BUG climbs steeply as
+memory drops. Min frontier-gap BUG-SnapKV = **+0.33**, hybrid-SnapKV = **+0.41** (both
+positive, BUG behind everywhere); the gap widens to **+2.36** at aggressive memory.
+Removing quant did **not** help BUG -- it made eviction look *better* (keeping a few
+whole tokens preserves WikiText perplexity almost perfectly, whereas a rank-64
+summary of all 32K tokens is very lossy). `figures/week5/fp16_longctx_8b.png`.
+
+**Not captured (infra):** (1) **ctx 64K OOM'd** on the 48 GB card (8B fp16 + BUG's
+on-GPU SVD needed ~15 GB more than free) -- no 64K perplexity. (2) **fp16 RULER
+retrieval stalled** on the cusolver SVD slowdown (even at block_size=512) and did not
+finish; the retrieval question stands at the earlier RULER verdict (mixed -- SnapKV
+drops keys but ExpectedAttention is competitive/wins at matched memory). Both are GPU
+limitations, not results; a bigger card (80 GB) + a CPU/gesvd SVD fallback would be
+needed to complete them.
+
+## Week-5 final scorecard (updated, all honest)
+| attempt | verdict |
+|---|---|
+| 4.5 integrator ablation | BUG best (rank-adaptivity); PSI "blow-up" retracted |
+| Axis C amortization (ppl, quant) | memory amortizes; BUG does not pass eviction (U-shaped) |
+| Hybrid fp16-exact / 4-bit-exact (ppl) | dominated / near-miss; never passes SnapKV |
+| Single-needle retrieval | saturates at 8B (inconclusive) |
+| RULER multi-key retrieval (quant) | mixed -- SnapKV collapses, EA wins at matched mem |
+| **Clean fp16 long-ctx (ppl)** | **decisive negative -- eviction wins the whole frontier at 32K** |
+
+**Bottom line, now thoroughly stress-tested:** across five distinct attempts
+(amortization, hybrid x2, two retrieval tasks, and the clean fp16 frontier), streaming
+BUG **does not beat SnapKV/ExpectedAttention** on long-context perplexity or retrieval
+at matched memory -- and the quant-free test makes the perplexity gap *clearer*, not
+smaller. Eviction's "keep a few whole tokens" is simply a better fit for LM perplexity
+than "a low-rank summary of everything". BUG's honest, defensible edges remain
+narrow and specific: streaming/online **rank-adaptivity** (the constant-memory
+decode niche, still the one un-measured place its online nature is a structural
+advantage), graceful degradation, and near-oracle low-rank tracking. Reported straight.

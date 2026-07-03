@@ -1,0 +1,296 @@
+{
+  "model": "unsloth/Meta-Llama-3.1-8B-Instruct",
+  "dtype": "bfloat16",
+  "n_features": 1024,
+  "target_len": 256,
+  "ranks": [
+    64,
+    128,
+    256
+  ],
+  "evict_ratios": [
+    0.5,
+    0.7,
+    0.85
+  ],
+  "bits": [
+    4
+  ],
+  "per_ctx": [
+    {
+      "ctx": 1024,
+      "n_windows": 4,
+      "series": {
+        "BUG x TurboQuant": [
+          {
+            "mem": 0.161,
+            "ppl": 7.8985
+          },
+          {
+            "mem": 0.317,
+            "ppl": 7.883
+          },
+          {
+            "mem": 0.083,
+            "ppl": 8.9721
+          }
+        ],
+        "SnapKV x TurboQuant": [
+          {
+            "mem": 0.125,
+            "ppl": 8.2466
+          },
+          {
+            "mem": 0.075,
+            "ppl": 8.8151
+          },
+          {
+            "mem": 0.038,
+            "ppl": 9.3492
+          }
+        ],
+        "ExpectedAttn x TurboQuant": [
+          {
+            "mem": 0.125,
+            "ppl": 8.0076
+          },
+          {
+            "mem": 0.075,
+            "ppl": 8.4264
+          },
+          {
+            "mem": 0.038,
+            "ppl": 8.7806
+          }
+        ],
+        "TurboQuant only": [
+          {
+            "mem": 0.251,
+            "ppl": 7.8521
+          }
+        ]
+      },
+      "baseline_ppl": 7.8214
+    },
+    {
+      "ctx": 4096,
+      "n_windows": 4,
+      "series": {
+        "BUG x TurboQuant": [
+          {
+            "mem": 0.064,
+            "ppl": 6.1755
+          },
+          {
+            "mem": 0.127,
+            "ppl": 5.8686
+          },
+          {
+            "mem": 0.033,
+            "ppl": 7.2385
+          }
+        ],
+        "SnapKV x TurboQuant": [
+          {
+            "mem": 0.125,
+            "ppl": 5.8227
+          },
+          {
+            "mem": 0.075,
+            "ppl": 5.9906
+          },
+          {
+            "mem": 0.038,
+            "ppl": 6.267
+          }
+        ],
+        "ExpectedAttn x TurboQuant": [
+          {
+            "mem": 0.125,
+            "ppl": 5.8743
+          },
+          {
+            "mem": 0.075,
+            "ppl": 6.0083
+          },
+          {
+            "mem": 0.038,
+            "ppl": 6.2363
+          }
+        ],
+        "TurboQuant only": [
+          {
+            "mem": 0.251,
+            "ppl": 5.7659
+          }
+        ]
+      },
+      "baseline_ppl": 5.749
+    },
+    {
+      "ctx": 8192,
+      "n_windows": 4,
+      "series": {
+        "BUG x TurboQuant": [
+          {
+            "mem": 0.048,
+            "ppl": 5.7602
+          },
+          {
+            "mem": 0.095,
+            "ppl": 5.4955
+          },
+          {
+            "mem": 0.025,
+            "ppl": 6.6859
+          }
+        ],
+        "SnapKV x TurboQuant": [
+          {
+            "mem": 0.125,
+            "ppl": 5.5008
+          },
+          {
+            "mem": 0.075,
+            "ppl": 5.5387
+          },
+          {
+            "mem": 0.038,
+            "ppl": 5.6043
+          }
+        ],
+        "ExpectedAttn x TurboQuant": [
+          {
+            "mem": 0.125,
+            "ppl": 5.4579
+          },
+          {
+            "mem": 0.075,
+            "ppl": 5.5225
+          },
+          {
+            "mem": 0.038,
+            "ppl": 5.6817
+          }
+        ],
+        "TurboQuant only": [
+          {
+            "mem": 0.251,
+            "ppl": 5.3888
+          }
+        ]
+      },
+      "baseline_ppl": 5.4046
+    },
+    {
+      "ctx": 16384,
+      "n_windows": 4,
+      "series": {
+        "BUG x TurboQuant": [
+          {
+            "mem": 0.04,
+            "ppl": 7.0356
+          },
+          {
+            "mem": 0.079,
+            "ppl": 6.5948
+          },
+          {
+            "mem": 0.021,
+            "ppl": 8.3279
+          }
+        ],
+        "SnapKV x TurboQuant": [
+          {
+            "mem": 0.125,
+            "ppl": 6.4921
+          },
+          {
+            "mem": 0.075,
+            "ppl": 6.5432
+          },
+          {
+            "mem": 0.038,
+            "ppl": 6.765
+          }
+        ],
+        "ExpectedAttn x TurboQuant": [
+          {
+            "mem": 0.125,
+            "ppl": 6.5561
+          },
+          {
+            "mem": 0.075,
+            "ppl": 6.6207
+          },
+          {
+            "mem": 0.038,
+            "ppl": 6.765
+          }
+        ],
+        "TurboQuant only": [
+          {
+            "mem": 0.251,
+            "ppl": 6.4414
+          }
+        ]
+      },
+      "baseline_ppl": 6.4288
+    },
+    {
+      "ctx": 32768,
+      "n_windows": 4,
+      "series": {
+        "BUG x TurboQuant": [
+          {
+            "mem": 0.036,
+            "ppl": 6.5689
+          },
+          {
+            "mem": 0.071,
+            "ppl": 6.2302
+          },
+          {
+            "mem": 0.019,
+            "ppl": 7.5798
+          }
+        ],
+        "SnapKV x TurboQuant": [
+          {
+            "mem": 0.125,
+            "ppl": 6.0973
+          },
+          {
+            "mem": 0.075,
+            "ppl": 6.0734
+          },
+          {
+            "mem": 0.038,
+            "ppl": 6.1212
+          }
+        ],
+        "ExpectedAttn x TurboQuant": [
+          {
+            "mem": 0.125,
+            "ppl": 6.0378
+          },
+          {
+            "mem": 0.075,
+            "ppl": 6.0496
+          },
+          {
+            "mem": 0.038,
+            "ppl": 6.0378
+          }
+        ],
+        "TurboQuant only": [
+          {
+            "mem": 0.251,
+            "ppl": 6.0973
+          }
+        ]
+      },
+      "baseline_ppl": 6.0734
+    }
+  ]
+}

@@ -148,14 +148,70 @@ exceeds `Rⁿ` and degenerates (silent ~5× error at the boundary; a shape crash
 
 ---
 
-## Axis C / Experiment A — long-context scaling (harness built; run pending pod)
-The key open question (amortization test): does BUG's fair perplexity–memory
-frontier pass SnapKV's as context grows (ctx {1K…32K}, 8B)? Harness:
-`scripts/w5_longctx.py` — loops context lengths, redoes the fair
-BUG/SnapKV/EA×TurboQuant comparison at each (position-fair; reuses
-`perplexity_sweep`'s explicit `position_ids`), interpolates each frontier at fixed
-memory budgets, and plots the **crossover vs T** + per-ctx frontier grid. Emits the
-full results JSON to stdout (`===W5_LONGCTX_JSON_BEGIN/END===`) so it survives in
-`vastai logs` (never post-hoc SSH — `[[vastai-pod-flakiness-jul2026]]`), and runs
-each ctx in a try/except so a 32K OOM still yields shorter-ctx results. Smoke-tested
-at 1B/CPU; the real run is 8B on a GPU pod (bf16, step ctx up gradually, watch OOM).
+## Axis C / Experiment A — long-context scaling (DONE, 8B)
+
+**Question.** BUG's fixed `U` basis is a per-layer overhead that **amortizes as
+context grows** (its stored-memory ratio shrinks with `T`, while eviction keeps a
+fixed token *fraction* → ctx-independent memory). Does BUG's fair
+perplexity–memory frontier therefore **pass SnapKV's (and close on EA's) as `T`
+grows**? Falsifiable either way.
+
+**Setup.** Llama-3.1-8B (ungated `unsloth` mirror), bf16, WikiText-2,
+prefill-then-score, **position-fair** (explicit `position_ids`), every mechanism
+×TurboQuant-4bit. ctx ∈ {1K, 4K, 8K, 16K, 32K}; BUG ranks {64,128,256}; eviction
+compression {0.5,0.7,0.85}. Ran on one RTX 6000 Ada (48 GB) via onstart-batch,
+~50 min, ≈ $0.46; **all five context lengths completed, including 32K (no OOM)**.
+`scripts/w5_longctx.py` (+`--plot-only`), `results/w5-longctx-8b.json`,
+`figures/week5/longctx_crossover*.png`. ⚠️ **Noise caveat:** `n_windows=4`
+(~1020 scored tokens/ctx), so fine gaps (±0.05 ppl) are within noise and absolute
+ppl varies across ctx (different WikiText windows); read the *trends*, not the
+third decimal. A confirmation run wants `n_windows ≥ 8`.
+
+**Verdict — amortization is real, but the clean "BUG passes eviction as `T` grows"
+thesis is NOT supported. Partial / non-monotonic result.**
+
+**(1) Memory amortization: confirmed and strong** (structural, not noise). BUG's
+stored-memory ratio at fixed rank drops ~4.5× as context grows, while eviction's is
+ctx-independent:
+
+| ctx | BUG r256 mem | BUG r128 mem | SnapKV cr0.5 mem |
+|---:|---:|---:|---:|
+| 1024  | 0.317 | 0.161 | 0.125 |
+| 4096  | 0.127 | 0.064 | 0.125 |
+| 8192  | 0.095 | 0.048 | 0.125 |
+| 16384 | 0.079 | 0.040 | 0.125 |
+| 32768 | 0.071 | 0.036 | 0.125 |
+
+**(2) Quality crossover: BUG closes to parity by mid-context, then eviction
+re-opens the gap.** Min perplexity gap between BUG's and each rival's Pareto
+frontier over their overlapping memory range (negative = BUG's frontier passes the
+rival somewhere):
+
+| ctx | BUG − SnapKV | BUG − EA |
+|---:|---:|---:|
+| 1024  | +0.147 | +0.386 |
+| 4096  | +0.056 | +0.004 |
+| 8192  | **−0.028** | **−0.001** |
+| 16384 | +0.056 | −0.021 |
+| 32768 | +0.152 | n/a |
+
+The gap is **U-shaped** (`figures/week5/longctx_crossover.png`): BUG starts well
+behind at 1K, closes to **near-parity / a nominal crossover around 4–8K** (within
+noise of zero), then the gap **re-widens** at 16–32K. Why the re-widening: at very
+long context eviction becomes **near-lossless** — SnapKV/EA ×4-bit sit essentially
+at baseline (e.g. ctx 32K: SnapKV cr0.5 +0.024, EA cr0.5 −0.036), leaving almost no
+quality headroom for BUG to beat, while BUG's low-rank reconstruction keeps a
+~+0.1–0.2 penalty at its (now very cheap) operating memory. So amortization shifts
+BUG's frontier far to the left (cheaper) but does not let it *overtake* eviction on
+perplexity at extreme context.
+
+**Honest read.** The amortization mechanism is real and materially improves BUG's
+standing with context — from clearly behind at 1K to competitive/near-parity at
+4–8K. But it is **not** a monotonic "passes SnapKV and stays ahead": eviction's
+near-losslessness at 16–32K reclaims the lead. This is consistent with the Week-4
+finding (EA leads on WikiText perplexity; pure quant is a strong floor) and extends
+it — context helps BUG most at *mid* range, not the extreme. The place BUG's
+amortized, no-eviction frontier most plausibly *wins* is **retrieval**, where
+eviction drops un-cued facts (already seen: BUG 15/15 vs SnapKV 3/15 at 1.6K) — that
+is **Experiment B** (RULER / long-needle at 8–32K), the natural follow-up. A clean
+negative on perplexity, an open (promising) question on retrieval.

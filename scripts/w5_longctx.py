@@ -199,29 +199,55 @@ def crossover_verdict(per_ctx: list[dict[str, Any]]) -> dict[str, Any]:
     return {"per_budget": rows, "note": "bug_minus_snapkv<0 means BUG wins at that (ctx,budget)"}
 
 
-def _plot(per_ctx: list[dict[str, Any]], out_path: Path) -> None:
-    """Two figures: crossover (ppl-vs-ctx per method per budget) + per-ctx frontiers."""
-    ctxs = [int(r["ctx"]) for r in per_ctx]
-    fronts_by_ctx = {int(r["ctx"]): _fronts(r) for r in per_ctx}
+def frontier_gap(rec: dict[str, Any], rival: str) -> float | None:
+    """Min perplexity gap ``BUG - rival`` over the memory range where BOTH Pareto
+    frontiers are defined (negative = BUG's frontier passes the rival somewhere).
 
-    # Figure 1: crossover -- ppl at each fixed budget vs ctx, one panel per budget.
-    fig, axes = plt.subplots(1, len(BUDGETS), figsize=(4.6 * len(BUDGETS), 4.4), squeeze=False)
-    for j, budget in enumerate(BUDGETS):
-        ax = axes[0][j]
-        for m, (color, marker, ls) in METHOD_STYLE.items():
-            ys = [ppl_at_budget(fronts_by_ctx[c][m], budget) for c in ctxs]
-            xs = [c for c, y in zip(ctxs, ys, strict=True) if y is not None]
-            yv = [y for y in ys if y is not None]
-            if xs:
-                ax.plot(xs, yv, marker=marker, ls=ls, color=color, label=m, alpha=0.9)
-        ax.set_xscale("log", base=2)
-        ax.set_xlabel("context length T")
-        ax.set_ylabel("WikiText-2 perplexity")
-        ax.set_title(f"budget {budget:.2f}x")
-        ax.grid(True, alpha=0.3, which="both")
-        if j == 0:
-            ax.legend(fontsize=7)
-    fig.suptitle("Axis C: perplexity at fixed memory vs context (does BUG pass SnapKV as T grows?)")
+    This is the amortization test's summary statistic per context length: the best
+    case for BUG at matched memory. ``None`` if the frontiers do not overlap in
+    memory (BUG's amortized frontier can drift below the eviction points)."""
+    fr = _fronts(rec)
+    bug, riv = fr["BUG x TurboQuant"], fr[rival]
+    if len(bug) < 2 or len(riv) < 2:
+        return None
+    lo = max(bug[0][0], riv[0][0])
+    hi = min(bug[-1][0], riv[-1][0])
+    if lo >= hi:
+        return None
+    grid = np.linspace(lo, hi, 25)
+    gaps = [
+        b - r
+        for x in grid
+        if (b := ppl_at_budget(bug, float(x))) is not None
+        and (r := ppl_at_budget(riv, float(x))) is not None
+    ]
+    return min(gaps) if gaps else None
+
+
+def _plot(per_ctx: list[dict[str, Any]], out_path: Path) -> None:
+    """Two figures: the amortization summary (min frontier-gap vs ctx) + frontiers."""
+    ctxs = [int(r["ctx"]) for r in per_ctx]
+
+    # Figure 1: does the gap close as T grows? Min frontier-gap (BUG - rival) vs ctx
+    # over the overlapping memory range. <0 => BUG's frontier passes the rival.
+    fig, ax = plt.subplots(figsize=(7.5, 5))
+    for rival, color, marker in [
+        ("SnapKV x TurboQuant", "tab:green", "^"),
+        ("ExpectedAttn x TurboQuant", "tab:red", "v"),
+    ]:
+        gaps = [frontier_gap(r, rival) for r in per_ctx]
+        xs = [c for c, g in zip(ctxs, gaps, strict=True) if g is not None]
+        ys = [g for g in gaps if g is not None]
+        if xs:
+            ax.plot(xs, ys, marker=marker, color=color, lw=1.9, ms=7, label=f"BUG - {rival}")
+    ax.axhline(0.0, color="k", lw=1, ls="-", alpha=0.7)
+    ax.text(ctxs[0], 0.0, " BUG passes rival below this line", va="bottom", fontsize=8, alpha=0.7)
+    ax.set_xscale("log", base=2)
+    ax.set_xlabel("context length T")
+    ax.set_ylabel("min ppl gap at matched memory  (BUG - rival)")
+    ax.set_title("Axis C: does BUG's frontier pass eviction as context grows?")
+    ax.grid(True, alpha=0.3, which="both")
+    ax.legend()
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     for suffix in (".png", ".pdf"):

@@ -282,3 +282,70 @@ KV compressor; on WikiText perplexity it does not beat SnapKV/EA, and the two We
 attempts to find a decisive win (long-context amortization, hybrid) came back honest
 negatives. The remaining credible win is a *harder retrieval* benchmark and/or the
 4-bit-exact hybrid — both are concrete, scoped next steps.
+
+---
+
+## Follow-up 1: 4-bit-exact hybrid (fair kept-token quantization) — narrower negative
+
+Fixed the unfair fp16 handicap: `BUGPress` now PolarQuant-4bit-quantizes the kept
+`n_exact` tokens (like eviction ×TurboQuant quantizes ITS kept tokens); only the
+`n_sink` sinks stay fp16. This helped materially:
+
+| | 1B ctx 4096 | 8B ctx 8192 | 8B ctx 32768 |
+|---|---|---|---|
+| min gap hybrid − SnapKV (fp16 exact) | +0.396 | — | — |
+| min gap hybrid − SnapKV (**4-bit exact**) | **+0.195** | **+0.041** | +0.181 |
+
+The 4-bit-exact hybrid is now a legitimate frontier member — it posts the **lowest
+absolute perplexity of any method** at moderate memory (1B ctx4096: 10.205 vs
+SnapKV's best 10.328) and at 8B ctx 8192 it comes within **+0.04** of SnapKV. But it
+still does not *pass* SnapKV at matched low memory (SnapKV owns the ≤0.04× regime
+the U-basis floor can't reach), and at very long ctx eviction is near-lossless. **A
+near-miss, not a win.** `results/w5-hybrid-{1b,8b}.json`.
+
+## Follow-up 2: RULER-lite multi-key retrieval (the harder test) — MIXED, not a BUG win
+
+`scripts/w5_ruler.py`: retrieve 1 of 12 distinct keys (distractors) at aggressive
+memory. Unlike the saturated single-needle, this **discriminates** — but not in
+BUG's favour. 8B, 6 trials/method:
+
+| method | ctx 4096 (mem) | acc | ctx 16384 (mem) | acc |
+|---|---|---|---|---|
+| BUG r128/4b | 0.064 | **0.83** | 0.040 | 0.33 |
+| BUG-hybrid r128 | 0.077 | 0.83 | 0.053 | 0.33 |
+| SnapKV keep-15% | 0.038 | **0.00** | 0.038 | 0.67 |
+| ExpectedAttn keep-15% | 0.038 | 0.50 | 0.038 | **1.00** |
+
+- **SnapKV's failure mode is real**: at ctx 4K it drops *every* queried key (0/6) —
+  it evicts the un-cued fact, exactly as predicted.
+- **But ExpectedAttention is strong** (0.50 → **1.00**), and at **matched memory
+  (~0.04×) at ctx 16K, both eviction methods beat BUG** (BUG **0.33** vs SnapKV 0.67
+  vs EA 1.00). BUG's fixed-rank low-rank summary **loses precise facts as context
+  grows** — r128 spread over 16K tokens can't hold exact 5-digit codes. The hybrid
+  doesn't help: its high-*norm* exact tokens rarely include the queried key.
+- The 1B smoke (BUG 2/2 vs SnapKV 0/2) overstated the case — it was unmatched memory
+  (BUG pricier) + a weak model + 2 trials.
+
+**Honest verdict:** BUG does **not** cleanly win retrieval either. It beats the
+weaker eviction method (SnapKV) at shorter/pricier settings, but ExpectedAttention
+retrieves better at matched memory, and BUG's precise-fact fidelity *degrades* with
+context at aggressive rank — the opposite of the perplexity amortization benefit.
+
+## Week-5 final scorecard (all honest)
+| attempt | verdict |
+|---|---|
+| 4.5 integrator ablation | BUG best (rank-adaptivity); PSI "blow-up" retracted |
+| Axis C amortization (perplexity) | memory amortizes; BUG does **not** pass eviction (U-shaped, closest mid-ctx) |
+| Hybrid, fp16-exact (perplexity) | dominated by plain BUG |
+| Hybrid, **4-bit-exact** (perplexity) | near-miss (+0.04 at 8B ctx 8192); still behind SnapKV at low mem |
+| Single-needle retrieval | saturates at 8B (inconclusive) |
+| RULER multi-key retrieval | **mixed** — SnapKV collapses, but EA wins and beats BUG at matched mem at long ctx |
+
+**Bottom line (Week 5, unchanged from Week 4 and now stress-tested):** BUG is a
+competitive, well-validated low-rank KV compressor. Across four distinct attempts to
+find a decisive win — long-context amortization, a hybrid press, and two retrieval
+tasks — none produced a clean BUG-beats-the-field result; the strongest is the
+4-bit-exact hybrid's near-tie at mid-context. Its honest, defensible edges remain:
+**streaming/online rank-adaptivity** (the untested-at-scale deployment niche),
+graceful degradation, and near-oracle tracking — not a headline perplexity or
+retrieval win over ExpectedAttention. Reported straight.

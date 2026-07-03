@@ -15,7 +15,7 @@ cd kvdlra || exit 1
 
 # Install everything EXCEPT torch (keep the image's CUDA build). kvpress first, then
 # pin transformers/datasets last so their versions win over kvpress's looser pins.
-pip install -q hf_transfer numpy matplotlib kvpress 2>&1 | tail -5
+pip install -q hf_transfer numpy matplotlib "kvpress==0.5.1" 2>&1 | tail -5
 pip install -q 'transformers==5.8.0' 'datasets==2.21.0' 2>&1 | tail -5
 echo "===DEPS_DONE==="
 python -c "import torch,transformers; print('torch',torch.__version__,'cuda',torch.cuda.is_available(),'tf',transformers.__version__)"
@@ -24,7 +24,7 @@ python -c "import torch,transformers; print('torch',torch.__version__,'cuda',tor
 # runs each ctx in try/except so a 32K OOM still yields shorter-ctx results, and
 # prints the full JSON between ===W5_LONGCTX_JSON_BEGIN/END=== for scraping.
 echo "===RUN_BEGIN==="
-PYTHONPATH=src python scripts/w5_longctx.py \
+PYTHONPATH=src python -u scripts/w5_longctx.py \
   --model unsloth/Meta-Llama-3.1-8B-Instruct --device cuda --dtype bfloat16 \
   --context-lens 1024 4096 8192 16384 32768 \
   --ranks 64 128 256 --evict-ratios 0.5 0.7 0.85 --bits 4 --n-windows 4 \

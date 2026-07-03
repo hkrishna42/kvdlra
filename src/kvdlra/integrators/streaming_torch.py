@@ -61,7 +61,7 @@ from __future__ import annotations
 import torch
 from torch import Tensor
 
-__all__ = ["blocked_bug_project", "blocked_bug_subspace"]
+__all__ = ["augmented_bug_step", "blocked_bug_project", "blocked_bug_subspace"]
 
 
 def _truncation_rank(sigma: Tensor, theta: float) -> int:
@@ -77,6 +77,93 @@ def _truncation_rank(sigma: Tensor, theta: float) -> int:
     if idx.numel() == 0:
         return int(sigma.shape[0])
     return max(1, int(idx[0].item()))
+
+
+def augmented_bug_step(
+    u: Tensor | None,
+    b_core: Tensor | None,
+    block: Tensor,
+    rank_cap: int,
+    *,
+    theta: float | None = None,
+) -> tuple[Tensor, Tensor, Tensor]:
+    """One augmented rank-adaptive BUG step on a block of ``b`` new columns.
+
+    The loop body of :func:`blocked_bug_subspace`, exposed as a *stateful* single
+    step so callers that receive columns over time (the decode-time streaming
+    cache, :mod:`kvdlra.cache`) can advance the tracked pair ``(U, B)`` one data
+    increment at a time with exactly the validated integrator math.
+
+    Parameters
+    ----------
+    u:
+        Current orthonormal basis ``(n, r)``, or ``None`` for the seeding step
+        (the first block, whose reduced QR initializes the basis).
+    b_core:
+        Current square-root core ``(r, r)``; must be ``None`` iff ``u`` is.
+    block:
+        New columns ``(n, b)`` in the dtype/device the step should run in
+        (callers pass ``compute_dtype``; PLAN §8 pitfall #4).
+    rank_cap:
+        Hard upper bound on the tracked rank (``>= 1``).
+    theta:
+        Optional Frobenius-tail truncation tolerance (see :func:`_truncation_rank`).
+
+    Returns
+    -------
+    tuple[Tensor, Tensor, Tensor]
+        ``(u_new, b_new, rot)`` -- the updated basis ``(n, r')`` and core
+        ``(r', r')``, plus ``rot = u_new^T u_old`` of shape ``(r', r)`` (``(r', 0)``
+        on the seeding step). Because ``u_new = [u | q] @ u_loc[:, :r']`` with
+        ``q ⟂ u``, this is exactly ``u_loc[:r, :r']^T`` -- the map that re-expresses
+        coordinates held in the old basis in the new one (used by the streaming
+        cache to carry per-token coordinates across basis updates).
+
+    Notes
+    -----
+    The number of *admitted* new directions is clamped to ``n - r`` so the
+    augmented basis ``[u | q]`` always fits in ``R^n``. This fixes the latent
+    degeneracy of the original blocked sweep when ``rank_cap + block_size >
+    n_features`` (the ablation follow-up in ``docs/week5.md``): the residual has
+    rank at most ``n - r`` mathematically, so the discarded QR columns are
+    numerically null and the clamp is exact up to roundoff.
+    """
+    if (u is None) != (b_core is None):
+        raise ValueError("u and b_core must be provided together (or both None)")
+    if rank_cap < 1:
+        raise ValueError(f"rank_cap must be >= 1, got {rank_cap}")
+
+    n = block.shape[0]
+    if u is None:
+        # Seeding step: the basis is the reduced QR of the first block.
+        q, r = torch.linalg.qr(block, mode="reduced")
+        u_aug = q
+        b_fac = r
+        r_old = 0
+    else:
+        assert b_core is not None  # by the pairing check above
+        r_old = u.shape[1]
+        a = u.mT @ block  # (r, b)
+        r_perp = block - u @ a  # (n, b)
+        q, r = torch.linalg.qr(r_perp, mode="reduced")  # q:(n,b) r:(b,b)
+        # Admit at most n - r_old genuinely new directions (see Notes).
+        m = min(q.shape[1], max(0, n - r_old))
+        q = q[:, :m]
+        r = r[:m, :]
+        u_aug = torch.cat([u, q], dim=1)  # (n, r+m)
+        top = torch.cat([b_core, a], dim=1)  # (r, r+b)
+        zeros = torch.zeros(m, r_old, dtype=block.dtype, device=block.device)
+        bot = torch.cat([zeros, r], dim=1)  # (m, r+b)
+        b_fac = torch.cat([top, bot], dim=0)  # (r+m, r+b)
+
+    u_loc, sigma, _ = torch.linalg.svd(b_fac, full_matrices=False)
+    keep = min(rank_cap, int(sigma.shape[0]))
+    if theta is not None:
+        keep = max(1, min(keep, _truncation_rank(sigma, theta)))
+    u_new = u_aug @ u_loc[:, :keep]  # (n, keep)
+    b_new = torch.diag(sigma[:keep])  # (keep, keep)
+    rot = u_loc[:r_old, :keep].mT  # (keep, r_old)
+    return u_new, b_new, rot
 
 
 def blocked_bug_subspace(
@@ -121,29 +208,7 @@ def blocked_bug_subspace(
 
     for start in range(0, t, block_size):
         block = mc[:, start : start + block_size]  # (n, b)
-        if u is None:
-            # First block: seed the basis directly from its reduced QR.
-            q, r = torch.linalg.qr(block, mode="reduced")  # q:(n,b) r:(b,b)
-            u_aug = q
-            b_fac = r
-        else:
-            assert b_core is not None  # set together with u on every prior step
-            a = u.mT @ block  # (r, b)
-            r_perp = block - u @ a  # (n, b)
-            q, r = torch.linalg.qr(r_perp, mode="reduced")  # q:(n,b) r:(b,b)
-            u_aug = torch.cat([u, q], dim=1)  # (n, r+b)
-            rows_r, cols_b = b_core.shape[0], a.shape[1]
-            top = torch.cat([b_core, a], dim=1)  # (r, r+b)
-            zeros = torch.zeros(cols_b, rows_r, dtype=mc.dtype, device=mc.device)
-            bot = torch.cat([zeros, r], dim=1)  # (b, r+b)
-            b_fac = torch.cat([top, bot], dim=0)  # (r+b, r+b)
-
-        u_loc, sigma, _ = torch.linalg.svd(b_fac, full_matrices=False)
-        keep = min(rank_cap, int(sigma.shape[0]))
-        if theta is not None:
-            keep = max(1, min(keep, _truncation_rank(sigma, theta)))
-        u = u_aug @ u_loc[:, :keep]  # (n, keep)
-        b_core = torch.diag(sigma[:keep])  # (keep, keep)
+        u, b_core, _ = augmented_bug_step(u, b_core, block, rank_cap, theta=theta)
 
     if u is None:  # empty M (T == 0): return a trivial 1-column basis
         u = torch.zeros(n, 1, dtype=compute_dtype, device=M.device)

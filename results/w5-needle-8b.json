@@ -1,0 +1,136 @@
+{
+  "model": "unsloth/Meta-Llama-3.1-8B-Instruct",
+  "depths": [
+    0.25,
+    0.5,
+    0.75
+  ],
+  "passcodes": [
+    "48213",
+    "70561"
+  ],
+  "per_ctx": [
+    {
+      "ctx": 4096,
+      "rows": [
+        {
+          "method": "baseline",
+          "ctx": 4096,
+          "memory": 1.0,
+          "accuracy": 1.0,
+          "hits": 6,
+          "total": 6
+        },
+        {
+          "method": "BUG r128/4b",
+          "ctx": 4096,
+          "memory": 0.064,
+          "accuracy": 1.0,
+          "hits": 6,
+          "total": 6
+        },
+        {
+          "method": "BUG r256/4b",
+          "ctx": 4096,
+          "memory": 0.127,
+          "accuracy": 1.0,
+          "hits": 6,
+          "total": 6
+        },
+        {
+          "method": "SnapKV keep0.50",
+          "ctx": 4096,
+          "memory": 0.125,
+          "accuracy": 1.0,
+          "hits": 6,
+          "total": 6
+        },
+        {
+          "method": "SnapKV keep0.15",
+          "ctx": 4096,
+          "memory": 0.038,
+          "accuracy": 0.83,
+          "hits": 5,
+          "total": 6
+        },
+        {
+          "method": "ExpectedAttn keep0.50",
+          "ctx": 4096,
+          "memory": 0.125,
+          "accuracy": 1.0,
+          "hits": 6,
+          "total": 6
+        },
+        {
+          "method": "ExpectedAttn keep0.15",
+          "ctx": 4096,
+          "memory": 0.038,
+          "accuracy": 1.0,
+          "hits": 6,
+          "total": 6
+        }
+      ]
+    },
+    {
+      "ctx": 16384,
+      "rows": [
+        {
+          "method": "baseline",
+          "ctx": 16384,
+          "memory": 1.0,
+          "accuracy": 1.0,
+          "hits": 6,
+          "total": 6
+        },
+        {
+          "method": "BUG r128/4b",
+          "ctx": 16384,
+          "memory": 0.04,
+          "accuracy": 1.0,
+          "hits": 6,
+          "total": 6
+        },
+        {
+          "method": "BUG r256/4b",
+          "ctx": 16384,
+          "memory": 0.079,
+          "accuracy": 1.0,
+          "hits": 6,
+          "total": 6
+        },
+        {
+          "method": "SnapKV keep0.50",
+          "ctx": 16384,
+          "memory": 0.125,
+          "accuracy": 1.0,
+          "hits": 6,
+          "total": 6
+        },
+        {
+          "method": "SnapKV keep0.15",
+          "ctx": 16384,
+          "memory": 0.038,
+          "accuracy": 1.0,
+          "hits": 6,
+          "total": 6
+        },
+        {
+          "method": "ExpectedAttn keep0.50",
+          "ctx": 16384,
+          "memory": 0.125,
+          "accuracy": 1.0,
+          "hits": 6,
+          "total": 6
+        },
+        {
+          "method": "ExpectedAttn keep0.15",
+          "ctx": 16384,
+          "memory": 0.038,
+          "accuracy": 1.0,
+          "hits": 6,
+          "total": 6
+        }
+      ]
+    }
+  ]
+}

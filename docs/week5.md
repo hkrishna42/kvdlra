@@ -215,3 +215,70 @@ amortized, no-eviction frontier most plausibly *wins* is **retrieval**, where
 eviction drops un-cued facts (already seen: BUG 15/15 vs SnapKV 3/15 at 1.6K) — that
 is **Experiment B** (RULER / long-needle at 8–32K), the natural follow-up. A clean
 negative on perplexity, an open (promising) question on retrieval.
+
+---
+
+## Hybrid press (exact tokens + low-rank residual) — DONE, honest negative on perplexity
+
+**Idea (post-Axis-C).** Pure BUG spreads its budget across *all* tokens; a few
+high-norm tokens carry most of the signal (what eviction keeps). The **hybrid**
+(`BUGPress(n_exact=k)`) keeps the top-`k` high-norm tokens *exact* and low-ranks
+the rest — matching eviction's strength on the important tokens while keeping a
+cheap summary of everything else, and (bonus) leaving a more low-rank residual.
+
+**Result — the mechanism works at fixed rank, but it does NOT help on the fair
+perplexity–memory frontier, at 1B or 8B.**
+
+- At *fixed aggressive rank* the hybrid clearly rescues BUG (1B ctx 1024, r128/4b:
+  pure BUG **+2.21** ppl → hybrid **+0.28**). So keeping the outliers exact does
+  what it should.
+- But on the fair **memory** frontier it is **dominated by plain BUG**: the exact
+  tokens cost memory that scales with `T`, so "spend the budget on higher rank"
+  wins. 8B ctx 32768: hybrid-r256 gives the *identical* ppl to plain BUG-r256
+  (7.124) at **more** memory (0.118 vs 0.071) — strictly worse, because BUG-r256 is
+  already near-lossless so the extra exact tokens buy nothing. Min frontier-gap
+  `hybrid − SnapKV` is **+0.13** at 8B ctx 8192 (behind), never negative.
+- Neither BUG nor the hybrid passes SnapKV/EA on perplexity (eviction near-lossless
+  at long ctx). Consistent with Axis C.
+
+**Caveat / unfinished refinement.** The hybrid keeps its exact tokens at **fp16**,
+while SnapKV×TurboQuant **4-bit-quantizes** the tokens *it* keeps — an unfair memory
+handicap on the hybrid. A fair version 4-bit-quantizes the kept tokens too (≈4×
+cheaper exact set), which would shift the hybrid frontier left and is the honest
+next step before calling the hybrid dead. `scripts/w5_hybrid.py`,
+`results/w5-hybrid-{1b,8b}.json`, `figures/week5/hybrid_frontiers*.png`.
+
+## Experiment B — long-context needle retrieval — DONE, inconclusive (task saturates at 8B)
+
+**Setup.** `scripts/w5_needle.py`: hide a 5-digit passcode at several depths in a
+filler haystack, compress with each press, ask for it (true-position decode). 8B,
+ctx {4K, 16K}, 6 trials/method. Methods at matched memory: BUG r128/r256 ×4b,
+SnapKV/EA at keep-50%/keep-15%.
+
+**Result — retrieval saturates: every method ≈ 100% at 8B.** BUG, SnapKV, and EA
+all score **6/6** at both 4K and 16K; the *only* miss is **SnapKV keep-15%** (most
+aggressive, mem 0.038) at ctx 4K → **5/6 (0.83)** — a whisper of the expected
+"eviction drops the un-cued needle" effect, but at noise level. An 8B model is
+strong enough to recover a single salient passcode even from a heavily compressed
+cache, so this simple needle **does not differentiate** the methods.
+
+**Honest read + next.** The dramatic 1B smoke (BUG 1/1 vs SnapKV 0/1) did not
+reproduce at 8B — it was a weak-model + single-trial artifact. To actually expose
+eviction's failure mode we need a **harder** retrieval task: **RULER**
+(multi-needle / multi-hop / aggregation), *many distractor* keys, or a far more
+aggressive memory budget where eviction must discard the evidence. That is the real
+Experiment B; the single-passcode version is saturated and is a clean *inconclusive*.
+
+## Week-5 honest scorecard
+| Result | Verdict |
+|---|---|
+| 4.5 integrator ablation | BUG wins on rank-adaptivity (near-tie accuracy); PSI "blow-up" retracted |
+| Axis C amortization (perplexity) | memory amortizes, but BUG does **not** pass eviction; U-shaped, closest at mid-ctx |
+| Hybrid press (perplexity) | mechanism works at fixed rank, but **dominated by plain BUG** on the memory frontier; fp16-exact caveat unfixed |
+| Experiment B (single-needle retrieval) | **inconclusive** — saturates at 8B; needs RULER/harder task |
+
+**Bottom line unchanged from Week 4:** BUG is a competitive, well-validated low-rank
+KV compressor; on WikiText perplexity it does not beat SnapKV/EA, and the two Week-5
+attempts to find a decisive win (long-context amortization, hybrid) came back honest
+negatives. The remaining credible win is a *harder retrieval* benchmark and/or the
+4-bit-exact hybrid — both are concrete, scoped next steps.

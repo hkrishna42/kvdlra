@@ -141,6 +141,32 @@ def test_bug_and_parallel_are_rank_adaptive() -> None:
             assert u.shape[1] == rank_cap
 
 
+# Per-variant near-oracle ratio bound at a block that overflows the ambient dim
+# (parallel-BUG trails by the cross-coupling it decouples away; see
+# test_operating_range_near_oracle).
+_LARGE_BLOCK_RATIO = {"psi": 1.05, "parallel": 1.40}
+
+
+@pytest.mark.parametrize("name", list(VARIANTS))
+@pytest.mark.parametrize("block_size", [64, 104])  # == n_features and > n_features
+def test_large_block_does_not_degenerate(name: str, block_size: int) -> None:
+    # Regression (docs/week5.md "Follow-up found during the ablation"): when
+    # rank_cap + block_size > n_features the augmented [U | Q] frame would exceed
+    # R^n and degenerate -- silent error blow-up at block_size == n_features, a hard
+    # shape crash at block_size > n_features. Capping the residual QR to
+    # n_features - rank new directions per step keeps every variant orthonormal,
+    # near-oracle, and crash-free at large blocks too.
+    subspace_fn, _ = VARIANTS[name]
+    n = 64
+    m = _heavy_tailed(n, 300, seed=11)
+    r = 32  # r + block_size > n for both block sizes -> exercises the cap
+    u = subspace_fn(m, r, block_size=block_size, compute_dtype=torch.float64)
+    assert u.shape[1] <= r
+    gram = u.mT @ u  # basis stays genuinely orthonormal (no degenerate directions)
+    assert torch.allclose(gram, torch.eye(u.shape[1], dtype=torch.float64), atol=1e-9)
+    assert _rel_error(m, u) <= _oracle_error(m, u.shape[1]) * _LARGE_BLOCK_RATIO[name]
+
+
 @pytest.mark.parametrize("name", list(VARIANTS))
 def test_guards(name: str) -> None:
     subspace_fn, _ = VARIANTS[name]

@@ -138,13 +138,19 @@ the right choice for KV — a near-tie in accuracy decided on rank-adaptivity �
 rules out the "a cheaper/parallel integrator gets the streaming niche for free"
 shortcut.
 
-### Follow-up found during the ablation (out of scope)
-`blocked_bug_subspace` (and the new variants) are only correct when
+### Follow-up found during the ablation → fixed
+`blocked_bug_subspace` (and the new variants) were only correct when
 `rank_cap + block_size ≤ n_features`: the augmented `[U | Q]` basis otherwise
-exceeds `Rⁿ` and degenerates (silent ~5× error at the boundary; a shape crash when
+exceeded `Rⁿ` and degenerated (silent ~5× error at the boundary; a shape crash when
 `block_size > n_features`). Never triggered in production (streaming uses
-`block_size = 128 ≪ 512`), but a real latent bug — flagged for a separate fix
-(guard/clamp the residual QR to at most `n − rank` new directions).
+`block_size = 128 ≪ 512`), but a real latent bug on valid input. **Fixed:** the
+shared `_capped_residual_qr` helper caps each block's residual QR to at most
+`n_features − rank` new directions (the dimension of the complement of `span(U)`),
+so `[U | Q]` never exceeds `Rⁿ`. On the generic real-KV residual the dropped QR
+rows are zero, so the cap is exact — the tracker stays near-oracle at
+`block_size ≥ n_features` and no longer crashes at `block_size > n_features`.
+Regression tests: `test_large_block_does_not_degenerate` in
+`tests/test_streaming_torch.py` and `tests/test_streaming_variants.py`.
 
 ---
 

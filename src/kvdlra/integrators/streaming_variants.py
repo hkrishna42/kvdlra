@@ -63,7 +63,7 @@ from __future__ import annotations
 import torch
 from torch import Tensor
 
-from kvdlra.integrators.streaming_torch import _truncation_rank
+from kvdlra.integrators.streaming_torch import _capped_residual_qr, _truncation_rank
 
 __all__ = [
     "parallel_bug_project",
@@ -112,16 +112,19 @@ def parallel_bug_step(
     """
     a = u.mT @ block  # (r, b) coordinates in the current basis
     r_perp = block - u @ a  # (n, b) out-of-basis residual
-    q, rqr = torch.linalg.qr(r_perp, mode="reduced")  # q:(n,b) rqr:(b,b)
+    q, rqr = _capped_residual_qr(u, r_perp)  # q:(n,k) rqr:(k,b), k <= n-r
 
     # In-subspace update: singular values/rotation of the grown square-root core
     # restricted to the OLD basis (r x (r+b)); ignores the new directions.
     u_in, sig_in, _ = torch.linalg.svd(torch.cat([b_core, a], dim=1), full_matrices=False)
-    # New-direction update: energy of the residual block, independent of the above.
-    u_new, sig_new, _ = torch.linalg.svd(rqr, full_matrices=False)
-
-    cand_u = torch.cat([u @ u_in, q @ u_new], dim=1)  # (n, r+b) candidate directions
-    cand_sig = torch.cat([sig_in, sig_new])  # (r+b,) their singular values
+    if q.shape[1] > 0:
+        # New-direction update: energy of the residual block, independent of the above.
+        u_new, sig_new, _ = torch.linalg.svd(rqr, full_matrices=False)
+        cand_u = torch.cat([u @ u_in, q @ u_new], dim=1)  # (n, r+k) candidate directions
+        cand_sig = torch.cat([sig_in, sig_new])  # (r+k,) their singular values
+    else:  # basis already spans R^n -- no room for new directions
+        cand_u = u @ u_in  # (n, r)
+        cand_sig = sig_in  # (r,)
     sig_sorted, order = torch.sort(cand_sig, descending=True)
     keep = min(rank_cap, int(cand_sig.shape[0]))
     if theta is not None:
@@ -154,7 +157,7 @@ def psi_step(
     r = u.shape[1]
     a = u.mT @ block  # (r, b)
     r_perp = block - u @ a  # (n, b)
-    q, rqr = torch.linalg.qr(r_perp, mode="reduced")  # q:(n,k) rqr:(k,b), k = min(n,b)
+    q, rqr = _capped_residual_qr(u, r_perp)  # q:(n,k) rqr:(k,b), k <= n-r
     k = q.shape[1]  # number of genuinely new orthonormal directions this block
     u_aug = torch.cat([u, q], dim=1)  # (n, r+k) fixed frame for this step
     c_hat = torch.cat([a, rqr], dim=0)  # (r+k, b): coords of C in u_aug

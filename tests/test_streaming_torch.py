@@ -107,6 +107,25 @@ def test_bf16_storage_runs_fp32_core() -> None:
     assert 0.0 <= err < 0.2  # rank-64 on ~rank-30 data: small error even via bf16
 
 
+@pytest.mark.parametrize("block_size", [64, 104])  # == n_features and > n_features
+def test_large_block_does_not_degenerate(block_size: int) -> None:
+    # Regression (docs/week5.md "Follow-up found during the ablation"): when
+    # rank_cap + block_size > n_features the augmented [U | Q] basis would exceed
+    # R^n and degenerate -- a silent ~5x-oracle error at block_size == n_features
+    # and a hard torch.cat shape crash at block_size > n_features. Capping the
+    # residual QR to n_features - rank new directions keeps [U | Q] within R^n, so
+    # the tracker stays near-oracle and never crashes.
+    n = 64
+    m = torch.from_numpy(_heavy_tailed(n, 300, true_rank=48, seed=11))
+    r = 32  # r + block_size > n for both block sizes -> exercises the cap
+    u = blocked_bug_subspace(m, rank_cap=r, block_size=block_size, compute_dtype=torch.float64)
+    assert u.shape[1] <= r
+    gram = u.mT @ u  # basis stays genuinely orthonormal (no degenerate directions)
+    assert torch.allclose(gram, torch.eye(u.shape[1], dtype=torch.float64), atol=1e-9)
+    err = _rel_err(m.numpy(), u.numpy())
+    assert err <= _oracle_err(m.numpy(), r) * 1.05  # near-oracle, not the ~5x blow-up
+
+
 def test_guards() -> None:
     m = torch.zeros(16, 10)
     with pytest.raises(ValueError, match="rank_cap"):

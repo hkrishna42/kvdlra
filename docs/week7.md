@@ -64,7 +64,7 @@ non-contiguous middles are re-rotated at their true positions; `retention=attn`
 with no observations reduces to FIFO **bitwise**; the quantized tier bounds
 reconstruction error and is counted honestly; exact-mode parity with
 `DynamicCache` and the mask-size == returned-length invariant hold for every
-variant. Suite: **NNN pass / 1 skip**, mypy-strict + ruff green.
+variant. Suite: **151 pass / 1 skip**, mypy-strict + ruff green.
 
 A 4-lens adversarial review (DLRA math, cache plumbing, memory honesty, harness
 protocol), each finding independently verified, caught three real issues before
@@ -169,12 +169,77 @@ morph verdict therefore needs the second document, where the baseline actually
 has a growing tail. Canonical 2-doc run (`full, bug, bugA, morph`,
 `results/w7-streamppl-1b.json`):
 
-TODO_CANONICAL_TABLE
+Per-bin ppl ratio to the full cache, **geo-mean over both docs** (the Week-6
+protocol; the `bug`/`full`/`morph` rows reproduce `results/w5-streamppl-1b.json`
+to the third decimal — the integrator fix is fp-equivalent as claimed, and the
+harness is sound):
+
+| pos (decode) | bug (FIFO) | bugA (attn) | morph |
+|---:|---:|---:|---:|
+| 256  | 1.032 | **1.032** | 1.225 |
+| 512  | 1.025 | **1.025** | 1.228 |
+| 768  | 1.062 | **1.028** | 1.297 |
+| 1024 | 1.165 | **1.026** | 1.181 |
+| 1280 | 1.085 | **1.060** | 1.166 |
+| 1536 | 1.186 | **1.065** | 1.063 |
+| 1792 | 1.296 | **1.066** | 1.181 |
+| 2048 | 1.101 | **1.043** | 1.107 |
+| 2304 | 1.155 | **1.033** | 1.176 |
+| 2560 | 1.231 | **1.059** | 1.197 |
+| 2816 | 1.198 | **1.086** | 1.089 |
+| 3072 | 1.229 | **1.062** | 1.104 |
+| **agg ppl** | 11.59 | **10.62** | 11.81 |
+
+*(full-cache aggregate 10.13.)*
+
+This is the tier-1 success signature, cleanly: **bugA keeps BUG's near-lossless
+early bins** (1.03×, vs eviction's 1.23–1.30× — eviction throws away the
+near-context low-rank fidelity) **and flattens the deep-horizon tail to ~1.06×**,
+where baseline BUG's FIFO retention grows to ~1.20× (peak 1.30× at 1792) and
+morph holds ~1.15×. bugA is ≤ both baselines at every bin past the first two.
+The per-document story is mechanistically coherent: on doc 0 the baseline has
+little tail (1.14× at 6× budget) so A gains little (12.44 → 12.40); on doc 1 the
+baseline tail is real (ratio 1.26 aggregate) and A closes most of it (10.80 →
+9.10). Attention-scored retention gives BUG MorphKV's eviction brain while
+keeping the rank-`r` subspace summary — exactly the intended best-of-both.
 
 ## Verdict
 
-TODO_VERDICT
+- **(A) adaptive coordinate retention — WIN at 1B.** A clean best-of-both:
+  near-lossless early (1.03×) *and* flat late (~1.06×), closing ~66% of the
+  bug→full aggregate gap (11.59 → 10.62 vs full 10.13) and beating both baseline
+  BUG (FIFO) and MorphKV. Confirms the Week-6 diagnosis: **FIFO coordinate
+  eviction (mechanism 1) was the dominant deep-horizon loss**, and scoring
+  retention by accumulated attention mass fixes it. The cheap `energy` proxy
+  does *not* substitute (‖c_s‖ ≠ attention relevance; a negative).
+- **(D) quantize-instead-of-drop — decisive NEGATIVE.** 4-bit coordinate aging
+  makes the tail *explode* (14.7×), the exact inverse of its intended signature:
+  the one-shot PolarQuant error on a rank-128 coordinate vector (~10% relative)
+  plus per-absorb requantization drift make more-but-noisy history far worse
+  than fewer-but-clean. Reported straight; not pursued at higher bit-widths (the
+  budget math makes 8-bit hold only ~2× more history, and A already wins).
 
-## Decision: tier 2 / 8B
+The honesty guardrail is met: every variant was solved to the same per-layer
+float budget (scores/positions/codes/norms/side-info all counted), measured
+`mem_max`/budget ≤ 1.0 throughout, and the win is a genuine flatten-the-tail-
+without-losing-the-early-bins, not a lateral trade.
 
-TODO_DECISION
+**Caveat / open question.** This is 1B, where BUG *already* beat eviction in
+Week 6 — so (A) makes a winning method more winning. The load-bearing Week-6
+result was the **inversion at 8B**, where BUG *lost* the deep horizon to
+eviction (7.74 morph vs 7.87 BUG tier-1; 8.39 vs 9.17 tier-2). Whether (A)
+closes *that* gap is the actual test, and it requires the pod.
+
+## Decision: tier 2 (C) / 8B
+
+- **8B confirmation: GO.** (A) is the one surviving variant and the 1B win is
+  clean and mechanism-validated. Confirm `bugA` against the full Week-6 set
+  (`full, bug, bugA, morph, snapkvD`) at both budget tiers on one RTX 6000 Ada
+  pod (`scripts/pod/w7_streamppl_8b.sh`; ~$1.3, credit ~$5.7). Success = bugA's
+  8B tail matches or beats eviction's flat offset while keeping the near-lossless
+  early bins — i.e. **un-inverts** the Week-6 verdict.
+- **Tier 2 (C) retention-aware truncation: DEFERRED.** The plan gates tiers 2/3
+  on tier 1 *not* flattening the tail; (A) flattened it. (C) targets mechanism
+  2 (projection erosion), which (A) leaves partly unaddressed — worth doing only
+  if the 8B run shows a residual tail that (A) does not fully close. Decide from
+  the 8B curves.

@@ -454,9 +454,18 @@ per-position-bin curves give the degradation *slope*, the falsifiable
 graceful-degradation claim. Methods at matched worst-case stored floats (BUG
 budget drives MorphKV capacity — score buffer included — and the StreamingLLM
 window): full cache (upper bound), BUG, MorphKV, SnapKV-decode (periodic
-variant), StreamingLLM. Results land below as they run; the 8B pod script
-(`scripts/pod/w5_streamppl_8b.sh`, two budget tiers) is staged — **blocked on
-vast.ai credit (balance $0)**.
+variant), StreamingLLM.
+
+**Results (complete — full analysis in `docs/week6.md`).** 1B (G=3072, ~515
+tok-eq): full 10.13 | **BUG 11.59** | MorphKV 11.81 | SnapKV-dec 11.83 | sllm
+14.47 — **BUG wins**. 8B (G=8192): tier 1 (~499 tok-eq) MorphKV/SnapKV 7.74 <
+BUG 7.87 < sllm 8.20; tier 2 (~183 tok-eq) MorphKV 8.39 < BUG 9.17. The bin
+curves explain the flip: BUG is near-lossless (1.03×) while generation is
+within ~2× its budget — the best method there at both scales — then its
+penalty grows, while adaptive eviction holds a flat offset; deep horizons
+reward the flat profile. The graceful-degradation hypothesis is **inverted**;
+verdict and mechanisms in `docs/week6.md`, fixes planned in
+`docs/week7-plan.md`.
 
 ## Week-5 final scorecard (updated, all honest)
 | attempt | verdict |

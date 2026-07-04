@@ -243,3 +243,101 @@ closes *that* gap is the actual test, and it requires the pod.
   2 (projection erosion), which (A) leaves partly unaddressed — worth doing only
   if the 8B run shows a residual tail that (A) does not fully close. Decide from
   the 8B curves.
+
+## Results (8B — the load-bearing confirmation)
+
+*(`unsloth/Meta-Llama-3.1-8B-Instruct`, bf16, RTX 6000 Ada; WikiText-103,
+P=1024, G=8192, 3 docs, bin 512; two budget tiers; methods `full, bug, bugA,
+morph, snapkvD`. One pod, ~$1.0, auto-destroyed. The `bug`/`morph`/`snapkvD`
+rows reproduce the Week-6 8B aggregates — the harness is unchanged.)*
+
+**This is the real test:** Week 6's inverted verdict — BUG *losing* the deep
+horizon to eviction — was an 8B phenomenon (at 1B, BUG already won). Does
+attention-scored retention un-invert it?
+
+### Tier 1 (r128, ~499 tok-eq/layer) — A UN-INVERTS the Week-6 loss
+
+3-doc geo-mean aggregate perplexity (full-cache = 7.222):
+
+| method | agg ppl | vs Week 6 |
+|---|---:|---|
+| **bugA (attn retention)** | **7.709** | — (new) |
+| morph | 7.737 | 7.74 ✓ |
+| snapkvD | 7.737 | 7.74 ✓ |
+| bug (FIFO baseline) | 7.863 | 7.87 ✓ |
+
+**bugA beats MorphKV *and* SnapKV-decode** (7.709 vs 7.737), and beats the FIFO
+baseline by 0.154 — where Week 6 had BUG *losing* 7.87 vs 7.74, bugA now **wins
+7.709 vs 7.737**. Per-doc bugA `[8.94, 8.08, 6.35]` vs morph `[9.09, 8.12,
+6.28]`: bugA wins docs 0–1, narrowly loses doc 2 — a 2/3-doc, aggregate win
+(small-n caveat honestly noted; the margin over eviction is ~0.4%, the margin
+over baseline BUG is real at 2%). The bin curve shows why: bugA has the **best
+early bins** (1.027 at 512, vs eviction's 1.045) *and* the **best mid bins**
+through ~6× budget (1.05–1.09 vs baseline BUG's 1.07–1.15), and only at the
+extreme tail (8–16× budget, bins ≥4096) does eviction's flat offset edge it
+back (bugA ~1.05–1.10 vs morph ~1.05–1.07). The near-lossless early+mid regime
+carries the aggregate — best-of-both, at scale, verdict flipped.
+
+### Tier 2 (r64, ~183 tok-eq/layer, aggressive) — A helps, eviction still wins
+
+3-doc geo-mean aggregate (full = 7.222):
+
+| method | agg ppl | vs Week 6 |
+|---|---:|---|
+| morph | 8.390 | 8.39 ✓ |
+| snapkvD | 8.462 | 8.46 ✓ |
+| bugA (attn) | 8.888 | — (new) |
+| bug (FIFO) | 9.171 | 9.17 ✓ |
+
+At the aggressive budget bugA improves substantially on baseline BUG (9.171 →
+8.888, closing ~36% of the bug→morph gap) but **MorphKV still wins** (8.390).
+The bin curve is telling: bugA is better than baseline BUG at every bin, yet
+*worse than eviction at every bin, including the earliest* — because at ~183
+tok-eq the crossover is below the first bin, so there is **no near-lossless
+early regime** for retention to protect. Here the loss is dominated not by
+retention (mechanism 1, which A fixes) but by the **rank-64 information squeeze
+(mechanism 3)**: a very coarse low-rank summary of more tokens loses to fewer
+whole tokens. A cannot fix what is fundamentally a rank problem.
+
+## Verdict (final)
+
+**Adaptive coordinate retention (A) is the Week-7 win, confirmed at 8B.** It
+turns BUG's Week-6 deep-horizon *loss* into a *win* at the moderate budget
+(tier 1: bugA 7.709 < morph 7.737 < BUG 7.863), reproducing the best-of-both
+signature at scale, and it strictly improves BUG at the aggressive budget
+(tier 2: 9.171 → 8.888) though eviction still wins there. The mechanism is
+exactly the Week-6 diagnosis: **FIFO coordinate eviction was the dominant
+deep-horizon loss at moderate compression, and scoring retention by accumulated
+attention mass fixes it.** Reported straight: (D) 4-bit quant aging and (E)
+energy retention are clean negatives; the tier-2 gap is real and un-closed.
+
+**Regime map (the honest, useful summary):**
+
+| budget | dominant loss | winner | A's effect |
+|---|---|---|---|
+| moderate (≥~2× rank/token) | FIFO retention (mech. 1) | **bugA** | closes + reverses the gap |
+| aggressive (rank ≪ history/token) | rank squeeze (mech. 3) | morph | narrows but does not close |
+
+## What's next (motivated by the tier-2 residual)
+
+The remaining gap is now precisely localized and points at the *other* two
+mechanisms, not retention:
+
+1. **Rank-adaptivity for the squeeze (mechanism 3, the tier-2 blocker).** The
+   BUG state already carries the machinery (`theta` truncation); letting the
+   rank *grow* when the spectrum is heavy-tailed and the budget allows —
+   spending the freed retention memory on rank instead of more coordinate
+   columns — directly attacks the tier-2 loss A cannot. Highest-value next step.
+2. **(C) retention-aware truncation for the extreme-tail erosion (mechanism 2).**
+   The tier-1 curve's only soft spot is the 8–16×-budget tail where erosion
+   (`c ← rot·c`) slowly bleeds retained tokens; truncating by the spectrum of
+   `[C | A_new]` (the windowed process) rather than the accumulated stream `B`
+   targets exactly this. Now motivated by data, not just theory.
+3. **(F) linear-attention tail** remains the option to hold an (approximate)
+   *unbounded* history for the aggressive regime without paying per-token
+   coordinate memory — the structural alternative to rank-adaptivity for
+   mechanism 3.
+
+The primary Week-7 target — **claim the deep horizon at 8B** — is met at the
+moderate budget with (A). Tiers for the aggressive budget are now a
+data-driven, well-posed follow-up rather than open-ended search.

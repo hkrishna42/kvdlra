@@ -41,6 +41,12 @@ PYTHONPATH=src python -u scripts/w5_streamppl.py --model "$MODEL" --device cuda 
   --rank 128 --coord-budget 2048 --recent-window 64 --absorb-block 32 --morph-recent 32 \
   --out-json results/w5-streamppl-8b.json --fig figures/week5/streamppl_8b.png 2>&1
 echo "===STREAMPPL_DONE==="
+# vast.ai's log path truncates long stdout lines (~500 chars), which ate the
+# single-line results JSON on the first run (pod 43752085) -- emit it base64,
+# folded to short lines, so `vastai logs` scraping is truncation-proof.
+echo "===JSON_B64_T1_BEGIN==="
+base64 -w 120 results/w5-streamppl-8b.json
+echo "===JSON_B64_T1_END==="
 
 # Aggressive tier: half the budget (rank 64 / W 1024 / w 32) -- does the ranking
 # change when every method is squeezed harder?
@@ -51,4 +57,7 @@ PYTHONPATH=src python -u scripts/w5_streamppl.py --model "$MODEL" --device cuda 
   --rank 64 --coord-budget 1024 --recent-window 32 --absorb-block 16 --morph-recent 32 \
   --out-json results/w5-streamppl-8b-tier2.json --fig figures/week5/streamppl_8b_tier2.png 2>&1
 echo "===STREAMPPL_TIER2_DONE==="
+echo "===JSON_B64_T2_BEGIN==="
+base64 -w 120 results/w5-streamppl-8b-tier2.json
+echo "===JSON_B64_T2_END==="
 echo "===ALL_DONE==="

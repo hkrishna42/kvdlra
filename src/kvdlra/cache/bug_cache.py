@@ -54,8 +54,9 @@ coordinate buffer attack the first two:
 
 * **(A) adaptive coordinate retention** -- ``retention``:
 
-  - ``"fifo"`` (default): drop the oldest column (the Week-6 behaviour,
-    bit-identical code path);
+  - ``"fifo"`` (default): drop the oldest column (the Week-6 behaviour; note
+    the Week-7 integrator robustness fix makes reruns *fp-equivalent*, not
+    bit-identical, to the archived Week-6 numbers -- rerun baselines in-sweep);
   - ``"attn"``: drop the column with the lowest **EMA-accumulated attention
     mass** (decay ``score_decay`` per decode step -- the O(1)-per-column
     analogue of MorphKV's sum-fusion over its recent window). Scores are
@@ -84,10 +85,12 @@ coordinate buffer attack the first two:
   columns (``quant_bits`` bits/coordinate, the Week-4 machinery already
   validated on BUG coordinates) instead of dropped; the quantized tier evicts
   by the same ``retention`` rule. Across basis updates the tier is carried by
-  dequantize -> ``rot @`` -> requantize; when ``rot`` is near identity the
-  centroid vectors requantize to themselves (an exact fixed point), so fresh
-  quantization noise enters only when the basis actually moves -- whether that
-  compounding is visible is exactly what the Week-7 bin curves falsify.
+  dequantize -> ``rot @`` -> requantize with **exact norm carry** (the decoded
+  direction is renormalized, so magnitudes see only the true rotation-induced
+  contraction -- see :meth:`BugStreamingLayer._dequantize`); the direction is
+  re-coded per absorb with error bounded by the one-shot PolarQuant distortion
+  per event -- whether that per-event jitter compounds visibly over deep
+  horizons is exactly what the Week-7 bin curves falsify.
   Accounting (the Week-4 fairness convention, ``scripts/w4_fair.py``): codes
   count ``quant_bits/32`` float-equivalents each (bit-packable), plus one fp32
   norm per column per K/V stream, plus the shared rotation/codebook side
@@ -311,6 +314,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             raise ValueError(f"retention must be one of {RETENTION_MODES}, got {retention!r}")
         if not 0.0 < score_decay <= 1.0:
             raise ValueError(f"score_decay must be in (0, 1], got {score_decay}")
+        if quant_budget < 0:
+            raise ValueError(f"quant_budget must be >= 0, got {quant_budget}")
         if (quant_bits is None) != (quant_budget == 0):
             raise ValueError("quant_bits and quant_budget (> 0) must be set together")
         if quant_bits is not None and not 1 <= quant_bits <= 8:
@@ -527,7 +532,15 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         if self.retention == "attn":
             scores = self.mid_score if tier == "fp32" else self.q_score
             assert scores is not None
-            if not self._seen_observation and not self._warned_unattached:
+            # Pre-fill overflow evicts before the attach() hook can seed scores
+            # (update() runs inside the attention forward; the hook fires after)
+            # -- that is documented FIFO-by-design, so only warn for score-less
+            # evictions during decode (cumulative_length > 0).
+            if (
+                not self._seen_observation
+                and not self._warned_unattached
+                and self.cumulative_length > 0
+            ):
                 logger.warning(
                     "retention='attn' evicting with no recorded attention scores "
                     "(cache not attach()ed?) -- falling back to FIFO order"
@@ -593,11 +606,24 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         return codes.to(torch.uint8), norm.squeeze(-1).to(torch.float32)
 
     def _dequantize(self, codes: Tensor, norm: Tensor) -> Tensor:
-        """Inverse of :meth:`_quantize_cols`: ``(m, r)+(m,)`` -> columns ``(r, m)``."""
+        """Inverse of :meth:`_quantize_cols`: ``(m, r)+(m,)`` -> columns ``(r, m)``.
+
+        The decoded *direction* is renormalized to unit length before scaling,
+        so every reconstructed column has Euclidean norm exactly equal to its
+        stored ``norm``. Plain ``PolarQuant.dequantize`` scales the raw centroid
+        vector, whose norm is ``||centroids[codes]|| != 1`` (Lloyd--Max
+        centroids do not lie on the sphere) -- under the per-absorb
+        dequantize -> rot -> requantize carry that mismatch compounds into
+        exponential per-column norm drift (adversarial-review finding, Week 7);
+        renormalizing makes the norm carry exact and leaves only the bounded
+        per-event direction error."""
         assert self._quant_bank is not None
         pq = self._quant_bank.get(int(codes.shape[1]), codes.device)
-        out = pq.dequantize(codes.to(torch.int64), norm.unsqueeze(-1))  # (m, r)
-        return out.mT
+        unit = torch.ones(codes.shape[0], 1, dtype=norm.dtype, device=norm.device)
+        direction = pq.dequantize(codes.to(torch.int64), unit)  # (m, r), ~unit rows
+        direction = direction / direction.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+        out: Tensor = (direction * norm.unsqueeze(-1)).mT
+        return out
 
     def _append_quant(
         self, ck: Tensor, cv: Tensor, pos: Tensor | None, score: Tensor | None
@@ -624,9 +650,13 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
 
     def _rotate_quant_tier(self, rot_k: Tensor, rot_v: Tensor) -> None:
         """Carry the quantized tier across a basis update: dequantize -> ``rot @``
-        -> requantize. Requantizing a centroid vector under ``rot ~= I`` is an
-        exact fixed point (no fresh noise); noise enters only with real basis
-        motion -- the documented, falsifiable compounding risk of variant D."""
+        -> requantize. Column *norms* are carried exactly (:meth:`_dequantize`
+        renormalizes the decoded direction, so the requantized norm is
+        ``norm_old * ||rot @ u_hat||`` -- the true rotation-induced contraction,
+        with no quantizer-induced drift). The *direction* is re-coded each
+        absorb with error bounded by the one-shot PolarQuant distortion per
+        event; whether that per-event jitter compounds visibly over deep
+        horizons is exactly what the Week-7 bin curves falsify."""
         assert self.qk_codes is not None and self.qk_norm is not None
         assert self.qv_codes is not None and self.qv_norm is not None
         ck = rot_k @ self._dequantize(self.qk_codes, self.qk_norm)

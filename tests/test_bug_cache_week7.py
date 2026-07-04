@@ -290,6 +290,46 @@ def test_quant_roundtrip_error_bounded(tiny_model: LlamaForCausalLM) -> None:
     assert float(rel.max()) < 0.05  # 8-bit: sqrt(2.7)*4^-8-ish per coordinate
 
 
+def test_quant_carry_norms_exact_under_identity_rotation(
+    tiny_model: LlamaForCausalLM,
+) -> None:
+    # Adversarial-review regression (Week 7): the dequantize -> rot -> requantize
+    # carry must NOT drift column norms when rot == I. (Plain PolarQuant
+    # dequantize scales the raw centroid vector, whose norm != 1, so the naive
+    # cycle multiplied each norm by ||centroids[codes]|| per absorb -> g^k
+    # exponential drift; _dequantize now renormalizes the direction.)
+    layer = BugStreamingLayer(
+        rope=_rope(tiny_model),
+        rank=8,
+        coord_budget=4,
+        recent_window=4,
+        absorb_block=4,
+        n_sink=2,
+        quant_bits=4,
+        quant_budget=16,
+    )
+    g = torch.Generator().manual_seed(12)
+    layer.update(*_kv(10, g))
+    for _ in range(8):  # push two blocks through -> populate the quant tier
+        layer.update(*_kv(1, g))
+    assert layer._q_len() > 0
+    assert layer.qk_norm is not None
+    norms0 = layer.qk_norm.clone()
+    deq0 = layer._dequantize(cast(torch.Tensor, layer.qk_codes), layer.qk_norm)
+    eye = torch.eye(layer.rank if layer.c_k is None else int(layer.c_k.shape[0]))
+    for _ in range(50):
+        layer._rotate_quant_tier(eye, eye)
+    assert layer.qk_norm is not None
+    # Norms exactly preserved (fp32 roundoff only), no exponential drift.
+    assert torch.allclose(layer.qk_norm, norms0, rtol=1e-5, atol=1e-7)
+    # Reconstruction stays within a small multiple of the one-shot distortion.
+    deq50 = layer._dequantize(cast(torch.Tensor, layer.qk_codes), layer.qk_norm)
+    rel = (deq50 - deq0).norm(dim=0) / deq0.norm(dim=0).clamp_min(1e-9)
+    assert float(rel.max()) < 0.5  # bounded jitter, not the ~3x drift of the bug
+    # And every reconstructed column's norm equals its stored norm exactly.
+    assert torch.allclose(deq50.norm(dim=0), layer.qk_norm, rtol=1e-5, atol=1e-7)
+
+
 def test_quant_memory_counted_honestly(tiny_model: LlamaForCausalLM) -> None:
     # stored_state_numel must equal: base fp32 tensors + ceil(codes*bits/32)
     # + fp32 norms + (positions + scores if tracked); side info counted once at

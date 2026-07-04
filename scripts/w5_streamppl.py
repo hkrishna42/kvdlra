@@ -114,13 +114,20 @@ def solve_bug_variant(
     if variant == "bugD":  # FIFO fp32 tier + FIFO quant tier
         w_f = int(pool * quant_keep_frac) // per_f
         q_pool = pool - w_f * per_f - side_share
-        return {"coord_budget": w_f, "quant_budget": int(q_pool // (per_q_codes + 2))}
-    if variant == "bugAD":  # both tiers position+score tracked, + ring scores
+        w_q = int(q_pool // (per_q_codes + 2))
+    elif variant == "bugAD":  # both tiers position+score tracked, + ring scores
         pool2 = pool - ring
         w_f = int(pool2 * quant_keep_frac) // (per_f + 2)
         q_pool = pool2 - w_f * (per_f + 2) - side_share
-        return {"coord_budget": w_f, "quant_budget": int(q_pool // (per_q_codes + 4))}
-    raise ValueError(f"unknown BUG variant {variant!r}")
+        w_q = int(q_pool // (per_q_codes + 4))
+    else:
+        raise ValueError(f"unknown BUG variant {variant!r}")
+    if w_q <= 0:
+        raise ValueError(
+            f"{variant}: quant tier gets no budget (quant_keep_frac={quant_keep_frac} "
+            "too high for this tier) -- lower it or use the non-quant variant"
+        )
+    return {"coord_budget": w_f, "quant_budget": w_q}
 
 
 def morph_capacity_for_budget(budget: int, n: int, h_kv: int, recent_window: int) -> int:
@@ -523,8 +530,12 @@ def main() -> None:
     parser.add_argument("--quant-keep-frac", type=float, default=0.5)
     parser.add_argument("--score-decay", type=float, default=0.97)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--out-json", default="results/w5-streamppl-1b.json")
-    parser.add_argument("--fig", default="figures/week5/streamppl_1b.png")
+    # Defaults point at Week-7 paths: a defaults rerun must never clobber the
+    # archived Week-6 baseline (results/w5-streamppl-1b.json) -- reruns of the
+    # bug baseline are fp-equivalent, not bit-identical, after the Week-7
+    # integrator robustness fix.
+    parser.add_argument("--out-json", default="results/w7-streamppl-1b.json")
+    parser.add_argument("--fig", default="figures/week7/streamppl_1b.png")
     parser.add_argument("--plot-only", action="store_true")
     args = parser.parse_args()
 

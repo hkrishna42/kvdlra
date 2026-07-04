@@ -135,8 +135,12 @@ def augmented_bug_step(
     block already lies in the tracked subspace -- e.g. data of effective
     dimension < ``rank_cap``) makes the plain QR return junk directions whose
     orthogonality against ``u`` is destroyed by cancellation, silently breaking
-    the basis (found by the Week-7 full-rank parity tests on a tiny model;
-    never triggered at r=128 on real KV, so Week-3..6 results are unaffected).
+    the basis (found by the Week-7 full-rank parity tests on a tiny model; the
+    pathology never fired at r=128 on real KV, so the *archived* Week-3..6
+    results stand as-is). Note the change applies on every step, so reruns of
+    older configs are **fp-equivalent, not bit-identical** (QR -> SVD residual
+    factorization + the coordinate refinement term) -- compare methods within
+    one run, never fresh curves against archived JSON at bit level.
     """
     if (u is None) != (b_core is None):
         raise ValueError("u and b_core must be provided together (or both None)")

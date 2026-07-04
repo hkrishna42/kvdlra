@@ -1,0 +1,163 @@
+{
+  "model": "unsloth/Llama-3.2-1B-Instruct",
+  "dtype": "float32",
+  "corpus": "wikitext-2",
+  "n_features": 512,
+  "prefill": 512,
+  "g_tokens": 256,
+  "bin_size": 64,
+  "tier": {
+    "rank": 32,
+    "coord_budget": 64,
+    "recent_window": 32,
+    "absorb_block": 16,
+    "morph_recent": 32
+  },
+  "methods": [
+    "full",
+    "bug",
+    "bugA",
+    "bugE",
+    "bugD",
+    "bugAD",
+    "morph"
+  ],
+  "quant_bits": 4,
+  "quant_keep_frac": 0.5,
+  "score_decay": 0.97,
+  "variant_budgets": {
+    "bugA": {
+      "coord_budget": 61,
+      "quant_budget": 0
+    },
+    "bugE": {
+      "coord_budget": 63,
+      "quant_budget": 0
+    },
+    "bugD": {
+      "coord_budget": 32,
+      "quant_budget": 198
+    },
+    "bugAD": {
+      "coord_budget": 30,
+      "quant_budget": 166
+    }
+  },
+  "budget_floats_per_layer": 91136,
+  "budget_token_equivalents": 89.0,
+  "docs": {
+    "0": {
+      "full": {
+        "mem_first": 8404992,
+        "mem_last": 12582912,
+        "mem_max": 12582912,
+        "lat_ms_p50": 201.3152912259102,
+        "lat_ms_p90": 244.17966697365046,
+        "ppl": 5.5820356320841,
+        "ppl_bins": [
+          13.988685096821866,
+          3.2381161637347216,
+          2.1313655443993933,
+          10.056414340427509
+        ],
+        "attended_length_final": 768
+      },
+      "bug-r32": {
+        "mem_first": 1228800,
+        "mem_last": 1212416,
+        "mem_max": 1458176,
+        "lat_ms_p50": 211.46520785987377,
+        "lat_ms_p90": 252.19816621392965,
+        "ppl": 22.53006553187494,
+        "ppl_bins": [
+          20.78024573965819,
+          19.51453902248937,
+          14.896057743587507,
+          42.654955851688385
+        ],
+        "attended_length_final": 100,
+        "mem_max_over_budget": 1.0
+      },
+      "bugA-r32-W61": {
+        "mem_first": 1228208,
+        "mem_last": 1211808,
+        "mem_max": 1457808,
+        "lat_ms_p50": 241.59795884042978,
+        "lat_ms_p90": 382.14875012636185,
+        "ppl": 22.258278666142406,
+        "ppl_bins": [
+          20.828065975145353,
+          17.644844363681713,
+          15.085176352945211,
+          44.274037948361375
+        ],
+        "attended_length_final": 97,
+        "mem_max_over_budget": 0.9997476299157303
+      },
+      "bugE-r32-W63": {
+        "mem_first": 1228784,
+        "mem_last": 1212400,
+        "mem_max": 1458160,
+        "lat_ms_p50": 211.69208269566298,
+        "lat_ms_p90": 308.3791248500347,
+        "ppl": 23.725835318589244,
+        "ppl_bins": [
+          23.70996028429483,
+          17.965413826092355,
+          15.298711211892801,
+          48.625395627769706
+        ],
+        "attended_length_final": 99,
+        "mem_max_over_budget": 0.9999890273876404
+      },
+      "bugD-r32-Wf32-Wq198b4": {
+        "mem_first": 1228767,
+        "mem_last": 1212383,
+        "mem_max": 1458143,
+        "lat_ms_p50": 227.25974954664707,
+        "lat_ms_p90": 331.9824170321226,
+        "ppl": 19.378636230905503,
+        "ppl_bins": [
+          19.79965976795907,
+          13.116994370292797,
+          13.004179189132461,
+          41.75589882812714
+        ],
+        "attended_length_final": 266,
+        "mem_max_over_budget": 0.9999773689870084
+      },
+      "bugAD-r32-Wf30-Wq166b4": {
+        "mem_first": 1228399,
+        "mem_last": 1211999,
+        "mem_max": 1457999,
+        "lat_ms_p50": 250.8147917687893,
+        "lat_ms_p90": 453.35075072944164,
+        "ppl": 20.486124707802087,
+        "ppl_bins": [
+          19.924925610103955,
+          14.993755246027822,
+          13.926331381893986,
+          42.33459383726014
+        ],
+        "attended_length_final": 232,
+        "mem_max_over_budget": 0.9998786154757725
+      },
+      "morph-C39-R32": {
+        "mem_first": 1454080,
+        "mem_last": 1454080,
+        "mem_max": 1454080,
+        "lat_ms_p50": 227.0345836877823,
+        "lat_ms_p90": 399.0202508866787,
+        "ppl": 18.80726305276962,
+        "ppl_bins": [
+          20.026292575612715,
+          13.06982060698722,
+          11.812748632420465,
+          40.46515888795294
+        ],
+        "attended_length_final": 71,
+        "mem_max_over_budget": 0.9971910112359551
+      }
+    }
+  }
+}

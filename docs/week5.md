@@ -388,6 +388,76 @@ drops keys but ExpectedAttention is competitive/wins at matched memory). Both ar
 limitations, not results; a bigger card (80 GB) + a CPU/gesvd SVD fallback would be
 needed to complete them.
 
+## Axis B — decode-time streaming BUG: the capability, built and validated
+
+**What was built** (design note: `docs/notes/streaming-decode-design.md`). The
+one un-measured structural edge after the negatives above is BUG's *streaming*
+nature: constant-memory **decode**, where the tracked subspace advances per
+generated token. Two new `transformers`-5.8 `Cache` subclasses:
+
+- **`BugStreamingCache`** (`src/kvdlra/cache/bug_cache.py`) — per layer: the 4
+  attention sinks + a recent ring of `w` tokens **verbatim**, and the middle as
+  BUG state: basis `U` (n×r, tracked on exactly un-rotated **pre-RoPE** keys via
+  the model's own rotary embedding), square-root core `B`, and up to `W`
+  per-token **coordinate** columns (r floats/token instead of n). Absorption =
+  one augmented rank-adaptive BUG step per graduating block (the factored
+  `augmented_bug_step`, one source of truth with the validated blocked tracker
+  — extraction also fixed the latent `rank+block>n` degeneracy found in 4.5);
+  held coordinates are carried across basis updates by `rot = U_newᵀU_old`
+  (each truncation projects old tokens onto the new subspace — the graceful-
+  degradation mechanism the DLRA bound governs). Oldest coordinates are dropped
+  at the cap: that is the honest bound — softmax attention needs per-token state
+  for every attendable token, so "constant memory" can only mean bounding the
+  attended set; BUG's version keeps a ~`n/r`× **longer but only approximately
+  represented** history at the same budget. `rank=0` degenerates to StreamingLLM
+  (sinks+window) — one implementation, two methods.
+- **`MorphKVCache`** (`src/kvdlra/cache/morph_cache.py`) — a faithful-core
+  reimplementation of MorphKV (ICML'25, arXiv:2503.00979; kvpress 0.5.1 has
+  none): R recent + top-C distant tokens, re-ranked per decode step by sum/max
+  fusion of the last R (exactly recomputed) attention rows, per-KV-head, GQA
+  aggregation per the paper. Documented deviations: prompt pruned at prefill
+  end; the score buffer's memory is **counted**; `evict_interval>1` gives the
+  paper's coarse-grained variant, which doubles as the **SnapKV-style decode
+  eviction** baseline (kvpress's own `DecodingPress`+SnapKV was rejected: under
+  transformers 5.8 it rotates all buffered window queries with the current
+  1-token `position_embeddings` — a silent scoring bias).
+
+Both keep `get_seq_length()` cumulative (true positions keep advancing) and
+report mask sizes equal to the returned K/V length; 25 new tests
+(`test_bug_cache.py`, `test_morph_cache.py`) pin teacher-forced logit parity
+with `DynamicCache` under sdpa **and** eager when nothing is truncated
+(MorphKV bitwise; BUG to fp tolerance — its middle passes through an fp32
+un-rotate/re-rotate round trip), mask consistency at every step, constant
+stored memory over hundreds of steps, the coordinate-carry invariant, and the
+eviction mechanics on crafted scores.
+
+**1B validation** (`scripts/w5_decode_validate.py`,
+`results/w5-decode-validate-1b.json`, `figures/week5/decode_validate_1b.png`;
+CPU fp32, 2 long prompts, 160 greedy tokens): (1) *parity*: exact-config BUG is
+byte-identical to the full cache on one prompt and flips a single near-tie at
+token 71 on the other, continuing coherently (fp-tolerance, as designed);
+MorphKV at full capacity is byte-identical on both. (2) *memory*: measured
+stored floats are flat (bounded sawtooth) for the lossy BUG configs and
+StreamingLLM, flatten at capacity for MorphKV, linear for the full cache.
+(3) *latency*: bounded, +10–30 % over the full cache on CPU at these lengths.
+Notable qualitative datum: at ~equal memory, **StreamingLLM (w=64) collapses
+into a degenerate `assistantassistant…` loop at token 7** on the relativity
+prompt while **BUG r=32 (less stored memory) stays coherent and factual** — the
+rank-32 summary of the dropped middle carries real information. Not yet a
+benchmark, but the first direct evidence the streaming low-rank middle does
+useful work during decode.
+
+**Benchmark** (`scripts/w5_streamppl.py`): teacher-forced *streaming
+perplexity* — prefill P tokens, then feed G ≫ budget tokens one per forward
+(exactly the decode regime), scoring each step against the bounded cache;
+per-position-bin curves give the degradation *slope*, the falsifiable
+graceful-degradation claim. Methods at matched worst-case stored floats (BUG
+budget drives MorphKV capacity — score buffer included — and the StreamingLLM
+window): full cache (upper bound), BUG, MorphKV, SnapKV-decode (periodic
+variant), StreamingLLM. Results land below as they run; the 8B pod script
+(`scripts/pod/w5_streamppl_8b.sh`, two budget tiers) is staged — **blocked on
+vast.ai credit (balance $0)**.
+
 ## Week-5 final scorecard (updated, all honest)
 | attempt | verdict |
 |---|---|

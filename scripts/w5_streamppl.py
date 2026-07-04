@@ -83,9 +83,10 @@ def morph_capacity_for_budget(budget: int, n: int, h_kv: int, recent_window: int
     return max(1, total_tokens - recent_window)
 
 
-def sllm_window_for_budget(budget: int, n: int) -> int:
-    """Largest StreamingLLM recent window whose sinks+ring fit ``budget``."""
-    return max(1, budget // (2 * n) - N_SINK)
+def sllm_window_for_budget(budget: int, n: int, absorb_block: int) -> int:
+    """Largest StreamingLLM recent window whose sinks + ring **high-water mark**
+    (window + absorb_block - 1 tokens) fit ``budget``."""
+    return max(1, budget // (2 * n) - N_SINK - (absorb_block - 1))
 
 
 def build_methods(
@@ -101,7 +102,7 @@ def build_methods(
     budget = bug_budget_floats(n, rank, coord, recent, absorb)
     morph_r = tier["morph_recent"]
     morph_c = morph_capacity_for_budget(budget, n, h_kv, morph_r)
-    sllm_w = sllm_window_for_budget(budget, n)
+    sllm_w = sllm_window_for_budget(budget, n, absorb)
     return {
         "full": None,
         f"bug-r{rank}": BugStreamingCache(

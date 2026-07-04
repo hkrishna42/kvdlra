@@ -19,12 +19,12 @@ What is stored per layer (all bounded; see the design note §4)
   r``, tracked on *pre-RoPE* keys -- the Week-2 operating point), a square-root
   core ``B`` (``r x r``, steers the basis; attention never sees it), and up to
   ``coord_budget`` per-token **coordinate** columns ``C`` (``r`` floats per
-  token instead of ``n``). When the coordinate buffer is full the *oldest*
-  columns are dropped -- that is the honest memory bound: softmax attention
-  needs per-token information for every attendable token, so "constant memory"
-  can only mean bounding the attended set. At matched memory the BUG cache
-  retains a ~``n/r`` x longer (but only approximately represented) history than
-  whole-token eviction; that trade is exactly the Axis-B experiment.
+  token instead of ``n``). When the coordinate buffer is full, columns are
+  *evicted* (see "Week-7 retention" below) -- that is the honest memory bound:
+  softmax attention needs per-token information for every attendable token, so
+  "constant memory" can only mean bounding the attended set. At matched memory
+  the BUG cache retains a ~``n/r`` x longer (but only approximately represented)
+  history than whole-token eviction; that trade is exactly the Axis-B experiment.
 
 The per-token cycle (design note §5)
 ------------------------------------
@@ -44,6 +44,54 @@ absorb events and is cached in between, so the steady-state per-step cost is a
 concat plus attention over a constant-length cache. Amortized per-token update
 cost: ``O(n r + (r+b)^3 / b + r^2 W / b)`` -- bounded, independent of generated
 length.
+
+Week-7 retention (``docs/week7-plan.md`` tier 1)
+------------------------------------------------
+Week 6 measured the deep-horizon loss mechanisms: FIFO coordinate eviction
+(adaptive *subspace*, non-adaptive *retention*), erosion by repeated
+projection, and the fixed-rank squeeze. Two independent knobs on the same
+coordinate buffer attack the first two:
+
+* **(A) adaptive coordinate retention** -- ``retention``:
+
+  - ``"fifo"`` (default): drop the oldest column (the Week-6 behaviour,
+    bit-identical code path);
+  - ``"attn"``: drop the column with the lowest **EMA-accumulated attention
+    mass** (decay ``score_decay`` per decode step -- the O(1)-per-column
+    analogue of MorphKV's sum-fusion over its recent window). Scores are
+    observed by the :meth:`BugStreamingCache.attach` hook, which recomputes the
+    step's aggregated attention row over this cache's returned K with exactly
+    MorphKV's machinery; tokens accumulate score while still in the recent
+    ring and carry it into the middle at graduation; prompt scores are seeded
+    from the last ``recent_window`` prompt queries' causal rows, ``score_decay``
+    -collapsed. Without :meth:`~BugStreamingCache.attach` all scores stay zero
+    and the stable-sort tiebreak reduces to FIFO (a warning is logged once).
+  - ``"energy"``: drop the column with the smallest coordinate norm
+    ``||c_s||_2`` (K stream; quantized columns use their stored norm) -- a
+    zero-extra-memory proxy: erosion shrinks exactly the columns whose
+    out-of-subspace mass the basis has drifted away from.
+
+  Non-FIFO retention makes the retained middle **non-contiguous in position**,
+  so true per-column positions are tracked (``mid_pos``/``q_pos``) and the
+  reconstruction is re-rotated at those positions (gathered cos/sin from the
+  model's own rotary module). The position arrays and (for ``"attn"``) the
+  score buffers are **counted** in ``stored_state_numel`` -- one float
+  equivalent per int32 position, one per fp32 score.
+
+* **(D) quantize-instead-of-drop (age-tiered precision)** -- ``quant_bits`` +
+  ``quant_budget``: columns evicted from the fp32 coordinate buffer are
+  **demoted** to a second tier of up to ``quant_budget`` PolarQuant-quantized
+  columns (``quant_bits`` bits/coordinate, the Week-4 machinery already
+  validated on BUG coordinates) instead of dropped; the quantized tier evicts
+  by the same ``retention`` rule. Across basis updates the tier is carried by
+  dequantize -> ``rot @`` -> requantize; when ``rot`` is near identity the
+  centroid vectors requantize to themselves (an exact fixed point), so fresh
+  quantization noise enters only when the basis actually moves -- whether that
+  compounding is visible is exactly what the Week-7 bin curves falsify.
+  Accounting (the Week-4 fairness convention, ``scripts/w4_fair.py``): codes
+  count ``quant_bits/32`` float-equivalents each (bit-packable), plus one fp32
+  norm per column per K/V stream, plus the shared rotation/codebook side
+  information counted **once** per cache (:class:`_QuantBank`).
 
 Positions and masks
 -------------------
@@ -69,12 +117,18 @@ References
 ----------
 G. Ceruti, J. Kusch, C. Lubich, arXiv:2104.05247 (rank-adaptive BUG).
 Xiao et al., arXiv:2309.17453 (StreamingLLM; sinks + recent window).
+Ghadia et al., arXiv:2503.00979 (MorphKV; the attention-scored retention rule).
+Zandieh et al., arXiv:2504.19874 (TurboQuant/PolarQuant; the quantized tier).
 """
 
 from __future__ import annotations
 
 import logging
+import math
 from collections import OrderedDict
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any, cast
 
 import torch
 from torch import Tensor, nn
@@ -82,11 +136,15 @@ from transformers import PreTrainedModel
 from transformers.cache_utils import Cache, CacheLayerMixin, LinearAttentionCacheLayerMixin
 from transformers.models.llama.modeling_llama import rotate_half
 
+from kvdlra.cache.morph_cache import _aggregated_attention_row, _window_attention_rows
 from kvdlra.integrators.streaming_torch import augmented_bug_step
+from kvdlra.quant import PolarQuant
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["BugStreamingCache", "BugStreamingLayer"]
+
+RETENTION_MODES = ("fifo", "attn", "energy")
 
 
 class _RopeAngles:
@@ -98,7 +156,10 @@ class _RopeAngles:
     so the un-rotate/re-rotate round trip is exact up to floating-point roundoff.
 
     All layers absorb on the same schedule and therefore request the same
-    position ranges within a decode step, so results are memoized (small LRU).
+    position ranges within a decode step, so contiguous-range results are
+    memoized (small LRU). Arbitrary (non-contiguous) position vectors -- needed
+    when adaptive retention makes the middle non-contiguous -- go through
+    :meth:`cos_sin_at` (no memo; rebuilt once per absorb event per layer).
     """
 
     def __init__(self, rotary_emb: nn.Module) -> None:
@@ -117,13 +178,56 @@ class _RopeAngles:
             self._memo.move_to_end(key)
             return hit
         positions = torch.arange(start, start + length, device=device).unsqueeze(0)
-        probe = torch.empty(1, dtype=torch.float32, device=device)
-        cos, sin = self._rotary(probe, positions)
-        out = (cos.squeeze(0).to(torch.float32), sin.squeeze(0).to(torch.float32))
+        out = self._cos_sin_for(positions)
         self._memo[key] = out
         while len(self._memo) > 8:
             self._memo.popitem(last=False)
         return out
+
+    def cos_sin_at(self, positions: Tensor) -> tuple[Tensor, Tensor]:
+        """fp32 ``(cos, sin)`` of shape ``(T, head_dim)`` for an arbitrary int64
+        position vector (identical rotary module call as :meth:`cos_sin`)."""
+        return self._cos_sin_for(positions.unsqueeze(0))
+
+    def _cos_sin_for(self, positions: Tensor) -> tuple[Tensor, Tensor]:
+        probe = torch.empty(1, dtype=torch.float32, device=positions.device)
+        cos, sin = self._rotary(probe, positions)
+        return cos.squeeze(0).to(torch.float32), sin.squeeze(0).to(torch.float32)
+
+
+class _QuantBank:
+    """Shared :class:`PolarQuant` instances keyed by coordinate dimension.
+
+    The rotation ``Pi`` and Lloyd--Max codebook are *data-oblivious* side
+    information shared by every layer and both K/V coordinate streams;
+    :meth:`side_info_numel` reports their float cost **once** so the matched-
+    memory budget can count it honestly (Week-7 guardrail: every variant counts
+    ALL its memory).
+    """
+
+    def __init__(self, bits: int, seed: int = 0) -> None:
+        self.bits = bits
+        self.seed = seed
+        self._bank: dict[tuple[int, str], PolarQuant] = {}
+
+    def get(self, dim: int, device: torch.device) -> PolarQuant:
+        key = (dim, str(device))
+        pq = self._bank.get(key)
+        if pq is None:
+            pq = PolarQuant(dim=dim, bits=self.bits, seed=self.seed, device=device)
+            self._bank[key] = pq
+        return pq
+
+    def side_info_numel(self) -> int:
+        """Float entries of the shared rotations + codebooks (per distinct dim)."""
+        seen: set[int] = set()
+        total = 0
+        for (dim, _), pq in self._bank.items():
+            if dim in seen:  # same dim on another device: identical side info
+                continue
+            seen.add(dim)
+            total += int(pq.Pi.numel() + pq.centroids.numel() + pq.boundaries.numel())
+        return total
 
 
 def _rope_apply(x_htd: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
@@ -138,12 +242,40 @@ def _rope_unapply(x_htd: Tensor, cos: Tensor, sin: Tensor, scale_sq: float) -> T
     return (x_htd * cos - rot * sin) / scale_sq
 
 
+def _prompt_seed_scores(
+    module: nn.Module,
+    hidden_states: Tensor,
+    position_embeddings: tuple[Tensor, Tensor],
+    window: int,
+    decay: float,
+) -> Tensor:
+    """``(T,)`` score seed over prompt positions: the last ``window`` prompt
+    queries' causal attention rows (recomputed exactly, GQA-aggregated, summed
+    over KV heads), collapsed with ``decay``-weights so the seed equals what the
+    per-step EMA would have accumulated had it run over those steps."""
+    cos, sin = position_embeddings
+    k_proj = cast(nn.Linear, module.k_proj)
+    head_dim = int(cast(int, module.head_dim))
+    t = int(hidden_states.shape[1])
+    k = k_proj(hidden_states).view(1, t, -1, head_dim).transpose(1, 2)  # (1, H_kv, T, D)
+    k = k * cos.unsqueeze(1) + rotate_half(k) * sin.unsqueeze(1)  # type: ignore[no-untyped-call]
+    rows = _window_attention_rows(module, hidden_states, k, (cos, sin), window)  # (H_kv, w, T)
+    mass = rows.sum(dim=0)  # (w, T)
+    w = int(mass.shape[0])
+    weights = decay ** torch.arange(
+        w - 1, -1, -1, dtype=torch.float32, device=mass.device
+    )  # newest row gets weight 1
+    return (weights.unsqueeze(1) * mass).sum(dim=0)  # (T,)
+
+
 class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
     """One layer's constant-memory streaming-BUG KV state (see module docstring).
 
     Internally tokens live as feature-by-token matrices ``(n, T)`` with ``n =
     num_kv_heads * head_dim`` (``docs/notes/conventions.md``); conversion to the
-    HF layout ``(1, H, T, D)`` happens only at the ``update()`` boundary.
+    HF layout ``(1, H, T, D)`` happens only at the ``update()`` boundary. The
+    retained middle is ``[quantized tier | fp32 tier]`` (each chronological
+    under FIFO; position-tracked under adaptive retention).
     """
 
     is_sliding = False
@@ -158,6 +290,11 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         n_sink: int = 4,
         theta: float | None = None,
         prefill_block_size: int = 128,
+        retention: str = "fifo",
+        score_decay: float = 0.97,
+        quant_bits: int | None = None,
+        quant_budget: int = 0,
+        quant_bank: _QuantBank | None = None,
     ) -> None:
         super().__init__()  # type: ignore[no-untyped-call]
         if rank < 0 or coord_budget < 0:
@@ -170,6 +307,14 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             raise ValueError(f"n_sink must be >= 0, got {n_sink}")
         if prefill_block_size < 1:
             raise ValueError(f"prefill_block_size must be >= 1, got {prefill_block_size}")
+        if retention not in RETENTION_MODES:
+            raise ValueError(f"retention must be one of {RETENTION_MODES}, got {retention!r}")
+        if not 0.0 < score_decay <= 1.0:
+            raise ValueError(f"score_decay must be in (0, 1], got {score_decay}")
+        if (quant_bits is None) != (quant_budget == 0):
+            raise ValueError("quant_bits and quant_budget (> 0) must be set together")
+        if quant_bits is not None and not 1 <= quant_bits <= 8:
+            raise ValueError(f"quant_bits must be in [1, 8], got {quant_bits}")
         self.rope = rope
         self.rank = rank
         self.coord_budget = coord_budget
@@ -178,8 +323,23 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.n_sink = n_sink
         self.theta = theta
         self.prefill_block_size = prefill_block_size
+        self.retention = retention
+        self.score_decay = score_decay
+        self.quant_bits = quant_bits
+        self.quant_budget = quant_budget
         # rank=0 / coord_budget=0 => no low-rank middle => StreamingLLM baseline.
         self.lowrank_enabled = rank >= 1 and coord_budget >= 1
+        if quant_budget > 0 and not self.lowrank_enabled:
+            raise ValueError("quant_budget > 0 requires an enabled low-rank middle")
+        self._quant_bank = (
+            quant_bank
+            if quant_bank is not None
+            else (_QuantBank(quant_bits) if quant_bits is not None else None)
+        )
+        # Adaptive retention needs true per-column positions (the middle stops
+        # being contiguous); attention scoring additionally needs score buffers.
+        self.track_positions = self.lowrank_enabled and retention != "fifo"
+        self.track_scores = self.lowrank_enabled and retention == "attn"
         self.cumulative_length = 0
         self._reset_state()
 
@@ -197,6 +357,19 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.u_v: Tensor | None = None
         self.b_v: Tensor | None = None
         self.c_v: Tensor | None = None
+        # Quantized age tier (Week-7 D): PolarQuant codes/norms, rows = columns.
+        self.qk_codes: Tensor | None = None  # (Wq, r) uint8 codes, K coords
+        self.qk_norm: Tensor | None = None  # (Wq,) fp32
+        self.qv_codes: Tensor | None = None
+        self.qv_norm: Tensor | None = None
+        # Retention bookkeeping (Week-7 A): positions + EMA attention scores.
+        self.mid_pos: Tensor | None = None  # (f_len,) int64, fp32-tier positions
+        self.q_pos: Tensor | None = None  # (q_len,) int64, quant-tier positions
+        self.mid_score: Tensor | None = None  # (f_len,) fp32 EMA attention mass
+        self.q_score: Tensor | None = None  # (q_len,) fp32
+        self.ring_score: Tensor | None = None  # (recent_len,) fp32
+        self._seen_observation = False
+        self._warned_unattached = False
         self._mid_k_cache: Tensor | None = None  # (n, mid_len) storage dtype, post-RoPE
         self._mid_v_cache: Tensor | None = None
 
@@ -226,8 +399,16 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
     def _mat_rope(self, mat: Tensor, start: int, *, inverse: bool) -> Tensor:
         """(Un-)rotate a feature-by-token block whose columns sit at positions
         ``start .. start+T-1``, in fp32."""
+        cos, sin = self.rope.cos_sin(start, mat.shape[1], mat.device)
+        return self._mat_rope_with(mat, cos, sin, inverse=inverse)
+
+    def _mat_rope_at(self, mat: Tensor, positions: Tensor, *, inverse: bool) -> Tensor:
+        """(Un-)rotate a feature-by-token block at *arbitrary* per-column positions."""
+        cos, sin = self.rope.cos_sin_at(positions.to(mat.device))
+        return self._mat_rope_with(mat, cos, sin, inverse=inverse)
+
+    def _mat_rope_with(self, mat: Tensor, cos: Tensor, sin: Tensor, *, inverse: bool) -> Tensor:
         t = mat.shape[1]
-        cos, sin = self.rope.cos_sin(start, t, mat.device)
         htd = mat.to(torch.float32).reshape(self.num_heads, self.head_dim, t).permute(0, 2, 1)
         if inverse:
             out = _rope_unapply(htd, cos, sin, self.rope.scale_sq)
@@ -243,8 +424,16 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
     def _recent_len(self) -> int:
         return 0 if self.recent_k is None else int(self.recent_k.shape[1])
 
-    def _mid_len(self) -> int:
+    def _f_len(self) -> int:
+        """fp32 coordinate columns currently held."""
         return 0 if self.c_k is None else int(self.c_k.shape[1])
+
+    def _q_len(self) -> int:
+        """Quantized coordinate columns currently held."""
+        return 0 if self.qk_norm is None else int(self.qk_norm.shape[0])
+
+    def _mid_len(self) -> int:
+        return self._q_len() + self._f_len()
 
     def _post_update_lengths(self, query_length: int) -> tuple[int, int, int]:
         """Predict ``(sink, mid, recent)`` lengths *after* an ``update`` of
@@ -255,10 +444,11 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             return 0, 0, query_length
         recent = self._recent_len() + query_length
         mid = self._mid_len()
+        mid_cap = self.coord_budget + self.quant_budget
         while recent >= self.recent_window + self.absorb_block:
             recent -= self.absorb_block
             if self.lowrank_enabled:
-                mid = min(self.coord_budget, mid + self.absorb_block)
+                mid = min(mid_cap, mid + self.absorb_block)
         return self._sink_len(), mid, recent
 
     # ------------------------------------------------------------- BUG step
@@ -270,32 +460,229 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         grad_v = self.recent_v[:, :m]
         self.recent_k = self.recent_k[:, m:]
         self.recent_v = self.recent_v[:, m:]
+        grad_score: Tensor | None = None
+        if self.track_scores and self.ring_score is not None:
+            grad_score = self.ring_score[:m]
+            self.ring_score = self.ring_score[m:]
         self._mid_k_cache = None
         self._mid_v_cache = None
         if not self.lowrank_enabled:
             return  # StreamingLLM mode: graduating tokens are dropped.
 
-        # Positions: recents are the last `_recent_len (pre-slice) ` tokens; the
+        # Positions: recents are the last `_recent_len (post-slice)` tokens; the
         # graduating block starts where the middle currently ends.
         grad_start = self.cumulative_length - self._recent_len() - m
-
         block_k = self._mat_rope(grad_k, grad_start, inverse=True)  # pre-RoPE, fp32
-        self.u_k, self.b_k, self.c_k = self._advance(self.u_k, self.b_k, self.c_k, block_k)
         block_v = grad_v.to(torch.float32)
-        self.u_v, self.b_v, self.c_v = self._advance(self.u_v, self.b_v, self.c_v, block_v)
+        self._absorb_columns(block_k, block_v, grad_start, grad_score)
 
-    def _advance(
-        self, u: Tensor | None, b_core: Tensor | None, coords: Tensor | None, block: Tensor
-    ) -> tuple[Tensor, Tensor, Tensor]:
-        """One BUG step + coordinate carry: rotate held coords into the new basis,
-        append the block's coords, and enforce the coordinate budget (drop oldest)."""
-        u_new, b_new, rot = augmented_bug_step(u, b_core, block, self.rank, theta=self.theta)
-        parts = [] if coords is None else [rot @ coords]
-        parts.append(u_new.mT @ block)
-        c_new = torch.cat(parts, dim=1)
-        if c_new.shape[1] > self.coord_budget:
-            c_new = c_new[:, -self.coord_budget :]
-        return u_new, b_new, c_new
+    def _absorb_columns(
+        self, block_k: Tensor, block_v: Tensor, start: int, scores: Tensor | None
+    ) -> None:
+        """One augmented BUG step + coordinate carry + budget enforcement for a
+        block of ``m`` new columns at positions ``start .. start+m-1``."""
+        m = int(block_k.shape[1])
+        self.u_k, self.b_k, rot_k = augmented_bug_step(
+            self.u_k, self.b_k, block_k, self.rank, theta=self.theta
+        )
+        self.u_v, self.b_v, rot_v = augmented_bug_step(
+            self.u_v, self.b_v, block_v, self.rank, theta=self.theta
+        )
+        # Carry held coordinates into the new basis.
+        if self.c_k is not None:
+            assert self.c_v is not None
+            self.c_k = rot_k @ self.c_k
+            self.c_v = rot_v @ self.c_v
+        if self._q_len() > 0:
+            self._rotate_quant_tier(rot_k, rot_v)
+        # Append the graduating block's coordinates (fp32 tier).
+        new_ck = self.u_k.mT @ block_k
+        new_cv = self.u_v.mT @ block_v
+        self.c_k = new_ck if self.c_k is None else torch.cat([self.c_k, new_ck], dim=1)
+        self.c_v = new_cv if self.c_v is None else torch.cat([self.c_v, new_cv], dim=1)
+        if self.track_positions:
+            pos = torch.arange(start, start + m, dtype=torch.int64, device=block_k.device)
+            self.mid_pos = pos if self.mid_pos is None else torch.cat([self.mid_pos, pos])
+        if self.track_scores:
+            sc = (
+                scores.to(torch.float32)
+                if scores is not None
+                else torch.zeros(m, dtype=torch.float32, device=block_k.device)
+            )
+            self.mid_score = sc if self.mid_score is None else torch.cat([self.mid_score, sc])
+        self._enforce_budgets()
+
+    # ------------------------------------------------- retention + quant tier
+
+    def _split_indices(self, n_out: int, *, tier: str) -> tuple[Tensor, Tensor]:
+        """``(evict_idx, keep_idx)`` (both ascending) for ``n_out`` evictions from
+        ``tier`` ("fp32" or "quant") under the configured retention rule. Ties
+        (e.g. all-zero scores) fall back to FIFO via the stable sort."""
+        length = self._f_len() if tier == "fp32" else self._q_len()
+        device = self.c_k.device if self.c_k is not None else torch.device("cpu")
+        if self.retention == "fifo":
+            evict = torch.arange(n_out, device=device)
+            keep = torch.arange(n_out, length, device=device)
+            return evict, keep
+        if self.retention == "attn":
+            scores = self.mid_score if tier == "fp32" else self.q_score
+            assert scores is not None
+            if not self._seen_observation and not self._warned_unattached:
+                logger.warning(
+                    "retention='attn' evicting with no recorded attention scores "
+                    "(cache not attach()ed?) -- falling back to FIFO order"
+                )
+                self._warned_unattached = True
+        else:  # "energy"
+            if tier == "fp32":
+                assert self.c_k is not None
+                scores = self.c_k.norm(dim=0)
+            else:
+                assert self.qk_norm is not None
+                scores = self.qk_norm
+        order = torch.argsort(scores, stable=True)  # ascending; ties keep age order
+        evict = order[:n_out].sort().values
+        keep = order[n_out:].sort().values
+        return evict, keep
+
+    def _enforce_budgets(self) -> None:
+        """Evict down to ``coord_budget`` (demoting to the quantized tier when
+        enabled) and then the quantized tier down to ``quant_budget``."""
+        f_over = self._f_len() - self.coord_budget
+        if f_over > 0:
+            assert self.c_k is not None and self.c_v is not None
+            evict, keep = self._split_indices(f_over, tier="fp32")
+            out_ck = self.c_k[:, evict]
+            out_cv = self.c_v[:, evict]
+            self.c_k = self.c_k[:, keep]
+            self.c_v = self.c_v[:, keep]
+            out_pos: Tensor | None = None
+            out_score: Tensor | None = None
+            if self.track_positions:
+                assert self.mid_pos is not None
+                out_pos = self.mid_pos[evict]
+                self.mid_pos = self.mid_pos[keep]
+            if self.track_scores:
+                assert self.mid_score is not None
+                out_score = self.mid_score[evict]
+                self.mid_score = self.mid_score[keep]
+            if self.quant_bits is not None:
+                self._append_quant(out_ck, out_cv, out_pos, out_score)
+        q_over = self._q_len() - self.quant_budget
+        if q_over > 0:
+            assert self.qk_codes is not None and self.qk_norm is not None
+            assert self.qv_codes is not None and self.qv_norm is not None
+            evict, keep = self._split_indices(q_over, tier="quant")
+            self.qk_codes = self.qk_codes[keep]
+            self.qk_norm = self.qk_norm[keep]
+            self.qv_codes = self.qv_codes[keep]
+            self.qv_norm = self.qv_norm[keep]
+            if self.track_positions:
+                assert self.q_pos is not None
+                self.q_pos = self.q_pos[keep]
+            if self.track_scores:
+                assert self.q_score is not None
+                self.q_score = self.q_score[keep]
+
+    def _quantize_cols(self, cols: Tensor, stream: str) -> tuple[Tensor, Tensor]:
+        """PolarQuant coordinate columns ``(r, m)`` -> ``(codes (m, r) uint8,
+        norms (m,) fp32)``. ``stream`` is only for error messages."""
+        assert self._quant_bank is not None, f"quant bank missing ({stream})"
+        pq = self._quant_bank.get(int(cols.shape[0]), cols.device)
+        codes, norm = pq.quantize(cols.mT)  # rows = vectors
+        return codes.to(torch.uint8), norm.squeeze(-1).to(torch.float32)
+
+    def _dequantize(self, codes: Tensor, norm: Tensor) -> Tensor:
+        """Inverse of :meth:`_quantize_cols`: ``(m, r)+(m,)`` -> columns ``(r, m)``."""
+        assert self._quant_bank is not None
+        pq = self._quant_bank.get(int(codes.shape[1]), codes.device)
+        out = pq.dequantize(codes.to(torch.int64), norm.unsqueeze(-1))  # (m, r)
+        return out.mT
+
+    def _append_quant(
+        self, ck: Tensor, cv: Tensor, pos: Tensor | None, score: Tensor | None
+    ) -> None:
+        """Demote evicted fp32 coordinate columns into the quantized tier."""
+        codes_k, norm_k = self._quantize_cols(ck, "K")
+        codes_v, norm_v = self._quantize_cols(cv, "V")
+        if self.qk_codes is None:
+            self.qk_codes, self.qk_norm = codes_k, norm_k
+            self.qv_codes, self.qv_norm = codes_v, norm_v
+        else:
+            assert self.qk_norm is not None and self.qv_codes is not None
+            assert self.qv_norm is not None
+            self.qk_codes = torch.cat([self.qk_codes, codes_k])
+            self.qk_norm = torch.cat([self.qk_norm, norm_k])
+            self.qv_codes = torch.cat([self.qv_codes, codes_v])
+            self.qv_norm = torch.cat([self.qv_norm, norm_v])
+        if self.track_positions:
+            assert pos is not None
+            self.q_pos = pos if self.q_pos is None else torch.cat([self.q_pos, pos])
+        if self.track_scores:
+            assert score is not None
+            self.q_score = score if self.q_score is None else torch.cat([self.q_score, score])
+
+    def _rotate_quant_tier(self, rot_k: Tensor, rot_v: Tensor) -> None:
+        """Carry the quantized tier across a basis update: dequantize -> ``rot @``
+        -> requantize. Requantizing a centroid vector under ``rot ~= I`` is an
+        exact fixed point (no fresh noise); noise enters only with real basis
+        motion -- the documented, falsifiable compounding risk of variant D."""
+        assert self.qk_codes is not None and self.qk_norm is not None
+        assert self.qv_codes is not None and self.qv_norm is not None
+        ck = rot_k @ self._dequantize(self.qk_codes, self.qk_norm)
+        cv = rot_v @ self._dequantize(self.qv_codes, self.qv_norm)
+        self.qk_codes, self.qk_norm = self._quantize_cols(ck, "K")
+        self.qv_codes, self.qv_norm = self._quantize_cols(cv, "V")
+
+    # ------------------------------------------------------------ scoring
+
+    def observe_attention(self, mass: Tensor) -> None:
+        """EMA-update retention scores from one decode step's attention mass over
+        the returned ``[sinks | quant | fp32 | recent]`` columns (``(L,)``,
+        aggregated over all query heads). Called by the attach() hook."""
+        if not self.track_scores:
+            return
+        s, q, f, rlen = self._sink_len(), self._q_len(), self._f_len(), self._recent_len()
+        if mass.shape != (s + q + f + rlen,):
+            raise ValueError(
+                f"attention mass must have length {s + q + f + rlen} "
+                f"(sinks {s} + quant {q} + fp32 {f} + recent {rlen}), got {tuple(mass.shape)}"
+            )
+        mass = mass.to(torch.float32)
+        g = self.score_decay
+        off = s
+        if q > 0:
+            assert self.q_score is not None
+            self.q_score = g * self.q_score + mass[off : off + q]
+            off += q
+        if f > 0:
+            assert self.mid_score is not None
+            self.mid_score = g * self.mid_score + mass[off : off + f]
+            off += f
+        if self.ring_score is not None and rlen > 0:
+            self.ring_score = g * self.ring_score + mass[off:]
+        self._seen_observation = True
+
+    def seed_scores(self, seed: Tensor) -> None:
+        """Initialize retention scores from prompt attention: ``seed`` is a
+        ``(T,)`` per-position mass over the prompt (see
+        :func:`_prompt_seed_scores`); mapped to retained columns by position."""
+        if not self.track_scores:
+            return
+        rlen = self._recent_len()
+        if rlen > 0:
+            self.ring_score = (
+                seed[self.cumulative_length - rlen : self.cumulative_length]
+                .to(torch.float32)
+                .clone()
+            )
+        if self._f_len() > 0:
+            assert self.mid_pos is not None
+            self.mid_score = seed[self.mid_pos].to(torch.float32).clone()
+        if self._q_len() > 0:
+            assert self.q_pos is not None
+            self.q_score = seed[self.q_pos].to(torch.float32).clone()
+        self._seen_observation = True
 
     # -------------------------------------------------------------- update
 
@@ -329,17 +716,17 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.sink_v = v_mat[:, :n_sink].clone()
         self.recent_k = k_mat[:, t - recent :].clone()
         self.recent_v = v_mat[:, t - recent :].clone()
+        if self.track_scores:
+            # Zero until the attach() hook seeds them from the prompt's rows.
+            self.ring_score = torch.zeros(recent, dtype=torch.float32, device=k_mat.device)
 
         if mid > 0 and self.lowrank_enabled:
             k_pre = self._mat_rope(k_mat[:, n_sink : n_sink + mid], n_sink, inverse=True)
             v_mid = v_mat[:, n_sink : n_sink + mid].to(torch.float32)
             for start in range(0, mid, self.prefill_block_size):
                 stop = min(mid, start + self.prefill_block_size)
-                self.u_k, self.b_k, self.c_k = self._advance(
-                    self.u_k, self.b_k, self.c_k, k_pre[:, start:stop]
-                )
-                self.u_v, self.b_v, self.c_v = self._advance(
-                    self.u_v, self.b_v, self.c_v, v_mid[:, start:stop]
+                self._absorb_columns(
+                    k_pre[:, start:stop], v_mid[:, start:stop], n_sink + start, None
                 )
         self.cumulative_length = t
         return key_states, value_states
@@ -348,6 +735,10 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         assert self.recent_k is not None and self.recent_v is not None
         self.recent_k = torch.cat([self.recent_k, self._to_mat(key_states)], dim=1)
         self.recent_v = torch.cat([self.recent_v, self._to_mat(value_states)], dim=1)
+        if self.track_scores:
+            assert self.ring_score is not None
+            zero = torch.zeros(1, dtype=torch.float32, device=self.ring_score.device)
+            self.ring_score = torch.cat([self.ring_score, zero])
         self.cumulative_length += 1
         while self._recent_len() >= self.recent_window + self.absorb_block:
             self._absorb_block_into_stream(self.absorb_block)
@@ -374,18 +765,50 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         v_ret = torch.cat(parts_v, dim=1) if len(parts_v) > 1 else parts_v[0]
         return self._to_hf(k_ret), self._to_hf(v_ret)
 
+    def _mid_positions(self) -> Tensor:
+        """True positions of the retained middle columns, in assembly order
+        ``[quant | fp32]`` (contiguous by construction under FIFO)."""
+        device = self.c_k.device if self.c_k is not None else torch.device("cpu")
+        if not self.track_positions:
+            mid_len = self._mid_len()
+            mid_start = self.cumulative_length - self._recent_len() - mid_len
+            return torch.arange(mid_start, mid_start + mid_len, dtype=torch.int64, device=device)
+        parts = []
+        if self._q_len() > 0:
+            assert self.q_pos is not None
+            parts.append(self.q_pos)
+        if self._f_len() > 0:
+            assert self.mid_pos is not None
+            parts.append(self.mid_pos)
+        return torch.cat(parts) if len(parts) > 1 else parts[0]
+
     def _ensure_mid_cache(self) -> None:
         """(Re)build the middle reconstruction; only changes on absorb events."""
         if self._mid_k_cache is not None:
             return
-        assert self.u_k is not None and self.c_k is not None
-        assert self.u_v is not None and self.c_v is not None
-        mid_len = self._mid_len()
-        mid_start = self.cumulative_length - self._recent_len() - mid_len
-        k_pre_hat = self.u_k @ self.c_k  # (n, mid_len) fp32
-        k_hat = self._mat_rope(k_pre_hat, mid_start, inverse=False)
+        assert self.u_k is not None and self.u_v is not None
+        parts_k: list[Tensor] = []
+        parts_v: list[Tensor] = []
+        if self._q_len() > 0:
+            assert self.qk_codes is not None and self.qk_norm is not None
+            assert self.qv_codes is not None and self.qv_norm is not None
+            parts_k.append(self.u_k @ self._dequantize(self.qk_codes, self.qk_norm))
+            parts_v.append(self.u_v @ self._dequantize(self.qv_codes, self.qv_norm))
+        if self._f_len() > 0:
+            assert self.c_k is not None and self.c_v is not None
+            parts_k.append(self.u_k @ self.c_k)
+            parts_v.append(self.u_v @ self.c_v)
+        k_pre_hat = torch.cat(parts_k, dim=1) if len(parts_k) > 1 else parts_k[0]
+        v_hat = torch.cat(parts_v, dim=1) if len(parts_v) > 1 else parts_v[0]
+        if self.track_positions:
+            k_hat = self._mat_rope_at(k_pre_hat, self._mid_positions(), inverse=False)
+        else:
+            # Contiguous middle: the memoized range path (bit-identical to Week 6).
+            mid_len = self._mid_len()
+            mid_start = self.cumulative_length - self._recent_len() - mid_len
+            k_hat = self._mat_rope(k_pre_hat, mid_start, inverse=False)
         self._mid_k_cache = k_hat.to(self.dtype)
-        self._mid_v_cache = (self.u_v @ self.c_v).to(self.dtype)
+        self._mid_v_cache = v_hat.to(self.dtype)
 
     # ------------------------------------------------------------ cache API
 
@@ -411,7 +834,11 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
     # ---------------------------------------------------------- accounting
 
     def stored_state_numel(self) -> int:
-        """Float entries of the *stored* per-layer state (the honest memory)."""
+        """Float-equivalents of the *stored* per-layer state (the honest memory):
+        fp32/verbatim tensors at 1 each; quantized codes at ``quant_bits/32``
+        each (bit-packable) + their fp32 norms; retention positions (int32) and
+        scores at 1 each. Shared quantizer side info is counted once at the
+        cache level (:meth:`BugStreamingCache.stored_state_numel`)."""
         tensors = (
             self.sink_k,
             self.sink_v,
@@ -424,7 +851,16 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             self.b_v,
             self.c_v,
         )
-        return sum(t.numel() for t in tensors if t is not None)
+        total = sum(t.numel() for t in tensors if t is not None)
+        if self.qk_codes is not None:
+            assert self.qk_norm is not None and self.qv_codes is not None
+            assert self.qv_norm is not None and self.quant_bits is not None
+            code_entries = int(self.qk_codes.numel() + self.qv_codes.numel())
+            total += math.ceil(code_entries * self.quant_bits / 32)
+            total += int(self.qk_norm.numel() + self.qv_norm.numel())
+        bookkeeping = (self.mid_pos, self.q_pos, self.mid_score, self.q_score, self.ring_score)
+        total += sum(t.numel() for t in bookkeeping if t is not None)
+        return int(total)
 
     def workspace_numel(self) -> int:
         """Float entries of the cached middle reconstruction (bounded derived
@@ -441,6 +877,9 @@ class BugStreamingCache(Cache):
     """Model-level constant-memory streaming-BUG cache (one layer per model layer).
 
     Pass as ``past_key_values`` to ``model.generate(...)`` / ``model(...)``.
+    With ``retention="attn"``, wrap the forward/generate in :meth:`attach` so
+    per-step attention rows drive the retention scores (mirrors
+    :meth:`MorphKVCache.attach`).
 
     Parameters
     ----------
@@ -450,8 +889,20 @@ class BugStreamingCache(Cache):
     rank:
         BUG rank cap ``r`` per layer (0 disables the low-rank middle).
     coord_budget:
-        Max retained middle-token coordinate columns ``W`` per layer (0 disables
+        Max retained fp32 middle-token coordinate columns per layer (0 disables
         the low-rank middle; with ``rank=0`` this cache *is* StreamingLLM).
+    retention:
+        Coordinate eviction rule: ``"fifo"`` (Week-6 baseline), ``"attn"``
+        (EMA attention mass; needs :meth:`attach`), or ``"energy"``
+        (``||c_s||_2``). See the module docstring (Week-7 A).
+    score_decay:
+        EMA decay per decode step for ``retention="attn"`` scores.
+    quant_bits, quant_budget:
+        Week-7 D: demote evicted fp32 coordinates into a PolarQuant tier of
+        ``quant_budget`` columns at ``quant_bits`` bits/coordinate (both set,
+        or neither). Codes count ``quant_bits/32`` float-equivalents each.
+    quant_seed:
+        Seed for the shared PolarQuant rotation/codebook.
     recent_window, absorb_block, n_sink, theta, prefill_block_size:
         See :class:`BugStreamingLayer`.
     """
@@ -466,6 +917,11 @@ class BugStreamingCache(Cache):
         n_sink: int = 4,
         theta: float | None = None,
         prefill_block_size: int = 128,
+        retention: str = "fifo",
+        score_decay: float = 0.97,
+        quant_bits: int | None = None,
+        quant_budget: int = 0,
+        quant_seed: int = 0,
     ) -> None:
         base = getattr(model, "model", model)
         rotary = getattr(base, "rotary_emb", None)
@@ -476,6 +932,8 @@ class BugStreamingCache(Cache):
                 "exact RoPE round trip"
             )
         rope = _RopeAngles(rotary)
+        self._retention = retention
+        self._quant_bank = _QuantBank(quant_bits, seed=quant_seed) if quant_bits else None
         n_layers = int(model.config.num_hidden_layers)
         layers: list[CacheLayerMixin | LinearAttentionCacheLayerMixin] = [
             BugStreamingLayer(
@@ -487,17 +945,80 @@ class BugStreamingCache(Cache):
                 n_sink=n_sink,
                 theta=theta,
                 prefill_block_size=prefill_block_size,
+                retention=retention,
+                score_decay=score_decay,
+                quant_bits=quant_bits,
+                quant_budget=quant_budget,
+                quant_bank=self._quant_bank,
             )
             for _ in range(n_layers)
         ]
         super().__init__(layers=layers)
 
+    @contextmanager
+    def attach(self, model: PreTrainedModel) -> Iterator[None]:
+        """Register per-layer hooks that record attention rows into the retention
+        scores (``retention="attn"``; a no-op otherwise). Per decode step the
+        aggregated attention row over this cache's *returned* K is recomputed
+        with MorphKV's exact machinery and EMA'd into per-column scores; at
+        pre-fill end the scores are seeded from the last ``recent_window``
+        prompt queries' causal rows."""
+        if self._retention != "attn":
+            yield
+            return
+        handles = []
+
+        def make_hook(cache: BugStreamingCache) -> Any:
+            def hook(
+                module: nn.Module,
+                args: tuple[Any, ...],
+                kwargs: dict[str, Any],
+                output: Any,
+            ) -> Any:
+                if kwargs.get("past_key_values") is not cache:
+                    return output  # a different cache is in play; stay out
+                layer = cache.layers[module.layer_idx]
+                assert isinstance(layer, BugStreamingLayer)
+                if not layer.is_initialized or layer.cumulative_length == 0:
+                    return output
+                hidden_states = kwargs["hidden_states"]
+                cos, sin = kwargs["position_embeddings"]
+                if hidden_states.shape[1] == 1:  # decode step
+                    keys, _ = layer._decode_peek()  # memoized middle; cheap concat
+                    row = _aggregated_attention_row(module, hidden_states, keys, cos, sin)
+                    layer.observe_attention(row.sum(dim=0))
+                else:  # pre-fill: seed scores from the prompt's own attention
+                    seed = _prompt_seed_scores(
+                        module,
+                        hidden_states,
+                        (cos, sin),
+                        layer.recent_window,
+                        layer.score_decay,
+                    )
+                    layer.seed_scores(seed)
+                return output
+
+            return hook
+
+        for module in model.modules():
+            if hasattr(module, "layer_idx") and hasattr(module, "q_proj"):
+                handles.append(module.register_forward_hook(make_hook(self), with_kwargs=True))
+        try:
+            yield
+        finally:
+            for handle in handles:
+                handle.remove()
+
     def _bug_layers(self) -> list[BugStreamingLayer]:
         return [layer for layer in self.layers if isinstance(layer, BugStreamingLayer)]
 
     def stored_state_numel(self) -> int:
-        """Total stored float entries across layers (the constant-memory claim)."""
-        return sum(layer.stored_state_numel() for layer in self._bug_layers())
+        """Total stored float-equivalents across layers (the constant-memory
+        claim), plus the shared quantizer side info counted once."""
+        total = sum(layer.stored_state_numel() for layer in self._bug_layers())
+        if self._quant_bank is not None:
+            total += self._quant_bank.side_info_numel()
+        return total
 
     def workspace_numel(self) -> int:
         """Total cached-reconstruction float entries across layers (bounded)."""

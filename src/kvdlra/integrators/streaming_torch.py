@@ -127,6 +127,16 @@ def augmented_bug_step(
     n_features`` (the ablation follow-up in ``docs/week5.md``): the residual has
     rank at most ``n - r`` mathematically, so the discarded QR columns are
     numerically null and the clamp is exact up to roundoff.
+
+    Additionally (Week-7 fix), the residual is **re-orthogonalized** against
+    ``u`` once ("twice is enough", Parlett/Kahan) and rank-revealed by SVD:
+    only directions with singular value above ``100 * eps(dtype) * ||block||_F``
+    are admitted. Without this, a *numerically null* residual (the incoming
+    block already lies in the tracked subspace -- e.g. data of effective
+    dimension < ``rank_cap``) makes the plain QR return junk directions whose
+    orthogonality against ``u`` is destroyed by cancellation, silently breaking
+    the basis (found by the Week-7 full-rank parity tests on a tiny model;
+    never triggered at r=128 on real KV, so Week-3..6 results are unaffected).
     """
     if (u is None) != (b_core is None):
         raise ValueError("u and b_core must be provided together (or both None)")
@@ -145,15 +155,24 @@ def augmented_bug_step(
         r_old = u.shape[1]
         a = u.mT @ block  # (r, b)
         r_perp = block - u @ a  # (n, b)
-        q, r = torch.linalg.qr(r_perp, mode="reduced")  # q:(n,b) r:(b,b)
-        # Admit at most n - r_old genuinely new directions (see Notes).
-        m = min(q.shape[1], max(0, n - r_old))
+        # Re-orthogonalize once: removes the O(eps * ||block||) component of
+        # r_perp along span(u) that cancellation leaves behind (and refines the
+        # coordinates a accordingly), so admitted directions are orthogonal to
+        # u at machine level even when the true residual is tiny.
+        a2 = u.mT @ r_perp
+        r_perp = r_perp - u @ a2
+        a = a + a2
+        # Rank-revealing factorization of the residual: admit only directions
+        # that carry genuine new energy (and at most n - r_old of them).
+        q, s, vh = torch.linalg.svd(r_perp, full_matrices=False)
+        tol = 100.0 * torch.finfo(block.dtype).eps * torch.linalg.norm(block)
+        m = int((s > tol).sum().item())
+        m = min(m, max(0, n - r_old))
         q = q[:, :m]
-        r = r[:m, :]
         u_aug = torch.cat([u, q], dim=1)  # (n, r+m)
         top = torch.cat([b_core, a], dim=1)  # (r, r+b)
         zeros = torch.zeros(m, r_old, dtype=block.dtype, device=block.device)
-        bot = torch.cat([zeros, r], dim=1)  # (m, r+b)
+        bot = torch.cat([zeros, s[:m].unsqueeze(1) * vh[:m]], dim=1)  # (m, r+b)
         b_fac = torch.cat([top, bot], dim=0)  # (r+m, r+b)
 
     u_loc, sigma, _ = torch.linalg.svd(b_fac, full_matrices=False)

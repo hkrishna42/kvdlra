@@ -12,6 +12,9 @@ set -x
 export HF_HUB_ENABLE_HF_TRANSFER=1
 export DEBIAN_FRONTEND=noninteractive
 export TOKENIZERS_PARALLELISM=false
+# pytorch/pytorch:2.11 images ship a PEP-668 "externally managed" python:
+# bare `pip install` refuses and the whole batch silently runs dep-less.
+export PIP_BREAK_SYSTEM_PACKAGES=1
 
 cd /root || exit 1
 git clone --depth 1 --branch week3 https://github.com/hkrishna42/kvdlra.git 2>&1 | tail -3
@@ -19,6 +22,10 @@ cd kvdlra || exit 1
 
 pip install -q hf_transfer numpy matplotlib "kvpress==0.5.1" 2>&1 | tail -5
 pip install -q 'transformers==5.8.0' 'datasets==2.21.0' 2>&1 | tail -5
+# Fail FAST and LOUD if deps are missing -- never blow through to ===ALL_DONE===
+# with a dep-less python (that pattern burned pod 43751804).
+python -c "import torch, transformers, kvpress, datasets, matplotlib" \
+  || { echo "===DEPS_FAILED==="; exit 1; }
 echo "===DEPS_DONE==="
 python -c "import torch,transformers; print('torch',torch.__version__,'cuda',torch.cuda.is_available(),'tf',transformers.__version__)"
 

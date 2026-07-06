@@ -373,7 +373,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "docs": {},
     }
     span = args.prefill + args.g_tokens + 1
-    for d in range(args.n_docs):
+    for d in range(args.doc_start, args.doc_start + args.n_docs):
         start = args.doc_stride * d
         ids = corpus[start : start + span]
         if ids.shape[0] < span:
@@ -515,6 +515,9 @@ def main() -> None:
     parser.add_argument("--g-tokens", type=int, default=2048)
     parser.add_argument("--bin-size", type=int, default=256)
     parser.add_argument("--n-docs", type=int, default=2)
+    parser.add_argument(
+        "--doc-start", type=int, default=0, help="first doc index (for fast iteration)"
+    )
     parser.add_argument("--doc-stride", type=int, default=100_000)
     parser.add_argument("--rank", type=int, default=128)
     parser.add_argument("--coord-budget", type=int, default=1024)

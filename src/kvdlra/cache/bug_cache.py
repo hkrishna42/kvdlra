@@ -298,6 +298,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         quant_bits: int | None = None,
         quant_budget: int = 0,
         quant_bank: _QuantBank | None = None,
+        hh_budget: int = 0,
     ) -> None:
         super().__init__()  # type: ignore[no-untyped-call]
         if rank < 0 or coord_budget < 0:
@@ -320,6 +321,10 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             raise ValueError("quant_bits and quant_budget (> 0) must be set together")
         if quant_bits is not None and not 1 <= quant_bits <= 8:
             raise ValueError(f"quant_bits must be in [1, 8], got {quant_bits}")
+        if hh_budget < 0:
+            raise ValueError(f"hh_budget must be >= 0, got {hh_budget}")
+        if hh_budget > 0 and retention != "attn":
+            raise ValueError("hh_budget > 0 (SLASH exact heavy-hitters) requires retention='attn'")
         self.rope = rope
         self.rank = rank
         self.coord_budget = coord_budget
@@ -332,10 +337,15 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.score_decay = score_decay
         self.quant_bits = quant_bits
         self.quant_budget = quant_budget
+        self.hh_budget = hh_budget
         # rank=0 / coord_budget=0 => no low-rank middle => StreamingLLM baseline.
         self.lowrank_enabled = rank >= 1 and coord_budget >= 1
         if quant_budget > 0 and not self.lowrank_enabled:
             raise ValueError("quant_budget > 0 requires an enabled low-rank middle")
+        if hh_budget > 0 and not self.lowrank_enabled:
+            raise ValueError("hh_budget > 0 requires an enabled low-rank middle")
+        # SLASH exact heavy-hitter tier (Week-7 dominance program).
+        self.hh_enabled = hh_budget >= 1 and self.lowrank_enabled
         self._quant_bank = (
             quant_bank
             if quant_bank is not None
@@ -372,6 +382,11 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.q_pos: Tensor | None = None  # (q_len,) int64, quant-tier positions
         self.mid_score: Tensor | None = None  # (f_len,) fp32 EMA attention mass
         self.q_score: Tensor | None = None  # (q_len,) fp32
+        # SLASH exact heavy-hitter tier (Week-7 dominance): verbatim K/V + posns.
+        self.hh_k: Tensor | None = None  # (n, <=hh_budget) post-RoPE, verbatim
+        self.hh_v: Tensor | None = None
+        self.hh_pos: Tensor | None = None  # (hh_len,) int64 true positions
+        self.hh_score: Tensor | None = None  # (hh_len,) fp32 EMA attention mass
         self.ring_score: Tensor | None = None  # (recent_len,) fp32
         self._seen_observation = False
         self._warned_unattached = False
@@ -437,8 +452,12 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         """Quantized coordinate columns currently held."""
         return 0 if self.qk_norm is None else int(self.qk_norm.shape[0])
 
+    def _hh_len(self) -> int:
+        """Exact heavy-hitter tokens currently held (SLASH)."""
+        return 0 if self.hh_k is None else int(self.hh_k.shape[1])
+
     def _mid_len(self) -> int:
-        return self._q_len() + self._f_len()
+        return self._hh_len() + self._q_len() + self._f_len()
 
     def _post_update_lengths(self, query_length: int) -> tuple[int, int, int]:
         """Predict ``(sink, mid, recent)`` lengths *after* an ``update`` of
@@ -449,7 +468,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             return 0, 0, query_length
         recent = self._recent_len() + query_length
         mid = self._mid_len()
-        mid_cap = self.coord_budget + self.quant_budget
+        mid_cap = self.coord_budget + self.quant_budget + self.hh_budget
         while recent >= self.recent_window + self.absorb_block:
             recent -= self.absorb_block
             if self.lowrank_enabled:
@@ -477,16 +496,66 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         # Positions: recents are the last `_recent_len (post-slice)` tokens; the
         # graduating block starts where the middle currently ends.
         grad_start = self.cumulative_length - self._recent_len() - m
+        grad_pos = torch.arange(grad_start, grad_start + m, dtype=torch.int64, device=grad_k.device)
+        if self.hh_enabled:
+            self._absorb_block_slash(grad_k, grad_v, grad_pos, grad_score)
+            return
         block_k = self._mat_rope(grad_k, grad_start, inverse=True)  # pre-RoPE, fp32
         block_v = grad_v.to(torch.float32)
-        self._absorb_columns(block_k, block_v, grad_start, grad_score)
+        self._absorb_columns(block_k, block_v, grad_pos, grad_score)
+
+    def _absorb_block_slash(
+        self, grad_k: Tensor, grad_v: Tensor, grad_pos: Tensor, grad_score: Tensor | None
+    ) -> None:
+        """SLASH (Week-7 dominance program): split the graduating block + the
+        current exact heavy-hitter tier into (i) the top-``hh_budget`` tokens by
+        recent-attention score, kept **verbatim** (post-RoPE K, raw V -- exactly
+        like sinks), and (ii) the rest, absorbed into the low-rank tail via
+        :meth:`_absorb_columns`. Because the exact peaks never pass through
+        ``augmented_bug_step``, the tracked rank-``r`` basis summarizes the
+        *outlier-removed residual* spectrum (a robust-PCA decomposition matched
+        to attention's heavy-tailed structure) -- neither pure eviction nor pure
+        BUG has both. Demoted former-heavy-hitters re-enter the tail at their
+        true (non-contiguous) positions."""
+        sc = (
+            grad_score.to(torch.float32)
+            if grad_score is not None
+            else torch.zeros(grad_k.shape[1], dtype=torch.float32, device=grad_k.device)
+        )
+        # Candidate pool = current exact tier + graduating block (all post-RoPE).
+        if self.hh_k is not None:
+            assert self.hh_v is not None and self.hh_pos is not None and self.hh_score is not None
+            cand_k = torch.cat([self.hh_k, grad_k], dim=1)
+            cand_v = torch.cat([self.hh_v, grad_v], dim=1)
+            cand_pos = torch.cat([self.hh_pos, grad_pos])
+            cand_score = torch.cat([self.hh_score, sc])
+        else:
+            cand_k, cand_v, cand_pos, cand_score = grad_k, grad_v, grad_pos, sc
+        n_cand = int(cand_k.shape[1])
+        keep_n = min(self.hh_budget, n_cand)
+        # Highest recent-attention scores stay exact; ties fall back to recency.
+        order = torch.argsort(cand_score, stable=True, descending=True)
+        keep = order[:keep_n].sort().values  # chronological for clean assembly
+        demote = order[keep_n:].sort().values
+        self.hh_k = cand_k[:, keep].clone()
+        self.hh_v = cand_v[:, keep].clone()
+        self.hh_pos = cand_pos[keep].clone()
+        self.hh_score = cand_score[keep].clone()
+        if demote.numel() > 0:
+            dem_pos = cand_pos[demote]
+            dem_k_pre = self._mat_rope_at(cand_k[:, demote], dem_pos, inverse=True)
+            dem_v = cand_v[:, demote].to(torch.float32)
+            self._absorb_columns(dem_k_pre, dem_v, dem_pos, cand_score[demote])
 
     def _absorb_columns(
-        self, block_k: Tensor, block_v: Tensor, start: int, scores: Tensor | None
+        self, block_k: Tensor, block_v: Tensor, positions: Tensor, scores: Tensor | None
     ) -> None:
         """One augmented BUG step + coordinate carry + budget enforcement for a
-        block of ``m`` new columns at positions ``start .. start+m-1``."""
+        block of ``m`` new columns at the given ``positions`` (``(m,)`` int64; may
+        be non-contiguous when heavy-hitters are demoted back into the tail)."""
         m = int(block_k.shape[1])
+        if m == 0:
+            return
         self.u_k, self.b_k, rot_k = augmented_bug_step(
             self.u_k, self.b_k, block_k, self.rank, theta=self.theta
         )
@@ -506,7 +575,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.c_k = new_ck if self.c_k is None else torch.cat([self.c_k, new_ck], dim=1)
         self.c_v = new_cv if self.c_v is None else torch.cat([self.c_v, new_cv], dim=1)
         if self.track_positions:
-            pos = torch.arange(start, start + m, dtype=torch.int64, device=block_k.device)
+            pos = positions.to(dtype=torch.int64, device=block_k.device)
             self.mid_pos = pos if self.mid_pos is None else torch.cat([self.mid_pos, pos])
         if self.track_scores:
             sc = (
@@ -668,19 +737,25 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
 
     def observe_attention(self, mass: Tensor) -> None:
         """EMA-update retention scores from one decode step's attention mass over
-        the returned ``[sinks | quant | fp32 | recent]`` columns (``(L,)``,
+        the returned ``[sinks | hh | quant | fp32 | recent]`` columns (``(L,)``,
         aggregated over all query heads). Called by the attach() hook."""
         if not self.track_scores:
             return
-        s, q, f, rlen = self._sink_len(), self._q_len(), self._f_len(), self._recent_len()
-        if mass.shape != (s + q + f + rlen,):
+        s, hh = self._sink_len(), self._hh_len()
+        q, f, rlen = self._q_len(), self._f_len(), self._recent_len()
+        if mass.shape != (s + hh + q + f + rlen,):
             raise ValueError(
-                f"attention mass must have length {s + q + f + rlen} "
-                f"(sinks {s} + quant {q} + fp32 {f} + recent {rlen}), got {tuple(mass.shape)}"
+                f"attention mass must have length {s + hh + q + f + rlen} "
+                f"(sinks {s} + hh {hh} + quant {q} + fp32 {f} + recent {rlen}), "
+                f"got {tuple(mass.shape)}"
             )
         mass = mass.to(torch.float32)
         g = self.score_decay
         off = s
+        if hh > 0:
+            assert self.hh_score is not None
+            self.hh_score = g * self.hh_score + mass[off : off + hh]
+            off += hh
         if q > 0:
             assert self.q_score is not None
             self.q_score = g * self.q_score + mass[off : off + q]
@@ -755,9 +830,10 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             v_mid = v_mat[:, n_sink : n_sink + mid].to(torch.float32)
             for start in range(0, mid, self.prefill_block_size):
                 stop = min(mid, start + self.prefill_block_size)
-                self._absorb_columns(
-                    k_pre[:, start:stop], v_mid[:, start:stop], n_sink + start, None
+                pos = torch.arange(
+                    n_sink + start, n_sink + stop, dtype=torch.int64, device=k_pre.device
                 )
+                self._absorb_columns(k_pre[:, start:stop], v_mid[:, start:stop], pos, None)
         self.cumulative_length = t
         return key_states, value_states
 
@@ -784,7 +860,11 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             assert self.sink_v is not None
             parts_k.append(self.sink_k)
             parts_v.append(self.sink_v)
-        if self._mid_len() > 0:
+        if self._hh_len() > 0:  # SLASH exact tier: verbatim post-RoPE, like sinks
+            assert self.hh_k is not None and self.hh_v is not None
+            parts_k.append(self.hh_k)
+            parts_v.append(self.hh_v)
+        if self._q_len() + self._f_len() > 0:  # the low-rank (reconstructed) tail
             self._ensure_mid_cache()
             assert self._mid_k_cache is not None and self._mid_v_cache is not None
             parts_k.append(self._mid_k_cache)
@@ -796,13 +876,15 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         return self._to_hf(k_ret), self._to_hf(v_ret)
 
     def _mid_positions(self) -> Tensor:
-        """True positions of the retained middle columns, in assembly order
-        ``[quant | fp32]`` (contiguous by construction under FIFO)."""
+        """True positions of the retained **low-rank** columns (assembly order
+        ``[quant | fp32]``), for re-rotating their reconstruction. The exact
+        heavy-hitter tier is stored verbatim post-RoPE and is not included here.
+        Contiguous by construction under FIFO."""
         device = self.c_k.device if self.c_k is not None else torch.device("cpu")
         if not self.track_positions:
-            mid_len = self._mid_len()
-            mid_start = self.cumulative_length - self._recent_len() - mid_len
-            return torch.arange(mid_start, mid_start + mid_len, dtype=torch.int64, device=device)
+            lr_len = self._q_len() + self._f_len()
+            mid_start = self.cumulative_length - self._recent_len() - lr_len
+            return torch.arange(mid_start, mid_start + lr_len, dtype=torch.int64, device=device)
         parts = []
         if self._q_len() > 0:
             assert self.q_pos is not None
@@ -880,6 +962,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             self.u_v,
             self.b_v,
             self.c_v,
+            self.hh_k,  # SLASH exact tier: full 2n floats/token, like a whole token
+            self.hh_v,
         )
         total = sum(t.numel() for t in tensors if t is not None)
         if self.qk_codes is not None:
@@ -888,7 +972,15 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             code_entries = int(self.qk_codes.numel() + self.qv_codes.numel())
             total += math.ceil(code_entries * self.quant_bits / 32)
             total += int(self.qk_norm.numel() + self.qv_norm.numel())
-        bookkeeping = (self.mid_pos, self.q_pos, self.mid_score, self.q_score, self.ring_score)
+        bookkeeping = (
+            self.mid_pos,
+            self.q_pos,
+            self.mid_score,
+            self.q_score,
+            self.ring_score,
+            self.hh_pos,
+            self.hh_score,
+        )
         total += sum(t.numel() for t in bookkeeping if t is not None)
         return int(total)
 
@@ -952,6 +1044,7 @@ class BugStreamingCache(Cache):
         quant_bits: int | None = None,
         quant_budget: int = 0,
         quant_seed: int = 0,
+        hh_budget: int = 0,
     ) -> None:
         base = getattr(model, "model", model)
         rotary = getattr(base, "rotary_emb", None)
@@ -980,6 +1073,7 @@ class BugStreamingCache(Cache):
                 quant_bits=quant_bits,
                 quant_budget=quant_budget,
                 quant_bank=self._quant_bank,
+                hh_budget=hh_budget,
             )
             for _ in range(n_layers)
         ]

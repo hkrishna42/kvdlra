@@ -268,7 +268,9 @@ def test_quant_roundtrip_error_bounded(tiny_model: LlamaForCausalLM) -> None:
     demote_expected: dict[str, torch.Tensor] = {}
     orig_absorb = layer._absorb_columns
 
-    def spy(block_k: torch.Tensor, block_v: torch.Tensor, start: int, scores: object) -> None:
+    def spy(
+        block_k: torch.Tensor, block_v: torch.Tensor, positions: torch.Tensor, scores: object
+    ) -> None:
         from kvdlra.integrators.streaming_torch import augmented_bug_step
 
         assert layer.u_k is not None and layer.b_k is not None
@@ -276,7 +278,7 @@ def test_quant_roundtrip_error_bounded(tiny_model: LlamaForCausalLM) -> None:
             layer.u_k.clone(), layer.b_k.clone(), block_k, layer.rank, theta=layer.theta
         )
         demote_expected["ck"] = rot_k @ snap_ck
-        orig_absorb(block_k, block_v, start, cast(torch.Tensor | None, scores))
+        orig_absorb(block_k, block_v, positions, cast(torch.Tensor | None, scores))
 
     layer._absorb_columns = spy  # type: ignore[method-assign]
     for _ in range(4):
@@ -538,3 +540,181 @@ def test_attach_hook_records_and_seeds_scores(tiny_model: LlamaForCausalLM) -> N
     other_layer = other.layers[0]
     assert isinstance(other_layer, BugStreamingLayer)
     assert not other_layer._seen_observation
+
+
+# --------------------------------------------------------------------------
+# SLASH: exact heavy-hitter tier + low-rank residual (dominance program)
+# --------------------------------------------------------------------------
+
+
+def test_slash_constructor_validation(tiny_model: LlamaForCausalLM) -> None:
+    with pytest.raises(ValueError, match="requires retention='attn'"):
+        BugStreamingCache(tiny_model, rank=8, coord_budget=12, hh_budget=4)  # fifo default
+    with pytest.raises(ValueError, match="hh_budget must be >= 0"):
+        BugStreamingCache(tiny_model, rank=8, coord_budget=12, retention="attn", hh_budget=-1)
+    with pytest.raises(ValueError, match="requires an enabled low-rank middle"):
+        BugStreamingCache(tiny_model, rank=0, coord_budget=0, retention="attn", hh_budget=4)
+
+
+def test_slash_exact_mode_parity(tiny_model: LlamaForCausalLM) -> None:
+    # Full rank + generous budgets + an exact heavy-hitter tier: nothing is ever
+    # lost (low-rank tier is lossless at full rank; hh tier is verbatim), so
+    # logits must match DynamicCache to fp tolerance across absorb boundaries.
+    tiny_model.config._attn_implementation = "sdpa"
+    cache = BugStreamingCache(
+        tiny_model,
+        rank=N_FEATURES,
+        coord_budget=4096,
+        recent_window=8,
+        absorb_block=4,
+        retention="attn",
+        hh_budget=8,
+    )
+    ref = DynamicCache()
+    stream = _prompt(60, seed=21)
+    with torch.no_grad(), cache.attach(tiny_model):
+        out_a = tiny_model(stream[:, :25], past_key_values=cache, use_cache=True)
+        out_b = tiny_model(stream[:, :25], past_key_values=ref, use_cache=True)
+        assert torch.equal(out_a.logits, out_b.logits)
+        for t in range(25, 60):
+            tok = stream[:, t : t + 1]
+            out_a = tiny_model(tok, past_key_values=cache, use_cache=True)
+            out_b = tiny_model(tok, past_key_values=ref, use_cache=True)
+            assert torch.allclose(out_a.logits, out_b.logits, atol=1e-4)
+
+
+def test_slash_mask_consistency(tiny_model: LlamaForCausalLM) -> None:
+    tiny_model.config._attn_implementation = "sdpa"
+    cache = BugStreamingCache(
+        tiny_model,
+        rank=8,
+        coord_budget=12,
+        recent_window=8,
+        absorb_block=4,
+        retention="attn",
+        hh_budget=6,
+    )
+    layer = cache.layers[0]
+    assert isinstance(layer, BugStreamingLayer)
+    ids = _prompt(40, seed=22)
+    with torch.no_grad(), cache.attach(tiny_model):
+        out = tiny_model(ids, past_key_values=cache, use_cache=True)
+        for _ in range(90):
+            kv_length, kv_offset = layer.get_mask_sizes(1)
+            tok = out.logits[:, -1:].argmax(-1)
+            out = tiny_model(tok, past_key_values=cache, use_cache=True)
+            assert kv_length == layer.attended_length()
+            assert kv_offset + kv_length == layer.cumulative_length
+
+
+def test_slash_heavy_hitters_are_exact_and_highest_scored(
+    tiny_model: LlamaForCausalLM,
+) -> None:
+    # Drive the layer directly with hand-set ring scores so a known set of
+    # tokens must be promoted to the exact tier -- and verify (a) they are the
+    # top-scored, (b) their stored K/V are the VERBATIM post-RoPE tokens (exact,
+    # not a low-rank reconstruction).
+    layer = BugStreamingLayer(
+        rope=_rope(tiny_model),
+        rank=8,
+        coord_budget=12,
+        recent_window=4,
+        absorb_block=4,
+        n_sink=2,
+        retention="attn",
+        hh_budget=4,
+    )
+    g = torch.Generator().manual_seed(23)
+    layer.update(*_kv(10, g))  # prefill -> low-rank tail only (hh empty)
+    assert layer._hh_len() == 0
+    # Feed decode tokens; before each absorb set the ring scores so positions
+    # 12,13 (first two graduating) are very high -> must land in hh and stay.
+    verbatim: dict[int, torch.Tensor] = {}
+    pos = 10
+    for _ in range(12):
+        k, v = _kv(1, g)
+        verbatim[pos] = layer._to_mat(k)[:, 0].clone()  # post-RoPE key column
+        layer.update(k, v)
+        # after each step, boost the score of the two oldest ring tokens
+        if layer.ring_score is not None and layer.ring_score.shape[0] >= 2:
+            layer.ring_score[0] += 100.0
+            layer.ring_score[1] += 100.0
+        layer._seen_observation = True
+        pos += 1
+    assert layer._hh_len() == 4
+    assert layer.hh_k is not None and layer.hh_pos is not None
+    # Every hh token's stored K equals the verbatim post-RoPE key (exact tier).
+    for j, p in enumerate(layer.hh_pos.tolist()):
+        if p in verbatim:
+            assert torch.allclose(layer.hh_k[:, j], verbatim[p], atol=1e-5)
+
+
+def test_slash_memory_counted_honestly(tiny_model: LlamaForCausalLM) -> None:
+    # hh tier costs 2n floats/token (K+V verbatim) + 1 position + 1 score, all
+    # counted; total memory must be bounded and equal the independent recount.
+    cache = BugStreamingCache(
+        tiny_model,
+        rank=8,
+        coord_budget=12,
+        recent_window=8,
+        absorb_block=4,
+        n_sink=2,
+        retention="attn",
+        hh_budget=6,
+    )
+    ids = _prompt(30, seed=24)
+    with torch.no_grad(), cache.attach(tiny_model):
+        out = tiny_model(ids, past_key_values=cache, use_cache=True)
+        for _ in range(60):
+            tok = out.logits[:, -1:].argmax(-1)
+            out = tiny_model(tok, past_key_values=cache, use_cache=True)
+    for layer in cache.layers:
+        assert isinstance(layer, BugStreamingLayer)
+        assert layer._hh_len() == 6  # tier full
+        base = sum(
+            int(t.numel())
+            for t in (
+                layer.sink_k,
+                layer.sink_v,
+                layer.recent_k,
+                layer.recent_v,
+                layer.u_k,
+                layer.b_k,
+                layer.c_k,
+                layer.u_v,
+                layer.b_v,
+                layer.c_v,
+                layer.hh_k,
+                layer.hh_v,
+            )
+            if t is not None
+        )
+        # bookkeeping: mid_pos + mid_score (f_len each) + hh_pos + hh_score
+        # (hh_len each) + ring_score (recent_len).
+        book = layer._f_len() * 2 + layer._hh_len() * 2 + layer._recent_len()
+        assert layer.stored_state_numel() == base + book
+
+
+def test_slash_memory_constant(tiny_model: LlamaForCausalLM) -> None:
+    cache = BugStreamingCache(
+        tiny_model,
+        rank=8,
+        coord_budget=12,
+        recent_window=8,
+        absorb_block=4,
+        retention="attn",
+        hh_budget=8,
+    )
+    ids = _prompt(40, seed=25)
+    mems = []
+    with torch.no_grad(), cache.attach(tiny_model):
+        out = tiny_model(ids, past_key_values=cache, use_cache=True)
+        for _ in range(200):
+            tok = out.logits[:, -1:].argmax(-1)
+            out = tiny_model(tok, past_key_values=cache, use_cache=True)
+            mems.append(cache.stored_state_numel())
+    assert max(mems[80:]) <= max(mems[:80])
+    layer = cache.layers[0]
+    assert isinstance(layer, BugStreamingLayer)
+    assert layer.cumulative_length == 240
+    assert layer._hh_len() == 8

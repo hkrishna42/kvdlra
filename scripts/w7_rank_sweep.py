@@ -67,12 +67,28 @@ JSON_BEGIN = "===W7_RANKSWEEP_JSON_BEGIN==="
 JSON_END = "===W7_RANKSWEEP_JSON_END==="
 
 
-def coord_for_rank(budget: int, n: int, rank: int, recent: int, absorb: int) -> int:
-    """Largest fp32 coordinate coverage ``W`` for ``rank`` at a FROZEN ``budget``:
-    ``budget = 2n*N_SINK + 2n*ring + 2n*rank + 2*rank^2 + 2*rank*W`` per layer."""
+def coord_for_config(
+    budget: int, n: int, rank: int, recent: int, absorb: int, retention: str, hh_budget: int = 0
+) -> int:
+    """Largest fp32 coordinate coverage ``W`` for ``rank`` (and an optional
+    exact heavy-hitter tier of ``hh_budget`` tokens) at a FROZEN ``budget``,
+    counting the retention overhead HONESTLY (matched memory).
+
+    fixed = sinks + recent ring + basis(2n*r) + core(2r^2) [+ ring_score(ring)
+    when retention="attn"]; each fp32 coord column costs ``2*rank`` (+2 for
+    position + score under attn); each exact heavy-hitter costs ``2n`` (+2 for
+    position + score, always attn). Mirrors ``BugStreamingLayer.
+    stored_state_numel`` exactly, so measured ``mem_max`` audits ``<= budget``."""
     ring = recent + absorb - 1
     fixed = 2 * n * N_SINK + 2 * n * ring + 2 * n * rank + 2 * rank * rank
-    return max(1, (budget - fixed) // (2 * rank))
+    if retention == "attn":
+        fixed += ring  # ring_score buffer (high-water)
+        per_f = 2 * rank + 2  # coords K+V + position + score
+        per_hh = 2 * n + 2  # verbatim K+V + position + score
+    else:  # fifo: no positions/scores/ring buffer
+        per_f = 2 * rank
+        per_hh = 2 * n
+    return max(1, (budget - fixed - per_hh * hh_budget) // per_f)
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
@@ -107,16 +123,25 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "score_decay": args.score_decay,
         "docs": {},
     }
-    # Solve every method to the FROZEN budget.
+    # Solve every method to the FROZEN budget (honest retention accounting).
     morph_c = morph_capacity_for_budget(budget, n, h_kv, args.morph_recent)
-    coords = {r: coord_for_rank(budget, n, r, args.recent_window, args.absorb_block) for r in ranks}
+    rw, ab, ret = args.recent_window, args.absorb_block, args.retention
+    coords = {r: coord_for_config(budget, n, r, rw, ab, ret) for r in ranks}
+    hh_list = [int(x) for x in args.hh_budgets.split(",") if x] if args.hh_budgets else []
+    # SLASH variants at the fixed ref_rank: each exact heavy-hitter costs 2n+2,
+    # taken out of the coordinate coverage W (matched memory).
+    slash_rank = args.slash_rank if args.slash_rank else args.ref_rank
+    slash = {
+        hh: coord_for_config(budget, n, slash_rank, rw, ab, "attn", hh_budget=hh) for hh in hh_list
+    }
+    results["hh_budgets"] = hh_list
     print(
         f"budget {budget} floats/layer (~{budget / (2 * n):.0f} tok-eq); "
-        f"morph_C={morph_c}; W(r)={coords}",
+        f"morph_C={morph_c}; W(r)={coords}; SLASH r{args.ref_rank} W(hh)={slash}",
         flush=True,
     )
 
-    tag = "bugA" if args.retention == "attn" else "bug"
+    tag = "bugA" if ret == "attn" else "bug"
 
     def make_methods() -> dict[str, Cache | None]:
         m: dict[str, Cache | None] = {"full": None}
@@ -125,11 +150,23 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 model,
                 rank=r,
                 coord_budget=coords[r],
-                recent_window=args.recent_window,
-                absorb_block=args.absorb_block,
+                recent_window=rw,
+                absorb_block=ab,
                 n_sink=N_SINK,
-                retention=args.retention,
+                retention=ret,
                 score_decay=args.score_decay,
+            )
+        for hh in hh_list:
+            m[f"slash-r{slash_rank}-h{hh}-W{slash[hh]}"] = BugStreamingCache(
+                model,
+                rank=slash_rank,
+                coord_budget=slash[hh],
+                recent_window=rw,
+                absorb_block=ab,
+                n_sink=N_SINK,
+                retention="attn",
+                score_decay=args.score_decay,
+                hh_budget=hh,
             )
         m[f"morph-C{morph_c}-R{args.morph_recent}"] = MorphKVCache(
             model, capacity=morph_c, recent_window=args.morph_recent
@@ -229,6 +266,8 @@ def main() -> None:
     parser.add_argument("--recent-window", type=int, default=32)
     parser.add_argument("--absorb-block", type=int, default=16)
     parser.add_argument("--morph-recent", type=int, default=32)
+    parser.add_argument("--hh-budgets", default="", help="SLASH exact-tier sizes, e.g. 8,16,24")
+    parser.add_argument("--slash-rank", type=int, default=0, help="SLASH rank (0=ref-rank)")
     parser.add_argument("--retention", default="attn", choices=["attn", "fifo", "energy"])
     parser.add_argument("--score-decay", type=float, default=0.97)
     parser.add_argument("--seed", type=int, default=0)

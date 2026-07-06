@@ -137,7 +137,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     results["hh_budgets"] = hh_list
     print(
         f"budget {budget} floats/layer (~{budget / (2 * n):.0f} tok-eq); "
-        f"morph_C={morph_c}; W(r)={coords}; SLASH r{args.ref_rank} W(hh)={slash}",
+        f"morph_C={morph_c}; W(r)={coords}; SLASH r{slash_rank} W(hh)={slash}",
         flush=True,
     )
 

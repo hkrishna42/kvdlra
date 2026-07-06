@@ -318,6 +318,28 @@ energy retention are clean negatives; the tier-2 gap is real and un-closed.
 | moderate (≥~2× rank/token) | FIFO retention (mech. 1) | **bugA** | closes + reverses the gap |
 | aggressive (rank ≪ history/token) | rank squeeze (mech. 3) | morph | narrows but does not close |
 
+**Latency — the cost side of the ledger (the honest counterweight).** Per-token
+decode p50 at 8B on the RTX 6000 Ada (from the same runs):
+
+| method | ms/token (tier 1) | note |
+|---|---:|---|
+| full | 5.9 | O(T) upper bound |
+| snapkvD | 9.4 | prunes every 16 steps |
+| bug (FIFO) | 12.6 | |
+| morph | 13.0 | |
+| **bugA** | **19.0** | **slowest bounded method** |
+
+Week 6's headline that BUG was the *fastest* adaptive constant-memory method
+(it beat MorphKV per-token) **no longer holds for bugA**: the attention-scoring
+`attach()` hook recomputes an attention pass every step, and bugA attends over
+~5× more positions than eviction (its more-history-per-byte trade), so it is now
+~46% slower than MorphKV. The honest value proposition is therefore a **trade,
+not a free win**: bugA buys the best-shaped perplexity curve (near-lossless
+early + flat tail; a thin aggregate win over eviction at the moderate budget) at
+the cost of being the slowest method. This directly motivates a cheaper scoring
+path (an O(1) proxy that keeps A's benefit at BUG's original speed) as a
+first-class follow-up, independent of the accuracy work below.
+
 ## What's next (motivated by the tier-2 residual)
 
 The remaining gap is now precisely localized and points at the *other* two

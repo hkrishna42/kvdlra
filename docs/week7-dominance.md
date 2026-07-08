@@ -138,6 +138,34 @@ adds only a sliver.
   retention/heavy-hitter cleverness overcomes a structural overhead — only
   *removing* the overhead would, and low-rank cannot remove its own basis.
 
+## DLRA without BUG — is the subspace tracker leaving accuracy on the table?
+
+BUG is one DLRA integrator; the tracker could be swapped for another integrator
+(PSI, projected-RK) or a non-DLRA streaming sketch. The strongest non-DLRA
+competitor for our exact setting (sketching a streaming data matrix) is
+**Frequent Directions** (Liberty 2013) — deterministic, with a provable
+covariance bound. Implemented (`src/kvdlra/integrators/frequent_directions.py`,
+5 tests) and compared to BUG / oracle / incremental-SVD on the same real KV
+streams and metric as Week 2 (layer 8, pre-RoPE, 5 docs, mean relative-Frobenius
+reconstruction error; lower is better):
+
+| rank | oracle | BUG | FD (matched mem) | FD (2× mem) | incremental SVD |
+|---:|---:|---:|---:|---:|---:|
+| 16 | 0.2996 | **0.3017** | 0.3223 | 0.3003 | 0.3058 |
+| 32 | 0.2290 | **0.2313** | 0.2442 | 0.2292 | 0.2351 |
+| 64 | 0.1567 | **0.1581** | 0.1629 | 0.1567 | 0.1608 |
+| 128 | 0.0980 | **0.0994** | 0.0991 | 0.0980 | 0.1017 |
+
+**The tracker is NOT leaving accuracy on the table.** BUG is within ~0.7-1.4% of
+the oracle, and at **matched memory it beats Frequent Directions** at ranks
+16/32/64 and ties at 128 — and beats incremental SVD everywhere. FD only reaches
+oracle quality at **2× the memory** (`ell=2r`), so BUG is the more
+*memory-efficient* tracker for the same accuracy. Conclusion: the DLRA/BUG
+subspace tracker is a settled, well-justified choice; swapping integrators (FD,
+PSI, projected-RK) cannot close the gap to the oracle because BUG is already
+essentially at it. Any real gain must come from *changing what is stored*, not
+*how the subspace is tracked* — i.e. the overhead floor, below.
+
 **Where a decisive win actually lives (the shorthand/codebook direction).** The
 one structural fix for the overhead floor is to make the per-token cost a shared,
 amortized *shorthand* — a learned/product **vector-quantization codebook** whose

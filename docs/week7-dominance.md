@@ -260,3 +260,14 @@ frontier is amortizing the per-token cost with a **shared vector-quantization
 codebook** (the shorthand/MILLION direction) — which needs calibration data and
 solves the streaming-requant problem that killed variant D. That remains the one
 open, higher-variance fork; everything reachable without it is now mapped.
+
+**DECISION (committed): pursue the codebook direction — see
+`docs/week8-codebook-plan.md`.** The plan is CodeBUG (BUG's near-oracle subspace
++ product-quantized coordinates into a shared, calibrated codebook), targeting a
+single falsifiable number: aggregate ppl **< morph** at the aggressive budget
+(1B ~89 tok-eq: beat 18.71; 8B tier-2: beat 8.39), at honestly matched memory.
+The load-bearing research risk is the requant-carry compounding that killed
+variant D; the default solution is **anchor-basis freezing** (code coordinates
+once against a frozen `U_ref`, never rotate coded columns). Calibration breaks
+the training-free stance (accepted, standard). Kickoff + multi-agent launch
+prompt in `next-session-prompt.md`.

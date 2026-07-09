@@ -71,12 +71,30 @@ uv run python scripts/w4_head_to_head.py --ratios 0.5 0.75 0.9 \
   [RoPE pitfall](docs/notes/rope-pitfall.md), [TurboQuant×RoPE](docs/notes/turboquant-rope-interaction.md)
 - `paper/` — arXiv-style preprint draft (`main.tex`)
 
+## Status — decode-time streaming (Weeks 6–7) and the dominance program
+
+The project's real niche is **constant-memory decode**: `BugStreamingCache` with
+attention-scored coordinate retention wins the moderate-compression regime
+(1B: 10.62 vs MorphKV 11.81) and **un-inverts an 8B deep-horizon loss** to
+eviction (bugA 7.71 < morph 7.74). A follow-up *dominance program* asked whether
+BUG can *defeat* eviction everywhere and found — honestly — **no**: a regime
+split bounded by two *measured* walls, a near-oracle tracking ceiling (BUG beats
+Frequent Directions, ~1% off the oracle) and a structural basis-overhead floor
+(85% of a tiny budget, which whole-token eviction doesn't pay), so eviction wins
+extreme compression. Full accounting in `docs/week7.md` and
+`docs/week7-dominance.md`.
+
+**Next (committed): Week 8 — CodeBUG** (`docs/week8-codebook-plan.md`): amortize
+the per-token cost with a shared, calibrated product-quantization codebook on the
+coordinates, targeting a single falsifiable number — beat eviction at the
+aggressive budget at matched memory.
+
 ## Honest caveats
 
 Absolute low-rank compression is moderate — the heavy-tailed KV spectrum limits pure
-low-rank, and aggressive ranks cost real perplexity. Results are WikiText-2 perplexity at 1B
-scale (not long-context LongBench/RULER); reported memory is the factored-storage cost.
-8B scale-up is a documented follow-up. See each week's writeup for the full accounting.
+low-rank, and aggressive ranks cost real perplexity. Results are WikiText-2/103 perplexity at
+1B–8B scale (not long-context LongBench/RULER); reported memory is the dtype-agnostic
+factored-storage cost, all buffers counted. See each week's writeup for the full accounting.
 
 ## License
 

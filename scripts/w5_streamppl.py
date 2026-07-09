@@ -70,9 +70,11 @@ def bug_budget_floats(
     n: int, rank: int, coord_budget: int, recent_window: int, absorb_block: int
 ) -> int:
     """Worst-case stored floats per layer for one BUG cache configuration:
-    sinks + recent ring at its high-water mark + (U, B, C) for keys AND values."""
+    sinks + recent ring at its high-water mark + (U, B, C) for keys AND values.
+    The core ``B`` is diagonal (see ``BugStreamingLayer.stored_state_numel``), so
+    it costs ``r`` per stream, not ``r^2``."""
     ring = recent_window + absorb_block - 1
-    return 2 * n * N_SINK + 2 * n * ring + 2 * n * rank + 2 * rank * coord_budget + 2 * rank * rank
+    return 2 * n * N_SINK + 2 * n * ring + 2 * n * rank + 2 * rank * coord_budget + 2 * rank
 
 
 def solve_bug_variant(
@@ -99,7 +101,7 @@ def solve_bug_variant(
     layer) come off the top.
     """
     ring = recent_window + absorb_block - 1
-    fixed = 2 * n * N_SINK + 2 * n * ring + 2 * n * rank + 2 * rank * rank
+    fixed = 2 * n * N_SINK + 2 * n * ring + 2 * n * rank + 2 * rank
     pool = budget - fixed  # the baseline spends all of this on 2*rank*W fp32 coords
     per_f = 2 * rank
     per_q_codes = 2.0 * rank * quant_bits / 32.0  # K+V codes, float-equivalents

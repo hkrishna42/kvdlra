@@ -364,14 +364,13 @@ def test_quant_memory_counted_honestly(tiny_model: LlamaForCausalLM) -> None:
                 layer.recent_k,
                 layer.recent_v,
                 layer.u_k,
-                layer.b_k,
                 layer.c_k,
                 layer.u_v,
-                layer.b_v,
                 layer.c_v,
             )
             if t is not None
         )
+        base += 2 * int(cast(torch.Tensor, layer.b_k).shape[0])  # cores counted diagonal (r)
         q, f, rlen = layer._q_len(), layer._f_len(), layer._recent_len()
         assert q == 8 and f == 8  # both tiers full after 40 steps
         r_k = int(cast(torch.Tensor, layer.qk_codes).shape[1])
@@ -679,16 +678,15 @@ def test_slash_memory_counted_honestly(tiny_model: LlamaForCausalLM) -> None:
                 layer.recent_k,
                 layer.recent_v,
                 layer.u_k,
-                layer.b_k,
                 layer.c_k,
                 layer.u_v,
-                layer.b_v,
                 layer.c_v,
                 layer.hh_k,
                 layer.hh_v,
             )
             if t is not None
         )
+        base += 2 * int(cast(torch.Tensor, layer.b_k).shape[0])  # cores counted diagonal (r)
         # bookkeeping: mid_pos + mid_score (f_len each) + hh_pos + hh_score
         # (hh_len each) + ring_score (recent_len).
         book = layer._f_len() * 2 + layer._hh_len() * 2 + layer._recent_len()
@@ -828,8 +826,6 @@ def test_merge_memory_constant_and_counted(tiny_model: LlamaForCausalLM) -> None
             layer.c_v,
             layer.u_k,
             layer.u_v,
-            layer.b_k,
-            layer.b_v,
             layer.sink_k,
             layer.sink_v,
             layer.recent_k,
@@ -837,5 +833,6 @@ def test_merge_memory_constant_and_counted(tiny_model: LlamaForCausalLM) -> None
         )
         if t is not None
     )
+    base += 2 * int(cast(torch.Tensor, layer.b_k).shape[0])  # cores counted diagonal (r)
     book = layer._f_len() * 2  # mid_pos + mid_weight (no scores: retention=fifo)
     assert layer.stored_state_numel() == base + book

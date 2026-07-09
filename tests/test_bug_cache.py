@@ -338,3 +338,26 @@ def test_reset_allows_reuse(tiny_model: LlamaForCausalLM) -> None:
         layer.reset()
     out = _generate(tiny_model, _prompt(20, seed=3), cache, 10)
     assert out.shape[0] == 10
+
+
+def test_core_is_diagonal_so_counted_as_r(tiny_model: LlamaForCausalLM) -> None:
+    # The square-root core B is always diag(sigma); stored_state_numel counts it
+    # as its r diagonal entries (deployable footprint), not r^2. Pin both facts.
+    cache = BugStreamingCache(tiny_model, rank=8, coord_budget=16, recent_window=8, absorb_block=4)
+    ids = _prompt(30)
+    with torch.no_grad():
+        out = tiny_model(ids, past_key_values=cache, use_cache=True)
+        for _ in range(50):
+            tok = out.logits[:, -1:].argmax(-1)
+            out = tiny_model(tok, past_key_values=cache, use_cache=True)
+    layer = cache.layers[0]
+    assert isinstance(layer, BugStreamingLayer)
+    assert layer.b_k is not None and layer.b_v is not None
+    for core in (layer.b_k, layer.b_v):
+        off = (core - torch.diag(torch.diag(core))).abs().max()
+        assert float(off) == 0.0  # exactly diagonal
+    # stored_state_numel counts the core as r (min dim), not r*r.
+    r = layer.b_k.shape[0]
+    counted = layer.stored_state_numel()
+    dense = counted + 2 * (r * r - r)  # what it would be if B were counted dense
+    assert counted < dense  # the diagonal saving is real

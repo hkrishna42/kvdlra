@@ -82,15 +82,15 @@ def coord_for_config(
     counting the retention/merge overhead HONESTLY (matched memory).
 
     Mirrors ``BugStreamingLayer.stored_state_numel``: fixed = sinks + recent ring
-    + basis(2n*r) + core(2r^2) [+ ring_score(ring) when retention="attn"]; each
-    fp32 coord column costs ``2*rank`` + 1 (position, whenever positions are
-    tracked = attn/energy OR merge) + 1 (attn score) + 1 (merge weight); each
-    exact heavy-hitter costs ``2n`` + 2. So measured ``mem_max`` audits
-    ``<= budget`` for every method."""
+    + basis(2n*r) + core(2r, the core is diagonal) [+ ring_score(ring) when
+    retention="attn"]; each fp32 coord column costs ``2*rank`` + 1 (position,
+    whenever positions are tracked = attn/energy OR merge) + 1 (attn score) + 1
+    (merge weight); each exact heavy-hitter costs ``2n`` + 2. So measured
+    ``mem_max`` audits ``<= budget`` for every method."""
     ring = recent + absorb - 1
     track_pos = retention != "fifo" or merge
     track_score = retention == "attn"
-    fixed = 2 * n * N_SINK + 2 * n * ring + 2 * n * rank + 2 * rank * rank
+    fixed = 2 * n * N_SINK + 2 * n * ring + 2 * n * rank + 2 * rank
     if track_score:
         fixed += ring  # ring_score buffer (high-water)
     per_f = 2 * rank + int(track_pos) + int(track_score) + int(merge)

@@ -1017,15 +1017,21 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             self.recent_k,
             self.recent_v,
             self.u_k,
-            self.b_k,
             self.c_k,
             self.u_v,
-            self.b_v,
             self.c_v,
             self.hh_k,  # SLASH exact tier: full 2n floats/token, like a whole token
             self.hh_v,
         )
         total = sum(t.numel() for t in tensors if t is not None)
+        # The square-root core B is *provably diagonal* (``augmented_bug_step``
+        # returns ``diag(sigma)`` every step and nothing rotates it between
+        # steps), so its deployable footprint is its ``r`` diagonal entries, not
+        # ``r^2`` -- counted honestly here (same convention as quant codes at
+        # bits/32 rather than their uint8 storage). ``tests`` pin the diagonality.
+        for core in (self.b_k, self.b_v):
+            if core is not None:
+                total += int(min(core.shape))
         if self.qk_codes is not None:
             assert self.qk_norm is not None and self.qv_codes is not None
             assert self.qv_norm is not None and self.quant_bits is not None

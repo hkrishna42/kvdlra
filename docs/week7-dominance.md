@@ -180,3 +180,83 @@ would collapse BUG's coverage cost the way VQ collapses eviction's. Caveat: the
 **catastrophic** under the streaming requantize carry, and a vector codebook
 needs calibration data (a break from the training-free stance). This is a real
 fork, flagged for a decision rather than pursued blindly.
+
+## Hybrid brainstorm round (JPEG / lossless / merge)
+
+A second round explored `(BUG + X)` hybrids inspired by classical compression.
+The honest outcomes:
+
+- **Hierarchical coordinate merging (BUG + token-merging / JPEG2000 wavelet
+  analog) — NEGATIVE.** Instead of *dropping* the oldest coordinate columns on
+  overflow, *merge* adjacent equal-weight pairs into count-weighted centroids (a
+  dyadic pyramid: unbounded history at geometrically decaying resolution,
+  constant memory). Result at the aggressive budget (1B, doc 0): `bugM ≈ bug`
+  (r24 20.99 vs 20.95; r8 identical, r32 slightly worse). Mechanism: without the
+  **log-count softmax key correction**, a merged super-column of `m` tokens is
+  attended with a single token's weight, so it is under-weighted `m×` and
+  effectively **ignored** — the merged history is present but invisible to
+  attention. The documented approximation is falsified; making merging pay off
+  needs attention-level surgery (a learned/log-count gate), the same invasive
+  step the linear-attention tail needs. Built, tested (5 tests), reported
+  straight. `merge` flag on `BugStreamingCache`.
+
+- **JPEG pipeline mapped onto BUG.** DCT ≈ BUG's basis but *adaptive* (KLT is the
+  optimal energy-compacting transform; JPEG's fixed DCT is a data-oblivious
+  approximation whose only advantage is zero basis-storage — the overhead-floor
+  fix, = the codebook direction). Quantization ≈ Week-7 variant D (catastrophic
+  under streaming requant); JPEG's variable bit-allocation is the one untried
+  twist but inherits D's failure mode. Entropy coding is genuinely new and
+  lossless, but **breaks KV random access and the constant-memory guarantee**
+  (variable-length codes), which is why no production KV-quant method uses it.
+  Deeper point: JPEG's 10× comes from *image-signal redundancy*, not the
+  pipeline; we measured KV states are far less compressible (~10% error even at
+  r=128/512), so the pipeline transfers but the compressibility does not.
+
+- **Lossless matrix compression (CSR / LZ4 / bit-packing) — wrong structure.**
+  These exploit sparsity / repetition / limited range; BUG's `U`, `C` are dense,
+  high-entropy, continuous floats (low-rank ≠ sparse). Lossless is
+  entropy-bounded, and any such trick shrinks eviction's stored tokens equally,
+  so it cannot change the matched-memory ranking (why we count dtype-agnostic
+  floats).
+
+- **Diagonal-core lossless win — REAL, implemented.** The one genuine lossless
+  saving the round surfaced: BUG's square-root core `B` is *provably diagonal*
+  (`augmented_bug_step` returns `diag(σ)` every step; nothing rotates it), yet we
+  stored/counted it as a dense `r×r`. That over-counted BUG's memory by `r²−r`
+  per stream — **~2% of budget at r=32, ~6% at r=128** — meaning we had been
+  *under-provisioning BUG in every prior experiment*. Fixed: the core is now
+  counted at its `r` diagonal entries (deployable footprint, same convention as
+  quant codes at bits/32) and the budget solvers charge `2r` not `2r²`, freeing
+  that memory for coordinate coverage. At the moderate tier this raises bugA's
+  coverage from **W=1015 → W=1141 (+12.4%)** at identical 527360-float budget.
+
+  **But the freed budget does NOT buy a ppl win** (1B, doc 0, moderate tier,
+  budget held at 527360, morph unchanged at 11.682): bugA-r128 goes
+  W=1015→1141 and ppl **9.772 → 9.793** — a slight *regression*. Reason: at the
+  moderate tier bugA-r128 is already *at/past its coordinate-coverage sweet
+  spot* (the same run family showed `slash-h32`, with *less* low-rank coverage +
+  a few exact tokens, was best at 9.713), so more low-rank coverage adds
+  approximate old tokens that don't help and marginally hurt. **Verdict:** the
+  diagonal-core fix is a *correct, honest accounting improvement* (BUG's true
+  footprint really is `2r` less per stream, and prior results had been charging
+  BUG for phantom memory) — but it is *not* a free quality win, because coverage
+  is not the binding constraint at the moderate tier. It would help where
+  coverage *is* binding (reallocated to rank, or to SLASH exact tokens), not as
+  extra low-rank width. Kept for correctness; reported straight.
+
+## Bottom line of the whole dominance program
+
+Across a 6-lens ideation panel and every hybrid built and measured — rank↔
+coverage water-filling, SLASH (exact + low-rank), quantized aging (D),
+Frequent-Directions tracker swap, hierarchical merge, the diagonal-core
+accounting fix — the conclusion is consistent and honest: **BUG is a
+near-oracle, correct, constant-memory streaming cache that decisively wins the
+moderate-compression regime and loses the extreme-compression regime, and no
+tuning-level change moves that line.** The two walls are measured, not
+conjectured: the *near-oracle tracking ceiling* (FD/PSI can't beat BUG; BUG is
+within ~1% of the oracle) and the *structural basis-overhead floor* (85% of a
+tiny budget, which eviction doesn't pay). The only lever that could change the
+frontier is amortizing the per-token cost with a **shared vector-quantization
+codebook** (the shorthand/MILLION direction) — which needs calibration data and
+solves the streaming-requant problem that killed variant D. That remains the one
+open, higher-variance fork; everything reachable without it is now mapped.

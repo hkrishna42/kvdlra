@@ -299,6 +299,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         quant_budget: int = 0,
         quant_bank: _QuantBank | None = None,
         hh_budget: int = 0,
+        merge: bool = False,
     ) -> None:
         super().__init__()  # type: ignore[no-untyped-call]
         if rank < 0 or coord_budget < 0:
@@ -338,12 +339,17 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.quant_bits = quant_bits
         self.quant_budget = quant_budget
         self.hh_budget = hh_budget
+        self.merge = merge
         # rank=0 / coord_budget=0 => no low-rank middle => StreamingLLM baseline.
         self.lowrank_enabled = rank >= 1 and coord_budget >= 1
         if quant_budget > 0 and not self.lowrank_enabled:
             raise ValueError("quant_budget > 0 requires an enabled low-rank middle")
         if hh_budget > 0 and not self.lowrank_enabled:
             raise ValueError("hh_budget > 0 requires an enabled low-rank middle")
+        if merge and not self.lowrank_enabled:
+            raise ValueError("merge requires an enabled low-rank middle")
+        if merge and quant_budget > 0:
+            raise ValueError("merge and the quantized tier are mutually exclusive")
         # SLASH exact heavy-hitter tier (Week-7 dominance program).
         self.hh_enabled = hh_budget >= 1 and self.lowrank_enabled
         self._quant_bank = (
@@ -353,7 +359,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         )
         # Adaptive retention needs true per-column positions (the middle stops
         # being contiguous); attention scoring additionally needs score buffers.
-        self.track_positions = self.lowrank_enabled and retention != "fifo"
+        self.track_positions = self.lowrank_enabled and (retention != "fifo" or merge)
         self.track_scores = self.lowrank_enabled and retention == "attn"
         self.cumulative_length = 0
         self._reset_state()
@@ -387,6 +393,9 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.hh_v: Tensor | None = None
         self.hh_pos: Tensor | None = None  # (hh_len,) int64 true positions
         self.hh_score: Tensor | None = None  # (hh_len,) fp32 EMA attention mass
+        # Hierarchical merge (Week-7 dominance): token count each fp32 column
+        # represents (1 = a single token; >1 = a merged centroid super-column).
+        self.mid_weight: Tensor | None = None  # (f_len,) fp32
         self.ring_score: Tensor | None = None  # (recent_len,) fp32
         self._seen_observation = False
         self._warned_unattached = False
@@ -584,6 +593,9 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
                 else torch.zeros(m, dtype=torch.float32, device=block_k.device)
             )
             self.mid_score = sc if self.mid_score is None else torch.cat([self.mid_score, sc])
+        if self.merge:
+            w = torch.ones(m, dtype=torch.float32, device=block_k.device)
+            self.mid_weight = w if self.mid_weight is None else torch.cat([self.mid_weight, w])
         self._enforce_budgets()
 
     # ------------------------------------------------- retention + quant tier
@@ -631,6 +643,9 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         """Evict down to ``coord_budget`` (demoting to the quantized tier when
         enabled) and then the quantized tier down to ``quant_budget``."""
         f_over = self._f_len() - self.coord_budget
+        if f_over > 0 and self.merge:
+            self._merge_down(f_over)
+            f_over = 0
         if f_over > 0:
             assert self.c_k is not None and self.c_v is not None
             evict, keep = self._split_indices(f_over, tier="fp32")
@@ -665,6 +680,51 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             if self.track_scores:
                 assert self.q_score is not None
                 self.q_score = self.q_score[keep]
+
+    def _merge_down(self, n_out: int) -> None:
+        """Hierarchical **dyadic** merge (Week-7 dominance): instead of *dropping*
+        the oldest ``n_out`` fp32 coordinate columns, collapse ``n_out`` adjacent
+        **equal-weight** pairs into weighted centroids -- so the middle keeps an
+        unbounded history at geometrically decaying resolution (recent = per-token,
+        old = coarse super-columns with weights ``..4,2,1``, a bounded count per
+        level like a binary counter), constant memory. Merging only equal-weight
+        neighbours keeps the pyramid balanced (a Compressive-Transformer / exponential
+        -histogram schedule) rather than letting one blob absorb all history.
+
+        Centroids are token-count-weighted -- a uniform-attention approximation
+        within a group; the log-count softmax correction that would make merged
+        *keys* exact is not applied (a documented, falsifiable approximation).
+        The reconstruction ``U C`` and position re-rotation treat a merged column
+        like any other, at its count-weighted mean position."""
+        assert self.c_k is not None and self.c_v is not None and self.mid_weight is not None
+        for _ in range(n_out):
+            length = self._f_len()
+            if length < 2:
+                return
+            w = self.mid_weight
+            eq = (w[:-1] == w[1:]).nonzero(as_tuple=False).flatten()
+            i = int(eq[0].item()) if eq.numel() > 0 else 0  # oldest equal pair, else oldest
+            wsum = w[i] + w[i + 1]
+            wi, wj = w[i].clone(), w[i + 1].clone()
+
+            def _merge_col(
+                c: Tensor, j: int = i, s: Tensor = wsum, a: Tensor = wi, b: Tensor = wj
+            ) -> Tensor:
+                cen = (c[:, j : j + 1] * a + c[:, j + 1 : j + 2] * b) / s
+                return torch.cat([c[:, :j], cen, c[:, j + 2 :]], dim=1)
+
+            self.c_k = _merge_col(self.c_k)
+            self.c_v = _merge_col(self.c_v)
+            self.mid_weight = torch.cat([w[:i], wsum.reshape(1), w[i + 2 :]])
+            if self.track_positions:
+                assert self.mid_pos is not None
+                p = self.mid_pos
+                mp = ((p[i] * w[i] + p[i + 1] * w[i + 1]) / wsum).round().to(torch.int64)
+                self.mid_pos = torch.cat([p[:i], mp.reshape(1), p[i + 2 :]])
+            if self.track_scores:
+                assert self.mid_score is not None
+                sc = self.mid_score
+                self.mid_score = torch.cat([sc[:i], (sc[i] + sc[i + 1]).reshape(1), sc[i + 2 :]])
 
     def _quantize_cols(self, cols: Tensor, stream: str) -> tuple[Tensor, Tensor]:
         """PolarQuant coordinate columns ``(r, m)`` -> ``(codes (m, r) uint8,
@@ -980,6 +1040,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             self.ring_score,
             self.hh_pos,
             self.hh_score,
+            self.mid_weight,
         )
         total += sum(t.numel() for t in bookkeeping if t is not None)
         return int(total)
@@ -1045,6 +1106,7 @@ class BugStreamingCache(Cache):
         quant_budget: int = 0,
         quant_seed: int = 0,
         hh_budget: int = 0,
+        merge: bool = False,
     ) -> None:
         base = getattr(model, "model", model)
         rotary = getattr(base, "rotary_emb", None)
@@ -1074,6 +1136,7 @@ class BugStreamingCache(Cache):
                 quant_budget=quant_budget,
                 quant_bank=self._quant_bank,
                 hh_budget=hh_budget,
+                merge=merge,
             )
             for _ in range(n_layers)
         ]

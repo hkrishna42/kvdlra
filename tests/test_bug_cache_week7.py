@@ -718,3 +718,124 @@ def test_slash_memory_constant(tiny_model: LlamaForCausalLM) -> None:
     assert isinstance(layer, BugStreamingLayer)
     assert layer.cumulative_length == 240
     assert layer._hh_len() == 8
+
+
+# --------------------------------------------------------------------------
+# Hierarchical merge (dominance program): unbounded history at decaying res
+# --------------------------------------------------------------------------
+
+
+def test_merge_constructor_validation(tiny_model: LlamaForCausalLM) -> None:
+    with pytest.raises(ValueError, match="merge requires an enabled low-rank"):
+        BugStreamingCache(tiny_model, rank=0, coord_budget=0, merge=True)
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        BugStreamingCache(
+            tiny_model, rank=8, coord_budget=16, merge=True, quant_bits=4, quant_budget=8
+        )
+
+
+def test_merge_exact_mode_parity(tiny_model: LlamaForCausalLM) -> None:
+    # Budget so generous nothing overflows => merge never fires => bit-for-bit
+    # the same as a full-rank lossless cache.
+    tiny_model.config._attn_implementation = "sdpa"
+    cache = BugStreamingCache(
+        tiny_model, rank=N_FEATURES, coord_budget=4096, recent_window=8, absorb_block=4, merge=True
+    )
+    ref = DynamicCache()
+    stream = _prompt(55, seed=31)
+    with torch.no_grad():
+        out_a = tiny_model(stream[:, :25], past_key_values=cache, use_cache=True)
+        out_b = tiny_model(stream[:, :25], past_key_values=ref, use_cache=True)
+        assert torch.equal(out_a.logits, out_b.logits)
+        for t in range(25, 55):
+            tok = stream[:, t : t + 1]
+            out_a = tiny_model(tok, past_key_values=cache, use_cache=True)
+            out_b = tiny_model(tok, past_key_values=ref, use_cache=True)
+            assert torch.allclose(out_a.logits, out_b.logits, atol=1e-4)
+
+
+def test_merge_mask_consistency_and_unbounded_history(tiny_model: LlamaForCausalLM) -> None:
+    tiny_model.config._attn_implementation = "sdpa"
+    cache = BugStreamingCache(
+        tiny_model, rank=8, coord_budget=16, recent_window=8, absorb_block=4, merge=True
+    )
+    layer = cache.layers[0]
+    assert isinstance(layer, BugStreamingLayer)
+    ids = _prompt(40, seed=32)
+    with torch.no_grad():
+        out = tiny_model(ids, past_key_values=cache, use_cache=True)
+        for _ in range(300):
+            kv_length, kv_offset = layer.get_mask_sizes(1)
+            tok = out.logits[:, -1:].argmax(-1)
+            out = tiny_model(tok, past_key_values=cache, use_cache=True)
+            assert kv_length == layer.attended_length()
+            assert kv_offset + kv_length == layer.cumulative_length
+    # The fp32 tier stays capped, but the tokens it *represents* far exceed it
+    # (unbounded history at decaying resolution) -- the whole point of merging.
+    assert layer._f_len() <= 16
+    assert layer.mid_weight is not None
+    assert int(layer.mid_weight.sum().item()) > 100  # >> f_len
+
+
+def test_merge_column_is_weighted_centroid(tiny_model: LlamaForCausalLM) -> None:
+    # Drive _merge_down directly on a controlled state (isolating the merge math
+    # from the absorb's basis rotation): a dyadic merge of equal-weight neighbours
+    # must produce the count-weighted centroid, sum the weights, and mean the
+    # positions -- one merge per requested column, oldest equal pair first.
+    layer = BugStreamingLayer(
+        rope=_rope(tiny_model), rank=4, coord_budget=8, recent_window=4, absorb_block=4, merge=True
+    )
+    g = torch.Generator().manual_seed(33)
+    layer.c_k = torch.randn(4, 6, generator=g)
+    layer.c_v = torch.randn(4, 6, generator=g)
+    layer.mid_weight = torch.tensor([2.0, 2.0, 1.0, 1.0, 1.0, 1.0])
+    layer.mid_pos = torch.tensor([1, 5, 8, 9, 10, 11], dtype=torch.int64)
+    ck0, w0, pos0 = layer.c_k.clone(), layer.mid_weight.clone(), layer.mid_pos.clone()
+    layer.coord_budget = 5
+    layer._merge_down(1)  # remove 1 column via one dyadic merge
+    # Oldest equal pair is cols 0,1 (both weight 2) -> fused into a weight-4 col.
+    assert layer.mid_weight.tolist() == [4.0, 1.0, 1.0, 1.0, 1.0]
+    expect0 = (ck0[:, 0] * w0[0] + ck0[:, 1] * w0[1]) / (w0[0] + w0[1])
+    assert layer.c_k is not None
+    assert torch.allclose(layer.c_k[:, 0], expect0, atol=1e-6)
+    assert torch.equal(layer.c_k[:, 1:], ck0[:, 2:])  # rest untouched
+    assert layer.mid_pos is not None
+    exp_pos = round(float((pos0[0] * w0[0] + pos0[1] * w0[1]) / (w0[0] + w0[1])))
+    assert int(layer.mid_pos[0]) == exp_pos  # weighted-mean position
+
+
+def test_merge_memory_constant_and_counted(tiny_model: LlamaForCausalLM) -> None:
+    cache = BugStreamingCache(
+        tiny_model, rank=8, coord_budget=16, recent_window=8, absorb_block=4, merge=True
+    )
+    ids = _prompt(30, seed=34)
+    mems = []
+    with torch.no_grad():
+        out = tiny_model(ids, past_key_values=cache, use_cache=True)
+        for _ in range(200):
+            tok = out.logits[:, -1:].argmax(-1)
+            out = tiny_model(tok, past_key_values=cache, use_cache=True)
+            mems.append(cache.stored_state_numel())
+    assert max(mems[80:]) <= max(mems[:80])
+    layer = cache.layers[0]
+    assert isinstance(layer, BugStreamingLayer)
+    # mid_weight (f_len floats) is counted in the honest memory.
+    assert layer.mid_weight is not None
+    base = sum(
+        int(t.numel())
+        for t in (
+            layer.c_k,
+            layer.c_v,
+            layer.u_k,
+            layer.u_v,
+            layer.b_k,
+            layer.b_v,
+            layer.sink_k,
+            layer.sink_v,
+            layer.recent_k,
+            layer.recent_v,
+        )
+        if t is not None
+    )
+    book = layer._f_len() * 2  # mid_pos + mid_weight (no scores: retention=fifo)
+    assert layer.stored_state_numel() == base + book

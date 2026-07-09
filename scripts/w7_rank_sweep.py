@@ -68,26 +68,33 @@ JSON_END = "===W7_RANKSWEEP_JSON_END==="
 
 
 def coord_for_config(
-    budget: int, n: int, rank: int, recent: int, absorb: int, retention: str, hh_budget: int = 0
+    budget: int,
+    n: int,
+    rank: int,
+    recent: int,
+    absorb: int,
+    retention: str,
+    hh_budget: int = 0,
+    merge: bool = False,
 ) -> int:
     """Largest fp32 coordinate coverage ``W`` for ``rank`` (and an optional
     exact heavy-hitter tier of ``hh_budget`` tokens) at a FROZEN ``budget``,
-    counting the retention overhead HONESTLY (matched memory).
+    counting the retention/merge overhead HONESTLY (matched memory).
 
-    fixed = sinks + recent ring + basis(2n*r) + core(2r^2) [+ ring_score(ring)
-    when retention="attn"]; each fp32 coord column costs ``2*rank`` (+2 for
-    position + score under attn); each exact heavy-hitter costs ``2n`` (+2 for
-    position + score, always attn). Mirrors ``BugStreamingLayer.
-    stored_state_numel`` exactly, so measured ``mem_max`` audits ``<= budget``."""
+    Mirrors ``BugStreamingLayer.stored_state_numel``: fixed = sinks + recent ring
+    + basis(2n*r) + core(2r^2) [+ ring_score(ring) when retention="attn"]; each
+    fp32 coord column costs ``2*rank`` + 1 (position, whenever positions are
+    tracked = attn/energy OR merge) + 1 (attn score) + 1 (merge weight); each
+    exact heavy-hitter costs ``2n`` + 2. So measured ``mem_max`` audits
+    ``<= budget`` for every method."""
     ring = recent + absorb - 1
+    track_pos = retention != "fifo" or merge
+    track_score = retention == "attn"
     fixed = 2 * n * N_SINK + 2 * n * ring + 2 * n * rank + 2 * rank * rank
-    if retention == "attn":
+    if track_score:
         fixed += ring  # ring_score buffer (high-water)
-        per_f = 2 * rank + 2  # coords K+V + position + score
-        per_hh = 2 * n + 2  # verbatim K+V + position + score
-    else:  # fifo: no positions/scores/ring buffer
-        per_f = 2 * rank
-        per_hh = 2 * n
+    per_f = 2 * rank + int(track_pos) + int(track_score) + int(merge)
+    per_hh = 2 * n + 2
     return max(1, (budget - fixed - per_hh * hh_budget) // per_f)
 
 
@@ -134,14 +141,23 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     slash = {
         hh: coord_for_config(budget, n, slash_rank, rw, ab, "attn", hh_budget=hh) for hh in hh_list
     }
+    # Merge variants (hierarchical dyadic coordinate merging) at the swept ranks.
+    merge_coords = (
+        {r: coord_for_config(budget, n, r, rw, ab, ret, merge=True) for r in ranks}
+        if args.merge
+        else {}
+    )
     results["hh_budgets"] = hh_list
+    results["merge"] = bool(args.merge)
     print(
         f"budget {budget} floats/layer (~{budget / (2 * n):.0f} tok-eq); "
-        f"morph_C={morph_c}; W(r)={coords}; SLASH r{slash_rank} W(hh)={slash}",
+        f"morph_C={morph_c}; W(r)={coords}; SLASH r{slash_rank} W(hh)={slash}; "
+        f"MERGE W(r)={merge_coords}",
         flush=True,
     )
 
     tag = "bugA" if ret == "attn" else "bug"
+    mtag = "bugMA" if ret == "attn" else "bugM"
 
     def make_methods() -> dict[str, Cache | None]:
         m: dict[str, Cache | None] = {"full": None}
@@ -155,6 +171,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 n_sink=N_SINK,
                 retention=ret,
                 score_decay=args.score_decay,
+            )
+        for r in merge_coords:
+            m[f"{mtag}-r{r}-W{merge_coords[r]}"] = BugStreamingCache(
+                model,
+                rank=r,
+                coord_budget=merge_coords[r],
+                recent_window=rw,
+                absorb_block=ab,
+                n_sink=N_SINK,
+                retention=ret,
+                score_decay=args.score_decay,
+                merge=True,
             )
         for hh in hh_list:
             m[f"slash-r{slash_rank}-h{hh}-W{slash[hh]}"] = BugStreamingCache(
@@ -268,6 +296,7 @@ def main() -> None:
     parser.add_argument("--morph-recent", type=int, default=32)
     parser.add_argument("--hh-budgets", default="", help="SLASH exact-tier sizes, e.g. 8,16,24")
     parser.add_argument("--slash-rank", type=int, default=0, help="SLASH rank (0=ref-rank)")
+    parser.add_argument("--merge", action="store_true", help="add hierarchical-merge variants")
     parser.add_argument("--retention", default="attn", choices=["attn", "fifo", "energy"])
     parser.add_argument("--score-decay", type=float, default=0.97)
     parser.add_argument("--seed", type=int, default=0)

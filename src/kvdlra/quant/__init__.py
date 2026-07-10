@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from kvdlra.quant.polar import PolarQuant
+from kvdlra.quant.product_quant import ProductQuantizer
 from kvdlra.quant.qjl import QJL
 
-__all__ = ["QJL", "PolarQuant"]
+__all__ = ["QJL", "PolarQuant", "ProductQuantizer"]

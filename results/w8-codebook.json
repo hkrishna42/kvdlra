@@ -1,0 +1,22 @@
+{
+  "model": "unsloth/Llama-3.2-1B-Instruct",
+  "calibration_corpus": "wikitext-103",
+  "calibration_split": "train",
+  "eval_corpus": "wikitext-2 (test) -- DISJOINT by the WikiText article split",
+  "n_calib_coords": 71424,
+  "anchor_rank": 8,
+  "pq_bits": 8,
+  "pq_subspaces": 4,
+  "normalize": true,
+  "codebook_numel": 2048,
+  "calib_rel_distortion": 0.0014659383940100017,
+  "config": {
+    "rank": 24,
+    "coord_budget": 64,
+    "code_budget": 1200,
+    "recent_window": 32,
+    "absorb_block": 16,
+    "anchor_seal_absorbs": 4,
+    "retention": "attn"
+  }
+}

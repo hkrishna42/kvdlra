@@ -141,7 +141,7 @@ from transformers.models.llama.modeling_llama import rotate_half
 
 from kvdlra.cache.morph_cache import _aggregated_attention_row, _window_attention_rows
 from kvdlra.integrators.streaming_torch import augmented_bug_step
-from kvdlra.quant import PolarQuant
+from kvdlra.quant import PolarQuant, ProductQuantizer
 
 logger = logging.getLogger(__name__)
 
@@ -300,6 +300,10 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         quant_bank: _QuantBank | None = None,
         hh_budget: int = 0,
         merge: bool = False,
+        coord_codebook: ProductQuantizer | None = None,
+        anchor_rank: int = 0,
+        anchor_seal_absorbs: int = 4,
+        code_budget: int = 0,
     ) -> None:
         super().__init__()  # type: ignore[no-untyped-call]
         if rank < 0 or coord_budget < 0:
@@ -350,6 +354,51 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             raise ValueError("merge requires an enabled low-rank middle")
         if merge and quant_budget > 0:
             raise ValueError("merge and the quantized tier are mutually exclusive")
+        # Week-8 CodeBUG: product-quantized coordinate tier against a *frozen*
+        # reduced-rank anchor U_ref -- code once at graduation, never rotate the
+        # codes (the structural inverse of variant D's per-absorb requantize).
+        self.codebook = coord_codebook
+        self._coded_mode = coord_codebook is not None
+        self.anchor_rank = anchor_rank if anchor_rank > 0 else min(8, rank)
+        self.anchor_seal_absorbs = anchor_seal_absorbs
+        self.code_budget = code_budget
+        if self._coded_mode:
+            assert coord_codebook is not None
+            if not self.lowrank_enabled:
+                raise ValueError("coord_codebook requires an enabled low-rank middle")
+            if code_budget < 1:
+                raise ValueError("coord_codebook requires code_budget >= 1")
+            if quant_bits is not None or quant_budget > 0:
+                raise ValueError("coord_codebook and the PolarQuant tier are mutually exclusive")
+            if merge:
+                raise ValueError("coord_codebook and merge are mutually exclusive")
+            if not 1 <= self.anchor_rank <= rank:
+                raise ValueError(f"anchor_rank must be in [1, rank={rank}], got {self.anchor_rank}")
+            if coord_codebook.dim != self.anchor_rank:
+                raise ValueError(
+                    f"coord_codebook.dim ({coord_codebook.dim}) must equal "
+                    f"anchor_rank ({self.anchor_rank})"
+                )
+            if anchor_seal_absorbs < 0:
+                raise ValueError(f"anchor_seal_absorbs must be >= 0, got {anchor_seal_absorbs}")
+        elif code_budget > 0:
+            raise ValueError("code_budget > 0 requires coord_codebook")
+        # The second tier's column budget: PolarQuant (variant D) or CodeBUG.
+        self._second_tier_budget = quant_budget + code_budget
+        # Calibration hook: when set to a list, the exact anchor-frame coordinate
+        # vectors that would be coded are appended here (pre-quantization), so
+        # ``scripts/calibrate_codebook.py`` can fit the PQ on the true deployment
+        # distribution. None in normal operation (zero overhead).
+        self._calib_sink: list[Tensor] | None = None
+        # Ablation ONLY (``scripts/w8_carry_drift.py``): when True, the coded tier
+        # is re-anchored to the live basis and RE-CODED every absorb -- the
+        # variant-D analog that SHOULD compound. The falsifiable OFF control that
+        # proves the frozen-anchor ON path does not. Never set in a real run.
+        self._debug_recode_coded = False
+        # Drift experiment ONLY: when a dict, each coded column's true rank-r
+        # feature vector (K stream) is recorded at graduation keyed by position,
+        # so the readout reconstruction error can be measured. None in prod.
+        self._drift_truth: dict[int, Tensor] | None = None
         # SLASH exact heavy-hitter tier (Week-7 dominance program).
         self.hh_enabled = hh_budget >= 1 and self.lowrank_enabled
         self._quant_bank = (
@@ -378,11 +427,19 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.u_v: Tensor | None = None
         self.b_v: Tensor | None = None
         self.c_v: Tensor | None = None
-        # Quantized age tier (Week-7 D): PolarQuant codes/norms, rows = columns.
-        self.qk_codes: Tensor | None = None  # (Wq, r) uint8 codes, K coords
+        # Quantized age tier (Week-7 D / Week-8 CodeBUG): codes/norms, rows =
+        # columns. Variant D: PolarQuant, shape ``(Wq, r)`` in the *live* basis,
+        # rotated per absorb. CodeBUG: ProductQuantizer, shape ``(W, M)`` in the
+        # *frozen* anchor ``u_ref``, never rotated.
+        self.qk_codes: Tensor | None = None  # (Wq, r) or (W, M) uint8 codes, K
         self.qk_norm: Tensor | None = None  # (Wq,) fp32
         self.qv_codes: Tensor | None = None
         self.qv_norm: Tensor | None = None
+        # CodeBUG frozen anchor: the reduced-rank basis coded columns live in.
+        self.u_ref_k: Tensor | None = None  # (n, r_a) fp32, frozen at seal
+        self.u_ref_v: Tensor | None = None
+        self.sealed = False
+        self._n_absorbs = 0
         # Retention bookkeeping (Week-7 A): positions + EMA attention scores.
         self.mid_pos: Tensor | None = None  # (f_len,) int64, fp32-tier positions
         self.q_pos: Tensor | None = None  # (q_len,) int64, quant-tier positions
@@ -458,8 +515,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         return 0 if self.c_k is None else int(self.c_k.shape[1])
 
     def _q_len(self) -> int:
-        """Quantized coordinate columns currently held."""
-        return 0 if self.qk_norm is None else int(self.qk_norm.shape[0])
+        """Second-tier (quantized / coded) coordinate columns currently held."""
+        return 0 if self.qk_codes is None else int(self.qk_codes.shape[0])
 
     def _hh_len(self) -> int:
         """Exact heavy-hitter tokens currently held (SLASH)."""
@@ -477,7 +534,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             return 0, 0, query_length
         recent = self._recent_len() + query_length
         mid = self._mid_len()
-        mid_cap = self.coord_budget + self.quant_budget + self.hh_budget
+        mid_cap = self.coord_budget + self._second_tier_budget + self.hh_budget
         while recent >= self.recent_window + self.absorb_block:
             recent -= self.absorb_block
             if self.lowrank_enabled:
@@ -571,13 +628,20 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.u_v, self.b_v, rot_v = augmented_bug_step(
             self.u_v, self.b_v, block_v, self.rank, theta=self.theta
         )
-        # Carry held coordinates into the new basis.
+        # Carry held fp32 coordinates into the new basis.
         if self.c_k is not None:
             assert self.c_v is not None
             self.c_k = rot_k @ self.c_k
             self.c_v = rot_v @ self.c_v
+        # Second tier: variant D re-expresses its codes into the new basis
+        # (dequantize -> rot @ -> requantize, the compounding path). CodeBUG does
+        # NOT: coded columns live in the *frozen* anchor ``u_ref`` and are never
+        # rotated, so no per-absorb quantization noise is re-injected.
         if self._q_len() > 0:
-            self._rotate_quant_tier(rot_k, rot_v)
+            if not self._coded_mode:
+                self._rotate_quant_tier(rot_k, rot_v)
+            elif self._debug_recode_coded and self.sealed:
+                self._recode_coded_tier()  # ablation-only variant-D analog
         # Append the graduating block's coordinates (fp32 tier).
         new_ck = self.u_k.mT @ block_k
         new_cv = self.u_v.mT @ block_v
@@ -596,6 +660,18 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         if self.merge:
             w = torch.ones(m, dtype=torch.float32, device=block_k.device)
             self.mid_weight = w if self.mid_weight is None else torch.cat([self.mid_weight, w])
+        # CodeBUG: seal the frozen anchor after a short decode warmup, so U_ref
+        # reflects decode statistics (not just the prompt). Sealed once, then the
+        # coded tier is opened for demotion in the enforce step below.
+        self._n_absorbs += 1
+        if (
+            self._coded_mode
+            and not self.sealed
+            and self._n_absorbs >= self.anchor_seal_absorbs
+            and self.u_k is not None
+            and int(self.u_k.shape[1]) >= self.anchor_rank
+        ):
+            self._seal_anchor()
         self._enforce_budgets()
 
     # ------------------------------------------------- retention + quant tier
@@ -663,9 +739,15 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
                 assert self.mid_score is not None
                 out_score = self.mid_score[evict]
                 self.mid_score = self.mid_score[keep]
-            if self.quant_bits is not None:
+            if self._coded_mode:
+                # Demote into the CodeBUG coded tier -- but only once the anchor
+                # is sealed; during the short pre-seal warmup demoted columns are
+                # dropped (the fp32 budget covers the warmup window).
+                if self.sealed:
+                    self._append_coded(out_ck, out_cv, out_pos, out_score)
+            elif self.quant_bits is not None:
                 self._append_quant(out_ck, out_cv, out_pos, out_score)
-        q_over = self._q_len() - self.quant_budget
+        q_over = self._q_len() - self._second_tier_budget
         if q_over > 0:
             assert self.qk_codes is not None and self.qk_norm is not None
             assert self.qv_codes is not None and self.qv_norm is not None
@@ -792,6 +874,103 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         cv = rot_v @ self._dequantize(self.qv_codes, self.qv_norm)
         self.qk_codes, self.qk_norm = self._quantize_cols(ck, "K")
         self.qv_codes, self.qv_norm = self._quantize_cols(cv, "V")
+
+    # -------------------------------------------------- CodeBUG frozen anchor
+
+    def _seal_anchor(self) -> None:
+        """Freeze the CodeBUG anchor: snapshot the top-``anchor_rank`` columns of
+        the current live basis as the read-only ``u_ref`` the coded tier lives
+        in. Columns are energy-sorted (``b = diag(sigma)`` descending, nothing
+        rotates it), so the leading ``r_a`` capture the dominant subspace; a
+        subset of orthonormal columns is itself orthonormal, so no
+        re-orthonormalization is needed. Called once, after
+        ``anchor_seal_absorbs`` absorbs."""
+        assert self.u_k is not None and self.u_v is not None
+        # Guaranteed by the seal gate: the basis has >= anchor_rank columns.
+        ra = self.anchor_rank
+        self.u_ref_k = self.u_k[:, :ra].clone()
+        self.u_ref_v = self.u_v[:, :ra].clone()
+        self.sealed = True
+
+    def _append_coded(
+        self, ck: Tensor, cv: Tensor, pos: Tensor | None, score: Tensor | None
+    ) -> None:
+        """Demote evicted fp32 columns into the CodeBUG coded tier: re-express
+        each from the *live* basis into the *frozen* anchor **once**
+        (``c_ref = u_ref^T (u_live @ c_live)``), PQ-encode, and append. This is
+        the only point a coded column is ever encoded; thereafter it is inert
+        (never rotated) -- the structural non-compounding guarantee."""
+        assert self.codebook is not None
+        assert self.u_ref_k is not None and self.u_ref_v is not None
+        assert self.u_k is not None and self.u_v is not None
+        ref_k = (self.u_ref_k.mT @ self.u_k) @ ck  # (r_a, m) anchor coordinates
+        ref_v = (self.u_ref_v.mT @ self.u_v) @ cv
+        if self._calib_sink is not None:  # calibration: record true anchor coords
+            self._calib_sink.append(ref_k.mT.detach().to("cpu", torch.float32))
+            self._calib_sink.append(ref_v.mT.detach().to("cpu", torch.float32))
+        if self._drift_truth is not None and pos is not None:  # drift experiment
+            xk = (self.u_k @ ck).detach().to("cpu", torch.float32)  # (n, m) rank-r truth
+            for j, p in enumerate(pos.tolist()):
+                self._drift_truth[int(p)] = xk[:, j]
+        codes_k, norm_k = self.codebook.quantize(ref_k.mT)  # (m, M) uint8, (m, 1)
+        codes_v, norm_v = self.codebook.quantize(ref_v.mT)
+        codes_k = codes_k.to(dtype=torch.uint8, device=self.device)
+        codes_v = codes_v.to(dtype=torch.uint8, device=self.device)
+        norm_k = norm_k.squeeze(-1).to(dtype=torch.float32, device=self.device)
+        norm_v = norm_v.squeeze(-1).to(dtype=torch.float32, device=self.device)
+        if self.qk_codes is None:
+            self.qk_codes, self.qk_norm = codes_k, norm_k
+            self.qv_codes, self.qv_norm = codes_v, norm_v
+        else:
+            assert self.qk_norm is not None and self.qv_codes is not None
+            assert self.qv_norm is not None
+            self.qk_codes = torch.cat([self.qk_codes, codes_k])
+            self.qk_norm = torch.cat([self.qk_norm, norm_k])
+            self.qv_codes = torch.cat([self.qv_codes, codes_v])
+            self.qv_norm = torch.cat([self.qv_norm, norm_v])
+        if self.track_positions:
+            assert pos is not None
+            self.q_pos = pos if self.q_pos is None else torch.cat([self.q_pos, pos])
+        if self.track_scores:
+            assert score is not None
+            self.q_score = score if self.q_score is None else torch.cat([self.q_score, score])
+
+    def _decode_coded(self, codes: Tensor, norm: Tensor | None) -> Tensor:
+        """Inverse of the coded-tier encode: ``(m, M)`` codes -> ``(r_a, m)``
+        anchor coordinates. In ``normalize`` mode the decoded unit direction is
+        scaled by the exact stored norm (magnitude carried losslessly); otherwise
+        the raw centroids carry magnitude."""
+        assert self.codebook is not None
+        idx = codes.to(torch.int64)
+        if self.codebook.normalize:
+            assert norm is not None
+            recon = self.codebook.dequantize(idx, norm.unsqueeze(-1))
+        else:
+            recon = self.codebook.decode(idx)
+        return recon.mT.to(device=self.device)  # (r_a, m)
+
+    def _recode_coded_tier(self) -> None:
+        """ABLATION ONLY (``_debug_recode_coded``): the variant-D analog. Decode
+        the coded tier, re-anchor ``u_ref`` to the current live basis, and
+        RE-CODE every column against it -- re-injecting PQ distortion every
+        absorb. This is the falsifiable OFF control that should compound; the
+        real (frozen-anchor) path never calls it."""
+        assert self.codebook is not None and self.u_ref_k is not None
+        assert self.u_ref_v is not None and self.u_k is not None and self.u_v is not None
+        assert self.qk_codes is not None and self.qv_codes is not None
+        full_k = self.u_ref_k @ self._decode_coded(self.qk_codes, self.qk_norm)  # (n, W)
+        full_v = self.u_ref_v @ self._decode_coded(self.qv_codes, self.qv_norm)
+        ra = self.anchor_rank
+        self.u_ref_k = self.u_k[:, :ra].clone()
+        self.u_ref_v = self.u_v[:, :ra].clone()
+        ref_k = self.u_ref_k.mT @ full_k  # (r_a, W) in the re-anchored frame
+        ref_v = self.u_ref_v.mT @ full_v
+        codes_k, norm_k = self.codebook.quantize(ref_k.mT)
+        codes_v, norm_v = self.codebook.quantize(ref_v.mT)
+        self.qk_codes = codes_k.to(dtype=torch.uint8, device=self.device)
+        self.qv_codes = codes_v.to(dtype=torch.uint8, device=self.device)
+        self.qk_norm = norm_k.squeeze(-1).to(dtype=torch.float32, device=self.device)
+        self.qv_norm = norm_v.squeeze(-1).to(dtype=torch.float32, device=self.device)
 
     # ------------------------------------------------------------ scoring
 
@@ -962,10 +1141,16 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         parts_k: list[Tensor] = []
         parts_v: list[Tensor] = []
         if self._q_len() > 0:
-            assert self.qk_codes is not None and self.qk_norm is not None
-            assert self.qv_codes is not None and self.qv_norm is not None
-            parts_k.append(self.u_k @ self._dequantize(self.qk_codes, self.qk_norm))
-            parts_v.append(self.u_v @ self._dequantize(self.qv_codes, self.qv_norm))
+            assert self.qk_codes is not None and self.qv_codes is not None
+            if self._coded_mode:
+                # CodeBUG: reconstruct against the FROZEN anchor (never u_k).
+                assert self.u_ref_k is not None and self.u_ref_v is not None
+                parts_k.append(self.u_ref_k @ self._decode_coded(self.qk_codes, self.qk_norm))
+                parts_v.append(self.u_ref_v @ self._decode_coded(self.qv_codes, self.qv_norm))
+            else:
+                assert self.qk_norm is not None and self.qv_norm is not None
+                parts_k.append(self.u_k @ self._dequantize(self.qk_codes, self.qk_norm))
+                parts_v.append(self.u_v @ self._dequantize(self.qv_codes, self.qv_norm))
         if self._f_len() > 0:
             assert self.c_k is not None and self.c_v is not None
             parts_k.append(self.u_k @ self.c_k)
@@ -1022,6 +1207,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             self.c_v,
             self.hh_k,  # SLASH exact tier: full 2n floats/token, like a whole token
             self.hh_v,
+            self.u_ref_k,  # CodeBUG frozen anchor (n, r_a) fp32 -- counted, not free
+            self.u_ref_v,
         )
         total = sum(t.numel() for t in tensors if t is not None)
         # The square-root core B is *provably diagonal* (``augmented_bug_step``
@@ -1033,11 +1220,17 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             if core is not None:
                 total += int(min(core.shape))
         if self.qk_codes is not None:
-            assert self.qk_norm is not None and self.qv_codes is not None
-            assert self.qv_norm is not None and self.quant_bits is not None
+            assert self.qv_codes is not None
+            # bits/code: PolarQuant (variant D, r codes/token) or ProductQuantizer
+            # (CodeBUG, M codes/token). Codes counted at bits/32 (bit-packable).
+            bits = self.codebook.bits if self.codebook is not None else self.quant_bits
+            assert bits is not None
             code_entries = int(self.qk_codes.numel() + self.qv_codes.numel())
-            total += math.ceil(code_entries * self.quant_bits / 32)
-            total += int(self.qk_norm.numel() + self.qv_norm.numel())
+            total += math.ceil(code_entries * bits / 32)
+            # Per-column norms (fp32): variant D always; CodeBUG in normalize mode.
+            for nrm in (self.qk_norm, self.qv_norm):
+                if nrm is not None:
+                    total += int(nrm.numel())
         bookkeeping = (
             self.mid_pos,
             self.q_pos,
@@ -1113,6 +1306,10 @@ class BugStreamingCache(Cache):
         quant_seed: int = 0,
         hh_budget: int = 0,
         merge: bool = False,
+        coord_codebook: ProductQuantizer | None = None,
+        anchor_rank: int = 0,
+        anchor_seal_absorbs: int = 4,
+        code_budget: int = 0,
     ) -> None:
         base = getattr(model, "model", model)
         rotary = getattr(base, "rotary_emb", None)
@@ -1125,6 +1322,7 @@ class BugStreamingCache(Cache):
         rope = _RopeAngles(rotary)
         self._retention = retention
         self._quant_bank = _QuantBank(quant_bits, seed=quant_seed) if quant_bits else None
+        self._codebook = coord_codebook  # shared PQ side info, counted once
         n_layers = int(model.config.num_hidden_layers)
         layers: list[CacheLayerMixin | LinearAttentionCacheLayerMixin] = [
             BugStreamingLayer(
@@ -1143,6 +1341,10 @@ class BugStreamingCache(Cache):
                 quant_bank=self._quant_bank,
                 hh_budget=hh_budget,
                 merge=merge,
+                coord_codebook=coord_codebook,
+                anchor_rank=anchor_rank,
+                anchor_seal_absorbs=anchor_seal_absorbs,
+                code_budget=code_budget,
             )
             for _ in range(n_layers)
         ]
@@ -1211,6 +1413,10 @@ class BugStreamingCache(Cache):
         total = sum(layer.stored_state_numel() for layer in self._bug_layers())
         if self._quant_bank is not None:
             total += self._quant_bank.side_info_numel()
+        if self._codebook is not None:
+            # Shared, calibrated PQ codebook: side info counted ONCE per cache
+            # (amortized across every coded token and every layer).
+            total += self._codebook.codebook_numel()
         return total
 
     def workspace_numel(self) -> int:

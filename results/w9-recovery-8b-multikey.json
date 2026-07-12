@@ -1,0 +1,131 @@
+{
+  "model": "unsloth/Meta-Llama-3.1-8B-Instruct",
+  "depths": [
+    0.0,
+    1.0,
+    2.0
+  ],
+  "passcodes": [
+    "0",
+    "1"
+  ],
+  "morph_capacity": 192,
+  "multikey": true,
+  "per_ctx": [
+    {
+      "ctx": 2048,
+      "rows": [
+        {
+          "method": "full",
+          "ctx": 2048,
+          "accuracy": 1.0,
+          "hits": 6,
+          "total": 6,
+          "mem_stored": null
+        },
+        {
+          "method": "morph-C192-R32",
+          "ctx": 2048,
+          "accuracy": 0.0,
+          "hits": 0,
+          "total": 6,
+          "mem_stored": 16515072
+        },
+        {
+          "method": "bugA-r64-W2156",
+          "ctx": 2048,
+          "accuracy": 0.0,
+          "hits": 0,
+          "total": 6,
+          "mem_stored": 16214656
+        },
+        {
+          "method": "bugS-r64-W2157",
+          "ctx": 2048,
+          "accuracy": 0.0,
+          "hits": 0,
+          "total": 6,
+          "mem_stored": 16213248
+        },
+        {
+          "method": "slash-r64-h32-W1652",
+          "ctx": 2048,
+          "accuracy": 0.0,
+          "hits": 0,
+          "total": 6,
+          "mem_stored": 16317056
+        }
+      ]
+    },
+    {
+      "ctx": 4096,
+      "rows": [
+        {
+          "method": "full",
+          "ctx": 4096,
+          "accuracy": 1.0,
+          "hits": 6,
+          "total": 6,
+          "mem_stored": null
+        },
+        {
+          "method": "morph-C192-R32",
+          "ctx": 4096,
+          "accuracy": 0.0,
+          "hits": 0,
+          "total": 6,
+          "mem_stored": 16515072
+        },
+        {
+          "method": "bugA-r64-W2156",
+          "ctx": 4096,
+          "accuracy": 0.0,
+          "hits": 0,
+          "total": 6,
+          "mem_stored": 16314496
+        },
+        {
+          "method": "bugS-r64-W2157",
+          "ctx": 4096,
+          "accuracy": 0.0,
+          "hits": 0,
+          "total": 6,
+          "mem_stored": 16317248
+        },
+        {
+          "method": "slash-r64-h32-W1652",
+          "ctx": 4096,
+          "accuracy": 0.0,
+          "hits": 0,
+          "total": 6,
+          "mem_stored": 16317056
+        }
+      ]
+    }
+  ],
+  "gate": {
+    "per_ctx": [
+      {
+        "ctx": 2048,
+        "full_acc": 1.0,
+        "morph_acc": 0.0,
+        "bugA_acc": 0.0,
+        "slash_acc": 0.0,
+        "isolates_forgetting": true,
+        "recovery_beats_morph": false
+      },
+      {
+        "ctx": 4096,
+        "full_acc": 1.0,
+        "morph_acc": 0.0,
+        "bugA_acc": 0.0,
+        "slash_acc": 0.0,
+        "isolates_forgetting": true,
+        "recovery_beats_morph": false
+      }
+    ],
+    "any_isolates": true,
+    "any_recovery_win": false
+  },
+  "_note": "8B (Llama-3.1-8B, n=1024) on RTX 3090 bf16; rank64 matched to morph cap192. BUG recovers 0 everywhere -> D1 1B win is rank-relative, does not replicate at 8B rank64."
+}

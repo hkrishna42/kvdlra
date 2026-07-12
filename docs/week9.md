@@ -18,7 +18,7 @@ counted honestly (`stored_state_numel`) and audited `mem_max ≤ budget`.
 
 | Dir | Mechanism | Axis judged | Verdict |
 |---|---|---|---|
-| **D1** | BUG recovery tier for eviction's dropped tokens | recall-of-dropped-content | **WIN** (bounded by buffer saturation) |
+| **D1** | BUG recovery tier for eviction's dropped tokens | recall-of-dropped-content | **1B WIN, rank-relative — does NOT replicate at 8B (rank 64)** |
 | **D2** | adaptive-SLASH as the {eviction, BUG} envelope | cross-budget Pareto | **bounded** (no extension) |
 | **D3** | low-rank surprise as an eviction score | matched-mem ppl / deep tail | **bounded** (complementary, not exploitable) |
 
@@ -190,16 +190,42 @@ transitioning to "needs a memory premium" at longer context** as the rank-vs-
 context fidelity tradeoff (Week-4/5) reasserts. Surprise retention (D3×D1) removes
 the eviction half of the long-context failure but not the rank half.
 
-**Honest caveats (do not overstate):** small n (4 trials/cell = 2 depths × 2
-passcodes; the 4/4-vs-0/4 split is decisive but coarse); single sharp-fact needle
-(RULER multi-key / multi-hop untested at 1B here — Week-4 showed BUG ties
-ExpectedAttention on needle retrieval, so the direction is consistent, but the
-harder multi-key case is a follow-up); morph capacity 192 is the aggressive
-operating point that forces forgetting — at bugA's *lower* 4.02M memory morph
-(cap≈160) still drops the needle, so the win survives matching memory in the
-adverse direction. The per-head MorphKV-preserving `HybridRecoveryCache` and an 8B
-confirmation are the natural follow-ups. 8B deferred (1B result is decisive on its
-axis; pod credit conserved; keys still unrotated).
+**Honest caveats (do not overstate):** small n (4 trials/cell); the win is at
+rank 64 / 1B (`n=512`).
+
+### 8B confirmation — the 1B win does NOT replicate at 8B (rank-relative)
+
+Run on Llama-3.1-8B (`n = head_dim·num_kv_heads = 128·8 = 1024`, 2× the 1B feature
+dim), matched budget = morph cap 192, rank 64, bf16 on an RTX 3090
+(`results/` not committed from the pod; raw below). `full` = uncompressed
+DynamicCache upper bound.
+
+| probe | ctx | full | morph | bugA | bugS | slash |
+|---|---|---|---|---|---|---|
+| single-needle | 2048 | 4/4 | **3/4** | 0/4 | 0/4 | 0/4 |
+| single-needle | 4096 | 4/4 | 0/4 | 0/4 | 0/4 | 0/4 |
+| RULER multi-key | 2048 | 6/6 | 0/6 | 0/6 | 0/6 | 0/6 |
+| RULER multi-key | 4096 | 6/6 | 0/6 | 0/6 | 0/6 | 0/6 |
+
+**The BUG recovery tier recovers NOTHING at 8B (0 everywhere), even where morph
+forgets** (ctx 4096, all multi-key). This is a **rank-relative fidelity ceiling**:
+at ctx 2048 single-needle the needle is *provably retained* (W=2156 > mid 2012, no
+eviction) yet bugA is 0/4 — pure reconstruction failure. Rank 64 over `n=512` (1B)
+rebuilds a sharp needle (1B: 4/4); rank 64 over `n=1024` (8B) cannot (0/4). The
+recovery tier's fidelity scales with **rank/n**, so at 8B's doubled feature dim,
+rank 64 is under-ranked — 1B's win needed the rank/n ratio it happened to have.
+(Single-needle also *saturates* for morph at short ctx — 3/4 at ctx 2048 — the
+Week-5 prediction; but at ctx 4096 and all multi-key morph genuinely forgets, and
+BUG still doesn't recover.)
+
+**Revised D1 verdict: a genuine but RANK-RELATIVE 1B recall win that does NOT
+survive to 8B at matched memory (rank 64).** At 8B the low-rank summary needs rank
+scaled to `n` — plausibly rank 128–256 (the 1B firming showed rank-256 recovers
+where rank-64 fails), i.e. a memory premium — but that is **untested** and, at
+matched memory, D1 provides **no** 8B recall benefit. Reported straight: the
+headline win is real at 1B/moderate scale, not a general result. Follow-ups: the
+premium/higher-rank arm at 8B, and the per-head MorphKV-preserving
+`HybridRecoveryCache`. Credit ~$4.10 remaining.
 
 ---
 
@@ -209,12 +235,14 @@ BUG as a **complement that extends eviction where eviction is weak**, not a
 competitor that replaces it. The three directions, judged each on the axis where
 eviction's weakness lives:
 
-- **D1 (WIN):** on **recall of dropped-then-queried content** — the axis where
-  eviction's *forgetting* lives — BUG's constant-memory low-rank summary recovers
-  needles whole-token eviction loses (4/4 vs 0/4, at ≤ matched memory, up to
-  ~1024 tokens). This is the load-bearing positive result of the week and the
-  clearest demonstration of BUG *aiding* eviction. Bounded at long context by the
-  rank-vs-context fidelity tradeoff (needs a memory premium).
+- **D1 (1B WIN, does not scale to 8B):** on **recall of dropped-then-queried
+  content** — the axis where eviction's *forgetting* lives — BUG's constant-memory
+  low-rank summary recovers needles whole-token eviction loses **at 1B** (4/4 vs
+  0/4, ≤ matched memory, ctx ≤ ~1024). But the 8B confirmation shows the win is
+  **rank-relative and does NOT replicate at 8B** at matched-memory rank 64 (BUG
+  recovers 0 everywhere; fidelity scales with rank/n and 8B doubles n). So D1 is a
+  real but *scale-bounded* demonstration of BUG aiding eviction, not a general one
+  — the honest 8B result tempers the headline.
 - **D2 (bounded):** on the cross-budget **envelope**, adaptive-SLASH does not
   extend the {eviction, BUG} Pareto frontier — the `2nr` basis overhead is dead
   weight eviction never pays, so no allocation reaches morph at extreme budgets.
@@ -222,10 +250,14 @@ eviction's weakness lives:
   mass but not a better *general* eviction score; its one real use is
   outlier-retention feeding D1's recall win.
 
-**The map is complete and consistent with Weeks 5–8:** BUG does not beat eviction
-on mean ppl (settled), and does not *extend* the envelope (D2) or improve the
-eviction *score* (D3) — but it genuinely **aids** eviction by *recovering
-forgotten content* (D1), exactly the orthogonal-failure-mode seam the week set out
-to test. Every verdict reported straight; the D1 headline was itself corrected
-from a premature negative by the adversarial-verification pass (the ctx-2048
-`bugA=0/4` was a coordinate-eviction artifact, not a fidelity ceiling).
+**The map, consistent with Weeks 5–8:** BUG does not beat eviction on mean ppl
+(settled), does not *extend* the envelope (D2) or improve the eviction *score*
+(D3), and its one demonstrated way of *aiding* eviction — recovering forgotten
+content (D1) — is **real at 1B but rank-relative and does not survive to 8B at
+matched memory**. So the honest end state of the "BUG aids eviction" pivot is
+**mostly negative**: a genuine but scale-bounded 1B recall win, no general result.
+Two verdicts were corrected mid-week by adversarial checks, in *both* directions —
+the D1 1B result was rescued from a premature *negative* (the ctx-2048 `bugA=0/4`
+was a coordinate-eviction artifact, not fidelity), and the D1 *headline* was then
+tempered by the 8B confirmation (rank-64 recovers nothing at `n=1024`). Reporting
+both straight is the point: the win is 1B-and-rank-specific, not a law.

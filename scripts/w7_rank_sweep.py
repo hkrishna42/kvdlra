@@ -89,11 +89,12 @@ def coord_for_config(
     ``mem_max`` audits ``<= budget`` for every method."""
     ring = recent + absorb - 1
     track_pos = retention != "fifo" or merge
-    track_score = retention == "attn"
+    track_score = retention in ("attn", "blend")
+    track_surprise = retention in ("lowrank_surprise", "blend")  # Week-9 D3: +1 fp32/column
     fixed = 2 * n * N_SINK + 2 * n * ring + 2 * n * rank + 2 * rank
     if track_score:
         fixed += ring  # ring_score buffer (high-water)
-    per_f = 2 * rank + int(track_pos) + int(track_score) + int(merge)
+    per_f = 2 * rank + int(track_pos) + int(track_score) + int(merge) + int(track_surprise)
     per_hh = 2 * n + 2
     return max(1, (budget - fixed - per_hh * hh_budget) // per_f)
 
@@ -297,7 +298,9 @@ def main() -> None:
     parser.add_argument("--hh-budgets", default="", help="SLASH exact-tier sizes, e.g. 8,16,24")
     parser.add_argument("--slash-rank", type=int, default=0, help="SLASH rank (0=ref-rank)")
     parser.add_argument("--merge", action="store_true", help="add hierarchical-merge variants")
-    parser.add_argument("--retention", default="attn", choices=["attn", "fifo", "energy"])
+    parser.add_argument(
+        "--retention", default="attn", choices=["attn", "fifo", "energy", "lowrank_surprise"]
+    )
     parser.add_argument("--score-decay", type=float, default=0.97)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out-json", default="results/w7-ranksweep-1b.json")

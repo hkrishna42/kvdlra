@@ -1,0 +1,12 @@
+{
+  "mode": "probe",
+  "model": "unsloth/Llama-3.2-1B-Instruct",
+  "rank": 64,
+  "coord_budget": 128,
+  "n_samples": 318336,
+  "n_events": 2144,
+  "spearman_surprise_attn": -0.11204261686016018,
+  "pearson_surprise_attn": 0.018297020345926285,
+  "spearman_surprise_energy": -0.09363473189323042,
+  "gate": "GO (complementary to attention)"
+}

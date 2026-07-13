@@ -1,0 +1,100 @@
+{
+  "model": "unsloth/Meta-Llama-3.1-8B-Instruct",
+  "depths": [
+    0.3,
+    0.5
+  ],
+  "passcodes": [
+    "48213",
+    "70561"
+  ],
+  "morph_capacity": 192,
+  "multikey": false,
+  "per_ctx": [
+    {
+      "ctx": 2048,
+      "rows": [
+        {
+          "method": "full",
+          "ctx": 2048,
+          "accuracy": 1.0,
+          "hits": 4,
+          "total": 4,
+          "mem_stored": null
+        },
+        {
+          "method": "morph-C192-R32",
+          "ctx": 2048,
+          "accuracy": 0.75,
+          "hits": 3,
+          "total": 4,
+          "mem_stored": 16515072
+        },
+        {
+          "method": "bugA-r64-W2156",
+          "ctx": 2048,
+          "accuracy": 0.0,
+          "hits": 0,
+          "total": 4,
+          "mem_stored": 15977536
+        },
+        {
+          "method": "bugS-r64-W2157",
+          "ctx": 2048,
+          "accuracy": 0.0,
+          "hits": 0,
+          "total": 4,
+          "mem_stored": 15976128
+        },
+        {
+          "method": "slash-r64-h32-W1652",
+          "ctx": 2048,
+          "accuracy": 0.0,
+          "hits": 0,
+          "total": 4,
+          "mem_stored": 16317056
+        },
+        {
+          "method": "bugFID-r64-Wall",
+          "ctx": 2048,
+          "accuracy": 0.0,
+          "hits": 0,
+          "total": 4,
+          "mem_stored": 15843328
+        },
+        {
+          "method": "bugFID-r128-Wall",
+          "ctx": 2048,
+          "accuracy": 1.0,
+          "hits": 4,
+          "total": 4,
+          "mem_stored": 28540928
+        },
+        {
+          "method": "bugFID-r256-Wall",
+          "ctx": 2048,
+          "accuracy": 1.0,
+          "hits": 4,
+          "total": 4,
+          "mem_stored": 53632328
+        }
+      ]
+    }
+  ],
+  "gate": {
+    "per_ctx": [
+      {
+        "ctx": 2048,
+        "full_acc": 1.0,
+        "morph_acc": 0.75,
+        "bugA_acc": 0.0,
+        "slash_acc": 0.0,
+        "isolates_forgetting": false,
+        "recovery_beats_morph": false
+      }
+    ],
+    "any_isolates": false,
+    "any_recovery_win": false
+  },
+  "_note": "8B rank sweep (Llama-3.1-8B, n=1024, RTX3090 bf16), ctx2048, fidelity-isolated bugFID (coord>>mid, needle retained). r64 0/4, r128 4/4 (1.73x morph), r256 4/4 (3.25x). Confirms 8B rank-64 failure is pure fidelity; rank scaled to n restores recovery at a premium."
+}

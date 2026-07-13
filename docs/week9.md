@@ -24,6 +24,17 @@ counted honestly (`stored_state_numel`) and audited `mem_max ≤ budget`.
 
 ---
 
+## The classic comparison — BUG vs eviction frontier
+
+`figures/week9/comparison_frontier.png` (regen: `scripts/w9_frontier.py`) plots
+streaming perplexity vs matched per-layer memory budget for **full / eviction
+(MorphKV) / BUG (DLRA)**, one consistent 1B protocol. The two **cross at ~130
+tok-eq/layer**: eviction wins at extreme compression (its `2n`/token beats a
+rank-squeezed summary), BUG wins at moderate budgets (a near-oracle low-rank
+summary of *all* history beats a few exact tokens), approaching the full-cache
+floor. This is the load-bearing "BUG vs eviction" picture of the project — a
+regime split, not a knockout, exactly as the two measured walls predict.
+
 ## D2 — adaptive-SLASH as "the envelope" (BOUNDED)
 
 **Mechanism.** SLASH (`hh_budget` exact heavy-hitters + rank-`r` BUG tail +

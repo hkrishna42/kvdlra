@@ -1,0 +1,92 @@
+{
+  "model": "unsloth/Meta-Llama-3.1-8B-Instruct",
+  "depths": [
+    0.3,
+    0.5
+  ],
+  "passcodes": [
+    "48213",
+    "70561"
+  ],
+  "morph_capacity": 192,
+  "multikey": false,
+  "per_ctx": [
+    {
+      "ctx": 4096,
+      "rows": [
+        {
+          "method": "full",
+          "ctx": 4096,
+          "accuracy": 1.0,
+          "hits": 4,
+          "total": 4,
+          "mem_stored": null
+        },
+        {
+          "method": "morph-C192-R32",
+          "ctx": 4096,
+          "accuracy": 0.5,
+          "hits": 2,
+          "total": 4,
+          "mem_stored": 16515072
+        },
+        {
+          "method": "bugA-r64-W2156",
+          "ctx": 4096,
+          "accuracy": 0.0,
+          "hits": 0,
+          "total": 4,
+          "mem_stored": 16314496
+        },
+        {
+          "method": "bugS-r64-W2157",
+          "ctx": 4096,
+          "accuracy": 0.0,
+          "hits": 0,
+          "total": 4,
+          "mem_stored": 16317248
+        },
+        {
+          "method": "slash-r64-h32-W1652",
+          "ctx": 4096,
+          "accuracy": 0.0,
+          "hits": 0,
+          "total": 4,
+          "mem_stored": 16317056
+        },
+        {
+          "method": "bugFID-r128-Wall",
+          "ctx": 4096,
+          "accuracy": 1.0,
+          "hits": 4,
+          "total": 4,
+          "mem_stored": 45260800
+        },
+        {
+          "method": "bugFID-r256-Wall",
+          "ctx": 4096,
+          "accuracy": 1.0,
+          "hits": 4,
+          "total": 4,
+          "mem_stored": 86846349
+        }
+      ]
+    }
+  ],
+  "gate": {
+    "per_ctx": [
+      {
+        "ctx": 4096,
+        "full_acc": 1.0,
+        "morph_acc": 0.5,
+        "bugA_acc": 0.0,
+        "slash_acc": 0.0,
+        "isolates_forgetting": true,
+        "recovery_beats_morph": true
+      }
+    ],
+    "any_isolates": true,
+    "any_recovery_win": true
+  },
+  "_note": "8B (n=1024) A6000 bf16. Fidelity-isolated bugFID (no eviction) at premium ranks 128/256 vs morph. AIRTIGHT WIN: multikey ctx2048 morph 0/6 -> bugFID-r128 6/6 @1.8x. rank need grows w/ ctx (ctx4096 multikey needs r256)."
+}

@@ -18,7 +18,7 @@ counted honestly (`stored_state_numel`) and audited `mem_max ≤ budget`.
 
 | Dir | Mechanism | Axis judged | Verdict |
 |---|---|---|---|
-| **D1** | BUG recovery tier for eviction's dropped tokens | recall-of-dropped-content | **1B WIN (rank 64); 8B works at a rank/memory premium (rank 128 → 4/4 @ 1.7×)** |
+| **D1** | BUG recovery tier for eviction's dropped tokens | recall-of-dropped-content | **WIN — 1B (rank 64, matched mem); 8B at a premium (rank 128 → 6/6 vs morph 0/6 @ 1.8×)** |
 | **D2** | adaptive-SLASH as the {eviction, BUG} envelope | cross-budget Pareto | **bounded** (no extension) |
 | **D3** | low-rank surprise as an eviction score | matched-mem ppl / deep tail | **bounded** (complementary, not exploitable) |
 
@@ -218,8 +218,9 @@ DynamicCache upper bound.
 | RULER multi-key | 2048 | 6/6 | 0/6 | 0/6 | 0/6 | 0/6 |
 | RULER multi-key | 4096 | 6/6 | 0/6 | 0/6 | 0/6 | 0/6 |
 
-**The BUG recovery tier recovers NOTHING at 8B (0 everywhere), even where morph
-forgets** (ctx 4096, all multi-key). This is a **rank-relative fidelity ceiling**:
+**At matched-memory rank 64, the BUG recovery tier recovers nothing at 8B (0
+everywhere)** — but this is *purely* a rank ceiling, lifted by a premium rank
+below. This is the **rank-relative fidelity ceiling**:
 at ctx 2048 single-needle the needle is *provably retained* (W=2156 > mid 2012, no
 eviction) yet bugA is 0/4 — pure reconstruction failure. Rank 64 over `n=512` (1B)
 rebuilds a sharp needle (1B: 4/4); rank 64 over `n=1024` (8B) cannot (0/4). The
@@ -244,15 +245,34 @@ So the recovery-tier fidelity scales with **rank/n**: rank 64 (which sufficed at
 recovery (4/4) at a ~1.7× memory premium**. The mechanism is sound at scale — it
 just needs rank scaled to the feature dimension.
 
-**Revised D1 verdict: a clean 1B recall WIN (rank 64, ≤ matched memory), and at 8B
-a working recovery tier at a rank/memory PREMIUM (rank 128 → full recovery at
-~1.7× morph).** So D1 is *not* dead at scale — the 8B rank-64 failure was a
-fidelity artifact of holding rank fixed, not a wall. The one step still not
-directly demonstrated is a *premium-rank win over morph in a forgetting case at 8B*
-(this sweep was at ctx 2048, where single-needle morph saturates 3/4; the
-forgetting cases — ctx 4096, multi-key — weren't re-run at rank 128). That, plus
-the per-head MorphKV-preserving `HybridRecoveryCache`, are the natural closers.
-Credit ~$3.49 remaining.
+So the recovery-tier fidelity scales with **rank/n**: rank 64 (which sufficed at
+1B, `n=512`) is under-ranked at 8B (`n=1024`), but **rank 128 fully restores
+recovery at a memory premium**. The mechanism is sound at scale.
+
+**The airtight win — premium-rank BUG beats eviction where eviction forgets**
+(`results/w9-recovery-8b-win-*.json`; `figures/week9/recall_8b.png`). Re-run at
+the cases where morph genuinely goes to 0:
+
+| case | full | morph | BUG r64 | **BUG r128** | BUG r256 |
+|---|---|---|---|---|---|
+| single ctx4096 | 4/4 | 2/4 | 0/4 | **4/4** (2.7×) | 4/4 (5.3×) |
+| **multi-key ctx2048** | 6/6 | **0/6** | 0/6 | **6/6 (1.8×)** | 6/6 (3.3×) |
+| multi-key ctx4096 | 6/6 | **0/6** | 0/6 | 1/6 (2.8×) | **6/6 (5.3×)** |
+
+**The cleanest win: multi-key ctx 2048 — eviction recalls 0/6, premium rank-128
+BUG recalls 6/6 at 1.8× morph memory.** So BUG's recovery tier genuinely beats
+eviction on dropped-content recall at 8B, in the exact regime (multi-key
+retrieval) where eviction cannot keep the queried key. The rank need grows with
+difficulty (rank 128 suffices at ctx 2048; ctx 4096 multi-key needs rank 256, 5.3×).
+
+**Final D1 verdict: a clean 1B recall WIN (rank 64, ≤ matched memory), and a
+demonstrated 8B win at a rank/memory PREMIUM** (rank 128 → 6/6 vs morph 0/6 @ 1.8×
+where eviction forgets). Honest costs: the premium is real and grows with context
+(1.8×–5.3×), because the fidelity-isolation arm stores everything; a bounded
+combination (`slash` = exact heavy-hitters + BUG tail) at rank 128 might hit the
+same recall cheaper — untested (slash was only run at rank 64). The per-head
+MorphKV-preserving `HybridRecoveryCache` remains the purest form (future work).
+Credit ~$3.19 remaining.
 
 ---
 
@@ -262,15 +282,14 @@ BUG as a **complement that extends eviction where eviction is weak**, not a
 competitor that replaces it. The three directions, judged each on the axis where
 eviction's weakness lives:
 
-- **D1 (1B WIN; 8B works at a rank/memory premium):** on **recall of
-  dropped-then-queried content** — the axis where eviction's *forgetting* lives —
-  BUG's constant-memory low-rank summary recovers needles whole-token eviction
-  loses **at 1B** (4/4 vs 0/4, ≤ matched memory, ctx ≤ ~1024, rank 64). At 8B the
-  recovery is **rank-relative**: rank 64 fails on fidelity (`n` doubles to 1024),
-  but **rank 128 fully restores it (4/4) at ~1.7× morph memory** — the mechanism
-  is sound at scale, it just needs rank scaled to the feature dim. So D1 is a real
-  demonstration of BUG aiding eviction — a matched-memory win at 1B, a
-  premium-memory win at 8B.
+- **D1 (WIN):** on **recall of dropped-then-queried content** — the axis where
+  eviction's *forgetting* lives — BUG's constant-memory low-rank summary recovers
+  content whole-token eviction loses. **1B:** 4/4 vs morph 0/4 at ≤ matched memory
+  (rank 64). **8B:** rank-relative — rank 64 fails on fidelity (`n` doubles to
+  1024), but at a premium **rank 128 recalls 6/6 where eviction recalls 0/6, in
+  the multi-key regime, at 1.8× memory** (`figures/week9/recall_8b.png`). So D1 is
+  a demonstrated win at both scales — matched-memory at 1B, premium-memory at 8B —
+  the one genuine positive of the pivot.
 - **D2 (bounded):** on the cross-budget **envelope**, adaptive-SLASH does not
   extend the {eviction, BUG} Pareto frontier — the `2nr` basis overhead is dead
   weight eviction never pays, so no allocation reaches morph at extreme budgets.

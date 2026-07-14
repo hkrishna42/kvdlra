@@ -7,13 +7,31 @@
 
 ## Goal
 
-The definitive frontier — **perplexity vs honestly-counted KV-cache memory** — for
+The definitive frontier — **quality vs honestly-counted KV-cache memory** — for
 **BUG at ranks {32, 64, 128, 256}** against **SnapKV, MorphKV, ShadowKV**
-(ExpectedAttention optional 5th) at **T ∈ {32K, 64K}**. Deliverables: (a) a
-ppl-vs-memory frontier figure with every method's curve; (b) a headline memory
-table ("at a given perplexity, how much more/less space does each BUG rank need vs
+(ExpectedAttention optional 5th) at long context. Deliverables: (a) a
+quality-vs-memory frontier figure with every method's curve; (b) a headline memory
+table ("at a given quality, how much more/less space does each BUG rank need vs
 each competitor?" and the inverse); (c) a plain-English `docs/week10-explained.md`.
 OOM-proof; 1B first, 8B confirm. Report the ranking straight — win or lose.
+
+> **RE-SCOPE (2026-07-13, user steer).** The **primary** long-context evaluation is
+> **task accuracy on RULER + LongBench**, not perplexity. Perplexity on WikiText is
+> a weak long-context signal and structurally *favours* BUG's global summary while
+> under-testing eviction (built for retrieval); RULER + LongBench are the standard
+> and **fairer to eviction**. So:
+> - **RULER** (`scripts/w10_ruler.py`) — synthetic, length-controllable to 32K/64K.
+>   Focused subset: `niah_single`, `niah_multikey`, `niah_multivalue`, `vt`
+>   (variable-tracking). **Compress-then-query** (query held out) — eviction's weak
+>   spot. Accuracy vs memory.
+> - **LongBench** (`scripts/w10_longbench.py`) — realistic QA (`qasper`,
+>   `multifieldqa_en`, `hotpotqa`, `2wikimqa`), token-F1. **Query in-prompt**
+>   (compress-whole-prompt-then-generate) — *fairer to eviction*. Most tasks < 32K,
+>   so LongBench carries the realistic-tasks story, RULER carries 64K.
+> - **Perplexity** (`scripts/w10_frontier.py`, DONE at 1B ≤4096) is now the
+>   **supporting** axis. Both new harnesses reuse its arms + `accounting.py` memory
+>   + Phase-3 chunked ingest. Both are generation/accuracy → more GPU-dependent at
+>   32K/64K (validate small on CPU, run at scale on GPU).
 
 ## The single protocol (one path for every method)
 

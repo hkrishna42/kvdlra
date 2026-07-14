@@ -65,6 +65,11 @@ docstring-code-format = true
 python_version = "3.12"
 strict = true
 ignore_missing_imports = true
+# Resolve ``kvdlra`` from src/ deterministically -- the hatchling editable .pth is
+# flaky on this Mac (handover §6), so scripts importing new submodules (e.g.
+# kvdlra.accounting) would otherwise fail mypy intermittently. Mirrors pytest's
+# pythonpath=["src"].
+mypy_path = "src"
 
 [[tool.mypy.overrides]]
 module = ["wandb.*", "kvpress.*", "flash_attn.*", "transformers.*", "datasets.*"]

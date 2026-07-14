@@ -75,4 +75,6 @@ testpaths = ["tests"]
 addopts = "-ra -q --strict-markers"
 # src layout: import kvdlra from src/ even if the editable install's import hook
 # is dropped by an env re-sync. No-op when the package is properly installed.
-pythonpath = ["src"]
+# scripts/ is on the path so accounting tests can pin against the canonical
+# script-level formulas (bug_budget_floats, kv_memory_ratio) they must not drift from.
+pythonpath = ["src", "scripts"]

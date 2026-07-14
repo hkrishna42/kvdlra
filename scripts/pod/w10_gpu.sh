@@ -15,6 +15,7 @@
 # (context lengths), CHUNK (chunked-prefill block), NSAMP/NTRIALS/NEX (trial counts).
 set -x
 export HF_HUB_ENABLE_HF_TRANSFER=1
+export HF_HUB_DISABLE_XET=1   # route around the Xet CAS backend (HTTP 401 on pods) -> standard download
 export DEBIAN_FRONTEND=noninteractive
 export TOKENIZERS_PARALLELISM=false
 export PIP_BREAK_SYSTEM_PACKAGES=1
@@ -33,10 +34,12 @@ cd /root || exit 1
 git clone --depth 1 --branch week7 https://github.com/hkrishna42/kvdlra.git 2>&1 | tail -3
 cd kvdlra || exit 1
 
-pip install -q hf_transfer numpy matplotlib "kvpress==0.5.1" 2>&1 | tail -5
+pip install -q hf_transfer hf_xet numpy matplotlib "kvpress==0.5.1" 2>&1 | tail -5
 pip install -q 'transformers==5.8.0' 'datasets==2.21.0' 2>&1 | tail -5
 echo "===DEPS_DONE==="
 python -c "import torch,transformers,kvpress; print('torch',torch.__version__,'cuda',torch.cuda.is_available(),'tf',transformers.__version__)" || echo "===DEPS_FAILED==="
+# Sanity: download the tokenizer up front so a model-fetch failure is obvious early.
+python -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('$MODEL'); print('===MODEL_OK===')" 2>&1 | tail -3 || echo "===MODEL_FAILED==="
 
 emit() {  # emit <marker> <json-path> : base64-fold the result so vast logs keep it
   echo "===${1}_RESULT_BEGIN==="

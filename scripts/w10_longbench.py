@@ -173,9 +173,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     results: list[dict[str, Any]] = []
     for task in args.tasks:
-        ds = load_dataset("THUDM/LongBench", task, split="test", trust_remote_code=True)
-        examples = [build_example(tokenizer, ds[i], args.max_len) for i in range(args.n_examples)]
-        avg_len = sum(int(p.shape[1]) for p, _ in examples) / len(examples)
+        try:
+            # Per-task load is isolated: one task's dataset load/build failing
+            # (network, HF schema drift, an empty split) must skip only that task,
+            # not abort the whole axis before a single arm runs (the lb:[] bug).
+            ds = load_dataset("THUDM/LongBench", task, split="test", trust_remote_code=True)
+            examples = [
+                build_example(tokenizer, ds[i], args.max_len) for i in range(args.n_examples)
+            ]
+            avg_len = sum(int(p.shape[1]) for p, _ in examples) / len(examples)
+        except Exception as exc:
+            print(f"[{task}] SKIP {type(exc).__name__}: {exc}", flush=True)
+            continue
         for arm in build_arms(args, model, args.max_len):
             arm_chunk = args.chunk if arm.get("chunkable", True) else 0
             f1s, ratios = [], []

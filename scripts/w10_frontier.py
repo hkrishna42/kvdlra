@@ -171,6 +171,70 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                 }
             )
 
+    if "bugslash" in want:
+        # Week-11 SurpriseSLASH: BUG low-rank gist + a surprise-selected EXACT
+        # outlier tier (hh_budget tokens kept verbatim). The needle is a
+        # low-attention high-residual outlier the low-rank basis fits worst, so a
+        # surprise-scored exact tier catches it where plain BUG (0% at 32K) can't.
+        # MUST prefill via chunked ingest (--chunk > 0) -- single-shot bypasses the
+        # exact tier. coord_budget >= mid keeps the whole (non-hh) bulk low-rank.
+        cb = t + rw + ab
+        for r in args.ranks:
+            for hh in args.hh_budgets:
+                arms.append(
+                    {
+                        "name": f"bugS-r{r}-h{hh}",
+                        "kind": "bug",
+                        "rank": r,
+                        "retention": "lowrank_surprise",
+                        "hh_select": "surprise",
+                        "hh_budget": hh,
+                        "make": (
+                            lambda r=r, cb=cb, hh=hh: BugStreamingCache(
+                                model,
+                                rank=r,
+                                coord_budget=cb,
+                                recent_window=rw,
+                                absorb_block=ab,
+                                n_sink=N_SINK,
+                                retention="lowrank_surprise",
+                                hh_budget=hh,
+                                hh_select="surprise",
+                            )
+                        ),
+                    }
+                )
+
+    if "bugevict" in want:
+        # Attribution control: a degenerate rank-1 BUG (negligible gist) with a
+        # surprise-selected exact tier == ~pure surprise-selected verbatim
+        # eviction. If bugslash retrieves at the SAME hh_budget as this, the win
+        # is the SELECTION RULE, not BUG's gist (the honesty crux, Week-7/8 wall).
+        for hh in args.hh_budgets:
+            arms.append(
+                {
+                    "name": f"bugEVICT-h{hh}",
+                    "kind": "bug",
+                    "rank": 1,
+                    "retention": "lowrank_surprise",
+                    "hh_select": "surprise",
+                    "hh_budget": hh,
+                    "make": (
+                        lambda hh=hh: BugStreamingCache(
+                            model,
+                            rank=1,
+                            coord_budget=1,
+                            recent_window=rw,
+                            absorb_block=ab,
+                            n_sink=N_SINK,
+                            retention="lowrank_surprise",
+                            hh_budget=hh,
+                            hh_select="surprise",
+                        )
+                    ),
+                }
+            )
+
     if "morph" in want:
         for keep in args.morph_keeps:
             arms.append(
@@ -280,14 +344,18 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
     if kind == "bug":
         assert isinstance(cache, BugStreamingCache)
         layer = cache._bug_layers()[0]
+        # Thread the arm's retention + hh_select so surprise arms count their
+        # position/surprise buffers honestly (fifo default keeps existing arms
+        # byte-identical); the anti-drift pin guards this against drift.
         return acc.bug_footprint(
             n,
             rank=int(arm["rank"]),
             coord_count=layer._f_len() + layer._q_len(),
             recent_len=layer._recent_len(),
             n_sink=N_SINK,
-            retention="fifo",
+            retention=arm.get("retention", "fifo"),
             hh_count=layer._hh_len(),
+            hh_select=arm.get("hh_select", "attn"),
             u_present=layer.u_k is not None,
         )
     if kind == "morph":
@@ -501,6 +569,13 @@ def main() -> None:
     parser.add_argument("--shadow-topk", type=int, default=256)
     parser.add_argument("--recent-window", type=int, default=32)
     parser.add_argument("--absorb-block", type=int, default=16)
+    parser.add_argument(
+        "--hh-budgets",
+        type=int,
+        nargs="+",
+        default=[256, 1024, 2048],
+        help="Week-11 SurpriseSLASH exact-tier sizes (bugslash/bugevict verbatim tokens)",
+    )
     parser.add_argument(
         "--chunk", type=int, default=0, help="chunked-prefill block size (0=single-shot)"
     )

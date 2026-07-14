@@ -23,10 +23,13 @@ export PIP_BREAK_SYSTEM_PACKAGES=1
 MODEL="${MODEL:-unsloth/Llama-3.2-1B-Instruct}"
 TLIST="${TLIST:-32768 65536}"
 RULER_CTX="${RULER_CTX:-32768}"
+RULER_TASKS="${RULER_TASKS:-niah_single niah_multikey niah_multivalue vt}"
+LB_TASKS="${LB_TASKS:-qasper multifieldqa_en hotpotqa 2wikimqa}"
 LB_MAXLEN="${LB_MAXLEN:-16384}"
 CHUNK="${CHUNK:-4096}"
 NSAMP="${NSAMP:-3}"
 NTRIALS="${NTRIALS:-4}"
+SEEDS="${SEEDS:-0 1}"
 NEX="${NEX:-20}"
 DTYPE="${DTYPE:-bfloat16}"
 
@@ -59,15 +62,15 @@ echo "===PPL_DONE==="
 # (2) RULER accuracy (PRIMARY) -- compress-then-query, eviction's weak spot.
 echo "===RULER_BEGIN==="
 PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
-  --context-lens $RULER_CTX --chunk "$CHUNK" --n-trials "$NTRIALS" --seeds 0 1 \
-  --out-json results/w10-ruler.json 2>&1
+  --context-lens $RULER_CTX --tasks $RULER_TASKS --chunk "$CHUNK" --n-trials "$NTRIALS" \
+  --seeds $SEEDS --out-json results/w10-ruler.json 2>&1
 emit RULER results/w10-ruler.json
 echo "===RULER_DONE==="
 
 # (3) LongBench F1 (PRIMARY) -- realistic QA, query in-prompt (fairer to eviction).
 echo "===LB_BEGIN==="
 PYTHONPATH=src python -u scripts/w10_longbench.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
-  --tasks qasper multifieldqa_en hotpotqa 2wikimqa --max-len "$LB_MAXLEN" --chunk "$CHUNK" \
+  --tasks $LB_TASKS --max-len "$LB_MAXLEN" --chunk "$CHUNK" \
   --n-examples "$NEX" --out-json results/w10-longbench.json 2>&1
 emit LB results/w10-longbench.json
 echo "===LB_DONE==="

@@ -36,7 +36,7 @@ cd /root || exit 1
 git clone --depth 1 --branch week7 https://github.com/hkrishna42/kvdlra.git 2>&1 | tail -3
 cd kvdlra || exit 1
 
-pip install -q hf_transfer hf_xet numpy "kvpress==0.5.1" 2>&1 | tail -5
+pip install -q hf_transfer hf_xet numpy matplotlib "kvpress==0.5.1" 2>&1 | tail -5
 pip install -q 'transformers==5.8.0' 'datasets==2.21.0' 2>&1 | tail -5
 echo "===DEPS_DONE==="
 python -c "import torch,transformers,kvpress; print('torch',torch.__version__,'cuda',torch.cuda.is_available(),'tf',transformers.__version__)" || echo "===DEPS_FAILED==="

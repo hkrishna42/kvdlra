@@ -402,6 +402,16 @@ def main() -> None:
     parser.add_argument("--shadow-topk", type=int, default=256)
     parser.add_argument("--recent-window", type=int, default=32)
     parser.add_argument("--absorb-block", type=int, default=16)
+    parser.add_argument(
+        "--hh-budgets",
+        type=int,
+        nargs="+",
+        default=[256, 1024, 2048],
+        help="Week-11 SurpriseSLASH exact-tier sizes (bugslash/bugevict)",
+    )
+    parser.add_argument(
+        "--hh-neighbor", type=int, default=0, help="SurpriseSLASH span-expansion window (0=off)"
+    )
     parser.add_argument("--chunk", type=int, default=0, help="chunked-prefill block size")
     parser.add_argument("--n-trials", type=int, default=4)
     parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1])

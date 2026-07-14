@@ -144,6 +144,15 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
     arms: list[dict[str, Any]] = []
     want = set(args.methods)
 
+    # Load-bearing invariant: single-shot _prefill bypasses the SLASH exact tier
+    # (it only populates via chunked ingest), so a SurpriseSLASH arm run without
+    # --chunk would silently retrieve nothing -- a wrong-reason zero. Fail loud.
+    if want & {"bugslash", "bugevict"} and not getattr(args, "chunk", 0):
+        raise ValueError(
+            "bugslash/bugevict require chunked prefill (--chunk > 0): single-shot "
+            "prefill bypasses the SLASH exact tier and the needle would be smeared."
+        )
+
     if "full" in want:
         arms.append({"name": "full", "kind": "full", "rank": None, "make": lambda: None})
 
@@ -200,6 +209,7 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                                 retention="lowrank_surprise",
                                 hh_budget=hh,
                                 hh_select="surprise",
+                                hh_neighbor=args.hh_neighbor,
                             )
                         ),
                     }
@@ -230,6 +240,7 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                             retention="lowrank_surprise",
                             hh_budget=hh,
                             hh_select="surprise",
+                            hh_neighbor=args.hh_neighbor,
                         )
                     ),
                 }
@@ -575,6 +586,9 @@ def main() -> None:
         nargs="+",
         default=[256, 1024, 2048],
         help="Week-11 SurpriseSLASH exact-tier sizes (bugslash/bugevict verbatim tokens)",
+    )
+    parser.add_argument(
+        "--hh-neighbor", type=int, default=0, help="SurpriseSLASH span-expansion window (0=off)"
     )
     parser.add_argument(
         "--chunk", type=int, default=0, help="chunked-prefill block size (0=single-shot)"

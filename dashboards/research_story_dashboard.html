@@ -260,7 +260,7 @@ p.sub{color:var(--muted);font-size:14.5px;margin-bottom:16px;max-width:860px}
     <div class="gterm"><b>KV cache</b> — the model's per-word memory (Keys + Values) that grows with context length and dominates GPU memory in long chats.</div>
     <div class="gterm"><b>Eviction</b> — compressing by deleting whole words from the cache (SnapKV, MorphKV, ExpectedAttention are eviction methods).</div>
     <div class="gterm"><b>Low-rank / rank</b> — representing a big table as a combination of a few patterns; "rank" is how many patterns you allow. Bigger rank = bigger whiteboard = more faithful.</div>
-    <div class="gterm"><b>BUG integrator</b> — a numerical-analysis algorithm (Ceruti–Lubich) for updating a low-rank summary as the underlying object evolves. The "hero" of this project. (Yes, it's really called BUG — the authors' initials: Basis-Update &amp; Galerkin.)</div>
+    <div class="gterm"><b>BUG integrator</b> — a numerical-analysis algorithm (Ceruti–Lubich) for updating a low-rank summary as the underlying object evolves. The "hero" of this project. (Yes, it's really called BUG — an acronym for its two steps: <b>B</b>asis-<b>U</b>pdate &amp; <b>G</b>alerkin.)</div>
     <div class="gterm"><b>Oracle</b> — the best summary theoretically possible with full hindsight (via SVD). Our impossible-to-beat yardstick.</div>
     <div class="gterm"><b>Perplexity (ppl)</b> — a standard "how confused is the model" score on real text. Lower is better; +5% is mildly worse, 2× is badly broken.</div>
     <div class="gterm"><b>Needle test / RULER</b> — hide a random code in a huge document, ask the model to retrieve it. Tests exact recall, not gist.</div>
@@ -373,7 +373,7 @@ new Chart(document.getElementById('chNeedle'),{type:'bar',
 
 /* Regime split */
 new Chart(document.getElementById('chRegime'),{type:'bar',
- data:{labels:['Moderate budget (~50% of a 1K ctx)','Extreme budget (~9%)'],
+ data:{labels:['Moderate squeeze (~⅓ of full cache)','Extreme squeeze (~9% of full cache)'],
   datasets:[
    {label:'BUG best (ours)',data:[9.71,20.15],backgroundColor:'#3b6fd4',borderRadius:6},
    {label:'Eviction best (MorphKV)',data:[11.68,18.71],backgroundColor:'#c96b4b',borderRadius:6},

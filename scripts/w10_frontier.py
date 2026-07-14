@@ -226,6 +226,7 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                     "press_type": "think",
                     "rank": None,
                     "think_ratio": cr,
+                    "chunkable": False,  # ThinKPress is not a ScorerPress -> no ChunkPress
                     "make": lambda cr=cr: ThinKPress(key_channel_compression_ratio=cr),
                 }
             )
@@ -396,10 +397,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     "peak_gpu_bytes": peak,
                     "status": "ok",
                 }
-            except torch.cuda.OutOfMemoryError:  # pragma: no cover - GPU-only path
-                row = {"method": arm["name"], "kind": arm["kind"], "T": t, "status": "OOM"}
+            except Exception as exc:
+                oom = isinstance(exc, torch.cuda.OutOfMemoryError)
+                row = {
+                    "method": arm["name"],
+                    "kind": arm["kind"],
+                    "T": t,
+                    "status": "OOM" if oom else "error",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
                 if args.device.startswith("cuda"):
                     torch.cuda.empty_cache()
+                print(f"  {arm['name']:14s} [T={t}] {row['status']}: {row['error'][:110]}")
             rows.append(row)
             _log_row(row)
         per_t[t] = rows

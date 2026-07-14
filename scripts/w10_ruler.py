@@ -258,34 +258,43 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             for arm in build_arms(args, model, ctx):
                 arm_chunk = args.chunk if arm.get("chunkable", True) else 0
                 hits, ratios, fracs = 0, [], []
-                for seed in args.seeds:
-                    for trial in range(args.n_trials):
-                        hay, query, targets = build_task(
-                            tokenizer,
-                            task,
-                            ctx,
-                            trial,
-                            seed,
-                            args.n_keys,
-                            args.n_values,
-                            args.n_hops,
-                        )
-                        hit, ratio, frac = retrieve(
-                            model,
-                            tokenizer,
-                            arm,
-                            hay,
-                            query,
-                            targets,
-                            args.device,
-                            arm_chunk,
-                            n,
-                            h_kv,
-                            max_new,
-                        )
-                        hits += int(hit)
-                        ratios.append(ratio)
-                        fracs.append(frac)
+                try:
+                    for seed in args.seeds:
+                        for trial in range(args.n_trials):
+                            hay, query, targets = build_task(
+                                tokenizer,
+                                task,
+                                ctx,
+                                trial,
+                                seed,
+                                args.n_keys,
+                                args.n_values,
+                                args.n_hops,
+                            )
+                            hit, ratio, frac = retrieve(
+                                model,
+                                tokenizer,
+                                arm,
+                                hay,
+                                query,
+                                targets,
+                                args.device,
+                                arm_chunk,
+                                n,
+                                h_kv,
+                                max_new,
+                            )
+                            hits += int(hit)
+                            ratios.append(ratio)
+                            fracs.append(frac)
+                except Exception as exc:
+                    print(
+                        f"[{task} ctx{ctx}] {arm['name']:14s} SKIP {type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
+                    if args.device.startswith("cuda"):
+                        torch.cuda.empty_cache()
+                    continue
                 total = len(args.seeds) * args.n_trials
                 row = {
                     "task": task,

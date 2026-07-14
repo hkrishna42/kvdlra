@@ -179,20 +179,26 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         for arm in build_arms(args, model, args.max_len):
             arm_chunk = args.chunk if arm.get("chunkable", True) else 0
             f1s, ratios = [], []
-            for prompt_ids, answers in examples:
-                text, ratio = generate(
-                    model,
-                    tokenizer,
-                    arm,
-                    prompt_ids,
-                    args.device,
-                    arm_chunk,
-                    n,
-                    h_kv,
-                    args.max_new,
-                )
-                f1s.append(qa_f1_max(text, answers))
-                ratios.append(ratio)
+            try:
+                for prompt_ids, answers in examples:
+                    text, ratio = generate(
+                        model,
+                        tokenizer,
+                        arm,
+                        prompt_ids,
+                        args.device,
+                        arm_chunk,
+                        n,
+                        h_kv,
+                        args.max_new,
+                    )
+                    f1s.append(qa_f1_max(text, answers))
+                    ratios.append(ratio)
+            except Exception as exc:
+                print(f"[{task}] {arm['name']:14s} SKIP {type(exc).__name__}: {exc}", flush=True)
+                if args.device.startswith("cuda"):
+                    torch.cuda.empty_cache()
+                continue
             row = {
                 "task": task,
                 "avg_len": avg_len,

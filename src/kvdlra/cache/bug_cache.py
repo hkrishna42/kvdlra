@@ -1182,6 +1182,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             return self._prefill(key_states, value_states)
         if self._mode == "score":
             return self._score_forward(key_states, value_states)
+        if self._mode == "ingest":
+            return self._ingest_chunk(key_states, value_states)
         if q_len != 1:
             raise NotImplementedError(
                 "BugStreamingCache supports single-shot pre-fill + one-token decode "
@@ -1203,6 +1205,33 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             torch.cat([k_ret, key_states], dim=2),
             torch.cat([v_ret, value_states], dim=2),
         )
+
+    def _ingest_chunk(self, key_states: Tensor, value_states: Tensor) -> tuple[Tensor, Tensor]:
+        """Week-10 chunked pre-fill (OOM-safe for 32K/64K): append a ``q_len``-token
+        block to the recent ring, advance ``cumulative_length``, and DEFER the
+        absorb to :meth:`consolidate` (called by the harness after the forward). The
+        returned ``[sink | hh | mid-hat | recent+chunk]`` lets the chunk attend to
+        the compressed-so-far cache plus itself -- so no forward ever holds the full
+        ``T`` K/V. Appending the block then consolidating is equivalent to feeding
+        the chunk one token at a time via :meth:`_decode_step` (same recent buffer,
+        same graduating blocks, same order); it differs from single-shot
+        :meth:`_prefill` only in that each chunk saw a *compressed* past (the
+        documented deviation, exact at a lossless config)."""
+        assert self.recent_k is not None and self.recent_v is not None
+        q = int(key_states.shape[2])
+        self.recent_k = torch.cat([self.recent_k, self._to_mat(key_states)], dim=1)
+        self.recent_v = torch.cat([self.recent_v, self._to_mat(value_states)], dim=1)
+        if self.track_scores and self.ring_score is not None:
+            zeros = torch.zeros(q, dtype=torch.float32, device=self.ring_score.device)
+            self.ring_score = torch.cat([self.ring_score, zeros])
+        self.cumulative_length += q
+        return self._decode_peek()
+
+    def consolidate(self) -> None:
+        """Run the deferred absorb for an over-full recent ring after a chunked
+        :meth:`_ingest_chunk` (same block schedule / loop as :meth:`_decode_step`)."""
+        while self._recent_len() >= self.recent_window + self.absorb_block:
+            self._absorb_block_into_stream(self.absorb_block)
 
     def _prefill(self, key_states: Tensor, value_states: Tensor) -> tuple[Tensor, Tensor]:
         """Compress the prompt into the bounded state; return the full K/V (standard
@@ -1331,8 +1360,13 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         """Report exactly the K/V length ``update()`` will return this step; the
         offset places the (strictly past) returned block right below the query's
         true position so the causal mask sees it all as visible."""
-        if self._mode == "score":
-            # Frozen scoring returns [retained | window] without mutating state.
+        if self._mode in ("score", "ingest"):
+            # score: returns [retained | window] (non-mutating). ingest: returns
+            # [retained | chunk] then defers absorb. Both: the returned block is
+            # strictly-past + the query block, so kv_length = attended + q_len and
+            # kv_offset places it right below the query's true position. In ingest,
+            # get_mask_sizes runs before update() advances cumulative_length, so
+            # attended_length()/cumulative_length are pre-chunk here.
             attended = self.attended_length()
             return attended + query_length, self.cumulative_length - attended
         sink, mid, recent = self._post_update_lengths(query_length)
@@ -1601,6 +1635,24 @@ class BugStreamingCache(Cache):
             yield
         finally:
             self._set_mode("normal")
+
+    @contextmanager
+    def ingesting(self) -> Iterator[None]:
+        """Week-10 chunked pre-fill (OOM-safe for 32K/64K). Inside the block, feed
+        the prompt in chunks; the FIRST chunk hits the normal single-shot
+        ``_prefill`` (cumulative_length == 0), each later chunk is appended to the
+        recent ring with its absorb deferred. Call :meth:`consolidate` after each
+        chunk forward to run the deferred absorb. Restores ``"normal"`` on exit."""
+        self._set_mode("ingest")
+        try:
+            yield
+        finally:
+            self._set_mode("normal")
+
+    def consolidate(self) -> None:
+        """Run each BUG layer's deferred absorb after a chunked-ingest forward."""
+        for layer in self._bug_layers():
+            layer.consolidate()
 
     def enable_surprise_probe(self) -> list[tuple[Tensor, Tensor, Tensor]]:
         """Week-9 D3 GO/NO-GO gate: instrument every layer to also track low-rank

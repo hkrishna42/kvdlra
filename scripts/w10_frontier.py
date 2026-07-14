@@ -69,33 +69,68 @@ def _score_window(
     return float(nll), int(win_ids[1:].shape[0])
 
 
+def _prefill_chunked(model: Any, cache: Cache, ctx: torch.Tensor, chunk: int) -> None:
+    """OOM-safe chunked prefill for a streaming cache (Phase 3): the first chunk
+    single-shot-prefills (cumulative_length == 0), each later chunk ingests; absorb
+    is consolidated after every chunk. ``logits_to_keep=1`` drops the P x vocab
+    logits so no forward's activations scale with the full ``T``."""
+    t = int(ctx.shape[1])
+    ingesting = getattr(cache, "ingesting")  # noqa: B009 (BugStreamingCache/MorphKVCache)
+    consolidate = getattr(cache, "consolidate")  # noqa: B009
+    with ingesting():
+        for start in range(0, t, chunk):
+            stop = min(t, start + chunk)
+            pos = torch.arange(start, stop, device=ctx.device).unsqueeze(0)
+            model(
+                ctx[:, start:stop],
+                past_key_values=cache,
+                use_cache=True,
+                position_ids=pos,
+                logits_to_keep=1,
+            )
+            consolidate()
+
+
 @torch.no_grad()
 def score_streaming(
     model: Any,
     cache: BugStreamingCache | MorphKVCache,
     ctx_ids: torch.Tensor,
     win_ids: torch.Tensor,
+    chunk: int = 0,
 ) -> tuple[float, int]:
-    """Single-shot prefill into a streaming cache (compresses), then frozen-window
-    score over the compressed cache (non-mutating)."""
+    """Prefill into a streaming cache (compresses) then frozen-window score over the
+    compressed cache (non-mutating). ``chunk > 0`` (and < ctx) uses OOM-safe chunked
+    ingest; otherwise single-shot."""
     ctx = ctx_ids.unsqueeze(0)
+    ctx_len = int(ctx_ids.shape[0])
     with cache.attach(model):
-        model(ctx, past_key_values=cache, use_cache=True)
+        if 0 < chunk < ctx_len:
+            _prefill_chunked(model, cache, ctx, chunk)
+        else:
+            model(ctx, past_key_values=cache, use_cache=True, logits_to_keep=1)
     with cache.frozen_scoring():
-        return _score_window(model, cache, int(ctx_ids.shape[0]), win_ids)
+        return _score_window(model, cache, ctx_len, win_ids)
 
 
 @torch.no_grad()
 def score_press(
-    model: Any, press: Any, ctx_ids: torch.Tensor, win_ids: torch.Tensor
+    model: Any, press: Any, ctx_ids: torch.Tensor, win_ids: torch.Tensor, chunk: int = 0
 ) -> tuple[float, int, DynamicCache]:
-    """Single-shot prefill through a kvpress prefill press (or None=full), then
-    score. Returns the (compressed) DynamicCache so its kept memory is measured."""
+    """Single-shot (or ChunkPress-chunked) prefill through a kvpress prefill press
+    (or None=full), then score. Returns the (compressed) DynamicCache so its kept
+    memory is measured."""
     cache = DynamicCache()
     ctx = ctx_ids.unsqueeze(0)
-    with press(model) if press is not None else nullcontext():
-        model(ctx, past_key_values=cache, use_cache=True)
-    nll, ntok = _score_window(model, cache, int(ctx_ids.shape[0]), win_ids)
+    ctx_len = int(ctx_ids.shape[0])
+    active = press
+    if press is not None and 0 < chunk < ctx_len:
+        from kvpress import ChunkPress
+
+        active = ChunkPress(press=press, chunk_length=chunk)
+    with active(model) if active is not None else nullcontext():
+        model(ctx, past_key_values=cache, use_cache=True, logits_to_keep=1)
+    nll, ntok = _score_window(model, cache, ctx_len, win_ids)
     return nll, ntok, cache
 
 
@@ -217,6 +252,9 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
 def run(args: argparse.Namespace) -> dict[str, Any]:
     install_kvpress_prefill_compat()
     model, tokenizer = load_model(args.model, args.device, args.dtype)
+    # Memory-efficient attention (never eager at long T -- eager materializes
+    # O(T^2); the OOM discipline for the 32K/64K GPU run, harmless on CPU).
+    model.config._attn_implementation = "sdpa"
     cfg = model.config
     head_dim = getattr(cfg, "head_dim", cfg.hidden_size // cfg.num_attention_heads)
     n = int(head_dim * cfg.num_key_value_heads)
@@ -248,10 +286,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     for ctx_ids, win_ids in samples:
                         if arm["kind"] == "press" or arm["kind"] == "full":
                             press = arm["make"]()
-                            nll, ntok, cache = score_press(model, press, ctx_ids, win_ids)
+                            nll, ntok, cache = score_press(
+                                model, press, ctx_ids, win_ids, args.chunk
+                            )
                         else:
                             cache = arm["make"]()
-                            nll, ntok = score_streaming(model, cache, ctx_ids, win_ids)
+                            nll, ntok = score_streaming(model, cache, ctx_ids, win_ids, args.chunk)
                         total_nll += nll
                         total_tok += ntok
                         if fp is None:
@@ -366,6 +406,9 @@ def main() -> None:
     parser.add_argument("--evict-keeps", type=float, nargs="+", default=[0.1, 0.25, 0.5])
     parser.add_argument("--recent-window", type=int, default=32)
     parser.add_argument("--absorb-block", type=int, default=16)
+    parser.add_argument(
+        "--chunk", type=int, default=0, help="chunked-prefill block size (0=single-shot)"
+    )
     parser.add_argument("--n-samples", type=int, default=2)
     parser.add_argument(
         "--corpus", default="wikitext-103", choices=["wikitext-2", "wikitext-103", "pg19"]

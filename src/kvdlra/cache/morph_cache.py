@@ -145,6 +145,16 @@ class MorphKVLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
                 torch.cat([self.keys, key_states], dim=2),
                 torch.cat([self.values, value_states], dim=2),
             )
+        if self._mode == "ingest":
+            # Week-10 chunked pre-fill (OOM-safe): append the q_len block; the
+            # attach() hook's prefill branch (q_len > 1) then seeds scores from the
+            # chunk's window attention and evicts back to capacity, so the kept set
+            # stays bounded (peak = capacity + recent + chunk, never the full T).
+            assert self.keys is not None and self.values is not None
+            self.keys = torch.cat([self.keys, key_states], dim=2)
+            self.values = torch.cat([self.values, value_states], dim=2)
+            self.cumulative_length += q_len
+            return self.keys, self.values
         if q_len != 1:
             raise NotImplementedError(
                 "MorphKVCache supports single-shot pre-fill + one-token decode steps "
@@ -190,6 +200,12 @@ class MorphKVLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         """Initialize the score window from the last ``R`` *prompt* tokens' causal
         attention rows ``(H_kv, R', T)`` (deviation #1), then prune to capacity."""
         self.score_rows = rows.to(torch.float32)[:, -self.recent_window :, :]
+        self._evict()
+
+    def consolidate(self) -> None:
+        """Week-10 chunked pre-fill: the attach() hook already seeds+evicts per
+        chunk; this defensively prunes to capacity so the kept set stays bounded
+        even without a firing hook (no-op once evicted)."""
         self._evict()
 
     def _evict(self) -> None:
@@ -399,6 +415,23 @@ class MorphKVCache(Cache):
             yield
         finally:
             self._set_mode("normal")
+
+    @contextmanager
+    def ingesting(self) -> Iterator[None]:
+        """Week-10 chunked pre-fill (OOM-safe). Feed the prompt in chunks under an
+        active :meth:`attach`; each chunk is appended and the hook seeds+evicts back
+        to capacity. Call :meth:`consolidate` after each chunk. Restores "normal"."""
+        self._set_mode("ingest")
+        try:
+            yield
+        finally:
+            self._set_mode("normal")
+
+    def consolidate(self) -> None:
+        """Prune every layer to capacity after a chunked-ingest forward."""
+        for layer in self.layers:
+            if isinstance(layer, MorphKVLayer):
+                layer.consolidate()
 
     def stored_state_numel(self) -> int:
         """Total stored floats across layers (K/V + score buffers)."""

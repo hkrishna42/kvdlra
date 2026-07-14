@@ -28,6 +28,7 @@ EVICT="${EVICT:-0.1}"          # EA bar: ea-k0.1 = 100% @ 0.10x at 8B/32K
 RULER_TASKS="${RULER_TASKS:-niah_single niah_multikey}"
 NTRIALS="${NTRIALS:-6}"
 SEEDS="${SEEDS:-0 1}"
+NSAMP="${NSAMP:-3}"
 CHUNK="${CHUNK:-4096}"
 DTYPE="${DTYPE:-bfloat16}"
 
@@ -77,6 +78,21 @@ PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --d
   --out-json results/w11-ruler-slash.json 2>&1
 emit SLASH results/w11-ruler-slash.json
 echo "===SLASH_DONE==="
+fi
+
+# (3) Joint quality axis: perplexity of the SAME arms (bugslash / bugEVICT / ea /
+# full) at CTX -> the retrieval+quality frontier at matched memory. This is where
+# BUG's low-rank gist earns its keep: bugEVICT (rank-1, no gist) may tie bugslash
+# on needle retrieval but has no context quality, so its ppl should be far worse.
+if [ "${RUN_PPL:-1}" = "1" ]; then
+echo "===PPL_BEGIN==="
+PYTHONPATH=src python -u scripts/w10_frontier.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+  --T $CTX --chunk "$CHUNK" --window 512 --n-samples "$NSAMP" \
+  --methods full bugslash bugevict ea --ranks "$RANK" \
+  --hh-budgets $HH --hh-neighbor "$NEIGHBOR" --evict-keeps $EVICT \
+  --no-ruler --out-json results/w11-ppl.json 2>&1
+emit PPL results/w11-ppl.json
+echo "===PPL_DONE==="
 fi
 
 echo "===ALL_DONE==="

@@ -166,6 +166,22 @@ def test_shadow_cpu_offload_is_counted_and_half() -> None:
     assert fp.ratio_fp16(t, n) == pytest.approx(fp.gpu_ratio_fp16(t, n) + fp.cpu_ratio_fp16(t, n))
 
 
+def test_think_ratio_is_one_minus_half_cr() -> None:
+    """ThinK prunes only KEY channels -> ratio 1 - cr/2 (K is half the cache)."""
+    t, n, head_dim, h_kv = 4096, 512, 64, 8
+    for cr in (0.3, 0.5, 0.7):
+        fp = acc.think_footprint(t, n, head_dim, h_kv, cr)
+        assert fp.ratio_fp16(t, n) == pytest.approx(1.0 - cr / 2, abs=2e-3)
+
+
+def test_palu_ratio_tracks_rank_ratio() -> None:
+    """Palu low-rank K+V latents -> ratio ~ rank_ratio at long t (basis amortizes)."""
+    t, n, head_dim, h_kv = 8192, 512, 64, 8
+    for rr in (0.25, 0.5):
+        fp = acc.palu_footprint(t, n, head_dim, h_kv, rr)
+        assert fp.ratio_fp16(t, n) == pytest.approx(rr, abs=0.03)
+
+
 def test_full_cache_ratio_is_one() -> None:
     fp = acc.full_cache_footprint(4096, 512)
     assert fp.ratio_fp16(4096, 512) == pytest.approx(1.0)

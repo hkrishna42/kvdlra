@@ -377,6 +377,7 @@ def main() -> None:
     parser.add_argument("--ranks", type=int, nargs="+", default=[32, 64, 128, 256])
     parser.add_argument("--morph-keeps", type=float, nargs="+", default=[0.1, 0.25, 0.5])
     parser.add_argument("--evict-keeps", type=float, nargs="+", default=[0.1, 0.25, 0.5])
+    parser.add_argument("--think-ratios", type=float, nargs="+", default=[0.3, 0.5, 0.7])
     parser.add_argument("--recent-window", type=int, default=32)
     parser.add_argument("--absorb-block", type=int, default=16)
     parser.add_argument("--chunk", type=int, default=0, help="chunked-prefill block size")
@@ -385,7 +386,9 @@ def main() -> None:
     parser.add_argument("--n-keys", type=int, default=8)
     parser.add_argument("--n-values", type=int, default=4)
     parser.add_argument("--n-hops", type=int, default=3)
-    parser.add_argument("--methods", nargs="+", default=["full", "bug", "morph", "snapkv", "ea"])
+    parser.add_argument(
+        "--methods", nargs="+", default=["full", "bug", "morph", "snapkv", "ea", "think"]
+    )
     parser.add_argument("--out-json", default="results/w10-ruler-1b.json")
     parser.add_argument("--out-fig", default="figures/week10/ruler_accuracy")
     parser.add_argument("--plot-only", action="store_true")

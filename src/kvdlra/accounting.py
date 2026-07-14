@@ -236,6 +236,48 @@ def morph_footprint(n: int, h_kv: int, kept_len: int, recent_window: int) -> Foo
     return Footprint(verbatim_elems=2 * n * kept_len, aux_words=h_kv * recent_window * kept_len)
 
 
+# ------------------------------------------------------------------ ThinK
+
+
+def think_footprint(
+    t: int, n: int, head_dim: int, h_kv: int, key_channel_ratio: float, window_size: int = 32
+) -> Footprint:
+    """Per-layer footprint of ThinK (arXiv:2407.21018): prune a ``key_channel_ratio``
+    fraction of the KEY channels (dimensions), values untouched. So only K is
+    compressed to ``(1-ratio)*head_dim`` channels/token; ``ratio_fp16 -> 1 - ratio/2``
+    (K is half the cache). Plus the kept-channel index set (per KV head, one-time).
+
+    Note: the kvpress ``ThinKPress`` *zeros* pruned channels (same tensor shape, no
+    measured gain), so this analytic footprint -- not the DynamicCache numel -- is
+    the honest deployable memory."""
+    kept_ch = max(1, round((1.0 - key_channel_ratio) * head_dim))
+    verbatim = t * kept_ch * h_kv + t * n  # pruned K + full V
+    aux = h_kv * kept_ch  # kept-channel indices, per head (one-time)
+    return Footprint(verbatim_elems=verbatim, aux_words=aux)
+
+
+# ------------------------------------------------------------------ Palu
+
+
+def palu_footprint(
+    t: int, n: int, head_dim: int, h_kv: int, rank_ratio: float, *, group: int = 1
+) -> Footprint:
+    """Per-layer footprint of Palu (arXiv:2407.21118): low-rank projection of K AND
+    V into a rank-``r`` latent per head-group, ``r = rank_ratio * head_dim * group``.
+    Stores the per-token latent ``H`` (``t*r``) for K and V, plus the reconstruction
+    basis ``B`` (``r*head_dim*group``) per group -- both counted. ``group`` = KV heads
+    sharing one projection (Palu's grouped low-rank; group=1 = per-head).
+
+    ratio_fp16 ~ (r / (head_dim*group)) = rank_ratio at long t (the basis amortizes),
+    i.e. it compresses BOTH K and V to the rank fraction -- the low-rank analogue of
+    BUG with a *static* (weight-SVD) subspace rather than the streaming tracker."""
+    n_groups = max(1, h_kv // group)
+    r = max(1, round(rank_ratio * head_dim * group))
+    latent = 2 * t * r * n_groups  # K + V per-token latents H (t x r) per group
+    basis = 2 * r * head_dim * group * n_groups  # K + V reconstruction bases B
+    return Footprint(verbatim_elems=latent + basis)
+
+
 # ------------------------------------------------------------------ ShadowKV
 
 

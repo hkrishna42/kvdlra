@@ -214,6 +214,21 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                         "make": lambda cr=cr: ExpectedAttentionPress(compression_ratio=cr),
                     }
                 )
+
+    if "think" in want:  # ThinK: channel-wise KEY low-rank (kvpress drop-in)
+        from kvpress import ThinKPress
+
+        for cr in args.think_ratios:
+            arms.append(
+                {
+                    "name": f"think-c{cr}",
+                    "kind": "press",
+                    "press_type": "think",
+                    "rank": None,
+                    "think_ratio": cr,
+                    "make": lambda cr=cr: ThinKPress(key_channel_compression_ratio=cr),
+                }
+            )
     return arms
 
 
@@ -240,7 +255,11 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
         return acc.morph_footprint(n, h_kv, kept, recent_window=mlayer.recent_window)
     if kind == "full":
         return acc.full_cache_footprint(t, n)
-    # press: measure kept fraction from the compressed DynamicCache
+    if arm.get("press_type") == "think":
+        # ThinK zeros channels (no measured gain) -> analytic footprint (K pruned).
+        head_dim = n // h_kv
+        return acc.think_footprint(t, n, head_dim, h_kv, float(arm["think_ratio"]))
+    # eviction press: measure kept fraction from the compressed DynamicCache
     assert isinstance(cache, DynamicCache)
     kept = int(cast(Any, cache.layers[0]).keys.shape[2])
     return acc.evict_footprint(t, n, kept / t)
@@ -404,6 +423,7 @@ def main() -> None:
     parser.add_argument("--ranks", type=int, nargs="+", default=[32, 64, 128, 256])
     parser.add_argument("--morph-keeps", type=float, nargs="+", default=[0.1, 0.25, 0.5])
     parser.add_argument("--evict-keeps", type=float, nargs="+", default=[0.1, 0.25, 0.5])
+    parser.add_argument("--think-ratios", type=float, nargs="+", default=[0.3, 0.5, 0.7])
     parser.add_argument("--recent-window", type=int, default=32)
     parser.add_argument("--absorb-block", type=int, default=16)
     parser.add_argument(
@@ -413,7 +433,9 @@ def main() -> None:
     parser.add_argument(
         "--corpus", default="wikitext-103", choices=["wikitext-2", "wikitext-103", "pg19"]
     )
-    parser.add_argument("--methods", nargs="+", default=["full", "bug", "morph", "snapkv", "ea"])
+    parser.add_argument(
+        "--methods", nargs="+", default=["full", "bug", "morph", "snapkv", "ea", "think"]
+    )
     parser.add_argument("--no-ruler", action="store_true", help="skip RULER (Phase 4)")
     parser.add_argument("--out-json", default="results/w10-frontier-1b.json")
     parser.add_argument("--out-fig", default="figures/week10/frontier_longctx")

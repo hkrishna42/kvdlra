@@ -280,10 +280,13 @@ def main() -> None:
     parser.add_argument("--ranks", type=int, nargs="+", default=[32, 64, 128, 256])
     parser.add_argument("--morph-keeps", type=float, nargs="+", default=[0.1, 0.25, 0.5])
     parser.add_argument("--evict-keeps", type=float, nargs="+", default=[0.1, 0.25, 0.5])
+    parser.add_argument("--think-ratios", type=float, nargs="+", default=[0.3, 0.5, 0.7])
     parser.add_argument("--recent-window", type=int, default=32)
     parser.add_argument("--absorb-block", type=int, default=16)
     parser.add_argument("--chunk", type=int, default=0, help="chunked-prefill block size")
-    parser.add_argument("--methods", nargs="+", default=["full", "bug", "morph", "snapkv", "ea"])
+    parser.add_argument(
+        "--methods", nargs="+", default=["full", "bug", "morph", "snapkv", "ea", "think"]
+    )
     parser.add_argument("--out-json", default="results/w10-longbench-1b.json")
     parser.add_argument("--out-fig", default="figures/week10/longbench_f1")
     parser.add_argument("--plot-only", action="store_true")

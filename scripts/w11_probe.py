@@ -100,6 +100,7 @@ def probe(args: argparse.Namespace) -> dict[str, object]:
             retention="lowrank_surprise",
             hh_budget=hh,
             hh_select="surprise",
+            hh_neighbor=args.hh_neighbor,
         )
         with torch.no_grad(), cache.ingesting():
             for s in range(0, t, args.chunk):
@@ -157,6 +158,7 @@ def main() -> None:
     p.add_argument("--chunk", type=int, default=1024)
     p.add_argument("--recent-window", type=int, default=32)
     p.add_argument("--absorb-block", type=int, default=16)
+    p.add_argument("--hh-neighbor", type=int, default=0, help="span-expansion window (0=off)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--trial", type=int, default=0)
     p.add_argument("--out-json", default="")

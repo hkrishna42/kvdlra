@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KV-DLRA — The Research Story, Explained Simply</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1" integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ" crossorigin="anonymous"></script>
+<style>
+:root{
+  --bg:#f6f7fb; --card:#ffffff; --ink:#1c2333; --muted:#5f6b85; --line:#e6e9f2;
+  --blue:#3b6fd4; --blue-soft:#e8effc; --green:#1f9d63; --green-soft:#e5f6ee;
+  --red:#d44a4a; --red-soft:#fdeaea; --amber:#c07f13; --amber-soft:#fdf3df;
+  --purple:#7a5cc4; --purple-soft:#f0ebfb; --dark:#181f36;
+  --radius:14px; --gap:18px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--ink);line-height:1.55}
+.wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px}
+.hero{background:linear-gradient(135deg,#182448 0%,#2a3f7d 60%,#3b6fd4 100%);color:#fff;border-radius:18px;padding:38px 40px;margin-bottom:var(--gap)}
+.hero .kicker{font-size:12px;letter-spacing:2px;text-transform:uppercase;opacity:.75;margin-bottom:10px}
+.hero h1{font-size:30px;font-weight:750;line-height:1.2;margin-bottom:12px}
+.hero p{font-size:16px;max-width:840px;opacity:.94}
+.hero .tag{display:inline-block;margin-top:16px;margin-right:8px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.25);padding:5px 12px;border-radius:999px;font-size:12.5px}
+h2.sec{font-size:21px;font-weight:750;margin:34px 0 6px}
+p.sub{color:var(--muted);font-size:14.5px;margin-bottom:16px;max-width:860px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:22px 24px;box-shadow:0 1px 3px rgba(20,30,60,.05)}
+.grid{display:grid;gap:var(--gap)}
+.g2{grid-template-columns:1fr 1fr}.g3{grid-template-columns:1fr 1fr 1fr}
+@media(max-width:900px){.g2,.g3{grid-template-columns:1fr}}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:var(--gap);margin-top:var(--gap)}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px}
+.kpi .v{font-size:26px;font-weight:800;color:var(--blue)}
+.kpi .l{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-top:3px}
+.kpi .n{font-size:12.5px;color:var(--ink);margin-top:6px;opacity:.85}
+.explain{display:grid;grid-template-columns:1.15fr .85fr;gap:var(--gap)}
+@media(max-width:900px){.explain{grid-template-columns:1fr}}
+.explain h3, .card h3{font-size:16px;font-weight:700;margin-bottom:10px}
+.explain p, .card p{font-size:14.5px;color:#333c52;margin-bottom:10px}
+.analogy{background:var(--blue-soft);border-left:4px solid var(--blue);padding:12px 16px;border-radius:8px;font-size:14px;color:#25355e;margin-top:6px}
+.memviz{display:flex;flex-direction:column;gap:14px;justify-content:center;height:100%}
+.membar{position:relative}
+.membar .lab{font-size:12.5px;color:var(--muted);margin-bottom:4px;display:flex;justify-content:space-between}
+.membar .track{background:#eef1f8;border-radius:8px;height:26px;overflow:hidden}
+.membar .fill{height:100%;border-radius:8px;display:flex;align-items:center;padding-left:10px;font-size:12px;font-weight:700;color:#fff;min-width:52px}
+.chip{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.4px;padding:3px 10px;border-radius:999px;text-transform:uppercase}
+.chip.win{background:var(--green-soft);color:var(--green)}
+.chip.go{background:var(--blue-soft);color:var(--blue)}
+.chip.neg{background:var(--red-soft);color:var(--red)}
+.chip.split{background:var(--amber-soft);color:var(--amber)}
+.chip.progress{background:var(--purple-soft);color:var(--purple)}
+.timeline{margin-top:var(--gap);display:flex;flex-direction:column;gap:10px}
+.tl-item{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.tl-head{display:flex;align-items:center;gap:14px;padding:14px 18px;cursor:pointer;user-select:none}
+.tl-head:hover{background:#fafbff}
+.tl-week{flex:0 0 66px;font-weight:800;color:var(--blue);font-size:14px}
+.tl-title{flex:1;font-size:14.5px;font-weight:650}
+.tl-caret{color:var(--muted);transition:transform .18s;font-size:12px}
+.tl-item.open .tl-caret{transform:rotate(90deg)}
+.tl-body{display:none;padding:2px 18px 18px 98px;font-size:14px;color:#333c52}
+.tl-item.open .tl-body{display:block}
+.tl-body .one{font-weight:650;color:var(--ink);margin-bottom:6px}
+.tl-body .num{background:#f4f6fc;border-radius:8px;padding:9px 13px;font-size:13px;margin-top:8px;color:#3a4460}
+@media(max-width:700px){.tl-body{padding-left:18px}}
+.chart-box{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px 22px}
+.chart-box h3{font-size:15px;font-weight:700;margin-bottom:2px}
+.chart-box .hint{font-size:12.5px;color:var(--muted);margin-bottom:12px}
+.chart-wrap{position:relative;height:320px}
+.chart-wrap.short{height:280px}
+.regime{border-top:5px solid var(--line)}
+.regime.b1{border-top-color:var(--green)}.regime.b2{border-top-color:var(--blue)}.regime.b3{border-top-color:var(--red)}
+.regime .who{font-size:13px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px}
+.regime.b1 .who{color:var(--green)}.regime.b2 .who{color:var(--blue)}.regime.b3 .who{color:var(--red)}
+.wall{background:var(--dark);color:#e8ecfa;border-radius:var(--radius);padding:24px 26px}
+.wall h3{color:#fff;font-size:16px;margin-bottom:8px}
+.wall p{color:#c3cbe6;font-size:14px;margin-bottom:8px}
+.wall .big{font-size:24px;font-weight:800;color:#8fb2ff;margin:4px 0 8px}
+.honest li,.next li{font-size:14px;color:#333c52;margin:8px 0 8px 18px}
+.glossary{display:grid;grid-template-columns:1fr 1fr;gap:10px 26px;margin-top:14px}
+@media(max-width:800px){.glossary{grid-template-columns:1fr}}
+.gterm{font-size:13.5px;padding:10px 0;border-bottom:1px dashed var(--line)}
+.gterm b{color:var(--blue)}
+.foot{margin-top:34px;font-size:12.5px;color:var(--muted);text-align:center}
+.legend-note{font-size:12px;color:var(--muted);margin-top:8px}
+.pill-row{margin-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- ============ HERO ============ -->
+<div class="hero">
+  <div class="kicker">kv-dlra · research progress dashboard · weeks 1–10</div>
+  <h1>Can a math trick from physics simulations shrink an LLM's memory?</h1>
+  <p>When a language model reads a long document, it keeps a growing scratchpad called the <b>KV cache</b>. This project tests whether a well-studied compression method from numerical mathematics — the <b>BUG integrator</b> — can keep that scratchpad small <i>while the text streams in</i>, without retraining the model. Ten weeks in, we have real wins, honest losses, and a precise map of where each lives.</p>
+  <div class="pill-row">
+    <span class="tag">Open-source PyTorch library</span>
+    <span class="tag">Tested on Llama 3.2 1B &amp; Llama 3.1 8B</span>
+    <span class="tag">Goal: reproducible library + arXiv preprint</span>
+  </div>
+</div>
+
+<!-- ============ KPIs ============ -->
+<div class="kpis">
+  <div class="kpi"><div class="v">10</div><div class="l">Weeks of research</div><div class="n">Each ends with an audited verdict</div></div>
+  <div class="kpi"><div class="v">7</div><div class="l">Methods compared</div><div class="n">Ours + the strongest published rivals</div></div>
+  <div class="kpi"><div class="v">~1%</div><div class="l">From mathematically perfect</div><div class="n">Our compressor nearly matches the theoretical best summary</div></div>
+  <div class="kpi"><div class="v">30&times;</div><div class="l">Max compression</div><div class="n">4&nbsp;GB of cache squeezed to ~135&nbsp;MB — only our method goes this far</div></div>
+  <div class="kpi"><div class="v">248</div><div class="l">Automated tests</div><div class="n">All passing; every claim adversarially reviewed</div></div>
+</div>
+
+<!-- ============ THE PROBLEM ============ -->
+<h2 class="sec">1 · Start here: the problem</h2>
+<p class="sub">You know the KV cache exists. Here is the only other thing you need: <b>it gets huge.</b></p>
+<div class="explain">
+  <div class="card">
+    <h3>What the KV cache actually is</h3>
+    <p>As a model reads text, it writes two numbers-tables for <i>every single word</i> it has seen: a <b>K</b> (key — "how can later words find me?") and a <b>V</b> (value — "what do I contribute when found?"). To generate the next word, the model looks back across <i>all</i> of these entries. That lookup table is the KV cache.</p>
+    <p>The problem: the cache grows with every word and never shrinks. For an 8-billion-parameter model reading a 32,000-word context, the cache alone is about <b>4&nbsp;GB — per conversation</b>. That's often more than the GPU memory left after loading the model, and it's the main reason long contexts are slow and expensive.</p>
+    <div class="analogy">🗒️ <b>Analogy:</b> imagine taking meeting notes where you must write down every sentence anyone says, verbatim, forever — and re-read all of it before you speak. This project asks: can we keep a smart running <i>summary</i> instead, updated live as people talk?</div>
+  </div>
+  <div class="card">
+    <h3>How big does it get? (8B model, one sequence)</h3>
+    <div class="memviz">
+      <div class="membar"><div class="lab"><span>Full cache @ 32K words</span><span><b>4.0 GB</b></span></div><div class="track"><div class="fill" style="width:100%;background:#d44a4a">100%</div></div></div>
+      <div class="membar"><div class="lab"><span>Full cache @ 64K words</span><span><b>8.0 GB</b></span></div><div class="track"><div class="fill" style="width:100%;background:#a93838">grows forever →</div></div></div>
+      <div class="membar"><div class="lab"><span>Typical rival compressors</span><span><b>~0.4–2.0 GB</b></span></div><div class="track"><div class="fill" style="width:38%;background:#c07f13">~10–50%</div></div></div>
+      <div class="membar"><div class="lab"><span>Our method at its smallest (BUG rank-32)</span><span><b>~135 MB</b></span></div><div class="track"><div class="fill" style="width:4.5%;background:#1f9d63">3.3%</div></div></div>
+      <div class="legend-note">Memory measured honestly in the same unit for every method — even bytes a rival parks on the CPU still count.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ THE IDEA ============ -->
+<h2 class="sec">2 · The idea we're testing</h2>
+<p class="sub">Two schools exist for shrinking the cache. We brought in a third tool and tested it against both.</p>
+<div class="grid g3">
+  <div class="card">
+    <h3>🗑️ School 1: Throw words away ("eviction")</h3>
+    <p>Keep the words the model pays most attention to, delete the rest — entirely. Methods: <b>SnapKV, MorphKV, ExpectedAttention</b>. Simple, cheap, and very hard to beat. But deleted is deleted: if a discarded word matters later, it's gone forever.</p>
+  </div>
+  <div class="card">
+    <h3>📉 School 2: Keep everything, roughly ("low-rank / quantize")</h3>
+    <p>Store every word, but blur each entry so it takes less space. Methods: <b>ThinK, Palu, ShadowKV</b>, plus number-rounding (quantization). Nothing is forgotten, but everything is slightly fuzzy.</p>
+  </div>
+  <div class="card" style="border:2px solid var(--blue)">
+    <h3>🧮 Ours: a live mathematical summary (BUG)</h3>
+    <p>Keep a <b>fixed-size summary</b> that captures the dominant patterns across <i>all</i> words seen so far, and update it with each new word. The updater is the <b>BUG integrator</b> (Ceruti–Lubich) — a method from numerical analysis built for exactly this "track a big evolving object with a small representation" problem in physics and quantum simulations. Nobody had tried it on KV caches.</p>
+    <div class="analogy">📝 The whiteboard analogy: a fixed-size whiteboard where you keep the best possible summary of the whole meeting, erasing and rewriting a little with every new sentence. "Rank" = the size of the whiteboard.</div>
+  </div>
+</div>
+
+<!-- ============ TIMELINE ============ -->
+<h2 class="sec">3 · The journey, week by week</h2>
+<p class="sub">Click any week to expand. Note how many honest negatives there are — each one was a deliberate test that ruled something out, and each survived an adversarial review. That's the point: we now know exactly where this method wins and loses, and why.</p>
+<div class="timeline" id="timeline"></div>
+
+<!-- ============ CHARTS ============ -->
+<h2 class="sec">4 · The evidence, in four pictures</h2>
+<p class="sub">All real measured numbers from the project (Llama models, honest matched-memory accounting). "Perplexity" = how confused the model is; <b>lower is better</b>.</p>
+<div class="grid g2">
+  <div class="chart-box">
+    <h3>How good is our summarizer, really?</h3>
+    <div class="hint">Reconstruction error at the same memory, rank 32 (lower = better). "Perfect hindsight" = the mathematically best possible summary if you'd seen the whole text upfront.</div>
+    <div class="chart-wrap short"><canvas id="chOracle"></canvas></div>
+    <div class="legend-note">Streaming BUG lands within ~1% of perfect — and beats every alternative summarizer (incremental SVD, Frequent Directions, Oja's rule is 1.3–3&times; worse). This part of the thesis is settled: the tracker is essentially optimal.</div>
+  </div>
+  <div class="chart-box">
+    <h3>Quality vs. memory — the main frontier (8B model, 32K context)</h3>
+    <div class="hint">Each point = one method at one memory setting. Down and left is better. Grey dashed line = the uncompressed model (7.62).</div>
+    <div class="chart-wrap short"><canvas id="chFrontier"></canvas></div>
+    <div class="legend-note">In the middle band, word-deleting (MorphKV/SnapKV) is near-lossless. But follow BUG's line to the far left: <b>it's the only method that still works at 3.3% memory.</b></div>
+  </div>
+  <div class="chart-box">
+    <h3>The needle test at 32K: our clearest loss</h3>
+    <div class="hint">Hide a random code in 32,000 words, then ask for it (RULER benchmark, 8B model). Score = % retrieved.</div>
+    <div class="chart-wrap short"><canvas id="chNeedle"></canvas></div>
+    <div class="legend-note">A summary captures dominant patterns — a needle is by definition <i>not</i> a dominant pattern, so it gets smeared away. At 16K our rank-128 still finds it half the time; by 32K, never. We call this the <b>fidelity wall</b>, and fixing it is the next research target.</div>
+  </div>
+  <div class="chart-box">
+    <h3>The regime split: same two methods, opposite winners</h3>
+    <div class="hint">Streaming perplexity at matched memory (1B model). Left: a moderate memory budget. Right: an extreme squeeze.</div>
+    <div class="chart-wrap short"><canvas id="chRegime"></canvas></div>
+    <div class="legend-note">At a comfortable budget BUG clearly beats eviction (9.71 vs 11.68). Squeeze hard enough and it flips (20.15 vs 18.71). Weeks 7–8 proved this flip is <b>structural</b>, not a tuning problem — see the two walls below.</div>
+  </div>
+</div>
+
+<!-- ============ THE MAP ============ -->
+<h2 class="sec">5 · The map: who wins where</h2>
+<p class="sub">Ten weeks of testing compress into one honest sentence: <b>there is no single winner — there are regimes.</b></p>
+<div class="grid g3">
+  <div class="card regime b1">
+    <div class="who">Extreme compression → BUG wins (only option)</div>
+    <p>Below ~7% memory every rival either breaks or simply cannot get that small. BUG still produces sensible text at <b>3.3%</b> (135&nbsp;MB instead of 4&nbsp;GB), at a quality premium. If memory is the hard constraint, BUG is the only game in town.</p>
+  </div>
+  <div class="card regime b2">
+    <div class="who">Everyday budgets → word-deletion wins</div>
+    <p>At 10–50% memory, MorphKV/SnapKV are near-lossless on ordinary text (7.54 vs 7.62 uncompressed) — because most words genuinely don't matter later, deleting them is almost free, and eviction carries zero bookkeeping overhead.</p>
+  </div>
+  <div class="card regime b3">
+    <div class="who">Finding needles at 32K → ExpectedAttention wins</div>
+    <p>For "recall one exact detail from a huge document," keeping the right words <i>verbatim</i> beats any summary: ExpectedAttention scores 100% at 10% memory, while BUG scores 0% at every rank at 32K.</p>
+  </div>
+</div>
+
+<div class="grid g2" style="margin-top:var(--gap)">
+  <div class="wall">
+    <h3>🧱 Wall 1 — the ceiling: our tracker is already ~perfect</h3>
+    <div class="big">within ~1% of the theoretical optimum</div>
+    <p>We measured BUG against the best possible summary (computed with full hindsight) and against every serious rival tracker. BUG essentially ties the optimum and beats the rivals. <b>Consequence:</b> no cleverer summarizer can meaningfully help — future gains must come from changing <i>what we store</i>, not <i>how we track it</i>.</p>
+  </div>
+  <div class="wall">
+    <h3>🧱 Wall 2 — the floor: the whiteboard itself costs memory</h3>
+    <div class="big">85% of a tiny budget is fixed overhead</div>
+    <p>BUG must store its "whiteboard" (the basis) before it stores a single word. At generous budgets that's a rounding error; at extreme squeezes it eats 85% of the budget — while eviction pays <i>zero</i> overhead. That's mechanically why eviction wins the extreme regime, and why no tuning can flip it. Only removing or sharing the overhead can.</p>
+  </div>
+</div>
+
+<!-- ============ THE WIN ============ -->
+<h2 class="sec">6 · The clearest win: BUG remembers what eviction forgets</h2>
+<div class="card" style="border-left:5px solid var(--green)">
+  <p style="font-size:15px"><b>Week 9's headline result.</b> Eviction's fatal flaw is that deleted words are gone forever. We used BUG as a <b>recovery tier</b>: a small always-on summary sitting alongside, holding a compressed memory of everything ever seen. Then we tested: hide facts, let the eviction cache delete them, ask for them later.</p>
+  <div class="grid g2" style="margin-top:12px">
+    <div class="analogy" style="background:var(--green-soft);border-color:var(--green)">🎯 <b>1B model:</b> eviction recalled <b>0 of 4</b> deleted facts. BUG recovered <b>4 of 4</b> — using <i>less</i> memory (4.02M vs 4.59M floats).</div>
+    <div class="analogy" style="background:var(--green-soft);border-color:var(--green)">🎯 <b>8B model, harder multi-fact test:</b> eviction <b>0 of 6</b> → BUG <b>6 of 6</b> (needs a 1.8&times; memory premium at that difficulty). Confirmed on rented GPUs.</div>
+  </div>
+  <p style="margin-top:12px">Bonus finding: BUG is also the <b>fastest</b> adaptive method per generated token (20.5&nbsp;ms vs eviction's 26.9&nbsp;ms at 8B on GPU).</p>
+</div>
+
+<!-- ============ HONESTY ============ -->
+<h2 class="sec">7 · How we keep ourselves honest</h2>
+<p class="sub">A research result is only worth something if it survives someone trying to kill it. Built into the process:</p>
+<div class="grid g2">
+  <div class="card">
+    <ul class="honest">
+      <li><b>Adversarial critics at every milestone.</b> Independent review passes re-derive the numbers and hunt for overclaims before anything is called "done" (3 of 3 skeptics signed off on Weeks 8–9).</li>
+      <li><b>Public retractions.</b> Week 4's exciting "beats state-of-the-art at 10×" turned out to be an unfair comparison (our method compressed, rivals not). We retracted it in the docs, the paper, and the README — and the honest version became the foundation for everything after.</li>
+      <li><b>A skeptic once saved a win.</b> Week 9's recovery result was nearly filed as a failure; an adversarial reviewer spotted the test itself was flawed. Rerun properly → the project's biggest win.</li>
+    </ul>
+  </div>
+  <div class="card">
+    <ul class="honest">
+      <li><b>Honest memory accounting.</b> Every method is charged for every float it stores — including rivals' bytes "hidden" on the CPU, and including our own bookkeeping. We even fixed an error that <i>overcharged our own method</i> (~2–6% of budget) and reported that the fix bought no quality win.</li>
+      <li><b>Negatives are published, not buried.</b> Weeks 5, 8, and parts of 6–7 are documented failures with measured mechanisms. They're what make the map trustworthy.</li>
+      <li><b>Engineering discipline.</b> 248 automated tests, type-checked, reproducible seeds, every figure regenerable from committed JSON.</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============ NEXT ============ -->
+<h2 class="sec">8 · What's next (Week 11)</h2>
+<div class="card" style="border-left:5px solid var(--purple)">
+  <p style="font-size:15px"><b>Mission: teach BUG to find the needle at 32K — or prove it can't.</b> The diagnosis is precise: a needle is a rare outlier, and outliers are exactly what summaries smear. So the plan is a hybrid: BUG keeps the compressed gist of everything, <i>plus</i> a tiny tier of exactly-stored "surprising" words (the machinery for spotting them already exists from Week 9).</p>
+  <p>The bar is falsifiable and pre-registered: match ExpectedAttention's 100% retrieval at <b>≤10% memory</b>, or publish the negative and complete the map. A deeper mathematical brainstorm of how to get there — and beyond — lives in the companion dashboard: <b><a href="research_brainstorm_dashboard.html">research_brainstorm_dashboard.html</a></b>.</p>
+</div>
+
+<!-- ============ GLOSSARY ============ -->
+<h2 class="sec">9 · Tiny glossary</h2>
+<div class="card">
+  <div class="glossary">
+    <div class="gterm"><b>KV cache</b> — the model's per-word memory (Keys + Values) that grows with context length and dominates GPU memory in long chats.</div>
+    <div class="gterm"><b>Eviction</b> — compressing by deleting whole words from the cache (SnapKV, MorphKV, ExpectedAttention are eviction methods).</div>
+    <div class="gterm"><b>Low-rank / rank</b> — representing a big table as a combination of a few patterns; "rank" is how many patterns you allow. Bigger rank = bigger whiteboard = more faithful.</div>
+    <div class="gterm"><b>BUG integrator</b> — a numerical-analysis algorithm (Ceruti–Lubich) for updating a low-rank summary as the underlying object evolves. The "hero" of this project. (Yes, it's really called BUG — the authors' initials: Basis-Update &amp; Galerkin.)</div>
+    <div class="gterm"><b>Oracle</b> — the best summary theoretically possible with full hindsight (via SVD). Our impossible-to-beat yardstick.</div>
+    <div class="gterm"><b>Perplexity (ppl)</b> — a standard "how confused is the model" score on real text. Lower is better; +5% is mildly worse, 2× is badly broken.</div>
+    <div class="gterm"><b>Needle test / RULER</b> — hide a random code in a huge document, ask the model to retrieve it. Tests exact recall, not gist.</div>
+    <div class="gterm"><b>Pre-RoPE keys</b> — keys captured <i>before</i> position-stamping. Week 2 found they compress ~2× better; a key design choice of ours.</div>
+    <div class="gterm"><b>Matched memory</b> — every comparison holds total stored floats equal across methods, so nobody wins by secretly using more memory.</div>
+    <div class="gterm"><b>1B / 8B</b> — the two model sizes tested (Llama 3.2 1B for cheap iteration, Llama 3.1 8B for confirmation on rented GPUs).</div>
+  </div>
+</div>
+
+<div class="foot">kv-dlra · Weeks 1–10 · All numbers from committed results (results/*.json, docs/week*.md) · Companion: research_brainstorm_dashboard.html · Generated 2026-07-14</div>
+</div>
+
+<script>
+/* ---------------- Timeline data ---------------- */
+const WEEKS = [
+ {w:"Week 1", t:"Build the machine, look at real model memory", v:["go","Foundations ✓"],
+  one:"Built the BUG algorithm from the original math papers and verified it behaves exactly as theory predicts. Captured real KV-cache tensors from Llama.",
+  body:"First reality check: raw cache entries (as the model stores them) are <b>less compressible than hoped</b> — a good summary still needs a fairly big whiteboard. This shaped everything after.",
+  num:"Convergence test: error halves exactly when the step halves (ratio 2.00) — the implementation matches the theory."},
+ {w:"Week 2", t:"The go/no-go pilot: is streaming BUG actually good?", v:["go","GO — critic-audited"],
+  one:"On real Llama memory streams, BUG's live summary came within 1–3% of the best summary theoretically possible — while seeing each word only once.",
+  body:"It also beat the two natural rivals (incremental SVD everywhere; Oja's rule by 1.3–3&times;). Big discovery: compressing keys <b>before</b> position-stamping (\"pre-RoPE\") roughly <b>halves the error</b>. An independent critic re-derived the numbers and confirmed: GO.",
+  num:"Error at rank 128: 0.171 (normal keys) → 0.096 (pre-RoPE keys). BUG ≤ 1.03× oracle at every budget on 5/5 documents."},
+ {w:"Week 3", t:"Wire it into a real inference engine", v:["go","Works end-to-end"],
+  one:"Plugged BUG into NVIDIA's kvpress as \"BUGPress\" and proved the model still generates correct text with a compressed cache.",
+  body:"Also rebuilt the core in fast GPU-friendly form (<b>20–30× speedup</b>). Quality cost measured: at 4× compression the model is only ~7% more confused; at 8×, ~9%.",
+  num:"Perplexity 12.65 uncompressed → +6.6% at rank 128 (4× smaller), +9.3% at rank 64 (8× smaller)."},
+ {w:"Week 4", t:"Add quantization — and retract our own hype", v:["neg","Overclaim caught & fixed"],
+  one:"Combined BUG with number-rounding (quantization). An exciting \"beats state-of-the-art at 10×!\" result turned out to be an unfair comparison — we had quantized our method but not the rivals.",
+  body:"Redone fairly, rivals lead the middle band; BUG's real edges are the extreme-compression end and needle retrieval. Retracted in the docs, the paper, and the README. Painful and valuable — this honest baseline anchored the rest of the project. Also first 8B-scale runs on rented GPUs.",
+  num:"Fair verdict: ExpectedAttention+quantization leads mid-band; BUG best only below ~7% memory; BUG ties needle retrieval 15/15."},
+ {w:"Week 5", t:"Fight on the rivals' turf — and lose, informatively", v:["neg","5 honest negatives"],
+  one:"Five planned attacks on eviction's home ground (long-context perplexity, hybrids, needle scaling, RULER, 32K) — all five failed, each for a now-understood reason.",
+  body:"The keeper: an ablation confirmed BUG is the <b>right integrator</b> among its mathematical siblings (its rank-adaptivity matters). Also caught and retracted one of our own overclaims about a rival integrator \"blowing up\".",
+  num:"Verdict that stands to this day: on plain long-text perplexity at everyday budgets, word-deletion is simply very strong."},
+ {w:"Week 6", t:"Go where rivals can't: constant-memory streaming decode", v:["split","Wins small, inverts at depth"],
+  one:"Built the flagship capability: a cache that never grows, no matter how long the text — exact recent words + sinks, BUG summary for the entire middle.",
+  body:"At 1B it <b>beat eviction</b> (11.59 vs 11.81). At 8B and deep horizons the result <b>inverted</b> — and instead of hiding that, we diagnosed three precise mechanisms (coordinate eviction order, projection erosion, rank squeeze) that became Week 7's to-do list.",
+  num:"BUG was also the fastest adaptive method per token: 20.5 ms vs 26.9 ms (8B, GPU)."},
+ {w:"Week 7", t:"Fix the diagnosis + ask the killer question", v:["split","Fixed the loss; mapped the walls"],
+  one:"One diagnosed fix — keep summary slots by attention instead of age — flipped the 8B loss back to a win (7.71 vs 7.74). Then we asked: can BUG ever fully DEFEAT eviction?",
+  body:"A structured \"dominance program\" (idea panels + adversarial ranking) tried every lever: budget re-splitting (found a clean U-shaped optimum), a hybrid keeping a few exact hot words (SLASH), rival trackers, merging schemes. Combined, the levers closed <b>60% of the gap</b> at extreme compression — and then hit a measured, structural wall. Verdict: <b>no dominance; a clean regime split</b>, with both walls measured rather than conjectured.",
+  num:"Extreme-budget chain: 22.32 → 20.95 → 20.62 → 20.15 vs eviction's 18.71. Overhead floor: 85% of a tiny budget is BUG's fixed bookkeeping."},
+ {w:"Week 8", t:"The codebook gambit (CodeBUG)", v:["neg","Honest negative, wall confirmed"],
+  one:"Last idea standing from Week 7: replace each word's summary coordinates with a tiny learned code from a shared codebook — amortizing the overhead away.",
+  body:"Built carefully (frozen anchor to avoid error compounding — and the no-compounding design <b>worked</b>). It still lost: the memory-forced anchor is intrinsically too blurry (~27% floor). Three independent skeptics confirmed the accounting and the mechanism. The extreme-compression wall now stands confirmed from two directions.",
+  num:"CodeBUG 22.43 vs eviction 18.71 — and monotonically worse the more it codes. Drift over 1024 steps: flat (1.38×), exactly as designed."},
+ {w:"Week 9", t:"Stop competing — start helping. The big win.", v:["win","D1 recovery WIN (8B-confirmed)"],
+  one:"Reframed BUG as eviction's safety net: a compressed memory of everything, used to recover facts the eviction cache deleted. It works.",
+  body:"1B: eviction recalls 0/4 deleted facts, BUG recovers 4/4 at less memory. 8B, harder multi-fact test: 0/6 → <b>6/6</b> (1.8× memory premium at that difficulty; premium provably scales with rank-vs-context). Two companion ideas were honestly bounded, not oversold. And a skeptic <b>rescued</b> this win — the first version of the test was flawed against us.",
+  num:"Also mapped: 'surprise' (what BUG fails to summarize) is genuinely complementary information to attention (correlation −0.11) — the seed of Week 11."},
+ {w:"Week 10", t:"The definitive shoot-out: 7 methods, one honest axis", v:["split","No single winner — the map"],
+  one:"Everything vs everything: BUG, MorphKV, SnapKV, ExpectedAttention, ThinK, Palu, ShadowKV — at 1B & 8B, up to 64K context, all memory counted in the same honest unit.",
+  body:"Three findings. (1) Everyday budgets: eviction near-lossless. (2) Extreme compression: <b>only BUG functions</b> (3.3% memory, 4 GB → 135 MB). (3) Needle retrieval at 32K: BUG fails at every rank while ExpectedAttention hits 100% at 10% memory — the <b>fidelity wall</b>, precisely located between 16K and 32K. Published as an interactive report; RULER/LongBench made the primary metric at the user's direction.",
+  num:"8B @ 32K: eviction 7.54 vs uncompressed 7.62; BUG at 3.3% memory: 9.31. Needle at 16K: rank-128 finds it 50% — at 32K: 0%."},
+ {w:"Week 11", t:"Next: teach BUG to find the needle — or prove it can't", v:["progress","In planning"],
+  one:"The one uncontested rival stronghold is exact recall at 32K. The plan: BUG's gist + a tiny tier of exactly-kept \"surprising\" words, judged against a pre-registered bar.",
+  body:"Falsifiable target: match ExpectedAttention's 100% retrieval at ≤10% memory — or publish the bounded negative and complete the map. See the companion brainstorm dashboard for the candidate mechanisms and the math.",
+  num:"Bar: RULER@32K ≥ EA accuracy at ≤ 0.10× memory, honest accounting, adversarial review."}
+];
+const CHIP = {win:"chip win",go:"chip go",neg:"chip neg",split:"chip split",progress:"chip progress"};
+const tl = document.getElementById('timeline');
+WEEKS.forEach((d,i)=>{
+  const el=document.createElement('div');el.className='tl-item'+(i===9?' open':'');
+  el.innerHTML=`<div class="tl-head" onclick="this.parentElement.classList.toggle('open')">
+    <div class="tl-week">${d.w}</div><div class="tl-title">${d.t}</div>
+    <span class="${CHIP[d.v[0]]}">${d.v[1]}</span><span class="tl-caret">▶</span></div>
+  <div class="tl-body"><div class="one">${d.one}</div><p>${d.body}</p><div class="num">📌 ${d.num}</div></div>`;
+  tl.appendChild(el);
+});
+
+/* ---------------- Charts ---------------- */
+Chart.defaults.font.family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif";
+Chart.defaults.color="#5f6b85";
+
+/* Oracle closeness (rank 32, week-2/7 tracker comparison, mean rel. Frobenius error) */
+new Chart(document.getElementById('chOracle'),{type:'bar',
+ data:{labels:['Perfect hindsight (oracle)','Streaming BUG (ours)','Incremental SVD','Frequent Directions'],
+  datasets:[{data:[0.2290,0.2313,0.2351,0.2442],
+   backgroundColor:['#9aa7c7','#3b6fd4','#c9a24b','#c96b4b'],borderRadius:6}]},
+ options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
+  plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' error: '+c.parsed.x.toFixed(4)}}},
+  scales:{x:{min:0.20,max:0.25,title:{display:true,text:'reconstruction error (lower = better)'},grid:{color:'#eef1f8'}},y:{grid:{display:false}}}}});
+
+/* Frontier 8B/32K ppl (from results/w10-gpu-parsed.json) */
+const F={
+ bug:{label:'BUG (ours)',color:'#3b6fd4',pts:[[0.033,9.31],[0.065,8.68],[0.130,8.05],[0.259,7.71]]},
+ morph:{label:'MorphKV (eviction)',color:'#c96b4b',pts:[[0.125,7.68],[0.312,7.54],[0.625,7.57]]},
+ snap:{label:'SnapKV (eviction)',color:'#c9a24b',pts:[[0.115,7.87],[0.266,7.68],[0.516,7.62]]},
+ ea:{label:'ExpectedAttention',color:'#7a5cc4',pts:[[0.115,8.28],[0.266,7.96],[0.516,7.68]]},
+ palu:{label:'Palu (low-rank rival)',color:'#8fa3b8',pts:[[0.251,13.88],[0.502,9.24]]}
+};
+new Chart(document.getElementById('chFrontier'),{type:'line',
+ data:{datasets:Object.values(F).map(m=>({label:m.label,data:m.pts.map(p=>({x:p[0],y:p[1]})),
+   borderColor:m.color,backgroundColor:m.color,tension:.25,pointRadius:4,pointHoverRadius:6,borderWidth:2.2,fill:false}))
+  .concat([{label:'No compression (7.62)',data:[{x:0.02,y:7.62},{x:0.7,y:7.62}],borderColor:'#9aa7c7',borderDash:[6,5],pointRadius:0,borderWidth:1.6,fill:false}])},
+ options:{responsive:true,maintainAspectRatio:false,
+  plugins:{legend:{position:'bottom',labels:{usePointStyle:true,boxHeight:6,padding:14,font:{size:11}}},
+   tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ppl ${c.parsed.y} at ${(c.parsed.x*100).toFixed(1)}% memory`}}},
+  scales:{x:{type:'linear',min:0,max:0.7,title:{display:true,text:'memory used (fraction of full cache)'},ticks:{callback:v=>(v*100)+'%'},grid:{color:'#eef1f8'}},
+   y:{min:7,max:14.2,title:{display:true,text:'perplexity (lower = better)'},grid:{color:'#eef1f8'}}}}});
+
+/* Needle retrieval */
+new Chart(document.getElementById('chNeedle'),{type:'bar',
+ data:{labels:['Full cache (100% mem)','ExpectedAttention (10% mem)','Palu (50% mem)','BUG rank-128 @16K (13% mem)','BUG @32K — every rank (3–26% mem)'],
+  datasets:[{data:[100,100,100,50,0],backgroundColor:['#9aa7c7','#7a5cc4','#8fa3b8','#6f8fdb','#d44a4a'],borderRadius:6}]},
+ options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
+  plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' retrieval: '+c.parsed.x+'%'}}},
+  scales:{x:{min:0,max:100,ticks:{callback:v=>v+'%'},title:{display:true,text:'needle retrieval accuracy (8B; BUG 16K point shows the wall being crossed)'},grid:{color:'#eef1f8'}},y:{grid:{display:false},ticks:{font:{size:11}}}}}});
+
+/* Regime split */
+new Chart(document.getElementById('chRegime'),{type:'bar',
+ data:{labels:['Moderate budget (~50% of a 1K ctx)','Extreme budget (~9%)'],
+  datasets:[
+   {label:'BUG best (ours)',data:[9.71,20.15],backgroundColor:'#3b6fd4',borderRadius:6},
+   {label:'Eviction best (MorphKV)',data:[11.68,18.71],backgroundColor:'#c96b4b',borderRadius:6},
+   {label:'No compression',data:[9.51,7.24],backgroundColor:'#c9d2e8',borderRadius:6}]},
+ options:{responsive:true,maintainAspectRatio:false,
+  plugins:{legend:{position:'bottom',labels:{usePointStyle:true,boxHeight:6}},tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ppl ${c.parsed.y}`}}},
+  scales:{x:{grid:{display:false}},y:{title:{display:true,text:'perplexity (lower = better)'},grid:{color:'#eef1f8'}}}}});
+</script>
+</body>
+</html>

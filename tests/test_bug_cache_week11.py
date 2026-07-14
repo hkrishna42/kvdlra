@@ -229,6 +229,59 @@ def test_single_shot_prefill_leaves_hh_empty(tiny_model: LlamaForCausalLM) -> No
     assert layer._hh_len() == 0
 
 
+# --------------------------------------------------------- span expansion
+
+
+def test_span_boost_is_position_windowed_max(tiny_model: LlamaForCausalLM) -> None:
+    """``_span_boost`` gives each token the max surprise within +-w positions, and
+    a gap wider than w does not leak across clusters."""
+    layer = _bug_layer(BugStreamingCache(tiny_model, rank=4, coord_budget=32))
+    sel = torch.tensor([0.1, 0.9, 0.2, 0.0, 0.8, 0.05])
+    pos = torch.tensor([10, 11, 12, 50, 51, 52])  # two position clusters
+    out = layer._span_boost(sel, pos, 1)
+    assert torch.allclose(out, torch.tensor([0.9, 0.9, 0.9, 0.8, 0.8, 0.8]))
+    # a lone outlier does not pull a far-away token (gap 100 > w)
+    lone = layer._span_boost(torch.tensor([1.0, 0.0]), torch.tensor([0, 100]), 1)
+    assert torch.allclose(lone, torch.tensor([1.0, 0.0]))
+    assert torch.allclose(layer._span_boost(sel, pos, 0), sel)  # w=0 is a no-op
+
+
+def test_span_expansion_captures_low_surprise_needle_member(
+    tiny_model: LlamaForCausalLM,
+) -> None:
+    """A contiguous needle span whose MIDDLE token is an ordinary (low-surprise)
+    background token is only fully captured verbatim with span expansion: the
+    middle is pulled in by its outlier neighbours, keeping the hh_budget cap."""
+    depth, t = 40, 96
+    ids = torch.full((1, t), 5, dtype=torch.long)
+    ids[0, depth], ids[0, depth + 2] = 200, 201  # two outliers flanking a bg token
+    # ids[0, depth+1] stays 5 (a low-surprise background token between them)
+
+    def run(neighbor: int) -> set[int]:
+        cache = BugStreamingCache(
+            tiny_model,
+            rank=4,
+            coord_budget=128,
+            recent_window=8,
+            absorb_block=4,
+            n_sink=4,
+            retention="lowrank_surprise",
+            hh_budget=8,
+            hh_select="surprise",
+            hh_neighbor=neighbor,
+        )
+        with torch.no_grad():
+            _chunked_prefill(tiny_model, cache, ids, chunk=16, attach=False)
+        layer = _bug_layer(cache)
+        return set(layer.hh_pos.tolist()) if layer.hh_pos is not None else set()
+
+    no_exp = run(0)
+    assert depth in no_exp and depth + 2 in no_exp  # both outliers kept
+    assert depth + 1 not in no_exp  # the bg middle is NOT verbatim
+    with_exp = run(1)
+    assert {depth, depth + 1, depth + 2} <= with_exp  # span expansion grabs it
+
+
 # --------------------------------------------------------- validation guards
 
 
@@ -262,3 +315,16 @@ def test_hh_select_attn_still_requires_attn_retention(tiny_model: LlamaForCausal
 def test_hh_select_invalid_raises(tiny_model: LlamaForCausalLM) -> None:
     with pytest.raises(ValueError, match="hh_select must be"):
         BugStreamingCache(tiny_model, rank=4, coord_budget=32, hh_budget=4, hh_select="bogus")
+
+
+def test_hh_neighbor_requires_surprise(tiny_model: LlamaForCausalLM) -> None:
+    with pytest.raises(ValueError, match=r"hh_neighbor.*requires hh_select='surprise'"):
+        BugStreamingCache(
+            tiny_model,
+            rank=4,
+            coord_budget=32,
+            retention="attn",
+            hh_budget=4,
+            hh_select="attn",
+            hh_neighbor=1,
+        )

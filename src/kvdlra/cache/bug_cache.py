@@ -328,6 +328,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         quant_bank: _QuantBank | None = None,
         hh_budget: int = 0,
         hh_select: str = "attn",
+        hh_neighbor: int = 0,
         merge: bool = False,
         coord_codebook: ProductQuantizer | None = None,
         anchor_rank: int = 0,
@@ -361,6 +362,10 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             raise ValueError(f"hh_budget must be >= 0, got {hh_budget}")
         if hh_select not in ("attn", "surprise"):
             raise ValueError(f"hh_select must be 'attn' or 'surprise', got {hh_select!r}")
+        if hh_neighbor < 0:
+            raise ValueError(f"hh_neighbor must be >= 0, got {hh_neighbor}")
+        if hh_neighbor > 0 and hh_select != "surprise":
+            raise ValueError("hh_neighbor (span expansion) requires hh_select='surprise'")
         # Week-11 SurpriseSLASH: the exact heavy-hitter tier can be selected by
         # recent-attention mass ("attn", the Week-7 default -- needs the attach()
         # score hook) OR by low-rank surprise ("surprise" -- the out-of-subspace
@@ -385,6 +390,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.quant_budget = quant_budget
         self.hh_budget = hh_budget
         self.hh_select = hh_select
+        self.hh_neighbor = hh_neighbor
         self.merge = merge
         # rank=0 / coord_budget=0 => no low-rank middle => StreamingLLM baseline.
         self.lowrank_enabled = rank >= 1 and coord_budget >= 1
@@ -695,6 +701,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             # Score the whole pool by its CURRENT out-of-subspace residual.
             cand_k_pre = self._mat_rope_at(cand_k, cand_pos, inverse=True)
             sel = self._surprise_scores(cand_k_pre)
+            if self.hh_neighbor > 0:  # span-boost so needle neighbours are kept too
+                sel = self._span_boost(sel, cand_pos, self.hh_neighbor)
         else:
             sel = cand_score  # highest recent-attention mass stays exact
         # Highest selection score stays exact; ties fall back to recency.
@@ -805,6 +813,35 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         c_old = self.u_k.mT @ block_k  # (r, m) coords in the OLD basis
         resid = (k_norm**2 - c_old.norm(dim=0) ** 2).clamp_min(0.0).sqrt()
         return cast(Tensor, (resid / k_norm.clamp_min(1e-12)).to(torch.float32))
+
+    def _span_boost(self, sel: Tensor, positions: Tensor, w: int) -> Tensor:
+        """Position-windowed max of ``sel``: each token inherits the highest
+        surprise among tokens within ``+-w`` positions (SnapKV-style span
+        expansion). A non-outlier token adjacent to a sharp needle outlier is thus
+        pulled toward the top-``hh_budget``, so the exact tier keeps the whole
+        contiguous needle span verbatim -- while the hard ``hh_budget`` cap (and so
+        the mask-length machinery) is untouched (it re-ranks, never grows the tier).
+        """
+        n = int(sel.shape[0])
+        if w <= 0 or n <= 1:
+            return sel
+        order = torch.argsort(positions)  # ascending true position
+        pos_s = positions[order]
+        boosted_s = sel[order].clone()
+        src_s = sel[order]
+        # Two tokens within +-w positions are within +-w sorted offsets (positions
+        # are unique), so a small offset sweep with a gap guard is exact.
+        for off in range(1, min(w, n - 1) + 1):
+            near = (pos_s[off:] - pos_s[:-off]) <= w  # gap between sorted i, i+off
+            boosted_s[:-off] = torch.where(
+                near, torch.maximum(boosted_s[:-off], src_s[off:]), boosted_s[:-off]
+            )
+            boosted_s[off:] = torch.where(
+                near, torch.maximum(boosted_s[off:], src_s[:-off]), boosted_s[off:]
+            )
+        out = torch.empty_like(sel)
+        out[order] = boosted_s
+        return out
 
     # ------------------------------------------------- retention + quant tier
 
@@ -1566,6 +1603,7 @@ class BugStreamingCache(Cache):
         quant_seed: int = 0,
         hh_budget: int = 0,
         hh_select: str = "attn",
+        hh_neighbor: int = 0,
         merge: bool = False,
         coord_codebook: ProductQuantizer | None = None,
         anchor_rank: int = 0,
@@ -1603,6 +1641,7 @@ class BugStreamingCache(Cache):
                 quant_bank=self._quant_bank,
                 hh_budget=hh_budget,
                 hh_select=hh_select,
+                hh_neighbor=hh_neighbor,
                 merge=merge,
                 coord_codebook=coord_codebook,
                 anchor_rank=anchor_rank,

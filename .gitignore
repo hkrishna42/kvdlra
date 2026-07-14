@@ -39,3 +39,6 @@ explanation_week_3_4.md
 explanation_week_5_6.md
 next-session-prompt.md
 results/gpu_logs/
+
+# Session-generated research dashboards (not part of the library)
+dashboards/

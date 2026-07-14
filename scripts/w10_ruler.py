@@ -17,10 +17,13 @@ Focused subset:
 * ``vt``             -- variable tracking: a chain ``V0=<num>; V1=V0; ...`` then
   ask the value of the last variable (retrieve the root number through the chain).
 
-Prefill uses OOM-safe chunked ingest (BUG/MorphKV, Phase 3) / ``ChunkPress``
-(presses); the short query + answer are decoded one token per forward at TRUE
-positions (the eviction fairness fix, ``w9_recovery`` / ``w4_needle``). Memory is
-measured on the post-prefill compressed cache. ``--plot-only`` rebuilds figures.
+Prefill uses OOM-safe chunked ingest for the streaming caches (BUG/MorphKV,
+Phase 3) and single-shot full-``T`` prefill for the kvpress scorer presses
+(``logits_to_keep=1`` + sdpa keeps it memory-safe, and SnapKV's ``q_len >
+window_size`` assert forbids a chunked prefill); the short query + answer are
+decoded one token per forward at TRUE positions (the eviction fairness fix,
+``w9_recovery`` / ``w4_needle``). Memory is measured on the post-prefill
+compressed cache. ``--plot-only`` rebuilds figures.
 
 Example (CPU smoke, 1B)
 -----------------------
@@ -218,14 +221,14 @@ def retrieve(
             model, tok, cache, query.to(device), ctx_len, device, block=False, max_new=max_new
         )
     else:
+        # Scorer presses run SINGLE-SHOT (no ChunkPress): kvpress compresses in
+        # prefill and SnapKVPress asserts q_len > window_size (64), which the small
+        # final ChunkPress chunk violates ("Query length ... should be greater than
+        # the window size"). RULER prefill uses logits_to_keep=1 + sdpa, so full-T
+        # prefill is memory-safe (proven by ExpectedAttention surviving at 32K).
         cache = DynamicCache()
         press = arm["make"]()
-        active = press
-        if press is not None and 0 < chunk < ctx_len:
-            from kvpress import ChunkPress
-
-            active = ChunkPress(press=press, chunk_length=chunk)
-        with active(model) if active is not None else nullcontext():
+        with press(model) if press is not None else nullcontext():
             model(hay, past_key_values=cache, use_cache=True, logits_to_keep=1)
         fp = _footprint(arm, cache, ctx_len, n, h_kv)
         text = _decode(
@@ -258,9 +261,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             for arm in build_arms(args, model, ctx):
                 arm_chunk = args.chunk if arm.get("chunkable", True) else 0
                 hits, ratios, fracs = 0, [], []
-                try:
-                    for seed in args.seeds:
-                        for trial in range(args.n_trials):
+                for seed in args.seeds:
+                    for trial in range(args.n_trials):
+                        try:
                             hay, query, targets = build_task(
                                 tokenizer,
                                 task,
@@ -284,18 +287,23 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                                 h_kv,
                                 max_new,
                             )
-                            hits += int(hit)
-                            ratios.append(ratio)
-                            fracs.append(frac)
-                except Exception as exc:
-                    print(
-                        f"[{task} ctx{ctx}] {arm['name']:14s} SKIP {type(exc).__name__}: {exc}",
-                        flush=True,
-                    )
-                    if args.device.startswith("cuda"):
-                        torch.cuda.empty_cache()
+                        except Exception as exc:
+                            # One bad trial is skipped (logged); the arm survives, so a
+                            # single OOM/edge trial no longer kills every seed of the arm.
+                            print(
+                                f"[{task} ctx{ctx}] {arm['name']:14s} "
+                                f"SKIP {type(exc).__name__}: {exc}",
+                                flush=True,
+                            )
+                            if args.device.startswith("cuda"):
+                                torch.cuda.empty_cache()
+                            continue
+                        hits += int(hit)
+                        ratios.append(ratio)
+                        fracs.append(frac)
+                if not ratios:  # every trial failed -> arm produced no measurement
                     continue
-                total = len(args.seeds) * args.n_trials
+                total = len(ratios)
                 row = {
                     "task": task,
                     "ctx": ctx,

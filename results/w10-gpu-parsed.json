@@ -834,6 +834,96 @@
       "acc": 1.0,
       "recall": 1.0,
       "ratio": 0.502
+    },
+    {
+      "model": "8b_supp",
+      "task": "niah_single",
+      "ctx": 16384,
+      "method": "full",
+      "acc": 1.0,
+      "recall": 1.0,
+      "ratio": 1.0
+    },
+    {
+      "model": "8b_supp",
+      "task": "niah_single",
+      "ctx": 16384,
+      "method": "bug-r32",
+      "acc": 0.0,
+      "recall": 0.0,
+      "ratio": 0.035
+    },
+    {
+      "model": "8b_supp",
+      "task": "niah_single",
+      "ctx": 16384,
+      "method": "bug-r64",
+      "acc": 0.0,
+      "recall": 0.0,
+      "ratio": 0.068
+    },
+    {
+      "model": "8b_supp",
+      "task": "niah_single",
+      "ctx": 16384,
+      "method": "bug-r128",
+      "acc": 0.5,
+      "recall": 0.5,
+      "ratio": 0.135
+    },
+    {
+      "model": "8b_supp",
+      "task": "niah_single",
+      "ctx": 16384,
+      "method": "bug-r256",
+      "acc": 0.0,
+      "recall": 0.0,
+      "ratio": 0.267
+    },
+    {
+      "model": "8b_supp",
+      "task": "niah_single",
+      "ctx": 16384,
+      "method": "ea-k0.1",
+      "acc": 1.0,
+      "recall": 1.0,
+      "ratio": 0.1
+    },
+    {
+      "model": "8b_supp",
+      "task": "niah_single",
+      "ctx": 16384,
+      "method": "ea-k0.25",
+      "acc": 1.0,
+      "recall": 1.0,
+      "ratio": 0.25
+    },
+    {
+      "model": "8b_supp",
+      "task": "niah_single",
+      "ctx": 16384,
+      "method": "ea-k0.5",
+      "acc": 1.0,
+      "recall": 1.0,
+      "ratio": 0.5
+    },
+    {
+      "model": "8b_supp",
+      "task": "niah_single",
+      "ctx": 16384,
+      "method": "think-c0.3",
+      "acc": 1.0,
+      "recall": 1.0,
+      "ratio": 0.852
+    },
+    {
+      "model": "8b_supp",
+      "task": "niah_single",
+      "ctx": 16384,
+      "method": "think-c0.5",
+      "acc": 1.0,
+      "recall": 1.0,
+      "ratio": 0.75
     }
   ],
   "lb": []

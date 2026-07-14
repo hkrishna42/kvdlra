@@ -295,7 +295,11 @@ def _window_attention_rows(
     """Causal attention rows of the last ``window`` prompt tokens over all prompt
     keys, GQA-aggregated: ``(H_kv, window, T)`` (pre-fill score seeding)."""
     h_kv, t, head_dim = int(keys.shape[1]), int(keys.shape[2]), int(keys.shape[3])
-    w = min(window, t)
+    # Bound the window by the actual hidden-states length too: during chunked
+    # ingest the final chunk may carry fewer than ``window`` tokens, in which
+    # case only its last ``w`` positions (t-w..t-1) can seed scores. Slicing q,
+    # cos/sin and ``query_pos`` all off this ``w`` keeps the rows consistent.
+    w = min(window, int(hidden_states.shape[1]), t)
     cos, sin = position_embeddings
     q_proj = cast(nn.Linear, module.q_proj)
     q = q_proj(hidden_states[:, -w:])  # (1, w, H_q*D)

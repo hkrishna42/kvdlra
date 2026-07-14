@@ -227,3 +227,34 @@ def test_chunked_prefill_raises(tiny_model: LlamaForCausalLM) -> None:
         tiny_model(_prompt(16), past_key_values=cache, use_cache=True)
         with pytest.raises(NotImplementedError, match="single-shot"):
             tiny_model(_prompt(8, seed=2), past_key_values=cache, use_cache=True)
+
+
+def test_chunked_ingest_short_final_chunk(tiny_model: LlamaForCausalLM) -> None:
+    # Week-10 regression: the OOM-safe ingesting() path feeds the prompt in chunks
+    # under attach(). When the FINAL chunk carries fewer tokens than recent_window
+    # (here 4 < 8), _window_attention_rows must bound its window by the chunk length
+    # -- otherwise the q/cos rows (w) mismatch the hidden-states rows and the einsum
+    # raises "size of tensor a (w) must match tensor b (chunk) at dim 2".
+    cap, win, chunk = 16, 8, 8
+    prompt = _prompt(20, seed=3)  # chunks: [0:8], [8:16], [16:20] -> final = 4 < win
+    cache = MorphKVCache(tiny_model, capacity=cap, recent_window=win)
+    with torch.no_grad(), cache.attach(tiny_model), cache.ingesting():
+        for start in range(0, prompt.shape[1], chunk):
+            stop = min(prompt.shape[1], start + chunk)
+            pos = torch.arange(start, stop).unsqueeze(0)
+            tiny_model(
+                prompt[:, start:stop],
+                past_key_values=cache,
+                use_cache=True,
+                position_ids=pos,
+                logits_to_keep=1,
+            )
+            cache.consolidate()
+    layer = cache.layers[0]
+    assert isinstance(layer, MorphKVLayer)
+    assert layer.keys is not None and layer.score_rows is not None
+    length = int(layer.keys.shape[2])
+    # Score window never exceeds R rows and stays column-aligned with the kept keys.
+    assert layer.score_rows.shape[1] <= win
+    assert int(layer.score_rows.shape[2]) == length
+    assert length <= cap + win  # kept set stayed bounded through the ragged ingest

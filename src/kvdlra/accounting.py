@@ -115,6 +115,7 @@ def bug_footprint(
     n_sink: int = N_SINK,
     retention: str = "fifo",
     hh_count: int = 0,
+    hh_select: str = "attn",
     merge: bool = False,
     u_present: bool = True,
     quant_count: int = 0,
@@ -125,7 +126,8 @@ def bug_footprint(
 
     ``coord_count`` fp32 coordinate columns (K+V, ``2*rank`` each), ``recent_len``
     verbatim recent-ring tokens (``2n``), ``n_sink`` verbatim sinks (``2n``),
-    ``hh_count`` verbatim SLASH heavy-hitters (``2n`` + 2 aux), the basis ``U``
+    ``hh_count`` verbatim SLASH heavy-hitters (``2n`` + 2 aux for ``hh_select=
+    "attn"``, ``2n`` + 1 aux for ``"surprise"``), the basis ``U``
     (``2*n*rank``) and diagonal core (``2*rank``) when ``u_present``. Adaptive
     retention adds 1 position and/or 1 score per column and a ``recent_len``
     ring-score buffer (``retention in {attn, blend}``). ``quant_count`` columns
@@ -147,7 +149,10 @@ def bug_footprint(
     aux += n_cols * (int(track_pos) + int(track_score) + int(merge) + int(track_surprise))
     if track_score:
         aux += recent_len  # ring-score buffer (high-water = recent_len)
-    aux += 2 * hh_count  # hh_pos + hh_score
+    # hh tier: always the int64 positions; the fp32 selection score only when the
+    # exact tier is attention-selected (Week-11 SurpriseSLASH recomputes surprise
+    # from the basis each absorb, so hh_select="surprise" stores no score).
+    aux += hh_count * (2 if hh_select == "attn" else 1)  # hh_pos (+ hh_score for attn)
 
     code_bits = 0.0
     if quant_count and quant_bits is not None:

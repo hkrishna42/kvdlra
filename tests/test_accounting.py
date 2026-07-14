@@ -72,11 +72,18 @@ def _bug_layer(cache: BugStreamingCache) -> BugStreamingLayer:
 
 
 @pytest.mark.parametrize(
-    "retention,hh_budget",
-    [("fifo", 0), ("attn", 0), ("attn", 6)],
+    "retention,hh_budget,hh_select",
+    [
+        ("fifo", 0, "attn"),
+        ("attn", 0, "attn"),
+        ("attn", 6, "attn"),
+        # Week-11 SurpriseSLASH: surprise-selected exact tier (no hh_score) on a
+        # lowrank_surprise tail -- the tier the retrieval arms deploy.
+        ("lowrank_surprise", 6, "surprise"),
+    ],
 )
 def test_bug_footprint_matches_stored_state_numel(
-    tiny_model: LlamaForCausalLM, retention: str, hh_budget: int
+    tiny_model: LlamaForCausalLM, retention: str, hh_budget: int, hh_select: str
 ) -> None:
     """``bug_footprint`` computed from the live layer's actual counts equals the
     measured ``stored_state_numel`` -- the pin across the frontier configs."""
@@ -89,6 +96,7 @@ def test_bug_footprint_matches_stored_state_numel(
         n_sink=4,
         retention=retention,
         hh_budget=hh_budget,
+        hh_select=hh_select,
     )
     _drive(tiny_model, cache)
     layer = _bug_layer(cache)
@@ -101,6 +109,7 @@ def test_bug_footprint_matches_stored_state_numel(
         n_sink=4,
         retention=retention,
         hh_count=layer._hh_len(),
+        hh_select=hh_select,
         u_present=layer.u_k is not None,
     )
     assert fp.float_equiv() == layer.stored_state_numel()

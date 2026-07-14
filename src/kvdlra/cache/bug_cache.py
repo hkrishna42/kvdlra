@@ -327,6 +327,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         quant_budget: int = 0,
         quant_bank: _QuantBank | None = None,
         hh_budget: int = 0,
+        hh_select: str = "attn",
         merge: bool = False,
         coord_codebook: ProductQuantizer | None = None,
         anchor_rank: int = 0,
@@ -358,8 +359,18 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             raise ValueError(f"quant_bits must be in [1, 8], got {quant_bits}")
         if hh_budget < 0:
             raise ValueError(f"hh_budget must be >= 0, got {hh_budget}")
-        if hh_budget > 0 and retention != "attn":
-            raise ValueError("hh_budget > 0 (SLASH exact heavy-hitters) requires retention='attn'")
+        if hh_select not in ("attn", "surprise"):
+            raise ValueError(f"hh_select must be 'attn' or 'surprise', got {hh_select!r}")
+        # Week-11 SurpriseSLASH: the exact heavy-hitter tier can be selected by
+        # recent-attention mass ("attn", the Week-7 default -- needs the attach()
+        # score hook) OR by low-rank surprise ("surprise" -- the out-of-subspace
+        # residual, computed from the pre-step basis + stored keys, so it is
+        # *attach-free* and imposes no constraint on the tail retention rule).
+        if hh_budget > 0 and hh_select == "attn" and retention != "attn":
+            raise ValueError(
+                "hh_budget > 0 with hh_select='attn' (SLASH exact heavy-hitters) "
+                "requires retention='attn'"
+            )
         self.rope = rope
         self.rank = rank
         self.coord_budget = coord_budget
@@ -373,6 +384,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.quant_bits = quant_bits
         self.quant_budget = quant_budget
         self.hh_budget = hh_budget
+        self.hh_select = hh_select
         self.merge = merge
         # rank=0 / coord_budget=0 => no low-rank middle => StreamingLLM baseline.
         self.lowrank_enabled = rank >= 1 and coord_budget >= 1
@@ -636,16 +648,24 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
     def _absorb_block_slash(
         self, grad_k: Tensor, grad_v: Tensor, grad_pos: Tensor, grad_score: Tensor | None
     ) -> None:
-        """SLASH (Week-7 dominance program): split the graduating block + the
-        current exact heavy-hitter tier into (i) the top-``hh_budget`` tokens by
-        recent-attention score, kept **verbatim** (post-RoPE K, raw V -- exactly
-        like sinks), and (ii) the rest, absorbed into the low-rank tail via
-        :meth:`_absorb_columns`. Because the exact peaks never pass through
-        ``augmented_bug_step``, the tracked rank-``r`` basis summarizes the
-        *outlier-removed residual* spectrum (a robust-PCA decomposition matched
-        to attention's heavy-tailed structure) -- neither pure eviction nor pure
-        BUG has both. Demoted former-heavy-hitters re-enter the tail at their
-        true (non-contiguous) positions."""
+        """SLASH: split the graduating block + the current exact heavy-hitter tier
+        into (i) the top-``hh_budget`` tokens, kept **verbatim** (post-RoPE K, raw
+        V -- exactly like sinks), and (ii) the rest, absorbed into the low-rank
+        tail via :meth:`_absorb_columns`. Because the exact peaks never pass
+        through ``augmented_bug_step``, the tracked rank-``r`` basis summarizes the
+        *outlier-removed residual* spectrum. Demoted former-heavy-hitters re-enter
+        the tail at their true (non-contiguous) positions.
+
+        Selection rule (``hh_select``):
+
+        * ``"attn"`` (Week-7 dominance): keep the highest recent-attention-mass
+          tokens -- the heavy hitters -- with a persisted ``hh_score`` EMA.
+        * ``"surprise"`` (Week-11 SurpriseSLASH): keep the highest low-rank
+          *surprise* (out-of-subspace residual) tokens, recomputed for the whole
+          candidate pool against the current basis each absorb (so a token now
+          captured by the grown basis is demoted, while a persistently
+          un-representable outlier -- a sharp needle -- keeps residual ~1 and is
+          never demoted). Attach-free (no attention hook) and stores no score."""
         sc = (
             grad_score.to(torch.float32)
             if grad_score is not None
@@ -653,26 +673,45 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         )
         # Candidate pool = current exact tier + graduating block (all post-RoPE).
         if self.hh_k is not None:
-            assert self.hh_v is not None and self.hh_pos is not None and self.hh_score is not None
+            assert self.hh_v is not None and self.hh_pos is not None
             cand_k = torch.cat([self.hh_k, grad_k], dim=1)
             cand_v = torch.cat([self.hh_v, grad_v], dim=1)
             cand_pos = torch.cat([self.hh_pos, grad_pos])
-            cand_score = torch.cat([self.hh_score, sc])
+            # A surprise-selected tier stores no hh_score; retained columns then
+            # contribute zeros to cand_score (which only feeds demoted columns'
+            # attention scores, ignored under retention="lowrank_surprise").
+            prev_sc = (
+                self.hh_score
+                if self.hh_score is not None
+                else torch.zeros(self.hh_k.shape[1], dtype=torch.float32, device=grad_k.device)
+            )
+            cand_score = torch.cat([prev_sc, sc])
         else:
             cand_k, cand_v, cand_pos, cand_score = grad_k, grad_v, grad_pos, sc
         n_cand = int(cand_k.shape[1])
         keep_n = min(self.hh_budget, n_cand)
-        # Highest recent-attention scores stay exact; ties fall back to recency.
-        order = torch.argsort(cand_score, stable=True, descending=True)
+        cand_k_pre: Tensor | None = None
+        if self.hh_select == "surprise":
+            # Score the whole pool by its CURRENT out-of-subspace residual.
+            cand_k_pre = self._mat_rope_at(cand_k, cand_pos, inverse=True)
+            sel = self._surprise_scores(cand_k_pre)
+        else:
+            sel = cand_score  # highest recent-attention mass stays exact
+        # Highest selection score stays exact; ties fall back to recency.
+        order = torch.argsort(sel, stable=True, descending=True)
         keep = order[:keep_n].sort().values  # chronological for clean assembly
         demote = order[keep_n:].sort().values
         self.hh_k = cand_k[:, keep].clone()
         self.hh_v = cand_v[:, keep].clone()
         self.hh_pos = cand_pos[keep].clone()
-        self.hh_score = cand_score[keep].clone()
+        # Surprise selection recomputes each absorb, so it persists no score.
+        self.hh_score = None if self.hh_select == "surprise" else cand_score[keep].clone()
         if demote.numel() > 0:
             dem_pos = cand_pos[demote]
-            dem_k_pre = self._mat_rope_at(cand_k[:, demote], dem_pos, inverse=True)
+            if cand_k_pre is not None:
+                dem_k_pre = cand_k_pre[:, demote]  # already un-rotated above
+            else:
+                dem_k_pre = self._mat_rope_at(cand_k[:, demote], dem_pos, inverse=True)
             dem_v = cand_v[:, demote].to(torch.float32)
             self._absorb_columns(dem_k_pre, dem_v, dem_pos, cand_score[demote])
 
@@ -693,13 +732,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         # sin of the angle between k and span(u_k) (scale-free across columns).
         surprise: Tensor | None = None
         if self.track_surprise or self._probe_surprise:
-            k_norm = block_k.norm(dim=0)
-            if self.u_k is None:  # first absorb: nothing older to predict from
-                surprise = torch.ones(m, dtype=torch.float32, device=block_k.device)
-            else:
-                c_old = self.u_k.mT @ block_k  # (r, m) coords in the OLD basis
-                resid = (k_norm**2 - c_old.norm(dim=0) ** 2).clamp_min(0.0).sqrt()
-                surprise = (resid / k_norm.clamp_min(1e-12)).to(torch.float32)
+            surprise = self._surprise_scores(block_k)
         self.u_k, self.b_k, rot_k = augmented_bug_step(
             self.u_k, self.b_k, block_k, self.rank, theta=self.theta
         )
@@ -755,6 +788,23 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         ):
             self._seal_anchor()
         self._enforce_budgets()
+
+    def _surprise_scores(self, block_k: Tensor) -> Tensor:
+        """Low-rank surprise of pre-RoPE K columns ``block_k`` ``(n, m)``: the
+        out-of-subspace residual fraction ``||k - U Uᵀk|| / ||k||`` against the
+        current (pre-step) basis ``self.u_k``. By Pythagoras (``u_k``
+        orthonormal): ``||k||² = ||u_kᵀk||² + ||k - u_k u_kᵀk||²``, so the residual
+        norm is ``sqrt(||k||² - ||c_old||²)``; normalized to ``[0, 1]`` (sin of the
+        angle to ``span(u_k)``, scale-free across columns). ``1.0`` when there is
+        no basis yet. Shared by ``retention="lowrank_surprise"`` graduation
+        snapshots and Week-11 SurpriseSLASH exact-tier selection."""
+        m = int(block_k.shape[1])
+        k_norm = block_k.norm(dim=0)
+        if self.u_k is None:  # first absorb: nothing older to predict from
+            return torch.ones(m, dtype=torch.float32, device=block_k.device)
+        c_old = self.u_k.mT @ block_k  # (r, m) coords in the OLD basis
+        resid = (k_norm**2 - c_old.norm(dim=0) ** 2).clamp_min(0.0).sqrt()
+        return cast(Tensor, (resid / k_norm.clamp_min(1e-12)).to(torch.float32))
 
     # ------------------------------------------------- retention + quant tier
 
@@ -1134,8 +1184,10 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         g = self.score_decay
         off = s
         if hh > 0:
-            assert self.hh_score is not None
-            self.hh_score = g * self.hh_score + mass[off : off + hh]
+            # A surprise-selected exact tier persists no hh_score (recomputed each
+            # absorb from the basis); only EMA-update an attention-selected tier.
+            if self.hh_score is not None:
+                self.hh_score = g * self.hh_score + mass[off : off + hh]
             off += hh
         if q > 0:
             assert self.q_score is not None
@@ -1513,6 +1565,7 @@ class BugStreamingCache(Cache):
         quant_budget: int = 0,
         quant_seed: int = 0,
         hh_budget: int = 0,
+        hh_select: str = "attn",
         merge: bool = False,
         coord_codebook: ProductQuantizer | None = None,
         anchor_rank: int = 0,
@@ -1549,6 +1602,7 @@ class BugStreamingCache(Cache):
                 quant_budget=quant_budget,
                 quant_bank=self._quant_bank,
                 hh_budget=hh_budget,
+                hh_select=hh_select,
                 merge=merge,
                 coord_codebook=coord_codebook,
                 anchor_rank=anchor_rank,

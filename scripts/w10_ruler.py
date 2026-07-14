@@ -256,6 +256,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     for ctx in args.context_lens:
         for task in args.tasks:
             for arm in build_arms(args, model, ctx):
+                arm_chunk = args.chunk if arm.get("chunkable", True) else 0
                 hits, ratios, fracs = 0, [], []
                 for seed in args.seeds:
                     for trial in range(args.n_trials):
@@ -277,7 +278,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                             query,
                             targets,
                             args.device,
-                            args.chunk,
+                            arm_chunk,
                             n,
                             h_kv,
                             max_new,
@@ -378,6 +379,8 @@ def main() -> None:
     parser.add_argument("--morph-keeps", type=float, nargs="+", default=[0.1, 0.25, 0.5])
     parser.add_argument("--evict-keeps", type=float, nargs="+", default=[0.1, 0.25, 0.5])
     parser.add_argument("--think-ratios", type=float, nargs="+", default=[0.3, 0.5, 0.7])
+    parser.add_argument("--palu-ranks", type=float, nargs="+", default=[0.25, 0.5])
+    parser.add_argument("--palu-group", type=int, default=1)
     parser.add_argument("--recent-window", type=int, default=32)
     parser.add_argument("--absorb-block", type=int, default=16)
     parser.add_argument("--chunk", type=int, default=0, help="chunked-prefill block size")
@@ -387,7 +390,7 @@ def main() -> None:
     parser.add_argument("--n-values", type=int, default=4)
     parser.add_argument("--n-hops", type=int, default=3)
     parser.add_argument(
-        "--methods", nargs="+", default=["full", "bug", "morph", "snapkv", "ea", "think"]
+        "--methods", nargs="+", default=["full", "bug", "morph", "snapkv", "ea", "think", "palu"]
     )
     parser.add_argument("--out-json", default="results/w10-ruler-1b.json")
     parser.add_argument("--out-fig", default="figures/week10/ruler_accuracy")

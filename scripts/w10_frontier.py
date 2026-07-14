@@ -229,6 +229,23 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                     "make": lambda cr=cr: ThinKPress(key_channel_compression_ratio=cr),
                 }
             )
+
+    if "palu" in want:  # Palu: low-rank projection of K+V (reconstruct-then-attend)
+        from kvdlra.press import PaluPress
+
+        for rr in args.palu_ranks:
+            arms.append(
+                {
+                    "name": f"palu-r{rr}",
+                    "kind": "press",
+                    "press_type": "palu",
+                    "rank": None,
+                    "palu_rank_ratio": rr,
+                    "palu_group": args.palu_group,
+                    "chunkable": False,  # single-shot prefill only (SVD over the whole T)
+                    "make": lambda rr=rr: PaluPress(rank_ratio=rr, group=args.palu_group),
+                }
+            )
     return arms
 
 
@@ -259,6 +276,12 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
         # ThinK zeros channels (no measured gain) -> analytic footprint (K pruned).
         head_dim = n // h_kv
         return acc.think_footprint(t, n, head_dim, h_kv, float(arm["think_ratio"]))
+    if arm.get("press_type") == "palu":
+        # Palu reconstructs same-shape K/V (Mode A); analytic low-rank footprint.
+        head_dim = n // h_kv
+        return acc.palu_footprint(
+            t, n, head_dim, h_kv, float(arm["palu_rank_ratio"]), group=int(arm["palu_group"])
+        )
     # eviction press: measure kept fraction from the compressed DynamicCache
     assert isinstance(cache, DynamicCache)
     kept = int(cast(Any, cache.layers[0]).keys.shape[2])
@@ -302,15 +325,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 with peak_ctx as peak_get:
                     total_nll, total_tok = 0.0, 0
                     fp: acc.Footprint | None = None
+                    arm_chunk = args.chunk if arm.get("chunkable", True) else 0
                     for ctx_ids, win_ids in samples:
                         if arm["kind"] == "press" or arm["kind"] == "full":
                             press = arm["make"]()
                             nll, ntok, cache = score_press(
-                                model, press, ctx_ids, win_ids, args.chunk
+                                model, press, ctx_ids, win_ids, arm_chunk
                             )
                         else:
                             cache = arm["make"]()
-                            nll, ntok = score_streaming(model, cache, ctx_ids, win_ids, args.chunk)
+                            nll, ntok = score_streaming(model, cache, ctx_ids, win_ids, arm_chunk)
                         total_nll += nll
                         total_tok += ntok
                         if fp is None:
@@ -424,6 +448,8 @@ def main() -> None:
     parser.add_argument("--morph-keeps", type=float, nargs="+", default=[0.1, 0.25, 0.5])
     parser.add_argument("--evict-keeps", type=float, nargs="+", default=[0.1, 0.25, 0.5])
     parser.add_argument("--think-ratios", type=float, nargs="+", default=[0.3, 0.5, 0.7])
+    parser.add_argument("--palu-ranks", type=float, nargs="+", default=[0.25, 0.5])
+    parser.add_argument("--palu-group", type=int, default=1)
     parser.add_argument("--recent-window", type=int, default=32)
     parser.add_argument("--absorb-block", type=int, default=16)
     parser.add_argument(
@@ -434,7 +460,7 @@ def main() -> None:
         "--corpus", default="wikitext-103", choices=["wikitext-2", "wikitext-103", "pg19"]
     )
     parser.add_argument(
-        "--methods", nargs="+", default=["full", "bug", "morph", "snapkv", "ea", "think"]
+        "--methods", nargs="+", default=["full", "bug", "morph", "snapkv", "ea", "think", "palu"]
     )
     parser.add_argument("--no-ruler", action="store_true", help="skip RULER (Phase 4)")
     parser.add_argument("--out-json", default="results/w10-frontier-1b.json")

@@ -177,6 +177,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         examples = [build_example(tokenizer, ds[i], args.max_len) for i in range(args.n_examples)]
         avg_len = sum(int(p.shape[1]) for p, _ in examples) / len(examples)
         for arm in build_arms(args, model, args.max_len):
+            arm_chunk = args.chunk if arm.get("chunkable", True) else 0
             f1s, ratios = [], []
             for prompt_ids, answers in examples:
                 text, ratio = generate(
@@ -185,7 +186,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     arm,
                     prompt_ids,
                     args.device,
-                    args.chunk,
+                    arm_chunk,
                     n,
                     h_kv,
                     args.max_new,
@@ -281,11 +282,13 @@ def main() -> None:
     parser.add_argument("--morph-keeps", type=float, nargs="+", default=[0.1, 0.25, 0.5])
     parser.add_argument("--evict-keeps", type=float, nargs="+", default=[0.1, 0.25, 0.5])
     parser.add_argument("--think-ratios", type=float, nargs="+", default=[0.3, 0.5, 0.7])
+    parser.add_argument("--palu-ranks", type=float, nargs="+", default=[0.25, 0.5])
+    parser.add_argument("--palu-group", type=int, default=1)
     parser.add_argument("--recent-window", type=int, default=32)
     parser.add_argument("--absorb-block", type=int, default=16)
     parser.add_argument("--chunk", type=int, default=0, help="chunked-prefill block size")
     parser.add_argument(
-        "--methods", nargs="+", default=["full", "bug", "morph", "snapkv", "ea", "think"]
+        "--methods", nargs="+", default=["full", "bug", "morph", "snapkv", "ea", "think", "palu"]
     )
     parser.add_argument("--out-json", default="results/w10-longbench-1b.json")
     parser.add_argument("--out-fig", default="figures/week10/longbench_f1")

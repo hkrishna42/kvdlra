@@ -205,7 +205,7 @@ def retrieve(
     Memory is the post-prefill compressed footprint (kvdlra.accounting)."""
     hay = hay.to(device)
     ctx_len = int(hay.shape[1])
-    streaming = arm["kind"] in ("bug", "morph")
+    streaming = arm["kind"] in ("bug", "morph", "shadow")
     if streaming:
         cache: Cache = arm["make"]()
         with cache.attach(model):  # type: ignore[attr-defined]
@@ -381,6 +381,8 @@ def main() -> None:
     parser.add_argument("--think-ratios", type=float, nargs="+", default=[0.3, 0.5, 0.7])
     parser.add_argument("--palu-ranks", type=float, nargs="+", default=[0.25, 0.5])
     parser.add_argument("--palu-group", type=int, default=1)
+    parser.add_argument("--shadow-ranks", type=int, nargs="+", default=[64, 128])
+    parser.add_argument("--shadow-topk", type=int, default=256)
     parser.add_argument("--recent-window", type=int, default=32)
     parser.add_argument("--absorb-block", type=int, default=16)
     parser.add_argument("--chunk", type=int, default=0, help="chunked-prefill block size")
@@ -390,7 +392,18 @@ def main() -> None:
     parser.add_argument("--n-values", type=int, default=4)
     parser.add_argument("--n-hops", type=int, default=3)
     parser.add_argument(
-        "--methods", nargs="+", default=["full", "bug", "morph", "snapkv", "ea", "think", "palu"]
+        "--methods",
+        nargs="+",
+        default=[
+            "full",
+            "bug",
+            "morph",
+            "snapkv",
+            "ea",
+            "think",
+            "palu",
+            "shadow",
+        ],
     )
     parser.add_argument("--out-json", default="results/w10-ruler-1b.json")
     parser.add_argument("--out-fig", default="figures/week10/ruler_accuracy")

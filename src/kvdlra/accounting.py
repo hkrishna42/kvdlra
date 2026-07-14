@@ -291,26 +291,43 @@ def shadow_footprint(
     chunk: int = 8,
     outlier_frac: float = 0.0,
     sparse_budget: int | None = None,
+    n_sink: int = 0,
+    recent_len: int = 0,
 ) -> Footprint:
-    """Per-layer footprint of ShadowKV (arXiv:2410.21465), the fairness crux.
+    """Per-layer footprint of ShadowKV (arXiv:2410.21465), the fairness crux --
+    reconciled with the in-repo port :class:`kvdlra.cache.ShadowKVCache` so its
+    ``float_equiv()`` equals the live cache's ``stored_state_numel()`` (the
+    ``tests/test_shadow_cache.py`` anti-drift pin).
 
-    **GPU-resident:** a rank-``rank_s`` factorisation of the key cache
-    (``U`` ``t*rank_s`` + ``Vh`` ``rank_s*head_dim`` per KV head), one mean-pooled
-    landmark key per chunk (``(t/chunk)*n``), and an optional exact ``outlier_frac``
-    of chunks. **CPU-offloaded:** the FULL value cache (``t*n``), fetched sparsely
-    each step. Under this repo's device-agnostic float rule the offloaded V counts
-    at 1 float/elem in the total (``cpu_ratio_fp16 -> 0.5``), so the offload buys
-    ZERO on the honest memory axis -- its only fair savings are low-rank K and
-    sparse decode. Reporting V-offload as "free" is forbidden.
+    The port keeps ``n_sink`` sinks + ``recent_len`` recent keys **verbatim** on the
+    accelerator and low-ranks only the *middle* (``mid_len = t - n_sink -
+    recent_len``, trimmed to a whole number of ``chunk``-token chunks).
 
-    Provisional formula pending the Phase-6 in-repo port; hyperparameters follow
-    the paper defaults. ``sparse_budget`` (top-k * chunk tokens fetched/step) does
-    not change the stored CPU footprint (always ``t*n``); it drives the separate
-    per-step CPU<->GPU bandwidth line, not this footprint."""
-    lowrank_k = t * rank_s * h_kv + rank_s * head_dim * h_kv
-    landmarks = (t / chunk) * n
-    outliers = outlier_frac * t * n
-    gpu = lowrank_k + landmarks + outliers
+    **GPU-resident:** the verbatim sink/recent keys (``n*(n_sink + recent_len)``), a
+    rank-``rank_s`` per-KV-head factorisation of the middle keys (coefficients
+    ``mid_len*rank_eff`` + basis ``rank_eff*head_dim`` per head, with ``rank_eff =
+    min(rank_s, head_dim, mid_len)``), one mean-pooled landmark per chunk
+    (``n_chunks*n``), and an optional exact ``outlier_frac`` of the middle.
+    **CPU-offloaded:** the FULL value cache (``t*n``), fetched sparsely each step.
+    Under this repo's device-agnostic float rule the offloaded V counts at 1
+    float/elem in the total (``cpu_ratio_fp16 -> 0.5``), so the offload buys ZERO on
+    the honest memory axis -- its only fair savings are low-rank K and sparse decode.
+    Reporting V-offload as "free" is forbidden.
+
+    With the defaults ``n_sink = recent_len = 0`` the whole context is the middle,
+    recovering the provisional whole-context formula (the value counted, never
+    hidden). ``sparse_budget`` (top-k * chunk tokens fetched/step) does not change
+    the stored CPU footprint (always ``t*n``); it drives the separate per-step
+    CPU<->GPU bandwidth line, not this footprint."""
+    mid_len = max(0, t - n_sink - recent_len)
+    mid_len = (mid_len // chunk) * chunk  # whole chunks only (port deviation #2)
+    n_chunks = mid_len // chunk
+    rank_eff = min(rank_s, head_dim, mid_len) if mid_len > 0 else 0
+    lowrank_k = h_kv * (mid_len * rank_eff + rank_eff * head_dim)
+    landmarks = float(n_chunks * n)
+    sink_recent_k = float(n * (n_sink + recent_len))
+    outliers = outlier_frac * mid_len * n
+    gpu = lowrank_k + landmarks + sink_recent_k + outliers
     cpu = float(t * n)  # full value cache, offloaded -- counted, never hidden
     return Footprint(verbatim_elems=gpu + cpu, gpu_verbatim_elems=gpu, cpu_verbatim_elems=cpu)
 

@@ -39,7 +39,7 @@ from torch.nn.functional import cross_entropy
 from transformers.cache_utils import Cache, DynamicCache
 
 from kvdlra import accounting as acc
-from kvdlra.cache import BugStreamingCache, MorphKVCache
+from kvdlra.cache import BugStreamingCache, MorphKVCache, ShadowKVCache
 from kvdlra.press.compat import install_kvpress_prefill_compat
 
 matplotlib.use("Agg")
@@ -94,7 +94,7 @@ def _prefill_chunked(model: Any, cache: Cache, ctx: torch.Tensor, chunk: int) ->
 @torch.no_grad()
 def score_streaming(
     model: Any,
-    cache: BugStreamingCache | MorphKVCache,
+    cache: BugStreamingCache | MorphKVCache | ShadowKVCache,
     ctx_ids: torch.Tensor,
     win_ids: torch.Tensor,
     chunk: int = 0,
@@ -246,6 +246,30 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                     "make": lambda rr=rr: PaluPress(rank_ratio=rr, group=args.palu_group),
                 }
             )
+
+    if "shadow" in want:  # ShadowKV: low-rank K on GPU + V offloaded to CPU + sparse decode
+        from kvdlra.cache import ShadowKVCache
+
+        for rs in args.shadow_ranks:
+            arms.append(
+                {
+                    "name": f"shadow-r{rs}",
+                    "kind": "shadow",
+                    "rank": None,
+                    "rank_s": rs,
+                    "chunkable": False,  # single-shot prefill only (port scope guard)
+                    "make": (
+                        lambda rs=rs: ShadowKVCache(
+                            model,
+                            rank_s=rs,
+                            top_k=args.shadow_topk,
+                            chunk=8,
+                            recent_window=rw,
+                            n_sink=N_SINK,
+                        )
+                    ),
+                }
+            )
     return arms
 
 
@@ -270,6 +294,20 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
         mlayer = cast(Any, cache.layers[0])
         kept = int(mlayer.keys.shape[2])
         return acc.morph_footprint(n, h_kv, kept, recent_window=mlayer.recent_window)
+    if kind == "shadow":
+        from kvdlra.cache import ShadowKVLayer
+
+        slayer = next(la for la in cache.layers if isinstance(la, ShadowKVLayer))
+        return acc.shadow_footprint(
+            t,
+            n,
+            h_kv,
+            n // h_kv,
+            rank_s=int(arm["rank_s"]),
+            chunk=slayer.chunk,
+            n_sink=slayer.n_sink,
+            recent_len=slayer._recent_len(),
+        )
     if kind == "full":
         return acc.full_cache_footprint(t, n)
     if arm.get("press_type") == "think":
@@ -450,6 +488,8 @@ def main() -> None:
     parser.add_argument("--think-ratios", type=float, nargs="+", default=[0.3, 0.5, 0.7])
     parser.add_argument("--palu-ranks", type=float, nargs="+", default=[0.25, 0.5])
     parser.add_argument("--palu-group", type=int, default=1)
+    parser.add_argument("--shadow-ranks", type=int, nargs="+", default=[64, 128])
+    parser.add_argument("--shadow-topk", type=int, default=256)
     parser.add_argument("--recent-window", type=int, default=32)
     parser.add_argument("--absorb-block", type=int, default=16)
     parser.add_argument(
@@ -460,7 +500,18 @@ def main() -> None:
         "--corpus", default="wikitext-103", choices=["wikitext-2", "wikitext-103", "pg19"]
     )
     parser.add_argument(
-        "--methods", nargs="+", default=["full", "bug", "morph", "snapkv", "ea", "think", "palu"]
+        "--methods",
+        nargs="+",
+        default=[
+            "full",
+            "bug",
+            "morph",
+            "snapkv",
+            "ea",
+            "think",
+            "palu",
+            "shadow",
+        ],
     )
     parser.add_argument("--no-ruler", action="store_true", help="skip RULER (Phase 4)")
     parser.add_argument("--out-json", default="results/w10-frontier-1b.json")

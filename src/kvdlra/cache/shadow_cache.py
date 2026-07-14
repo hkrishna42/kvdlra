@@ -258,7 +258,10 @@ class ShadowKVLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             cs, sn = self.rope.cos_sin_at(pos)  # (n_sel, D)
             post = recon * cs + rotate_half(recon) * sn  # type: ignore[no-untyped-call]
             key_heads.append(post.to(self.dtype))
-            val_heads.append(self.value_cpu[h][pos].to(self.device))
+            # value_cpu is on CPU; index it with CPU indices, then move to device
+            # (pos stays on-device for the RoPE above). Fixes a GPU-only device
+            # mismatch not exercised by the CPU test suite.
+            val_heads.append(self.value_cpu[h][pos.cpu()].to(self.device))
         return torch.stack(key_heads, dim=0), torch.stack(val_heads, dim=0)
 
     def _assemble(self) -> tuple[Tensor, Tensor]:

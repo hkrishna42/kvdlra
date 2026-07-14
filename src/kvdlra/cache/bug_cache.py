@@ -516,6 +516,11 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self._warned_unattached = False
         self._mid_k_cache: Tensor | None = None  # (n, mid_len) storage dtype, post-RoPE
         self._mid_v_cache: Tensor | None = None
+        # Week-10 harness mode (default "normal" preserves every existing call
+        # site / the q_len==1 decode invariant). "score": non-mutating frozen
+        # continuation-window forward (Phase 1b). "ingest": chunked pre-fill
+        # (Phase 3). Set only by BugStreamingCache context managers.
+        self._mode = "normal"
 
     def lazy_initialization(self, key_states: Tensor, value_states: Tensor) -> None:
         if key_states.shape[0] != 1:
@@ -1175,6 +1180,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         q_len = int(key_states.shape[2])
         if self.cumulative_length == 0:
             return self._prefill(key_states, value_states)
+        if self._mode == "score":
+            return self._score_forward(key_states, value_states)
         if q_len != 1:
             raise NotImplementedError(
                 "BugStreamingCache supports single-shot pre-fill + one-token decode "
@@ -1182,6 +1189,20 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
                 "tokens (chunked/continued pre-fill would desync the streaming state)."
             )
         return self._decode_step(key_states, value_states)
+
+    def _score_forward(self, key_states: Tensor, value_states: Tensor) -> tuple[Tensor, Tensor]:
+        """Week-10 frozen continuation scoring (non-mutating): attend the ``q_len``
+        window to ``[retained | window]`` without touching the streaming state, so
+        one forward scores perplexity over the compressed cache. The retained block
+        is strictly-past (true-position RoPE preserved); ``get_mask_sizes`` reports
+        ``attended_length() + q_len`` so the causal mask sees it all. No absorb, no
+        recent append, no score/position mutation -- ``stored_state_numel`` is
+        unchanged by this call."""
+        k_ret, v_ret = self._decode_peek()
+        return (
+            torch.cat([k_ret, key_states], dim=2),
+            torch.cat([v_ret, value_states], dim=2),
+        )
 
     def _prefill(self, key_states: Tensor, value_states: Tensor) -> tuple[Tensor, Tensor]:
         """Compress the prompt into the bounded state; return the full K/V (standard
@@ -1310,6 +1331,10 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         """Report exactly the K/V length ``update()`` will return this step; the
         offset places the (strictly past) returned block right below the query's
         true position so the causal mask sees it all as visible."""
+        if self._mode == "score":
+            # Frozen scoring returns [retained | window] without mutating state.
+            attended = self.attended_length()
+            return attended + query_length, self.cumulative_length - attended
         sink, mid, recent = self._post_update_lengths(query_length)
         kv_length = sink + mid + recent
         kv_offset = self.cumulative_length + query_length - kv_length
@@ -1527,6 +1552,8 @@ class BugStreamingCache(Cache):
                 assert isinstance(layer, BugStreamingLayer)
                 if not layer.is_initialized or layer.cumulative_length == 0:
                     return output
+                if layer._mode == "score":
+                    return output  # frozen scoring is non-mutating: never re-seed
                 hidden_states = kwargs["hidden_states"]
                 cos, sin = kwargs["position_embeddings"]
                 if hidden_states.shape[1] == 1:  # decode step
@@ -1557,6 +1584,23 @@ class BugStreamingCache(Cache):
 
     def _bug_layers(self) -> list[BugStreamingLayer]:
         return [layer for layer in self.layers if isinstance(layer, BugStreamingLayer)]
+
+    def _set_mode(self, mode: str) -> None:
+        for layer in self._bug_layers():
+            layer._mode = mode
+
+    @contextmanager
+    def frozen_scoring(self) -> Iterator[None]:
+        """Week-10: score a continuation window over the compressed cache without
+        mutating it. Inside the block every BUG layer returns ``[retained | window]``
+        (non-mutating) so a ``q_len=W`` teacher-forced forward measures perplexity
+        against the compressed cache; state (and ``stored_state_numel``) is
+        unchanged on exit. Restores ``"normal"`` even on exception."""
+        self._set_mode("score")
+        try:
+            yield
+        finally:
+            self._set_mode("normal")
 
     def enable_surprise_probe(self) -> list[tuple[Tensor, Tensor, Tensor]]:
         """Week-9 D3 GO/NO-GO gate: instrument every layer to also track low-rank

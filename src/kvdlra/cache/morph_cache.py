@@ -108,6 +108,10 @@ class MorphKVLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         # Score buffer: last <=R recorded attention rows over the kept slots,
         # (H_kv, <=R, L), aligned column-for-column with keys/values.
         self.score_rows: Tensor | None = None
+        # Week-10 harness mode (default "normal" preserves the q_len==1 decode
+        # invariant). "score": non-mutating frozen continuation-window forward.
+        # Set only by MorphKVCache.frozen_scoring().
+        self._mode = "normal"
 
     def lazy_initialization(self, key_states: Tensor, value_states: Tensor) -> None:
         if key_states.shape[0] != 1:
@@ -132,6 +136,15 @@ class MorphKVLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             self.values = value_states
             self.cumulative_length = q_len
             return key_states, value_states
+        if self._mode == "score":
+            # Week-10 frozen continuation scoring (non-mutating): attend the window
+            # to [kept | window] without appending or evicting. get_mask_sizes
+            # already reports kept + q_len with offset cumulative - kept.
+            assert self.keys is not None and self.values is not None
+            return (
+                torch.cat([self.keys, key_states], dim=2),
+                torch.cat([self.values, value_states], dim=2),
+            )
         if q_len != 1:
             raise NotImplementedError(
                 "MorphKVCache supports single-shot pre-fill + one-token decode steps "
@@ -346,6 +359,8 @@ class MorphKVCache(Cache):
                 assert isinstance(layer, MorphKVLayer)
                 if layer.keys is None:
                     return output
+                if layer._mode == "score":
+                    return output  # frozen scoring is non-mutating: never observe/evict
                 hidden_states = kwargs["hidden_states"]
                 cos, sin = kwargs["position_embeddings"]
                 if hidden_states.shape[1] == 1:  # decode step
@@ -368,6 +383,22 @@ class MorphKVCache(Cache):
         finally:
             for handle in handles:
                 handle.remove()
+
+    def _set_mode(self, mode: str) -> None:
+        for layer in self.layers:
+            if isinstance(layer, MorphKVLayer):
+                layer._mode = mode
+
+    @contextmanager
+    def frozen_scoring(self) -> Iterator[None]:
+        """Week-10: score a continuation window over the compressed cache without
+        mutating it (non-mutating [kept | window] return); restores "normal" on
+        exit. Symmetric with :meth:`BugStreamingCache.frozen_scoring`."""
+        self._set_mode("score")
+        try:
+            yield
+        finally:
+            self._set_mode("normal")
 
     def stored_state_numel(self) -> int:
         """Total stored floats across layers (K/V + score buffers)."""

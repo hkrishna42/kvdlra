@@ -1,0 +1,273 @@
+<title>KV-Cache Compression at Long Context — Week 10 Results</title>
+<style>
+  :root{
+    --bg:#f4f6f9; --panel:#ffffff; --ink:#181d27; --ink-soft:#4a5265; --line:#dde2ea;
+    --muted:#8b93a4; --accent:#e0731f; --accent-soft:#f6e6d4;
+    --good:#2f9e6f; --bad:#d0524a; --grid:#e7ebf1;
+    --bug:#e0731f; --morph:#1f9e94; --snap:#3f9e56; --ea:#3f74d6; --think:#8b63cf; --palu:#cf5397; --shadow:#7b8494; --full:#a7afbd;
+    --shadow-lg:0 1px 2px rgba(20,28,44,.05),0 8px 28px rgba(20,28,44,.06);
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{ --bg:#0f1218; --panel:#161b23; --ink:#e8ecf3; --ink-soft:#a9b2c2; --line:#262d3a;
+      --muted:#727d90; --accent:#f0872f; --accent-soft:#2a2015; --grid:#20262f; --full:#565f6e;
+      --shadow-lg:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.35);}
+  }
+  :root[data-theme="dark"]{ --bg:#0f1218; --panel:#161b23; --ink:#e8ecf3; --ink-soft:#a9b2c2; --line:#262d3a;
+    --muted:#727d90; --accent:#f0872f; --accent-soft:#2a2015; --grid:#20262f; --full:#565f6e;
+    --shadow-lg:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.35);}
+  :root[data-theme="light"]{ --bg:#f4f6f9; --panel:#ffffff; --ink:#181d27; --ink-soft:#4a5265; --line:#dde2ea;
+    --muted:#8b93a4; --accent:#e0731f; --accent-soft:#f6e6d4; --grid:#e7ebf1; --full:#a7afbd;}
+
+  *{box-sizing:border-box}
+  body{margin:0}
+  .wrap{max-width:920px;margin:0 auto;padding:clamp(20px,5vw,56px) clamp(16px,4vw,32px);
+    background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6;
+    -webkit-font-smoothing:antialiased;}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);font-weight:600;margin:0 0 14px}
+  h1{font-size:clamp(28px,5vw,44px);line-height:1.08;letter-spacing:-.02em;margin:0 0 18px;
+    font-weight:750;text-wrap:balance;max-width:20ch}
+  .lede{font-size:clamp(17px,2.4vw,20px);color:var(--ink-soft);margin:0 0 8px;max-width:62ch}
+  h2{font-size:clamp(20px,3vw,26px);letter-spacing:-.01em;margin:56px 0 6px;font-weight:700;text-wrap:balance}
+  h2 .num{font-family:var(--mono);font-size:14px;color:var(--accent);margin-right:10px;font-weight:600}
+  h3{font-size:16px;margin:26px 0 8px;font-weight:650}
+  p{margin:12px 0;max-width:64ch}
+  a{color:var(--accent)}
+  .sub{color:var(--muted);font-size:14px;margin:2px 0 0}
+  strong{font-weight:650}
+  .hl-bug{color:var(--bug);font-weight:650}
+  .hl-ev{color:var(--ea);font-weight:650}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    padding:clamp(16px,3vw,26px);box-shadow:var(--shadow-lg);margin:20px 0}
+  .chart-head{display:flex;flex-wrap:wrap;gap:12px;align-items:baseline;justify-content:space-between;margin-bottom:6px}
+  .chart-title{font-weight:650;font-size:16px}
+  .toggles{display:flex;gap:6px;flex-wrap:wrap}
+  .toggles button{font-family:var(--mono);font-size:12px;border:1px solid var(--line);background:transparent;
+    color:var(--ink-soft);padding:5px 11px;border-radius:999px;cursor:pointer;transition:.15s}
+  .toggles button:hover{border-color:var(--accent);color:var(--ink)}
+  .toggles button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+  .toggles button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  figure{margin:0}
+  svg{display:block;width:100%;height:auto;overflow:visible}
+  .cap{background:var(--accent-soft);border-radius:10px;padding:13px 16px;margin-top:14px;font-size:14.5px;color:var(--ink)}
+  .cap b{color:var(--accent)}
+
+  .legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-size:13px;color:var(--ink-soft)}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .dot{width:11px;height:11px;border-radius:50%;flex:none}
+  .sw-full{width:16px;height:0;border-top:2px dashed var(--full)}
+
+  table{border-collapse:collapse;width:100%;font-size:14.5px;margin:8px 0}
+  th,td{text-align:left;padding:11px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+  td.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .win{color:var(--good);font-weight:650}.lose{color:var(--bad)}
+  tr .m-name{font-weight:650;display:inline-flex;align-items:center;gap:8px}
+
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(255px,1fr));gap:14px;margin-top:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-left-width:4px;border-radius:10px;padding:14px 16px}
+  .card h4{margin:0 0 3px;font-size:15px;display:flex;align-items:center;justify-content:space-between}
+  .card .tag{font-family:var(--mono);font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  .card p{margin:4px 0 0;font-size:13.5px;color:var(--ink-soft);max-width:none}
+
+  .note{border-left:3px solid var(--line);padding:2px 0 2px 16px;color:var(--ink-soft);font-size:14px;margin:14px 0}
+  .pending{background:var(--accent-soft);border:1px dashed var(--accent);border-radius:10px;padding:14px 18px;font-size:14px}
+  footer{margin-top:60px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
+  .kfacts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:22px 0}
+  .kfact{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .kfact .big{font-size:30px;font-weight:750;letter-spacing:-.02em;line-height:1}
+  .kfact .lbl{font-size:12.5px;color:var(--ink-soft);margin-top:7px}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">kvdlra · week 10 · long-context KV-cache compression</p>
+  <h1>Which cache-shrinking trick wins, at very long context?</h1>
+  <p class="lede">A head-to-head of <strong>7 ways to shrink an LLM's memory</strong> (the KV-cache), measured on real 32K–64K-token inputs at two model sizes. The honest answer isn't a single winner — it depends on <em>how much</em> you compress and <em>what you ask the model to do</em>.</p>
+
+  <div class="kfacts">
+    <div class="kfact"><div class="big" style="color:var(--bug)">3.3%</div><div class="lbl">Smallest cache any method reaches — <strong>BUG</strong> at 8B/32K (ppl 9.3 vs 7.6 full). No eviction method goes below ~11%.</div></div>
+    <div class="kfact"><div class="big" style="color:var(--ea)">100%</div><div class="lbl">Needle-retrieval for <strong>ExpectedAttention</strong> at 10% memory — where <strong style="color:var(--bug)">BUG scores 0%</strong> at 32K.</div></div>
+    <div class="kfact"><div class="big">7</div><div class="lbl">Methods compared, all counted in the <strong>same honest memory unit</strong> (a CPU-offloaded float costs the same as a GPU one).</div></div>
+  </div>
+
+  <h2><span class="num">01</span>What this is, in plain words</h2>
+  <p>When an LLM reads a long prompt it stores a running summary of every token — the <strong>KV-cache</strong>. It gets huge and dominates memory, so people compress it. Two families:</p>
+  <p><strong>Eviction</strong> (MorphKV, SnapKV, ExpectedAttention) throws away "unimportant" tokens and keeps the rest exactly. <strong>Low-rank</strong> (our <span class="hl-bug">BUG</span>, plus Palu, ThinK, ShadowKV) keeps a compressed <em>summary of everything</em> instead of dropping tokens. We put all 7 on one honest scale: <strong>quality vs. how much memory they use</strong>, at 32K and 64K tokens, on Llama-3.2-1B and Llama-3.1-8B.</p>
+  <div class="note">Every method's memory is counted the same way (float-equivalents per layer). Crucially, ShadowKV's trick of parking values in CPU RAM is <em>not</em> treated as free — a stored float costs the same wherever it lives. That's what keeps the comparison fair.</div>
+
+  <h2><span class="num">02</span>The main chart: quality vs. memory</h2>
+  <p class="sub">Left = less memory (more compression). Lower = better (perplexity, how "surprised" the model is). The dashed line is the full, uncompressed cache.</p>
+  <div class="panel">
+    <div class="chart-head">
+      <div class="chart-title" id="pplTitle">Llama-3.1-8B · 32K tokens</div>
+      <div class="toggles" id="pplToggles" role="group" aria-label="choose model and context">
+        <button data-k="8b_32768" aria-pressed="true">8B · 32K</button>
+        <button data-k="8b_65536" aria-pressed="false">8B · 64K</button>
+        <button data-k="1b_32768" aria-pressed="false">1B · 32K</button>
+        <button data-k="1b_65536" aria-pressed="false">1B · 64K</button>
+      </div>
+    </div>
+    <figure><svg id="pplChart" viewBox="0 0 720 420" role="img" aria-label="Perplexity versus memory scatter chart"></svg></figure>
+    <div class="legend" id="pplLegend"></div>
+    <div class="cap" id="pplCap"></div>
+  </div>
+
+  <h2><span class="num">03</span>The twist: can it still <em>find</em> things?</h2>
+  <p>Perplexity rewards keeping the general gist. But long-context tasks are often about <strong>retrieval</strong> — "find the one passcode buried 20,000 tokens back." We hid a needle mid-context, compressed, then asked for it. This is where the story flips.</p>
+  <div class="panel">
+    <div class="chart-head">
+      <div class="chart-title" id="rulTitle">Needle retrieval @ 32K · Llama-3.1-8B</div>
+      <div class="toggles" id="rulToggles" role="group" aria-label="choose model">
+        <button data-k="8b" aria-pressed="true">8B</button>
+        <button data-k="1b" aria-pressed="false">1B</button>
+      </div>
+    </div>
+    <figure><svg id="rulChart" viewBox="0 0 720 360" role="img" aria-label="Retrieval accuracy versus memory chart"></svg></figure>
+    <div class="legend" id="rulLegend"></div>
+    <div class="cap" id="rulCap"></div>
+  </div>
+
+  <h2><span class="num">04</span>Who wins where</h2>
+  <p>No method wins everywhere. Three honest regimes:</p>
+  <table>
+    <thead><tr><th>Regime</th><th>Winner</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Extreme compression</strong><br><span class="sub">below ~10% of the cache</span></td>
+          <td class="m-name"><span class="dot" style="background:var(--bug)"></span>BUG <span class="win">(only option)</span></td>
+          <td>A rank-32 summary reaches 3% of the cache. Eviction physically can't go there — its floor is ~11% (it must keep whole tokens). BUG pays a quality premium but it's the <em>only</em> thing in this zone.</td></tr>
+      <tr><td><strong>Moderate compression, long context</strong><br><span class="sub">~11–60% of the cache, 32K–64K</span></td>
+          <td class="m-name"><span class="dot" style="background:var(--morph)"></span>MorphKV / SnapKV <span class="win">(eviction)</span></td>
+          <td>At long context, keeping 10–25% of the <em>right</em> tokens is nearly lossless (7.54 vs 7.62 full). Eviction is remarkably strong here — matching the project's honest Week-4 finding.</td></tr>
+      <tr><td><strong>Retrieval @ 32K</strong><br><span class="sub">find a specific fact</span></td>
+          <td class="m-name"><span class="dot" style="background:var(--ea)"></span>ExpectedAttention <span class="win">(eviction)</span></td>
+          <td>Keeps needle-relevant tokens verbatim → 100% at 10% memory. BUG's low-rank summary is too blurry to reconstruct a sharp needle at 32K — <strong class="lose">0% at every rank</strong>. This is the rank-vs-context wall.</td></tr>
+    </tbody>
+  </table>
+  <div class="note"><strong>Important nuance vs. earlier weeks.</strong> At <em>moderate</em> context (≤4K, tested separately) BUG's low-rank summary <em>does</em> win retrieval — it recovers needles eviction forgets. But that advantage does not survive to 32K: the rank needed to rebuild a sharp fact grows faster than is practical. BUG's real, durable edge is <em>extreme compression</em>, not long-range retrieval.</div>
+
+  <h2><span class="num">05</span>The 7 methods, one line each</h2>
+  <div class="cards" id="cards"></div>
+
+  <h2><span class="num">06</span>Honest caveats</h2>
+  <ul>
+    <li><strong>Retrieval &amp; QA at 16K, and ShadowKV's GPU numbers, are still finishing.</strong> The perplexity frontier above (1B+8B, 32K+64K) is complete; the retrieval panel shows the 32K needle task (partial), and the realistic LongBench QA panel + a mid-context (16K) retrieval sweep are re-running. This report updates in place when they land.</li>
+    <li><strong>ShadowKV can't beat 0.5× here</strong> — it keeps every value, just in CPU RAM, and we count that honestly. Its win is GPU-headroom/throughput, an axis we deliberately don't reward.</li>
+    <li><strong>Palu is the per-head variant</strong> (each attention head gets its own tiny subspace). It's weak because it can't share structure across heads the way BUG's pooled subspace does. A grouped Palu would sit closer to BUG.</li>
+    <li>Small trial counts on retrieval; perplexity is on a held-out continuation window. Absolute numbers are indicative — the <em>ordering</em> is the claim.</li>
+  </ul>
+
+  <footer>
+    Llama-3.2-1B-Instruct &amp; Llama-3.1-8B-Instruct · bf16 · WikiText-103 (perplexity), synthetic RULER needle (retrieval) · chunked-prefill, OOM-safe · every arm's memory pinned to its live cache. Generated by the kvdlra Week-10 pipeline.
+  </footer>
+</div>
+
+<script>
+const DATA = {"ppl": {"1b_32768": [{"m": "full", "fam": "full", "x": 1.0, "y": 13.985}, {"m": "bug-r32", "fam": "BUG", "x": 0.065, "y": 18.829}, {"m": "bug-r64", "fam": "BUG", "x": 0.128, "y": 16.227}, {"m": "bug-r128", "fam": "BUG", "x": 0.255, "y": 14.888}, {"m": "bug-r256", "fam": "BUG", "x": 0.508, "y": 14.43}, {"m": "morph-k0.1", "fam": "MorphKV", "x": 0.15, "y": 15.005}, {"m": "morph-k0.25", "fam": "MorphKV", "x": 0.375, "y": 14.543}, {"m": "morph-k0.5", "fam": "MorphKV", "x": 0.75, "y": 14.43}, {"m": "snapkv-k0.1", "fam": "SnapKV", "x": 0.115, "y": 14.888}, {"m": "ea-k0.1", "fam": "ExpectedAttention", "x": 0.115, "y": 16.743}, {"m": "snapkv-k0.25", "fam": "SnapKV", "x": 0.266, "y": 14.43}, {"m": "ea-k0.25", "fam": "ExpectedAttention", "x": 0.266, "y": 15.604}, {"m": "snapkv-k0.5", "fam": "SnapKV", "x": 0.516, "y": 14.205}, {"m": "ea-k0.5", "fam": "ExpectedAttention", "x": 0.516, "y": 14.543}, {"m": "think-c0.3", "fam": "ThinK", "x": 0.852, "y": 14.43}, {"m": "think-c0.5", "fam": "ThinK", "x": 0.75, "y": 16.613}, {"m": "think-c0.7", "fam": "ThinK", "x": 0.648, "y": 21.849}, {"m": "palu-r0.25", "fam": "Palu", "x": 0.25, "y": 79.498}, {"m": "palu-r0.5", "fam": "Palu", "x": 0.501, "y": 37.497}], "1b_65536": [{"m": "full", "fam": "full", "x": 1.0, "y": 19.428}, {"m": "bug-r32", "fam": "BUG", "x": 0.064, "y": 24.001}, {"m": "bug-r64", "fam": "BUG", "x": 0.126, "y": 21.678}, {"m": "bug-r128", "fam": "BUG", "x": 0.252, "y": 20.684}, {"m": "bug-r256", "fam": "BUG", "x": 0.504, "y": 20.046}, {"m": "morph-k0.1", "fam": "MorphKV", "x": 0.15, "y": 19.735}, {"m": "morph-k0.25", "fam": "MorphKV", "x": 0.375, "y": 19.127}, {"m": "morph-k0.5", "fam": "MorphKV", "x": 0.75, "y": 19.127}, {"m": "snapkv-k0.1", "fam": "SnapKV", "x": 0.108, "y": 20.363}, {"m": "ea-k0.1", "fam": "ExpectedAttention", "x": 0.108, "y": 23.628}, {"m": "snapkv-k0.25", "fam": "SnapKV", "x": 0.258, "y": 19.581}, {"m": "ea-k0.25", "fam": "ExpectedAttention", "x": 0.258, "y": 22.021}, {"m": "snapkv-k0.5", "fam": "SnapKV", "x": 0.508, "y": 19.277}, {"m": "ea-k0.5", "fam": "ExpectedAttention", "x": 0.508, "y": 20.523}, {"m": "think-c0.3", "fam": "ThinK", "x": 0.852, "y": 20.204}, {"m": "think-c0.5", "fam": "ThinK", "x": 0.75, "y": 22.721}, {"m": "think-c0.7", "fam": "ThinK", "x": 0.648, "y": 30.354}, {"m": "palu-r0.25", "fam": "Palu", "x": 0.25, "y": 118.505}, {"m": "palu-r0.5", "fam": "Palu", "x": 0.5, "y": 59.975}], "8b_32768": [{"m": "full", "fam": "full", "x": 1.0, "y": 7.624}, {"m": "bug-r32", "fam": "BUG", "x": 0.033, "y": 9.308}, {"m": "bug-r64", "fam": "BUG", "x": 0.065, "y": 8.675}, {"m": "bug-r128", "fam": "BUG", "x": 0.13, "y": 8.053}, {"m": "bug-r256", "fam": "BUG", "x": 0.259, "y": 7.714}, {"m": "morph-k0.1", "fam": "MorphKV", "x": 0.125, "y": 7.684}, {"m": "morph-k0.25", "fam": "MorphKV", "x": 0.312, "y": 7.535}, {"m": "morph-k0.5", "fam": "MorphKV", "x": 0.625, "y": 7.565}, {"m": "snapkv-k0.1", "fam": "SnapKV", "x": 0.115, "y": 7.867}, {"m": "ea-k0.1", "fam": "ExpectedAttention", "x": 0.115, "y": 8.277}, {"m": "snapkv-k0.25", "fam": "SnapKV", "x": 0.266, "y": 7.684}, {"m": "ea-k0.25", "fam": "ExpectedAttention", "x": 0.266, "y": 7.959}, {"m": "snapkv-k0.5", "fam": "SnapKV", "x": 0.516, "y": 7.624}, {"m": "ea-k0.5", "fam": "ExpectedAttention", "x": 0.516, "y": 7.684}, {"m": "think-c0.3", "fam": "ThinK", "x": 0.852, "y": 7.654}, {"m": "think-c0.5", "fam": "ThinK", "x": 0.75, "y": 7.897}, {"m": "think-c0.7", "fam": "ThinK", "x": 0.648, "y": 9.164}, {"m": "palu-r0.25", "fam": "Palu", "x": 0.251, "y": 13.876}, {"m": "palu-r0.5", "fam": "Palu", "x": 0.502, "y": 9.236}], "8b_65536": [{"m": "full", "fam": "full", "x": 1.0, "y": 9.455}, {"m": "bug-r32", "fam": "BUG", "x": 0.032, "y": 11.865}, {"m": "bug-r64", "fam": "BUG", "x": 0.064, "y": 10.801}, {"m": "bug-r128", "fam": "BUG", "x": 0.127, "y": 10.225}, {"m": "bug-r256", "fam": "BUG", "x": 0.254, "y": 9.91}, {"m": "morph-k0.1", "fam": "MorphKV", "x": 0.125, "y": 9.382}, {"m": "morph-k0.25", "fam": "MorphKV", "x": 0.312, "y": 9.455}, {"m": "morph-k0.5", "fam": "MorphKV", "x": 0.625, "y": 9.455}, {"m": "snapkv-k0.1", "fam": "SnapKV", "x": 0.108, "y": 9.455}, {"m": "ea-k0.1", "fam": "ExpectedAttention", "x": 0.108, "y": 10.225}, {"m": "snapkv-k0.25", "fam": "SnapKV", "x": 0.258, "y": 9.382}, {"m": "ea-k0.25", "fam": "ExpectedAttention", "x": 0.258, "y": 9.91}, {"m": "snapkv-k0.5", "fam": "SnapKV", "x": 0.508, "y": 9.382}, {"m": "ea-k0.5", "fam": "ExpectedAttention", "x": 0.508, "y": 9.53}, {"m": "think-c0.3", "fam": "ThinK", "x": 0.852, "y": 9.53}, {"m": "think-c0.5", "fam": "ThinK", "x": 0.75, "y": 9.833}, {"m": "think-c0.7", "fam": "ThinK", "x": 0.648, "y": 11.499}, {"m": "palu-r0.25", "fam": "Palu", "x": 0.25, "y": 18.977}, {"m": "palu-r0.5", "fam": "Palu", "x": 0.501, "y": 12.052}]}, "ruler": [{"model": "1b", "m": "full", "fam": "full", "x": 1.0, "acc": 1.0}, {"model": "1b", "m": "bug-r32", "fam": "BUG", "x": 0.065, "acc": 0.0}, {"model": "1b", "m": "bug-r64", "fam": "BUG", "x": 0.128, "acc": 0.0}, {"model": "1b", "m": "bug-r128", "fam": "BUG", "x": 0.255, "acc": 0.0}, {"model": "1b", "m": "bug-r256", "fam": "BUG", "x": 0.509, "acc": 0.0}, {"model": "1b", "m": "ea-k0.1", "fam": "ExpectedAttention", "x": 0.1, "acc": 0.0}, {"model": "1b", "m": "ea-k0.25", "fam": "ExpectedAttention", "x": 0.25, "acc": 0.17}, {"model": "1b", "m": "ea-k0.5", "fam": "ExpectedAttention", "x": 0.5, "acc": 0.67}, {"model": "1b", "m": "think-c0.3", "fam": "ThinK", "x": 0.852, "acc": 1.0}, {"model": "1b", "m": "think-c0.5", "fam": "ThinK", "x": 0.75, "acc": 0.67}, {"model": "1b", "m": "think-c0.7", "fam": "ThinK", "x": 0.648, "acc": 0.0}, {"model": "1b", "m": "palu-r0.25", "fam": "Palu", "x": 0.25, "acc": 0.0}, {"model": "8b", "m": "full", "fam": "full", "x": 1.0, "acc": 1.0}, {"model": "8b", "m": "bug-r32", "fam": "BUG", "x": 0.034, "acc": 0.0}, {"model": "8b", "m": "bug-r64", "fam": "BUG", "x": 0.066, "acc": 0.0}, {"model": "8b", "m": "bug-r128", "fam": "BUG", "x": 0.13, "acc": 0.0}, {"model": "8b", "m": "bug-r256", "fam": "BUG", "x": 0.259, "acc": 0.0}, {"model": "8b", "m": "ea-k0.1", "fam": "ExpectedAttention", "x": 0.1, "acc": 1.0}, {"model": "8b", "m": "ea-k0.25", "fam": "ExpectedAttention", "x": 0.25, "acc": 1.0}, {"model": "8b", "m": "ea-k0.5", "fam": "ExpectedAttention", "x": 0.5, "acc": 1.0}, {"model": "8b", "m": "think-c0.3", "fam": "ThinK", "x": 0.852, "acc": 1.0}, {"model": "8b", "m": "think-c0.5", "fam": "ThinK", "x": 0.75, "acc": 1.0}, {"model": "8b", "m": "think-c0.7", "fam": "ThinK", "x": 0.648, "acc": 0.33}, {"model": "8b", "m": "palu-r0.25", "fam": "Palu", "x": 0.251, "acc": 0.0}, {"model": "8b", "m": "palu-r0.5", "fam": "Palu", "x": 0.502, "acc": 1.0}]};
+const COL = {BUG:'--bug',MorphKV:'--morph',SnapKV:'--snap',ExpectedAttention:'--ea',ThinK:'--think',Palu:'--palu',ShadowKV:'--shadow',full:'--full'};
+const cvar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const FAMS = ['BUG','MorphKV','SnapKV','ExpectedAttention','ThinK','Palu','ShadowKV'];
+const NS='http://www.w3.org/2000/svg';
+const el=(t,a={})=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;};
+
+function axesLog(svg,W,H,pad,xd,yd,ylab,xlab,yticks){
+  const x=v=>pad.l+(Math.log10(v)-Math.log10(xd[0]))/(Math.log10(xd[1])-Math.log10(xd[0]))*(W-pad.l-pad.r);
+  const y=v=>H-pad.b-(v-yd[0])/(yd[1]-yd[0])*(H-pad.t-pad.b);
+  const grid=cvar('--grid'),muted=cvar('--muted');
+  [0.03,0.06,0.125,0.25,0.5,1].forEach(t=>{ if(t<xd[0]-1e-9||t>xd[1]+1e-9)return;
+    svg.appendChild(el('line',{x1:x(t),x2:x(t),y1:pad.t,y2:H-pad.b,stroke:grid,'stroke-width':1}));
+    const tx=el('text',{x:x(t),y:H-pad.b+18,fill:muted,'font-size':11,'text-anchor':'middle','font-family':'var(--mono)'});
+    tx.textContent=(t*100)+'%'; svg.appendChild(tx); });
+  yticks.forEach(t=>{ svg.appendChild(el('line',{x1:pad.l,x2:W-pad.r,y1:y(t),y2:y(t),stroke:grid,'stroke-width':1}));
+    const tx=el('text',{x:pad.l-8,y:y(t)+4,fill:muted,'font-size':11,'text-anchor':'end','font-family':'var(--mono)'});
+    tx.textContent=t; svg.appendChild(tx); });
+  const xl=el('text',{x:(pad.l+W-pad.r)/2,y:H-4,fill:muted,'font-size':12,'text-anchor':'middle'});xl.textContent=xlab;svg.appendChild(xl);
+  const yl=el('text',{x:14,y:(pad.t+H-pad.b)/2,fill:muted,'font-size':12,'text-anchor':'middle',transform:`rotate(-90 14 ${(pad.t+H-pad.b)/2})`});yl.textContent=ylab;svg.appendChild(yl);
+  return {x,y};
+}
+
+function drawPpl(key){
+  const svg=document.getElementById('pplChart'); svg.innerHTML='';
+  const W=720,H=420,pad={l:52,r:18,t:16,b:40};
+  const pts=DATA.ppl[key], full=pts.find(p=>p.fam==='full').y;
+  // focus the y-axis on the competitive band; a few catastrophic points (Palu's
+  // aggressive rank) sit off the top and are called out in the caption instead.
+  const cap=full*1.6, inrange=pts.filter(p=>p.y<=cap);
+  const ymin=Math.floor(Math.min(...pts.map(p=>p.y))*10)/10-0.2;
+  const ymax=Math.ceil(Math.max(...inrange.map(p=>p.y)));
+  const off=pts.filter(p=>p.y>cap && p.fam!=='full');
+  const step=(ymax-ymin>12?4:(ymax-ymin>6?2:1));
+  const yticks=[]; for(let t=Math.ceil(ymin);t<=ymax;t+=step)yticks.push(t);
+  const {x,y}=axesLog(svg,W,H,pad,[0.028,1.03],[ymin,ymax],'perplexity  (lower = better)','memory  (share of full cache) →',yticks);
+  // full reference line
+  svg.appendChild(el('line',{x1:pad.l,x2:W-pad.r,y1:y(full),y2:y(full),stroke:cvar('--full'),'stroke-width':1.5,'stroke-dasharray':'5 4'}));
+  const ft=el('text',{x:W-pad.r,y:y(full)-6,fill:cvar('--muted'),'font-size':11,'text-anchor':'end'});ft.textContent='full cache = '+full.toFixed(1);svg.appendChild(ft);
+  FAMS.forEach(f=>{
+    const s=pts.filter(p=>p.fam===f&&p.y<=ymax).sort((a,b)=>a.x-b.x); if(!s.length)return;
+    const c=cvar(COL[f]);
+    if(s.length>1){const path=s.map((p,i)=>(i?'L':'M')+x(p.x)+' '+y(p.y)).join(' ');
+      svg.appendChild(el('path',{d:path,fill:'none',stroke:c,'stroke-width':2,'stroke-linejoin':'round',opacity:.55}));}
+    s.forEach(p=>{svg.appendChild(el('circle',{cx:x(p.x),cy:y(p.y),r:f==='BUG'?5.5:4.5,fill:c,stroke:cvar('--panel'),'stroke-width':1.5}));});
+  });
+  document.getElementById('pplTitle').textContent=(key.startsWith('8b')?'Llama-3.1-8B':'Llama-3.2-1B')+' · '+(key.endsWith('32768')?'32K':'64K')+' tokens';
+  const bug=pts.filter(p=>p.fam==='BUG').sort((a,b)=>a.x-b.x)[0];
+  const mor=pts.filter(p=>p.fam==='MorphKV').sort((a,b)=>a.y-b.y)[0];
+  const offnote=off.length?` <span style="color:var(--palu)">Palu</span>'s most-aggressive point (${Math.max(...off.map(p=>p.y)).toFixed(0)} ppl) is off the top of the chart — per-head low-rank collapses under heavy compression.`:'';
+  document.getElementById('pplCap').innerHTML=`<b>Read it left-to-right.</b> <span style="color:var(--bug)">BUG</span> (orange) is the only method that reaches the far left — down to <b>${(bug.x*100).toFixed(0)}% of the cache</b> — but its dots ride higher (worse) there. In the middle band the <span style="color:var(--morph)">eviction</span> methods sit lowest, nearly touching the full-cache line (best case ${mor.y.toFixed(2)} vs ${full.toFixed(2)} full).${offnote} <span style="color:var(--think)">ThinK</span> only lives on the right — it barely compresses.`;
+}
+
+function drawRul(model){
+  const svg=document.getElementById('rulChart'); svg.innerHTML='';
+  const W=720,H=360,pad={l:52,r:18,t:16,b:40};
+  const pts=DATA.ruler.filter(p=>p.model===model);
+  const x=v=>pad.l+(Math.log10(v)-Math.log10(0.028))/(Math.log10(1.03)-Math.log10(0.028))*(W-pad.l-pad.r);
+  const y=v=>H-pad.b-(v)/(1)*(H-pad.t-pad.b);
+  const grid=cvar('--grid'),muted=cvar('--muted');
+  [0.03,0.06,0.125,0.25,0.5,1].forEach(t=>{svg.appendChild(el('line',{x1:x(t),x2:x(t),y1:pad.t,y2:H-pad.b,stroke:grid,'stroke-width':1}));
+    const tx=el('text',{x:x(t),y:H-pad.b+18,fill:muted,'font-size':11,'text-anchor':'middle','font-family':'var(--mono)'});tx.textContent=(t*100)+'%';svg.appendChild(tx);});
+  [0,0.5,1].forEach(t=>{svg.appendChild(el('line',{x1:pad.l,x2:W-pad.r,y1:y(t),y2:y(t),stroke:grid,'stroke-width':1}));
+    const tx=el('text',{x:pad.l-8,y:y(t)+4,fill:muted,'font-size':11,'text-anchor':'end','font-family':'var(--mono)'});tx.textContent=(t*100)+'%';svg.appendChild(tx);});
+  const xl=el('text',{x:(pad.l+W-pad.r)/2,y:H-4,fill:muted,'font-size':12,'text-anchor':'middle'});xl.textContent='memory  (share of full cache) →';svg.appendChild(xl);
+  const yl=el('text',{x:14,y:(H-pad.b+pad.t)/2,fill:muted,'font-size':12,'text-anchor':'middle',transform:`rotate(-90 14 ${(H-pad.b+pad.t)/2})`});yl.textContent='found the needle';svg.appendChild(yl);
+  FAMS.forEach(f=>{ const s=pts.filter(p=>p.fam===f); if(!s.length)return; const c=cvar(COL[f]);
+    s.forEach(p=>{ const jitter=(f==='BUG'?-3:f==='Palu'?3:0);
+      svg.appendChild(el('circle',{cx:x(p.x),cy:y(p.acc)+jitter,r:f==='BUG'?6:5,fill:c,stroke:cvar('--panel'),'stroke-width':1.5,opacity:.95}));});});
+  document.getElementById('rulTitle').textContent='Needle retrieval @ 32K · '+(model==='8b'?'Llama-3.1-8B':'Llama-3.2-1B');
+  const cap8='At 8B, <span style="color:var(--ea)">ExpectedAttention</span> finds the needle <b>100% of the time even at 10% memory</b> (top-left). <span style="color:var(--bug)">BUG</span> sits flat on the floor — <b>0% at every rank</b>, even at 26% memory — because a rank-256 summary still can\'t rebuild one sharp fact across 32K tokens. <span style="color:var(--palu)">Palu</span> only succeeds once it barely compresses.';
+  const cap1='At 1B the effect is milder but the same shape: <span style="color:var(--bug)">BUG</span> is 0% everywhere; eviction climbs with memory. Retrieval at this extreme length simply needs verbatim tokens, which favours eviction.';
+  document.getElementById('rulCap').innerHTML=(model==='8b'?cap8:cap1);
+}
+
+function legend(id){const c=document.getElementById(id);c.innerHTML='';
+  FAMS.forEach(f=>{const s=document.createElement('span');s.innerHTML=`<span class="dot" style="background:${cvar(COL[f])}"></span>${f}`;c.appendChild(s);});
+  const fu=document.createElement('span');fu.innerHTML='<span class="sw-full"></span>full cache';c.appendChild(fu);}
+
+const CARDS=[
+  ['BUG','BUG','ours · low-rank','Keeps a streaming low-rank summary of the whole history. Superpower: extreme compression (down to 3% of the cache) — a regime no other method reaches.'],
+  ['MorphKV','MorphKV','ours · eviction','Decode-time eviction that keeps recently- and consistently-attended tokens. Quietly the strongest all-rounder on long-context perplexity.'],
+  ['SnapKV','SnapKV','eviction','Prefill eviction by a recent-window attention score. Near-lossless in the mid-memory band; a solid, simple baseline.'],
+  ['ExpectedAttention','ea','eviction','Evicts by expected future attention. The retrieval champion — keeps needle-relevant tokens verbatim, so it finds facts others lose.'],
+  ['ThinK','ThinK','low-rank (channels)','Prunes low-importance key channels. Only compresses keys (half the cache), so it lives in the high-memory band; meant to compose with eviction.'],
+  ['Palu','Palu','low-rank projection','Per-head SVD low-rank of keys & values. Weak here: a 64-dim per-head subspace can\'t capture what BUG\'s pooled 512/1024-dim subspace does.'],
+  ['ShadowKV','ShadowKV','low-rank + offload','Low-rank keys on GPU, full values in CPU RAM, sparse retrieval. Faithfully ported — but counting the offloaded values honestly, it can\'t beat 0.5×.'],
+];
+function cards(){const c=document.getElementById('cards');
+  CARDS.forEach(([name,fam,tag,desc])=>{const d=document.createElement('div');d.className='card';
+    d.style.borderLeftColor=cvar(COL[fam]);
+    d.innerHTML=`<h4><span>${name}</span><span class="tag">${tag}</span></h4><p>${desc}</p>`;c.appendChild(d);});}
+
+function bind(id,fn){const box=document.getElementById(id);box.addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b)return;
+  [...box.children].forEach(x=>x.setAttribute('aria-pressed',x===b));
+  fn(b.dataset.k);});}
+
+function renderAll(){drawPpl(curPpl);drawRul(curRul);legend('pplLegend');legend('rulLegend');}
+let curPpl='8b_32768',curRul='8b';
+bind('pplToggles',k=>{curPpl=k;drawPpl(k);});
+bind('rulToggles',k=>{curRul=k;drawRul(k);});
+cards(); renderAll();
+new MutationObserver(renderAll).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+matchMedia('(prefers-color-scheme:dark)').addEventListener('change',renderAll);
+</script>

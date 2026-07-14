@@ -52,27 +52,33 @@ emit() {  # emit <marker> <json-path> : base64-fold the result so vast logs keep
 }
 
 # (1) Perplexity frontier (supporting axis) -- chunked ingest at 32K/64K.
+if [ "${RUN_PPL:-1}" = "1" ]; then
 echo "===PPL_BEGIN==="
 PYTHONPATH=src python -u scripts/w10_frontier.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
   --T $TLIST --chunk "$CHUNK" --window 512 --n-samples "$NSAMP" \
   --out-json results/w10-frontier.json 2>&1
 emit PPL results/w10-frontier.json
 echo "===PPL_DONE==="
+fi
 
 # (2) RULER accuracy (PRIMARY) -- compress-then-query, eviction's weak spot.
+if [ "${RUN_RULER:-1}" = "1" ]; then
 echo "===RULER_BEGIN==="
 PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
   --context-lens $RULER_CTX --tasks $RULER_TASKS --chunk "$CHUNK" --n-trials "$NTRIALS" \
   --seeds $SEEDS --out-json results/w10-ruler.json 2>&1
 emit RULER results/w10-ruler.json
 echo "===RULER_DONE==="
+fi
 
 # (3) LongBench F1 (PRIMARY) -- realistic QA, query in-prompt (fairer to eviction).
+if [ "${RUN_LB:-1}" = "1" ]; then
 echo "===LB_BEGIN==="
 PYTHONPATH=src python -u scripts/w10_longbench.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
   --tasks $LB_TASKS --max-len "$LB_MAXLEN" --chunk "$CHUNK" \
   --n-examples "$NEX" --out-json results/w10-longbench.json 2>&1
 emit LB results/w10-longbench.json
 echo "===LB_DONE==="
+fi
 
 echo "===ALL_DONE==="

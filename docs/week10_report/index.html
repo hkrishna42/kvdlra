@@ -93,6 +93,10 @@
     <div class="kfact"><div class="big">7</div><div class="lbl">Methods compared, all counted in the <strong>same honest memory unit</strong> (a CPU-offloaded float costs the same as a GPU one).</div></div>
   </div>
 
+  <div class="note" style="border-left:4px solid var(--bug)">
+    <strong>Week-11 update — the retrieval story flipped.</strong> This report concluded BUG can't retrieve at 32K (0% at every rank). Since then we made it work: by keeping the few most <em>surprising</em> (outlier) tokens exact instead of blurring them into the summary, BUG now finds the 32K needle at <strong>100% accuracy using 0.009× memory</strong> — roughly <strong>11× cheaper</strong> than ExpectedAttention's 0.10%. The honest catch: that win comes from BUG's surprise <em>signal</em> repurposed as smart eviction — <em>not</em> its low-rank summary, which we show is dead weight in this regime. Section 04 below is superseded on this point; full write-up in <span class="hl-bug">docs/week11.md</span>.
+  </div>
+
   <h2><span class="num">01</span>What this is, in plain words</h2>
   <p>When an LLM reads a long prompt it stores a running summary of every token — the <strong>KV-cache</strong>. It gets huge and dominates memory, so people compress it. Two families:</p>
   <p><strong>Eviction</strong> (MorphKV, SnapKV, ExpectedAttention) throws away "unimportant" tokens and keeps the rest exactly. <strong>Low-rank</strong> (our <span class="hl-bug">BUG</span>, plus Palu, ThinK, ShadowKV) keeps a compressed <em>summary of everything</em> instead of dropping tokens. We put all 7 on one honest scale: <strong>quality vs. how much memory they use</strong>, at 32K and 64K tokens, on Llama-3.2-1B and Llama-3.1-8B.</p>
@@ -142,18 +146,18 @@
           <td class="m-name"><span class="dot" style="background:var(--morph)"></span>MorphKV / SnapKV <span class="win">(eviction)</span></td>
           <td>At long context, keeping 10–25% of the <em>right</em> tokens is nearly lossless (7.54 vs 7.62 full). Eviction is remarkably strong here — matching the project's honest Week-4 finding.</td></tr>
       <tr><td><strong>Retrieval @ 32K</strong><br><span class="sub">find a specific fact</span></td>
-          <td class="m-name"><span class="dot" style="background:var(--ea)"></span>ExpectedAttention <span class="win">(eviction)</span></td>
-          <td>Keeps needle-relevant tokens verbatim → 100% at 10% memory. BUG's low-rank summary is too blurry to reconstruct a sharp needle at 32K — <strong class="lose">0% at every rank</strong>. This is the rank-vs-context wall.</td></tr>
+          <td class="m-name"><span class="dot" style="background:var(--bug)"></span>BUG + exact tier <span class="win">(Week-11)</span></td>
+          <td>BUG's low-rank summary alone is too blurry — <strong class="lose">0% at every rank</strong> (the rank-vs-context wall). But <strong>Week-11 flips this</strong>: keeping the most <em>surprising</em> tokens exact reaches <strong>100% at 0.009× memory</strong>, ~11× cheaper than ExpectedAttention (100% at 0.10×). Caveat — the win is BUG's surprise <em>signal</em> as eviction, not its summary.</td></tr>
     </tbody>
   </table>
-  <div class="note"><strong>Important nuance vs. earlier weeks.</strong> At <em>moderate</em> context (≤4K, tested separately) BUG's low-rank summary <em>does</em> win retrieval — it recovers needles eviction forgets. But that advantage does not survive to 32K: the rank needed to rebuild a sharp fact grows faster than is practical. BUG's real, durable edge is <em>extreme compression</em>, not long-range retrieval.</div>
+  <div class="note"><strong>Important nuance vs. earlier weeks.</strong> At <em>moderate</em> context (≤4K, tested separately) BUG's low-rank summary <em>does</em> win retrieval — it recovers needles eviction forgets. Its low-rank <em>summary</em> still can't rebuild a sharp fact at 32K (the rank-vs-context wall). <strong>Week-11 gets retrieval at 32K a different way</strong> — a surprise-selected <em>exact</em> tier (100% at 0.009×) — so the durable lesson holds: BUG's edge is extreme compression and its outlier <em>signal</em>, not long-range low-rank reconstruction.</div>
 
   <h2><span class="num">05</span>The 7 methods, one line each</h2>
   <div class="cards" id="cards"></div>
 
   <h2><span class="num">06</span>Honest caveats</h2>
   <ul>
-    <li><strong>Retrieval &amp; QA at 16K, and ShadowKV's GPU numbers, are still finishing.</strong> The perplexity frontier above (1B+8B, 32K+64K) is complete; the retrieval panel shows the 32K needle task (partial), and the realistic LongBench QA panel + a mid-context (16K) retrieval sweep are re-running. This report updates in place when they land.</li>
+    <li><strong>Retrieval &amp; QA at 16K, and ShadowKV, landed in Week 11.</strong> The perplexity frontier (1B+8B, 32K+64K) was already complete; Week-11 then fixed harness bugs that had silently dropped MorphKV/SnapKV and repaired ShadowKV, so the full <strong>4-task RULER at 16K/8B</strong> and LongBench <span class="hl-bug">qasper</span> now run for all methods. Details in docs/week11.md. (Multi-key/value at 32K and the 1B row remain honest follow-ups.)</li>
     <li><strong>ShadowKV can't beat 0.5× here</strong> — it keeps every value, just in CPU RAM, and we count that honestly. Its win is GPU-headroom/throughput, an axis we deliberately don't reward.</li>
     <li><strong>Palu is the per-head variant</strong> (each attention head gets its own tiny subspace). It's weak because it can't share structure across heads the way BUG's pooled subspace does. A grouped Palu would sit closer to BUG.</li>
     <li>Small trial counts on retrieval; perplexity is on a held-out continuation window. Absolute numbers are indicative — the <em>ordering</em> is the claim.</li>

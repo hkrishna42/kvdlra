@@ -12,7 +12,8 @@
 # RANK (BUG gist rank), HH (exact-tier sizes), NEIGHBOR (span window),
 # EVICT (EA keep fractions = the bar), NTRIALS/SEEDS, CHUNK, DTYPE.
 set -x
-export HF_HUB_ENABLE_HF_TRANSFER=1
+export HF_HUB_ENABLE_HF_TRANSFER=${HF_HUB_ENABLE_HF_TRANSFER:-1}  # 0 = robust resumable dl on flaky hosts
+export HF_HUB_DOWNLOAD_TIMEOUT=${HF_HUB_DOWNLOAD_TIMEOUT:-60}
 export HF_HUB_DISABLE_XET=1
 export DEBIAN_FRONTEND=noninteractive
 export TOKENIZERS_PARALLELISM=false

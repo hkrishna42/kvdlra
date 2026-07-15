@@ -33,8 +33,14 @@ CHUNK="${CHUNK:-4096}"
 DTYPE="${DTYPE:-bfloat16}"
 
 cd /root || exit 1
-git clone --depth 1 --branch week7 https://github.com/hkrishna42/kvdlra.git 2>&1 | tail -3
-cd kvdlra || exit 1
+# Retry the clone: vast hosts intermittently drop the fetch-pack (early EOF).
+for attempt in 1 2 3 4 5; do
+  rm -rf kvdlra
+  git clone --branch week7 https://github.com/hkrishna42/kvdlra.git 2>&1 | tail -3
+  [ -d kvdlra/scripts ] && break
+  echo "===CLONE_RETRY_${attempt}==="; sleep 5
+done
+cd kvdlra || { echo "===CLONE_FAILED==="; exit 1; }
 
 pip install -q hf_transfer hf_xet numpy matplotlib "kvpress==0.5.1" 2>&1 | tail -5
 pip install -q 'transformers==5.8.0' 'datasets==2.21.0' 2>&1 | tail -5

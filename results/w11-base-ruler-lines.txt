@@ -16,6 +16,7 @@
 [niah_multivalue ctx32768] morph-k0.5     acc=1.00 recall=1.00 ratio=0.624
 [niah_multivalue ctx32768] palu-r0.25     acc=0.00 recall=0.00 ratio=0.251
 [niah_multivalue ctx32768] palu-r0.5      acc=1.00 recall=1.00 ratio=0.502
+[niah_multivalue ctx32768] shadow-r128    acc=0.00 recall=0.00 ratio=1.064
 [niah_multivalue ctx32768] shadow-r64     acc=0.00 recall=0.00 ratio=0.814
 [niah_multivalue ctx32768] snapkv-k0.1    acc=0.50 recall=0.88 ratio=0.100
 [niah_multivalue ctx32768] snapkv-k0.25   acc=1.00 recall=1.00 ratio=0.250
@@ -36,3 +37,16 @@
 [niah_single ctx32768] think-c0.3     acc=1.00 recall=1.00 ratio=0.852
 [niah_single ctx32768] think-c0.5     acc=1.00 recall=1.00 ratio=0.750
 [niah_single ctx32768] think-c0.7     acc=0.50 recall=0.50 ratio=0.648
+[vt ctx32768] morph-k0.1     acc=0.00 recall=0.00 ratio=0.125
+[vt ctx32768] morph-k0.25    acc=0.50 recall=0.50 ratio=0.312
+[vt ctx32768] morph-k0.5     acc=1.00 recall=1.00 ratio=0.624
+[vt ctx32768] palu-r0.25     acc=0.00 recall=0.00 ratio=0.251
+[vt ctx32768] palu-r0.5      acc=1.00 recall=1.00 ratio=0.502
+[vt ctx32768] shadow-r128    acc=0.00 recall=0.00 ratio=1.064
+[vt ctx32768] shadow-r64     acc=0.00 recall=0.00 ratio=0.814
+[vt ctx32768] snapkv-k0.1    acc=0.00 recall=0.00 ratio=0.100
+[vt ctx32768] snapkv-k0.25   acc=0.00 recall=0.00 ratio=0.250
+[vt ctx32768] snapkv-k0.5    acc=1.00 recall=1.00 ratio=0.500
+[vt ctx32768] think-c0.3     acc=1.00 recall=1.00 ratio=0.852
+[vt ctx32768] think-c0.5     acc=0.50 recall=0.50 ratio=0.750
+[vt ctx32768] think-c0.7     acc=0.00 recall=0.00 ratio=0.648

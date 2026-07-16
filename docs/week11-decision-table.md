@@ -1,8 +1,7 @@
-# Week 11 — the decision table (all methods, 16K + 32K, 8B)
+# Week 11 — the decision table (all methods, 16K + 32K, 8B) — COMPLETE
 
 Llama-3.1-8B. RULER retrieval accuracy (%) on 4 tasks + perplexity (lower=better);
-memory = share of full KV cache. `—` = not measured (baseline var-track @32K still
-running at time of writing). Data: `results/w11-decision-table.json`.
+memory = share of full KV cache. Data: `results/w11-decision-table.json`.
 
 ## 16K context
 
@@ -37,32 +36,31 @@ running at time of writing). Data: `results/w11-decision-table.json`.
 | bugEVICT-h1024 | 0.033× | 8.81 | 100 | 50 | 0 | 100 |
 | bug-r32 | 0.034× | 9.31 | 0 | 0 | 0 | 0 |
 | bug-r128 | 0.130× | 8.05 | 0 | — | — | — |
-| morph-k0.25 | 0.312× | 7.54 | 100 | 100 | 100 | — |
-| morph-k0.5 | 0.625× | 7.57 | 100 | 100 | 100 | — |
-| snapkv-k0.1 | 0.100× | 7.87 | 100 | 0 | 50 | — |
-| snapkv-k0.25 | 0.250× | 7.68 | 100 | 0 | 100 | — |
-| think-c0.3 | 0.852× | 7.65 | 100 | 100 | 100 | — |
-| think-c0.5 | 0.750× | 7.90 | 100 | 100 | 100 | — |
-| palu-r0.5 | 0.502× | 9.24 | 100 | 100 | 100 | — |
-| shadow-r64 | 0.814× | — | 0 | 0 | 0 | — |
+| morph-k0.25 | 0.312× | 7.54 | 100 | 100 | 100 | 50 |
+| morph-k0.5 | 0.624× | 7.57 | 100 | 100 | 100 | 100 |
+| snapkv-k0.1 | 0.100× | 7.87 | 100 | 0 | 50 | 0 |
+| snapkv-k0.25 | 0.250× | 7.68 | 100 | 0 | 100 | 0 |
+| think-c0.3 | 0.852× | 7.65 | 100 | 100 | 100 | 100 |
+| think-c0.5 | 0.750× | 7.90 | 100 | 100 | 100 | 50 |
+| palu-r0.5 | 0.502× | 9.24 | 100 | 100 | 100 | 100 |
+| shadow-r64 | 0.814× | — | 0 | 0 | 0 | 0 |
 
 ## Recommendation (a lean, not a slam dunk)
 
-**`bugS` (SurpriseSLASH) occupies a unique sweet spot: near-perfect retrieval at ~0.04× memory.**
-At 32K it hits needle/multi-value/var-track = 100 and multi-key = 83 at **0.043×** — and every
-method that matches that accuracy needs far more memory: MorphKV/ThinK/Palu all reach 100s but at
-**0.3–0.85×** (7–20× more), and ExpectedAttention (0.10×) is *weaker* on multi-key (50 vs 83) while
-SnapKV outright fails multi-key (0). So among **low-memory** methods, `bugS` is the strongest
-multi-fact retriever.
+**`bugS` (SurpriseSLASH) is the only sub-0.1× method that handles all four retrieval tasks.**
+At 32K it hits needle/multi-value/var-track = 100 and multi-key = 83 at **0.043×**. Every method
+that matches that needs far more memory (MorphKV 0.31–0.62×, ThinK 0.75–0.85×, Palu 0.50× — 7–20×
+more), ExpectedAttention (0.10×) is weaker on multi-key (50 vs 83), and SnapKV fails multi-key AND
+var-track (0) below 0.5×.
 
 - **Keep `bugS`:** best accuracy-per-byte for retrieval; the low-rank summary carries the hard tasks.
-- **Drop `bugEVICT`:** cheapest (0.009×) and aces the single needle, but collapses on multi-key/
-  value/var-track at a tight tier — a single-needle trap.
+- **Drop `bugEVICT`:** cheapest (0.009×), aces the single needle, collapses on the harder tasks at a
+  tight tier — a single-needle trap.
 - **Retire plain BUG:** 0% on every retrieval task at 32K.
-- Baselines are a *reference*: MorphKV is a strong retriever but memory-hungry; ThinK/Palu only win
-  by barely compressing (0.5–0.85×); SnapKV is weak on multi-key; ShadowKV fails this axis.
+- **Perplexity note:** `bugS-r32` trades text quality (ppl 8.9–9.2 vs EA 8.28); rank is the lever —
+  plain BUG at rank-128 already beats EA on ppl (8.05), so **`bugS-r128-h1024` (~0.15×) is the likely
+  'balanced' config** (retrieval + near-full quality) worth measuring next.
 
-Honest caveats: **small trial counts (2–6/cell)**, all-or-nothing metrics are noisy; the gist's edge
-is **budget-dependent** (bigger exact tier narrows it) and **context-dependent** (at 16K both bugS and
-bugEVICT are weak on hard tasks); this is a **memory-and-retrieval** win (EA/morph keep better ppl).
-A confirming run with more trials would firm the `bugS`-vs-`bugEVICT` lean.
+Honest caveats: small trial counts (2–6/cell), all-or-nothing metrics are noisy; the gist's edge over
+`bugEVICT` is budget- and context-dependent (at 16K both are weak on hard tasks). Memory-and-retrieval
+win; EA/MorphKV keep better perplexity. A confirming run with more trials would firm the lean.

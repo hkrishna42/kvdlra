@@ -7,9 +7,14 @@
 > outlier, which is exactly what a rank-`r` low-rank summary reproduces worst.
 > Week 11 asks the falsifiable question: **can BUG retrieve the 32K needle at ≤ the
 > memory ExpectedAttention needs — or prove it can't?** The answer is a genuine
-> retrieval-frontier win, delivered by BUG's *surprise signal used as an eviction
-> rule*, together with a rigorous self-critical finding that BUG's low-rank gist
-> itself is dead weight here. Read with `docs/week9.md` (D1 recovery / D3 surprise,
+> retrieval-frontier win, delivered by BUG's *surprise signal used to select an exact
+> tier* on top of its low-rank gist. An initial single-needle-plus-perplexity read
+> suggested the gist was dead weight (a rank-1 `bugEVICT` control matched it); a later
+> **full 4-task RULER run overturns that attribution** — the low-rank gist *helps* on
+> the hard multi-fact tasks (multi-key / multi-value / variable-tracking), where the
+> gist-free control collapses to 0% *at a tight exact-tier budget*. A lean, not a slam
+> dunk: small n (2–6/cell), and the edge is budget- and context-dependent (see the
+> caveats). Read with `docs/week9.md` (D1 recovery / D3 surprise,
 > the closest prior art), `docs/week10-handover.md` (the 7-method map and this
 > wall), and `docs/week7-dominance.md` (the two measured walls).
 
@@ -24,7 +29,7 @@ Every arm's memory is counted honestly in the same float-equivalent unit
 | Goal | Question | Axis judged | Verdict |
 |---|---|---|---|
 | **B** | can BUG retrieve the 32K needle at ≤ EA's memory? | retrieval-vs-memory @ 32K/8B | **WIN — surprise-selected exact tier retrieves 100% at 0.009× (≈11× cheaper than EA's 0.10×) where plain BUG was 0%** |
-| **B (attribution)** | is it BUG's low-rank *gist* doing the work? | joint quality (ppl) + retrieval, `bugEVICT` control | **NO — the rank-1 `bugEVICT` control matches/beats the rank-32 gist arm on both; the gist is dead weight (extends the overhead-floor wall)** |
+| **B (attribution)** | is BUG's low-rank *gist* dead weight, or does it carry the win? | full 4-task RULER + ppl @ 32K/8B, `bugEVICT` control | **GIST HELPS (a lean) — single-needle + ppl alone flatter the gist-free `bugEVICT`; on the full suite `bugEVICT` collapses to 0% on multi-key/multi-value/var-track *at a tight tier (h256)* while `bugS` handles all four. Budget/context-dependent, small n; keep `bugS`, drop `bugEVICT`** |
 | **A** | finish the broken Week-10 retrieval eval | 4-task RULER @ 16K + LongBench | **DONE — 3 harness bugs fixed (each with a regression test); complete matrix banked** |
 
 ---
@@ -70,8 +75,11 @@ compression* or merely the *surprise selection rule* doing the retrieving, we ru
 degenerate arm: **rank-1 BUG** (a negligible gist) with the same surprise-selected
 verbatim tier. `bugEVICT` is therefore ≈ **pure surprise-selected verbatim
 eviction** — it keeps the same exact tokens the gist arm keeps, but throws away
-essentially all of the low-rank summary. If `bugEVICT` matches the real gist arm,
-the gist is dead weight. Two eval arms carry the comparison:
+essentially all of the low-rank summary. If `bugEVICT` matches the real gist arm
+**across the full task suite**, the gist is dead weight; if it matches on some tasks
+but collapses on others, the gist is carrying those others. (Spoiler: it's the
+latter — single-needle + ppl tie, but the hard multi-fact tasks separate them.) Two
+eval arms carry the comparison:
 
 - **`bugslash`** (`bugS-r32-h{hh}`): rank-32 low-rank gist **+** surprise exact tier.
 - **`bugEVICT`** (`bugEVICT-h{hh}`): rank-1 degenerate gist **+** surprise exact tier
@@ -116,10 +124,11 @@ Accuracy and honest memory ratio (`results/w11-goalB-ruler-lines.txt`):
 rank, a surprise-selected exact tier retrieves the 32K needle **100% at 0.009×** —
 about **11× cheaper** than ExpectedAttention's 0.10×. This is the headline of GOAL B.
 
-**`niah_multikey` @ 32K (partial).** The harder multi-key task degrades: `full`
-1.00, `bugS-r32-h256` and `bugS-r32-h512` both **0.83** (a needle among distractor
-keys stresses selection). Honest caveat — this row is partial (single-needle is the
-completed frontier; multikey/multivalue are follow-ups, below).
+**`niah_multikey` @ 32K.** The harder multi-key task degrades, but the gist arm holds
+up best: `full` 1.00, `bugS-r32-h256` **0.83** — *above* ExpectedAttention's 0.50 at
+<half its memory (see the full 4-task decision table below). This is the first sign
+that the gist is *not* dead weight: the gist-free `bugEVICT` control drops to **0**
+here, while the rank-32 gist keeps the arm above EA.
 
 ## GOAL B — joint quality (perplexity @ 32K / 8B): THE attribution
 
@@ -137,38 +146,79 @@ does the arm still *model text* well, not just fish out the needle?
 | bugS-r32-h256 | 9.164 | 0.043× |
 | bugS-r32-h1024 | 8.881 | 0.065× |
 
-**The control wins.** `bugEVICT` (rank-1, *no* gist) matches or **beats** `bugslash`
-(rank-32 gist) on **both** axes — retrieval-memory *and* perplexity: 8.951 vs 9.164
-at hh=256, 8.812 vs 8.881 at hh=1024 (within ~2%). And it does so at **5× less
-memory** (0.009× vs 0.043× at hh=256), because the rank-32 basis costs `2nr` floats
-the rank-1 arm doesn't pay. So the honest reading is: **the low-rank gist does not
-help and costs 5× the memory here — it is dead weight.** The retrieval win is the
-*surprise selection rule* repurposed as eviction, **not** BUG's low-rank
-compression.
+**On perplexity + single needle the control ties — but that view is too narrow.**
+`bugEVICT` (rank-1, *no* gist) matches or slightly beats `bugslash` (rank-32 gist) on
+perplexity: 8.951 vs 9.164 at hh=256, 8.812 vs 8.881 at hh=1024 (within ~2%), at ~5×
+less memory (0.009× vs 0.043× at hh=256). On the *single-needle* retrieval task the
+two are also tied (both 100%). Taken alone, these two axes suggest the gist is dead
+weight — and that **was** the initial Week-11 conclusion. **The full 4-task RULER run
+below overturns it:** single-needle + perplexity flatter the cheap gist-free control,
+because neither task exercises what the gist is *for* — reconstructing the many soft
+facts a hard multi-fact query needs. On perplexity the gist still adds little (the
+Week-7/8 overhead-floor wall for *text modelling* stands); its payoff shows up only on
+multi-fact retrieval.
+
+## GOAL B — the full 4-task decision table (@ 32K / 8B): the attribution, corrected
+
+Single-needle + perplexity are only two axes. Running the **full four RULER tasks**
+(single needle, multi-key, multi-value, variable-tracking) at 32K / 8B is what
+actually settles the attribution (`results/w11-goalB-ruler-lines.txt`), accuracy in %:
+
+| arm | mem | needle | multi-key | multi-value | var-track | ppl |
+|---|---|---|---|---|---|---|
+| full | 1.0× | 100 | 100 | 100 | 100 | 7.62 |
+| ea-k0.1 | 0.10× | 100 | 50 | 100 | 100 | 8.28 |
+| **bugS-r32-h256** | **0.043×** | **100** | **83** | **100** | **100** | 9.16 |
+| bugS-r32-h1024 | 0.066× | 100 | 50 | 100 | 100 | 8.88 |
+| bugEVICT-h256 | 0.009× | 100 | **0** | **0** | **0** | 8.95 |
+| bugEVICT-h1024 | 0.033× | 100 | 50 | **0** | 100 | 8.81 |
+| plain BUG r32 | 0.03× | 0 | 0 | 0 | 0 | 9.31 |
+
+**The gist helps on hard retrieval — not dead weight, but a lean.** The single-needle
+-only view flattered `bugEVICT`: with essentially no gist, at a *tight* tier (h256) it
+**collapses to 0** on multi-key, multi-value, and variable-tracking, and is still 0 on
+multi-value at h1024. The rank-32 gist arm `bugS` **handles all four tasks** at 0.043×
+— and **beats ExpectedAttention on multi-key, 83 vs 50, at <half EA's memory.** So the
+low-rank summary does real work on the hard multi-fact retrieval the single needle
+never probed. *But hold the strength honestly:* the gap is starkest at the tight h256
+budget (at h1024 `bugEVICT` partly catches up — var-track 100, multi-key 50); at 16K
+*both* arms are weak on the hard tasks; and n is 2–6/cell on all-or-nothing metrics. So
+it is a **lean toward `bugS`**, worth a confirming run. Plain BUG (surprise tier off)
+is **0% on all four** at 32K — the wall SurpriseSLASH was built to break.
 
 ## GOAL B — the honest decision (stated self-critically)
 
 1. **WIN on retrieval-vs-memory.** A surprise-selected exact tier retrieves the 32K
-   needle at **0.009×** — ≈11× cheaper than ExpectedAttention's 0.10× — where plain
-   BUG was 0% at every rank. The Week-10 rank-vs-context fidelity wall is **beaten,
-   not tied.**
-2. **BUT it is the surprise SELECTION RULE, not BUG's low-rank compression.** The
-   `bugEVICT` control (rank-1, no gist) matches/beats the rank-32 gist arm on both
-   retrieval-memory *and* perplexity (8.95 vs 9.16 at h256; 8.81 vs 8.88 at h1024)
-   at a fraction of the memory. So honestly: **the gist does not help and is dead
-   weight** — this **extends the Week-7/8 overhead-floor wall**: BUG's `2nr` basis
-   is dead weight *even when paired with a good exact tier*. Caveat the small
-   margins (~2%) and small `n` (n=2 per ppl cell) — this is "no measurable benefit,"
-   not "provably harmful."
-3. **vs ExpectedAttention: an honest memory/quality TRADEOFF, not a clean sweep.**
-   `bugEVICT` gets the same 100% retrieval **and** reasonable ppl (~8.8–9.0) at
-   **3–12× less memory** than EA (0.009×–0.032× vs 0.115×); but EA keeps **better
-   ppl** (8.28 vs ~8.8–9.0). Report both directions — neither dominates.
+   *single* needle at **0.009×** — ≈11× cheaper than ExpectedAttention's 0.10× —
+   where plain BUG was 0% at every rank. The Week-10 rank-vs-context fidelity wall is
+   **beaten, not tied.**
+2. **The low-rank gist HELPS on hard retrieval (a lean) — the earlier "dead weight"
+   attribution was a single-needle trap.** On single-needle + perplexity, the
+   gist-free `bugEVICT` control ties the gist arm, which initially looked like the
+   gist adding nothing. But on the **full 4-task suite**, `bugEVICT` collapses to 0 on
+   multi-key/multi-value/variable-tracking *at a tight tier (h256)*, while the rank-32
+   `bugS` handles all four and beats EA on multi-key. So the gist earns its `2nr` floats
+   on multi-fact retrieval — **but as a lean, not a proof:** the edge is
+   budget-dependent (h1024 narrows it), context-dependent (16K both weak), and n is
+   2–6/cell. **On *perplexity* the gist still adds little** (~2% at n=2), so the
+   Weeks-7/8 overhead-floor wall for *text modelling* is unchanged — the gist is
+   ~neutral on ppl/single-needle, and *leans* useful on multi-fact retrieval.
+3. **Recommendation: keep `bugS` (SurpriseSLASH); drop `bugEVICT`; retire plain BUG.**
+   `bugEVICT` is a single-needle trap (cheap, but 0% on the hard tasks). Plain BUG is
+   0% on all four at 32K. `bugS-r32-h256` is the arm to carry forward: all four tasks
+   at 0.043× (~2.3× cheaper than EA), winning multi-key outright.
+4. **vs ExpectedAttention: a memory-and-retrieval win with a perplexity trade, not a
+   clean sweep.** `bugS` matches or beats EA on every RULER task (ties on
+   needle/multi-value/var-track, wins multi-key 83 vs 50) at **<half the memory**
+   (0.043× vs 0.10×); but EA keeps **better perplexity** (8.28 vs 9.16). Report both
+   directions — the win is memory + hard-retrieval, the cost is ppl.
 
 So Week 11 lands like Week 9's D1: **a genuine retrieval-frontier positive via BUG's
-surprise signal (used as eviction), with a rigorous self-critical attribution that
-the low-rank gist itself is dead weight here** — consistent with the whole project's
-overhead-floor finding. A publishable positive-with-honest-caveat.
+surprise-selected exact tier, and — once the full suite is run — a low-rank gist that
+*earns its keep* on hard multi-fact retrieval** (even as it stays ~neutral on
+perplexity, consistent with the overhead-floor finding for text modelling). A
+publishable positive; the honest caveat is the perplexity trade and small `n`, not a
+dead-weight gist.
 
 ---
 
@@ -223,18 +273,22 @@ rank on in-prompt QA; eviction/ThinK competitive) — consistent with Week 10.
 
 ## Honest caveats (do not overstate)
 
-- **Small `n`.** The perplexity attribution is `n=2` per cell and the gist-vs-evict
-  margins are ~2%. This supports "the gist gives no measurable benefit here," **not**
-  "the gist is provably harmful." Larger-`n` confirmation is a follow-up.
-- **Multikey partial.** The completed 32K frontier is `niah_single`;
-  `niah_multikey` is partial (bugS 0.83) and `niah_multivalue` is not yet run at
-  32K.
+- **Small `n`.** RULER cells are 2–6 trials each and the ppl attribution is `n=2`
+  (gist-vs-evict ppl margins ~2%). The 4-task pattern is clear — the gist-vs-no-gist
+  gaps on the hard tasks are 0-vs-100, not 2% — but exact per-task percentages carry
+  trial-count noise; larger-`n` confirmation is a follow-up.
+- **Full 4-task suite now run @ 32K.** single / multi-key / multi-value /
+  variable-tracking are all measured for `bugS`, `bugEVICT`, EA, and plain BUG
+  (decision table above). Variable-tracking stays hard for every compressed arm except
+  at light compression.
 - **8B only for GOAL B.** The 32K frontier is 8B; a **1B row** (`n=512`, where the
   Week-9 rank/n ratio was more favourable) remains to be run for scale-invariance.
-- **`bugEVICT` is by construction not "BUG."** Its win is the honest *result*, not a
-  claim that BUG's compression retrieves — the whole point of the control.
-- **The trade vs EA is a trade, not a sweep.** EA keeps better ppl; `bugEVICT` keeps
-  the same retrieval at much less memory. Both directions reported.
+- **`bugEVICT` is dropped, not headlined.** It was the attribution control; the full
+  suite shows it is a single-needle trap (0% on the hard tasks). The carried-forward
+  arm is `bugS`, gist included.
+- **The trade vs EA is a trade, not a sweep.** `bugS` wins memory and hard retrieval
+  (multi-key 83 vs 50 at <half the memory); EA keeps better perplexity. Both
+  directions reported.
 
 ## Standing / follow-ups
 
@@ -244,10 +298,15 @@ rank on in-prompt QA; eviction/ThinK competitive) — consistent with Week 10.
   the frontier), LongBench beyond `qasper`, and the **1B row** for GOAL B. All are
   extensions of a result that already stands, not fixes to it.
 
-**Overarching read.** Week 11 is the retrieval mirror of the whole project's
-compression finding. BUG's *surprise signal* is genuinely valuable — as an eviction
-rule it beats the 32K fidelity wall at ~11× less memory than ExpectedAttention. But
-BUG's *low-rank gist*, the thing under study, is once again dead weight: the rank-1
-control matches it on every axis at a fraction of the memory. A real positive
-(surprise-as-eviction) plus a rigorous negative (the gist), reported straight — the
-same shape as Week 9's D1, and the same overhead-floor wall as Weeks 7–8.
+**Overarching read.** Week 11 breaks the 32K retrieval wall plain BUG failed at 0%.
+BUG's *surprise signal*, used to select an exact tier, drives the single-needle
+frontier win (~11× less memory than EA at the extreme). And — the correction that
+matters — once the **full 4-task suite** is run, BUG's *low-rank gist* looks **not**
+dead weight after all: it *helps* on the hard multi-fact tasks, where at a tight tier
+the gist-free control collapses to 0% while the gist arm `bugS` handles all four and
+beats EA on multi-key. The earlier "gist is dead weight" read came from single-needle +
+perplexity alone, which don't exercise what the gist is for. Precise standing: the gist
+stays ~neutral on perplexity (the Weeks-7/8 overhead-floor wall for *text modelling*
+holds), and *leans* useful on multi-fact retrieval — a lean, not a proof (the edge is
+budget/context-dependent and n is 2–6/cell; a confirming run would firm it). A real
+positive — surprise-selection *and* the gist — with an honest perplexity trade vs EA.

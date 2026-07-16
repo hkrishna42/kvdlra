@@ -16,22 +16,6 @@
    "niah_multivalue": 1.0,
    "vt": 0.12
   },
-  "bug-r32": {
-   "mem": 0.036,
-   "ppl": 4.566,
-   "niah_single": 0.0,
-   "niah_multikey": 0.0,
-   "niah_multivalue": 0.0,
-   "vt": 0.0
-  },
-  "bug-r128": {
-   "mem": 0.135,
-   "ppl": null,
-   "niah_single": 0.25,
-   "niah_multikey": 0.38,
-   "niah_multivalue": 0.38,
-   "vt": 0.0
-  },
   "bugS-r32-h256": {
    "mem": 0.053,
    "ppl": 4.477,
@@ -64,33 +48,73 @@
    "niah_multivalue": 0.0,
    "vt": 0.0
   },
+  "bug-r32": {
+   "mem": 0.036,
+   "ppl": 4.566,
+   "niah_single": 0.0,
+   "niah_multikey": 0.0,
+   "niah_multivalue": 0.0,
+   "vt": 0.0
+  },
+  "bug-r128": {
+   "mem": 0.135,
+   "ppl": null,
+   "niah_single": 0.25,
+   "niah_multikey": 0.38,
+   "niah_multivalue": 0.38,
+   "vt": 0.0
+  },
   "morph-k0.25": {
    "mem": 0.312,
-   "ppl": null,
+   "ppl": 4.076,
    "niah_single": 0.75,
    "niah_multikey": 0.5,
    "niah_multivalue": 0.88,
    "vt": 0.12
   },
+  "morph-k0.5": {
+   "mem": 0.624,
+   "ppl": 4.06,
+   "niah_single": 1.0,
+   "niah_multikey": 1.0,
+   "niah_multivalue": 1.0,
+   "vt": 0.75
+  },
   "snapkv-k0.1": {
    "mem": 0.1,
-   "ppl": null,
+   "ppl": 4.108,
    "niah_single": 0.88,
    "niah_multikey": 0.25,
    "niah_multivalue": 0.75,
    "vt": 0.0
   },
+  "snapkv-k0.25": {
+   "mem": 0.25,
+   "ppl": 4.044,
+   "niah_single": 1.0,
+   "niah_multikey": 0.5,
+   "niah_multivalue": 1.0,
+   "vt": 0.0
+  },
   "think-c0.3": {
    "mem": 0.852,
-   "ppl": null,
+   "ppl": 4.092,
    "niah_single": 1.0,
    "niah_multikey": 1.0,
    "niah_multivalue": 1.0,
    "vt": 1.0
   },
+  "think-c0.5": {
+   "mem": 0.75,
+   "ppl": 4.189,
+   "niah_single": 1.0,
+   "niah_multikey": 1.0,
+   "niah_multivalue": 1.0,
+   "vt": 0.38
+  },
   "palu-r0.5": {
    "mem": 0.504,
-   "ppl": null,
+   "ppl": 5.236,
    "niah_single": 1.0,
    "niah_multikey": 1.0,
    "niah_multivalue": 1.0,
@@ -98,7 +122,7 @@
   },
   "shadow-r64": {
    "mem": 0.815,
-   "ppl": null,
+   "ppl": 4.108,
    "niah_single": 0.0,
    "niah_multikey": 0.0,
    "niah_multivalue": 0.0,
@@ -121,22 +145,6 @@
    "niah_multikey": 0.5,
    "niah_multivalue": 1.0,
    "vt": 1.0
-  },
-  "bug-r32": {
-   "mem": 0.034,
-   "ppl": 9.308,
-   "niah_single": 0.0,
-   "niah_multikey": 0.0,
-   "niah_multivalue": 0.0,
-   "vt": 0.0
-  },
-  "bug-r128": {
-   "mem": 0.13,
-   "ppl": 8.053,
-   "niah_single": 0.0,
-   "niah_multikey": null,
-   "niah_multivalue": null,
-   "vt": null
   },
   "bugS-r32-h256": {
    "mem": 0.043,
@@ -170,36 +178,84 @@
    "niah_multivalue": 0.0,
    "vt": 1.0
   },
-  "morph-k0.25": {
-   "mem": 0.312,
-   "ppl": 7.535,
-   "niah_single": null,
+  "bug-r32": {
+   "mem": 0.034,
+   "ppl": 9.308,
+   "niah_single": 0.0,
+   "niah_multikey": 0.0,
+   "niah_multivalue": 0.0,
+   "vt": 0.0
+  },
+  "bug-r128": {
+   "mem": 0.13,
+   "ppl": 8.053,
+   "niah_single": 0.0,
    "niah_multikey": null,
    "niah_multivalue": null,
    "vt": null
   },
+  "morph-k0.25": {
+   "mem": 0.312,
+   "ppl": 7.535,
+   "niah_single": 1.0,
+   "niah_multikey": 1.0,
+   "niah_multivalue": 1.0,
+   "vt": null
+  },
+  "morph-k0.5": {
+   "mem": 0.625,
+   "ppl": 7.565,
+   "niah_single": 1.0,
+   "niah_multikey": 1.0,
+   "niah_multivalue": 1.0,
+   "vt": null
+  },
   "snapkv-k0.1": {
-   "mem": 0.115,
+   "mem": 0.1,
    "ppl": 7.867,
-   "niah_single": null,
-   "niah_multikey": null,
-   "niah_multivalue": null,
+   "niah_single": 1.0,
+   "niah_multikey": 0.0,
+   "niah_multivalue": 0.5,
+   "vt": null
+  },
+  "snapkv-k0.25": {
+   "mem": 0.25,
+   "ppl": 7.684,
+   "niah_single": 1.0,
+   "niah_multikey": 0.0,
+   "niah_multivalue": 1.0,
    "vt": null
   },
   "think-c0.3": {
    "mem": 0.852,
    "ppl": 7.654,
    "niah_single": 1.0,
-   "niah_multikey": null,
-   "niah_multivalue": null,
+   "niah_multikey": 1.0,
+   "niah_multivalue": 1.0,
+   "vt": null
+  },
+  "think-c0.5": {
+   "mem": 0.75,
+   "ppl": 7.897,
+   "niah_single": 1.0,
+   "niah_multikey": 1.0,
+   "niah_multivalue": 1.0,
    "vt": null
   },
   "palu-r0.5": {
    "mem": 0.502,
    "ppl": 9.236,
    "niah_single": 1.0,
-   "niah_multikey": null,
-   "niah_multivalue": null,
+   "niah_multikey": 1.0,
+   "niah_multivalue": 1.0,
+   "vt": null
+  },
+  "shadow-r64": {
+   "mem": 0.814,
+   "ppl": null,
+   "niah_single": 0.0,
+   "niah_multikey": 0.0,
+   "niah_multivalue": 0.0,
    "vt": null
   }
  }

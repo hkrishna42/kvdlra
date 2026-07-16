@@ -1,0 +1,13 @@
+morph-k0.1     [T=16384] ppl=4.108 tok_eq/layer=1842.8 ratio=0.125
+morph-k0.25    [T=16384] ppl=4.076 tok_eq/layer=4608.0 ratio=0.312
+morph-k0.5     [T=16384] ppl=4.060 tok_eq/layer=9216.0 ratio=0.625
+palu-r0.25     [T=16384] ppl=7.050 tok_eq/layer=4128.0 ratio=0.252
+palu-r0.5      [T=16384] ppl=5.236 tok_eq/layer=8256.0 ratio=0.504
+shadow-r128    [T=16384] ppl=4.076 tok_eq/layer=17469.5 ratio=1.066
+shadow-r64     [T=16384] ppl=4.108 tok_eq/layer=13351.5 ratio=0.815
+snapkv-k0.1    [T=16384] ppl=4.108 tok_eq/layer=2148.0 ratio=0.131
+snapkv-k0.25   [T=16384] ppl=4.044 tok_eq/layer=4608.0 ratio=0.281
+snapkv-k0.5    [T=16384] ppl=4.044 tok_eq/layer=8704.0 ratio=0.531
+think-c0.3     [T=16384] ppl=4.092 tok_eq/layer=13952.4 ratio=0.852
+think-c0.5     [T=16384] ppl=4.189 tok_eq/layer=12288.2 ratio=0.750
+think-c0.7     [T=16384] ppl=4.674 tok_eq/layer=10624.1 ratio=0.648

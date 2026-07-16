@@ -1,5 +1,12 @@
 # Week 11 — session handover (decision-table run + 2 pending deliverables)
 
+> **STATUS 2026-07-16: the decision-table run COMPLETED and both deliverables shipped.**
+> Authoritative result: `docs/week11-decision-table.md` (the unified 16K+32K table +
+> recommendation). Key correction since this doc was written: the "gist is dead weight"
+> line below is **superseded** — the full 4-task suite shows the low-rank gist *helps*
+> on hard multi-fact retrieval (a lean; keep `bugS`, drop `bugEVICT`, retire plain BUG).
+> Explainer artifact `c776074d`. The rest of this doc is kept as the historical run recipe.
+
 > Written mid-session so a fresh session can finish cleanly if this one runs out
 > of context. Repo `/Users/hari/Desktop/kv-dlra`, branch `week7`, **HEAD `113f31e`
 > (pushed to `origin/week7`)**. Suite **263 passed / 1 skipped**, ruff + mypy clean.

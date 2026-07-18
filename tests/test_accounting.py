@@ -72,24 +72,27 @@ def _bug_layer(cache: BugStreamingCache) -> BugStreamingLayer:
 
 
 @pytest.mark.parametrize(
-    "retention,hh_budget,hh_select",
+    "rank,retention,hh_budget,hh_select",
     [
-        ("fifo", 0, "attn"),
-        ("attn", 0, "attn"),
-        ("attn", 6, "attn"),
+        (8, "fifo", 0, "attn"),
+        (8, "attn", 0, "attn"),
+        (8, "attn", 6, "attn"),
         # Week-11 SurpriseSLASH: surprise-selected exact tier (no hh_score) on a
         # lowrank_surprise tail -- the tier the retrieval arms deploy.
-        ("lowrank_surprise", 6, "surprise"),
+        (8, "lowrank_surprise", 6, "surprise"),
+        # Week-11 balanced-config shape: high rank (n/2) + exact tier bigger than
+        # the coord tier, mirroring bugS-r128-h1024 (rank >> typical, hh dominant).
+        (16, "lowrank_surprise", 12, "surprise"),
     ],
 )
 def test_bug_footprint_matches_stored_state_numel(
-    tiny_model: LlamaForCausalLM, retention: str, hh_budget: int, hh_select: str
+    tiny_model: LlamaForCausalLM, rank: int, retention: str, hh_budget: int, hh_select: str
 ) -> None:
     """``bug_footprint`` computed from the live layer's actual counts equals the
     measured ``stored_state_numel`` -- the pin across the frontier configs."""
     cache = BugStreamingCache(
         tiny_model,
-        rank=8,
+        rank=rank,
         coord_budget=24,
         recent_window=8,
         absorb_block=4,
@@ -103,7 +106,7 @@ def test_bug_footprint_matches_stored_state_numel(
     coord_count = layer._f_len() + layer._q_len()
     fp = acc.bug_footprint(
         N_FEATURES,
-        rank=8,
+        rank=rank,
         coord_count=coord_count,
         recent_len=layer._recent_len(),
         n_sink=4,
@@ -113,6 +116,28 @@ def test_bug_footprint_matches_stored_state_numel(
         u_present=layer.u_k is not None,
     )
     assert fp.float_equiv() == layer.stored_state_numel()
+
+
+def test_balanced_config_ratio_pin() -> None:
+    """The Week-11 'balanced' operating point bugS-r128-h1024 at 32K on 8B
+    (n=1024) computes to ~0.15x by the accounting formula -- the memory-cost
+    claim attached to the config in docs/week11*. Arm-style counts as built by
+    ``w10_frontier.build_arms`` (coord tier = everything not verbatim)."""
+    n, t, rank, hh = 1024, 32768, 128, 1024
+    rw, sink = 32, 4
+    coord = t - hh - rw - sink
+    fp = acc.bug_footprint(
+        n,
+        rank=rank,
+        coord_count=coord,
+        recent_len=rw,
+        n_sink=sink,
+        retention="lowrank_surprise",
+        hh_count=hh,
+        hh_select="surprise",
+    )
+    ratio = fp.ratio_fp16(t, n)
+    assert 0.12 < ratio < 0.20  # "~0.15x": rank is the ppl lever, paid in memory
 
 
 def test_bug_footprint_saturated_matches_bug_budget_floats() -> None:

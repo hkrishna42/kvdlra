@@ -1,66 +1,112 @@
-# Week 11 — the decision table (all methods, 16K + 32K, 8B) — COMPLETE
+# Week 11 — the decision table (POOLED: all sources, n per cell shown)
 
 Llama-3.1-8B. RULER retrieval accuracy (%) on 4 tasks + perplexity (lower=better);
-memory = share of full KV cache. Data: `results/w11-decision-table.json`.
+memory = share of full KV cache, ALL floats counted. Pooled across every run this week
+(both seeds where run). Data: `results/w11-decision-table.json`, merged by
+`scripts/w11_merge.py`. Probe evidence: `results/w11-probe8b-all.json`,
+`results/w11-probe-1b-mk-*.json`.
 
 ## 16K context
 
-| method | memory | perplexity | needle | multi-key | multi-value | var-track |
-|---|---|---|---|---|---|---|
-| full | 1.000× | 4.08 | 100 | 100 | 100 | 100 |
-| ea-k0.1 | 0.100× | 4.29 | 100 | 88 | 100 | 12 |
-| bugS-r32-h256 | 0.053× | 4.48 | 100 | 33 | 0 | 0 |
-| bugS-r32-h1024 | 0.098× | 4.30 | 100 | 33 | 0 | 0 |
-| bugEVICT-h256 | 0.018× | 4.44 | 100 | 33 | 0 | 0 |
-| bugEVICT-h1024 | 0.065× | 4.36 | 100 | 33 | 0 | 0 |
-| bug-r32 | 0.036× | 4.57 | 0 | 0 | 0 | 0 |
-| bug-r128 | 0.135× | — | 25 | 38 | 38 | 0 |
-| morph-k0.25 | 0.312× | 4.08 | 75 | 50 | 88 | 12 |
-| morph-k0.5 | 0.624× | 4.06 | 100 | 100 | 100 | 75 |
-| snapkv-k0.1 | 0.100× | 4.11 | 88 | 25 | 75 | 0 |
-| snapkv-k0.25 | 0.250× | 4.04 | 100 | 50 | 100 | 0 |
-| think-c0.3 | 0.852× | 4.09 | 100 | 100 | 100 | 100 |
-| think-c0.5 | 0.750× | 4.19 | 100 | 100 | 100 | 38 |
-| palu-r0.5 | 0.504× | 5.24 | 100 | 100 | 100 | 0 |
-| shadow-r64 | 0.815× | 4.11 | 0 | 0 | 0 | 0 |
+| method | memory | perplexity | needle | multi-key | multi-value | var-track | n/cell |
+|---|---|---|---|---|---|---|---|
+| full | 1.000× | 4.08 | 100 | 100 | 100 | 100 | 8 |
+| ea-k0.1 | 0.100× | 4.29 | 100 | 92 | 100 | 17 | 8-12 |
+| bugS-r128-h256 | 0.150× | 4.17 | 100 | 25 | 25 | 0 | 4-10 |
+| bugS-r128-h1024 | 0.191× | 4.16 | 100 | 25 | 25 | 0 | 4-10 |
+| bugS-r256-h256 | 0.281× | 4.12 | — | — | — | — | — |
+| bugS-r256-h1024 | 0.316× | 4.12 | — | — | — | — | — |
+| bugS-r32-h256 | 0.053× | 4.48 | 100 | 14 | 0 | 0 | 3-7 |
+| bugS-r32-h1024 | 0.098× | 4.30 | 100 | 33 | 0 | 0 | 3 |
+| bugEVICT-h256 | 0.018× | 4.44 | 100 | 14 | 0 | 0 | 3-7 |
+| bugEVICT-h1024 | 0.065× | 4.36 | 100 | 33 | 0 | 0 | 3 |
+| bug-r32 | 0.036× | 4.57 | 0 | 0 | 0 | 0 | 8 |
+| bug-r128 | 0.135× | — | 25 | 38 | 38 | 0 | 8 |
+| morph-k0.25 | 0.312× | 4.08 | 75 | 50 | 88 | 12 | 8 |
+| morph-k0.5 | 0.624× | 4.06 | 100 | 100 | 100 | 75 | 8 |
+| snapkv-k0.1 | 0.100× | 4.11 | 88 | 25 | 75 | 0 | 8 |
+| snapkv-k0.25 | 0.250× | 4.04 | 100 | 50 | 100 | 0 | 8 |
+| think-c0.3 | 0.852× | 4.09 | 100 | 100 | 100 | 100 | 8 |
+| think-c0.5 | 0.750× | 4.19 | 100 | 100 | 100 | 38 | 8 |
+| palu-r0.5 | 0.504× | 5.24 | 100 | 100 | 100 | 0 | 8 |
+| shadow-r64 | 0.815× | 4.11 | 0 | 0 | 0 | 0 | 8 |
 
 ## 32K context
 
-| method | memory | perplexity | needle | multi-key | multi-value | var-track |
-|---|---|---|---|---|---|---|
-| full | 1.000× | 7.62 | 100 | 100 | 100 | 100 |
-| ea-k0.1 | 0.100× | 8.28 | 100 | 50 | 100 | 100 |
-| bugS-r32-h256 | 0.043× | 9.16 | 100 | 83 | 100 | 100 |
-| bugS-r32-h1024 | 0.066× | 8.88 | 100 | 50 | 100 | 100 |
-| bugEVICT-h256 | 0.009× | 8.95 | 100 | 0 | 0 | 0 |
-| bugEVICT-h1024 | 0.033× | 8.81 | 100 | 50 | 0 | 100 |
-| bug-r32 | 0.034× | 9.31 | 0 | 0 | 0 | 0 |
-| bug-r128 | 0.130× | 8.05 | 0 | — | — | — |
-| morph-k0.25 | 0.312× | 7.54 | 100 | 100 | 100 | 50 |
-| morph-k0.5 | 0.624× | 7.57 | 100 | 100 | 100 | 100 |
-| snapkv-k0.1 | 0.100× | 7.87 | 100 | 0 | 50 | 0 |
-| snapkv-k0.25 | 0.250× | 7.68 | 100 | 0 | 100 | 0 |
-| think-c0.3 | 0.852× | 7.65 | 100 | 100 | 100 | 100 |
-| think-c0.5 | 0.750× | 7.90 | 100 | 100 | 100 | 50 |
-| palu-r0.5 | 0.502× | 9.24 | 100 | 100 | 100 | 100 |
-| shadow-r64 | 0.814× | — | 0 | 0 | 0 | 0 |
+| method | memory | perplexity | needle | multi-key | multi-value | var-track | n/cell |
+|---|---|---|---|---|---|---|---|
+| full | 1.000× | 7.62 | 100 | 100 | 100 | 100 | 2-8 |
+| ea-k0.1 | 0.100× | 8.28 | 100 | 67 | 100 | 83 | 6-8 |
+| bugS-r128-h256 | 0.139× | 8.15 | 100 | 75 | 100 | 75 | 4 |
+| bugS-r128-h1024 | 0.159× | 8.12 | 100 | 75 | 100 | 75 | 4 |
+| bugS-r256-h256 | 0.266× | 7.74 | — | — | — | — | — |
+| bugS-r256-h1024 | 0.284× | 7.74 | — | — | — | — | — |
+| bugS-r32-h256 | 0.043× | 9.16 | 100 | 67 | 100 | 100 | 6-14 |
+| bugS-r32-h1024 | 0.066× | 8.88 | 100 | 50 | 100 | 100 | 2-8 |
+| bugEVICT-h256 | 0.009× | 8.95 | 100 | 0 | 0 | 0 | 6-8 |
+| bugEVICT-h1024 | 0.033× | 8.81 | 100 | 50 | 0 | 100 | 2-8 |
+| bug-r32 | 0.034× | 9.31 | 0 | 0 | 0 | 0 | 2 |
+| bug-r128 | 0.130× | 8.05 | 0 | — | — | — | — |
+| morph-k0.25 | 0.312× | 7.54 | 100 | 100 | 100 | 50 | 2 |
+| morph-k0.5 | 0.624× | 7.57 | 100 | 100 | 100 | 100 | 2 |
+| snapkv-k0.1 | 0.100× | 7.87 | 100 | 0 | 50 | 0 | 2 |
+| snapkv-k0.25 | 0.250× | 7.68 | 100 | 0 | 100 | 0 | 2 |
+| think-c0.3 | 0.852× | 7.65 | 100 | 100 | 100 | 100 | 2 |
+| think-c0.5 | 0.750× | 7.90 | 100 | 100 | 100 | 50 | 2 |
+| palu-r0.5 | 0.502× | 9.24 | 100 | 100 | 100 | 100 | 2 |
+| shadow-r64 | 0.814× | — | 0 | 0 | 0 | 0 | 2 |
 
-## Recommendation (a lean, not a slam dunk)
+## Recommendation (three operating points, honest)
 
-**`bugS` (SurpriseSLASH) is the only sub-0.1× method that handles all four retrieval tasks.**
-At 32K it hits needle/multi-value/var-track = 100 and multi-key = 83 at **0.043×**. Every method
-that matches that needs far more memory (MorphKV 0.31–0.62×, ThinK 0.75–0.85×, Palu 0.50× — 7–20×
-more), ExpectedAttention (0.10×) is weaker on multi-key (50 vs 83), and SnapKV fails multi-key AND
-var-track (0) below 0.5×.
+- **Retrieval-per-byte at ≥32K: `bugS-r32-h256` (0.043×).** The only sub-0.1× method covering
+  all four tasks: 100/67/100/100 pooled (n=6-14). EA at 0.100× is 100/67/100/83. The ppl cost
+  is real (9.16 vs EA 8.28).
+- **Balanced quality+retrieval at ≥32K: `bugS-r128-h1024` (~0.16×).** Beats EA on ppl (8.12 vs
+  8.28) AND multi-key (75 vs 67), ties multi-value (100), loses var-track narrowly (75 vs 83;
+  n=4). A quality-first point bought with 1.6× EA's memory — not a free win.
+- **At 16K: EA (or SnapKV for pure ppl).** The BUG family's basis warm-up window (Q1) makes it
+  weak on hard tasks below ~32K: bugS-r32-h256 pooled 14/0/0, r128 25/25/0, vs EA 92/100/17.
+  bugS is a ≥32K method — state this plainly.
 
-- **Keep `bugS`:** best accuracy-per-byte for retrieval; the low-rank summary carries the hard tasks.
-- **Drop `bugEVICT`:** cheapest (0.009×), aces the single needle, collapses on the harder tasks at a
-  tight tier — a single-needle trap.
-- **Retire plain BUG:** 0% on every retrieval task at 32K.
-- **Perplexity note:** `bugS-r32` trades text quality (ppl 8.9–9.2 vs EA 8.28); rank is the lever —
-  plain BUG at rank-128 already beats EA on ppl (8.05), so **`bugS-r128-h1024` (~0.15×) is the likely
-  'balanced' config** (retrieval + near-full quality) worth measuring next.
+The gist-helps lean FIRMS at 32K: `bugEVICT-h256` collapses on the hard tasks (0/0/0, n=6-8)
+where `bugS-r32-h256` scores 67/100/100 at 4.8× the memory but still 0.043×.
 
-Honest caveats: small trial counts (2–6/cell), all-or-nothing metrics are noisy; the gist's edge over
-`bugEVICT` is budget- and context-dependent (at 16K both are weak on hard tasks). Memory-and-retrieval
-win; EA/MorphKV keep better perplexity. A confirming run with more trials would firm the lean.
+## Q1 answered: why bugS-r32 retrieves better at 32K than 16K
+
+The 16K deficit is REAL and mechanistic — the prior "task-construction + small-n noise" lean
+is refuted. Mechanism: a **basis warm-up window**. Surprise = residual against the streaming
+low-rank basis; for roughly the first 4-5K tokens (8B, rank 32) the basis is young, filler is
+as surprising as planted codes, and codes are NOT selected into the exact tier. The miss is at
+selection time and budget-independent: 8B multikey capture is 6/8 codes at 16K flat from
+hh=64 to hh=2048, and 7/8 at 32K, equally flat. Misses are exactly the earliest-planted items
+(8B: keys {0,1} missed at 16K, {0} at 32K, both trials; 1B: {0,1}@4K, {0}@8K, none@16K).
+RULER plants at relative positions, so longer contexts push items past the absolute window —
+retro-predicted by multivalue@16K per-value recall = 0.75 (accuracy 0: the one value planted
+at ~3.3K sits inside the window and is always lost, the other three retrieved) and vt@16K
+= 0 vs vt@32K = 100 (chain root at ~3.3K vs ~6.6K). The old "EA jumps too" argument only ever
+held for var-track (EA vt 17→83); EA scores 92/100 on multikey/multivalue at 16K, so it was
+never evidence of a task artifact. The n≥5 rerun confirms: bugS-r32-h256 @16K pooled = mk 14
+(1/7), mv 0 (0/7), vt 0 (0/7).
+
+## Q2 answered: the balanced config bugS-r128
+
+Rank is the ppl lever, confirmed: bugS-r128 ppl 4.17/4.16 (h256/h1024) at 16K vs EA 4.29;
+8.15/8.12 at 32K vs EA 8.28 — at 0.14-0.19× memory. r256 reaches 4.12/7.74 at 0.27-0.32×
+(diminishing returns; full = 4.08/7.62). 32K retrieval largely holds (n=4/cell): needle 100,
+mk 75, mv 100, vt 75. **Surprise — attribution is OPEN:** the probe shows the r128 exact tier
+is STARVED (0/8 planted codes captured at both contexts for hh≤256, and never more than
+3/8 at any budget up to 2048 — the richer basis fits
+the codes, so their residual surprise is low), yet bugS-r128 retrieves at 32K where plain
+FIFO bug-r128 scores 0 on the needle. So the win is NOT the exact tier holding the codes and
+NOT the plain gist; likely candidate is that withholding top-surprise outliers from
+absorption keeps the basis cleaner. Next ablation: bugS-r128 with hh_budget=0. At 16K the
+hard tasks stay weak at r128 too (mk 25, mv 25, vt 0) — same ≥32K caveat as r32.
+
+## Honest caveats
+
+- 32K non-BUG baselines and all r128 retrieval cells are n=2-4 — all-or-nothing metrics are
+  noisy at that n; the r128-vs-EA multi-key edge (75 vs 67) is inside the noise.
+- bugS-r256 retrieval is unmeasured (ppl only).
+- The r128 retrieval mechanism is unattributed (see Q2) — flagging, not hiding, it.
+- bug-r128 16K ppl and shadow-r64 32K ppl are unmeasured (—).
+- EA's 32K var-track softened 100→83 with more trials; expect other n≤4 cells to move too.

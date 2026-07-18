@@ -81,11 +81,13 @@ On those:
 | test | bugEVICT (almost no summary) | BUG + surprise (real summary) |
 |---|---|---|
 | single needle | 100% | 100% |
-| multi-key | **0%** | **83%** |
+| multi-key | **0%** | **67%** |
 | multi-value | **0%** | 100% |
 | variable-tracking | **0%** | 100% |
 
-(both at 32K / 8B; bugEVICT at its smallest 0.009× setting, BUG+surprise at 0.043×.)
+(both at 32K / 8B; bugEVICT at its smallest 0.009× setting, BUG+surprise at 0.043×.
+Numbers are the final **pooled** counts across all runs — 6–14 trials per cell — which
+supersede the earlier small-n snapshot; multi-key softened from an early 83% to 67%.)
 
 **When the exact shelf is small, bugEVICT drops to zero the moment the task needs more
 than one fact.** The full version — *with* the blurry summary — handles all four. So the
@@ -105,8 +107,10 @@ surprise rule and the summary *both* look useful — worth one more run to be su
 Use the full version (BUG + surprise, summary included — we call it **bugS**), not the
 stripped-down control. Against ExpectedAttention it's an honest **trade**:
 
-- **BUG+surprise (bugS):** matches or beats EA on every retrieval test — and **wins
-  multi-key outright, 83% vs 50%** — at **less than half the memory**.
+- **BUG+surprise (bugS):** matches or ties EA on every retrieval test (with the pooled
+  numbers multi-key is an honest **tie, 67% vs 67%** — an earlier small-n snapshot read
+  83% vs 50%) — at **less than half the memory**, and it alone keeps variable-tracking
+  at 100% (EA pooled: 83%).
 - **ExpectedAttention:** slightly **better general text quality** (perplexity).
 
 So the win is **memory + hard retrieval**; the cost is a bit of perplexity. Neither
@@ -148,3 +152,93 @@ the exact shelf is small). So the win looks like it comes from **both** pieces �
 worse text quality than ExpectedAttention. It's a lean worth one confirming run. A real
 win, honestly attributed. (Cost: ~$17 of GPU credit, ~$9 left; the rented machines
 were shut down after.)
+
+---
+
+## Update (2026-07-18): a mystery solved, and a "balanced" setting
+
+Two things happened in the wrap-up session. We solved a genuinely weird mystery —
+why our method was *worse* at finding things in a **shorter** document — and we
+built a mid-range setting that also competes on plain text quality. Both come with
+honest fine print.
+
+### The mystery: why was 16K *harder* than 32K?
+
+Strange but true: BUG+surprise found almost everything in 32,000-token documents, but
+kept missing things in 16,000-token ones. Shorter should be easier. What's going on?
+
+**The answer is a warm-up window. Think of moving to a new city.** Your first few
+days, *everything* is new — every street, every shop sign, every sound. Nothing
+stands out, because it's all equally unfamiliar. After a couple of weeks the basics
+are familiar, and now the genuinely odd thing — a llama in the park — instantly pops.
+
+BUG's "surprise" score works the same way. A token is surprising if the blurry
+summary predicts it badly. But at the *start* of a document, the summary is brand
+new — it predicts *everything* badly, plain filler included. So a secret code planted
+early streams past looking no more surprising than the sentence around it, and it
+never gets picked for the sharp pocket. Only after roughly the first 4–5,000 tokens
+does the summary know the "normal" of the document well enough for a weird code to
+stand out.
+
+Now the paradox dissolves. These benchmarks hide the codes at *proportional* spots —
+say, 10%, 20%, 30% of the way in. In a 16K document, "10% in" is ~1,600 tokens: still
+inside the warm-up window, so the code slips by. In a 32K document the same "10% in"
+is ~3,200 tokens — further along, more often *past* the window. **Longer documents
+push the hidden items out of the blind spot.** The document didn't get easier; the
+items moved.
+
+How sure are we? This one's actually well-nailed, because it made predictions that
+came true:
+
+- **The misses are exactly the earliest-planted items** — the first one or two codes,
+  every time, on both the small 1B model and the big 8B model. Later codes are fine.
+- **A bigger sharp pocket doesn't help at all.** We swept the pocket from tiny to
+  huge and the miss count didn't move. That proves the code was never *selected* —
+  it's a blind spot, not a space problem.
+- **Two side-predictions checked out.** A "one key, four values" test at 16K missed
+  exactly the *first* value (the one inside the window) and got the other three. And
+  the chain-following test scored 0 at 16K (the chain's *root* sits in the window —
+  lose the root, lose everything) but 100 at 32K (root pushed outside).
+
+**The honest consequence:** BUG+surprise is a **long-document (32K-and-up) method**.
+For 16K documents, ExpectedAttention is simply the better recommendation, and we say
+so plainly. (We'd earlier leaned toward "the 16K dip is probably test noise" — that
+lean was wrong, and the rerun with more samples confirmed the dip is real.)
+
+### The balanced setting: a sharper photo
+
+All season the story has been "BUG wins on memory, loses a bit on text quality." The
+obvious knob: make the blurry photo **sharper** (rank 128 instead of 32). That costs
+memory — about 0.16× instead of 0.043× — but here's what it buys at 32K:
+
+- **Better text quality than ExpectedAttention** (perplexity 8.12 vs 8.28; same story
+  at 16K, 4.16 vs 4.29) — the first time this season BUG beats EA on that axis.
+- **Retrieval mostly holds**: beats EA on multi-key (75% vs 67%), ties on the needle
+  and multi-value, narrowly loses chain-following (75% vs 83%).
+
+So the sharper-photo setting beats EA on text quality *and* multi-key at once — but
+it pays with memory (~1.6× EA's budget). A trade, not a free win. And it's still a
+32K-and-up method: at 16K the warm-up window bites it just like the blurrier version.
+
+**One honest mystery remains.** With the sharper photo, we peeked inside the sharp
+pocket — and the code we ask for is *never in it* (a stray code or two shows up only at
+the largest pocket sizes). The sharper summary predicts the codes
+well enough that they no longer look surprising, so they never get picked. Yet the
+method still retrieves them — while plain BUG at the same sharpness scores 0%. So
+the win isn't the pocket holding the codes, and it isn't the plain photo either. Our
+best guess: keeping the weirdest tokens *out* of the photo keeps the photo cleaner
+for everything else. We haven't proven that. Next session's test: switch the pocket
+**off** entirely at this sharpness and see if the retrieval survives.
+
+### Where this leaves the recommendations
+
+- **Tightest memory, long documents (32K+):** BUG+surprise, blurry setting — all
+  four retrieval tests covered at 0.043×, the only method under 0.1× that does it.
+- **Balanced quality + retrieval, long documents:** the sharper rank-128 setting at
+  ~0.16× — beats EA on text quality and multi-key.
+- **16K or shorter:** use ExpectedAttention. No hedging.
+
+And one tidy prediction we get to test next time: at **64K**, *every* hidden item
+should sit past the warm-up window, so retrieval should get even better. If it
+doesn't, the warm-up story is in trouble — which is exactly what a good explanation
+should risk.

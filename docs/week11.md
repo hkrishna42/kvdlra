@@ -310,3 +310,131 @@ stays ~neutral on perplexity (the Weeks-7/8 overhead-floor wall for *text modell
 holds), and *leans* useful on multi-fact retrieval — a lean, not a proof (the edge is
 budget/context-dependent and n is 2–6/cell; a confirming run would firm it). A real
 positive — surprise-selection *and* the gist — with an honest perplexity trade vs EA.
+
+---
+
+## Balanced configs + Q1/Q2 answers (2026-07-18)
+
+Finalizing session. Two open questions from above get answered: **Q1** — why does
+`bugS-r32-h256` retrieve *better* at 32K than at 16K on the hard tasks? — and **Q2** —
+is there a balanced `bugS-r128` operating point that competes with EA on perplexity
+without giving up the 32K retrieval win? Authoritative data:
+`results/w11-decision-table.json` (pooled accuracies + per-cell trial counts) rendered
+in `results/w11-final-tables.md`; probe evidence in `results/w11-probe8b-all.json`
+(8B) and `results/w11-probe-1b-mk-*.json` (1B). **Pooled numbers below supersede the
+small-n snapshots in the tables above** (notably: `bugS-r32-h256` multi-key @32K
+softens 83 → 67 pooled, and EA's multi-key rises 50 → 67 — the r32 multi-key "win"
+is now an honest tie).
+
+### The pod campaign
+
+The session ran as six vast.ai pods after a **cost replan**: measured per-RULER-trial
+cost came in at **~8–13 min** (far above the naive plan), so scope was cut to fit
+budget. What ran: **four "v2" RULER pods** (16K/32K × two seeds — the n≥5 rerun of
+the r32/EVICT cells plus the new `bugS-r128`/`r256` cells), **one 32K-perplexity
+pod** (`ppl32`), and **one 8B probe pod** (`probe8b`, the surprise-capture sweeps
+that settle Q1).
+
+### Q1 ANSWERED: a basis warm-up window (the 16K deficit is real and mechanistic)
+
+The prior lean — "mostly task-construction + small-n noise" — is **refuted** by this
+session's data. The 16K weakness is real, and the mechanism is identified:
+
+> **Surprise is residual against the streaming low-rank basis. While the basis is
+> young — roughly the first 4–5K tokens at 8B / rank 32 — *everything* is surprising,
+> filler included, so planted codes streaming by are not selected into the exact
+> tier.** The miss happens at *selection time* and is therefore budget-independent.
+
+The evidence chain (1B + 8B):
+
+- **Budget-independence.** 8B multikey capture is **6/8 codes at 16K, flat from
+  hh=64 to hh=2048**, and **7/8 at 32K, equally flat** (both seeds). A bigger exact
+  tier does not recover the misses — they were never candidates. Selection-time, not
+  capacity.
+- **Misses are exactly the earliest-planted items.** 8B missed keys **{0,1} at 16K**
+  and **{0} at 32K** (both trials); 1B missed **{0,1} @4K, {0} @8K, none @16K**.
+  RULER plants items at *relative* positions, so longer contexts push items past the
+  (absolute) warm-up window — which is precisely why 32K beats 16K.
+- **Retro-predictions that check out.** multivalue@16K recall 0.75 — the first value
+  (~3.3K, inside the window) is lost, the other three survive. vt@16K = 0 (chain root
+  at ~3.3K, inside) vs vt@32K = 100 (root at ~6.6K, outside).
+- **The old counter-argument dies.** "EA shows the same 16K→32K jump" only ever held
+  for var-track (EA vt 17@16K → 83@32K pooled); EA is *strong* on multikey/multivalue
+  at 16K (92/100), so it never was evidence of a task-construction artifact.
+- **The n≥5 rerun confirms the deficit.** Pooled `bugS-r32-h256` @16K: **mk 14
+  (1/7), mv 0 (0/7), vt 0 (0/7)** — needle stays 100.
+
+**Consequence, stated plainly: `bugS` is a ≥32K method. At 16K, EA is the honest
+recommendation** (SnapKV if perplexity is the only axis).
+
+### Q2 ANSWERED: `bugS-r128` — rank is the ppl lever (confirmed), with an open attribution
+
+**Perplexity grid** (`results/w11-final-tables.md`, exact):
+
+| arm | 16K ppl (mem) | 32K ppl (mem) |
+|---|---|---|
+| full | 4.08 (1.000×) | 7.62 (1.000×) |
+| ea-k0.1 | 4.29 (0.100×) | 8.28 (0.100×) |
+| bugS-r128-h256 | **4.17** (0.150×) | **8.15** (0.139×) |
+| bugS-r128-h1024 | **4.16** (0.191×) | **8.12** (0.159×) |
+| bugS-r256-h256 | 4.12 (0.281×) | 7.74 (0.266×) |
+| bugS-r256-h1024 | 4.12 (0.316×) | 7.74 (0.284×) |
+
+Rank is the perplexity lever: **`bugS-r128` beats EA on ppl at both contexts** —
+at 0.14–0.19× memory, i.e. **1.4–1.9× EA's budget**. r256 buys a little more
+(diminishing returns toward full). This is quality bought with memory, not a free win.
+
+**32K retrieval largely holds at r128** (n=4/cell, both hh): needle **100**, multikey
+**75** (EA 67), multivalue **100**, var-track **75** (EA 83; `bugS-r32-h256` 100).
+So **`bugS-r128-h1024` (~0.16×) beats EA on ppl *and* multi-key at 32K, ties
+multi-value, loses var-track narrowly.** At 16K the hard tasks stay weak at r128 too
+(mk 25, mv 25, vt 0) — better than r32's 0–14, still far below EA. Same ≥32K caveat
+as r32.
+
+**The SURPRISE (honest open question): the r128 exact tier is starved, yet the arm
+retrieves.** The probe shows **0/8 planted codes captured at both contexts for
+hh ≤ 256** (16K shows 1/8 at hh=512; never more than 3/8 at any budget up to
+2048, and the queried code is
+*never* in the tier — `queried_in_hh` 0/3 throughout): the richer rank-128 basis fits
+the codes too, so their residual surprise is low and they are not selected. Yet
+`bugS-r128` retrieves at 32K where plain FIFO `bug-r128` scores **0** on the needle.
+So the win is **not** the exact tier holding the codes, and **not** the plain gist.
+Likely candidate: **withholding the top-surprise outliers from absorption keeps the
+basis cleaner** — but this is unproven. **Attribution is OPEN — flag it.** Proposed
+next ablation: `bugS-r128` with `hh_budget=0`.
+
+### Firmed 32K leans (pooled, both seeds)
+
+| arm | mem | needle | multi-key | multi-value | var-track | n/cell |
+|---|---|---|---|---|---|---|
+| ea-k0.1 | 0.100× | 100 | 67 | 100 | 83 | 6–8 |
+| bugS-r32-h256 | 0.043× | 100 | 67 | 100 | 100 | 6–14 |
+| bugS-r128-h1024 | 0.159× | 100 | 75 | 100 | 75 | 4 |
+| bugEVICT-h256 | 0.009× | 100 | **0** | **0** | **0** | 6–8 |
+
+- **The gist-helps lean FIRMS at 32K**: `bugS-r32-h256` covers all four tasks at
+  0.043× with n=6–14 while `bugEVICT-h256` still collapses to 0/0/0 on the hard
+  tasks at n=6–8. This is no longer a 2-trial pattern.
+- **Honest softenings**: the earlier multi-key 83-vs-50 headline pools to a **67–67
+  tie** with EA at r32 (the r128 arm now carries the multi-key edge, 75 vs 67), and
+  EA's var-track softened 100 → 83 with more trials. Small-n caveat still applies to
+  the n=4 (r128) cells.
+
+### Recommendation shape (three operating points, honest)
+
+1. **Retrieval-per-byte at ≥32K: `bugS-r32-h256` (0.043×)** — the only sub-0.1×
+   method covering all four tasks.
+2. **Balanced quality+retrieval at ≥32K: `bugS-r128-h1024` (~0.16×)** — beats EA on
+   ppl *and* multi-key; a quality-first point bought with 1.6× EA's memory.
+3. **At 16K: EA** (or SnapKV for ppl) — the BUG family's warm-up window makes it weak
+   on hard tasks below ~32K. State this plainly; do not sell `bugS` under 32K.
+
+### Next session
+
+- **`hh_budget=0` ablation at r128** — settles the open attribution (is the win the
+  cleaner basis from withholding outliers?).
+- **64K prediction (falsifiable):** at 64K *all* planted items exit the warm-up
+  window, so multikey capture should rise further (8B went 6/8 @16K → 7/8 @32K;
+  predict 8/8-ish @64K). A clean pre-registered test of the mechanism.
+- **r256 retrieval** only if a use-case ever demands it (ppl 7.74 @ 0.27–0.32× is
+  already near-full; retrieval cells unmeasured).

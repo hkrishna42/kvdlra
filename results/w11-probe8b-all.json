@@ -1,0 +1,250 @@
+{
+  "note": "8B multikey surprise-capture probe, 16K vs 32K. vastai logs truncates lines at 500 chars so only the hh=64 per_code PREFIX survives per run; full sweeps from the printed rows. Runs in order: 16K r32 t0s0, 16K r32 t1s1, 16K r128 t0s0, 32K r32 t0s0, 32K r32 t1s1, 32K r128 t0s0.",
+  "runs": [
+    {
+      "ctx": 16457,
+      "rank": 32,
+      "sweep": [
+        {
+          "hh": 64,
+          "codes_captured": 6,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 128,
+          "codes_captured": 6,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 256,
+          "codes_captured": 6,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 512,
+          "codes_captured": 6,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 1024,
+          "codes_captured": 6,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 2048,
+          "codes_captured": 6,
+          "queried_in_hh": "0/3"
+        }
+      ],
+      "per_code_prefix_hh64": [
+        false,
+        false,
+        true
+      ]
+    },
+    {
+      "ctx": 16457,
+      "rank": 32,
+      "sweep": [
+        {
+          "hh": 64,
+          "codes_captured": 6,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 128,
+          "codes_captured": 6,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 256,
+          "codes_captured": 6,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 512,
+          "codes_captured": 6,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 1024,
+          "codes_captured": 6,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 2048,
+          "codes_captured": 6,
+          "queried_in_hh": "0/3"
+        }
+      ],
+      "per_code_prefix_hh64": [
+        false,
+        false,
+        true
+      ]
+    },
+    {
+      "ctx": 16457,
+      "rank": 128,
+      "sweep": [
+        {
+          "hh": 64,
+          "codes_captured": 0,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 128,
+          "codes_captured": 0,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 256,
+          "codes_captured": 0,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 512,
+          "codes_captured": 1,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 1024,
+          "codes_captured": 0,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 2048,
+          "codes_captured": 3,
+          "queried_in_hh": "0/3"
+        }
+      ],
+      "per_code_prefix_hh64": [
+        false,
+        false,
+        false
+      ]
+    },
+    {
+      "ctx": 32835,
+      "rank": 32,
+      "sweep": [
+        {
+          "hh": 64,
+          "codes_captured": 7,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 128,
+          "codes_captured": 7,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 256,
+          "codes_captured": 7,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 512,
+          "codes_captured": 7,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 1024,
+          "codes_captured": 7,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 2048,
+          "codes_captured": 7,
+          "queried_in_hh": "0/3"
+        }
+      ],
+      "per_code_prefix_hh64": [
+        false,
+        true,
+        true
+      ]
+    },
+    {
+      "ctx": 32835,
+      "rank": 32,
+      "sweep": [
+        {
+          "hh": 64,
+          "codes_captured": 7,
+          "queried_in_hh": "3/3"
+        },
+        {
+          "hh": 128,
+          "codes_captured": 7,
+          "queried_in_hh": "3/3"
+        },
+        {
+          "hh": 256,
+          "codes_captured": 7,
+          "queried_in_hh": "3/3"
+        },
+        {
+          "hh": 512,
+          "codes_captured": 7,
+          "queried_in_hh": "3/3"
+        },
+        {
+          "hh": 1024,
+          "codes_captured": 7,
+          "queried_in_hh": "3/3"
+        },
+        {
+          "hh": 2048,
+          "codes_captured": 7,
+          "queried_in_hh": "3/3"
+        }
+      ],
+      "per_code_prefix_hh64": [
+        false,
+        true
+      ]
+    },
+    {
+      "ctx": 32835,
+      "rank": 128,
+      "sweep": [
+        {
+          "hh": 64,
+          "codes_captured": 0,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 128,
+          "codes_captured": 0,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 256,
+          "codes_captured": 0,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 512,
+          "codes_captured": 0,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 1024,
+          "codes_captured": 2,
+          "queried_in_hh": "0/3"
+        },
+        {
+          "hh": 2048,
+          "codes_captured": 0,
+          "queried_in_hh": "0/3"
+        }
+      ],
+      "per_code_prefix_hh64": [
+        false,
+        false,
+        false
+      ]
+    }
+  ]
+}

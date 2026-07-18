@@ -1,0 +1,90 @@
+{
+  "model": "unsloth/Llama-3.2-1B-Instruct",
+  "ctx": 8211,
+  "rank": 32,
+  "code": "72234",
+  "needle_tokens": 3,
+  "needle_positions": [
+    4130,
+    4131,
+    4132
+  ],
+  "smallest_capturing_hh": 64,
+  "sweep": [
+    {
+      "hh_budget": 64,
+      "captured": true,
+      "needle_in_hh": 3,
+      "in_hh_positions": [
+        4130,
+        4131,
+        4132
+      ],
+      "neighbor_covered": {
+        "1": true,
+        "2": true,
+        "4": true
+      }
+    },
+    {
+      "hh_budget": 128,
+      "captured": true,
+      "needle_in_hh": 3,
+      "in_hh_positions": [
+        4130,
+        4131,
+        4132
+      ],
+      "neighbor_covered": {
+        "1": true,
+        "2": true,
+        "4": true
+      }
+    },
+    {
+      "hh_budget": 256,
+      "captured": true,
+      "needle_in_hh": 3,
+      "in_hh_positions": [
+        4130,
+        4131,
+        4132
+      ],
+      "neighbor_covered": {
+        "1": true,
+        "2": true,
+        "4": true
+      }
+    },
+    {
+      "hh_budget": 512,
+      "captured": true,
+      "needle_in_hh": 3,
+      "in_hh_positions": [
+        4130,
+        4131,
+        4132
+      ],
+      "neighbor_covered": {
+        "1": true,
+        "2": true,
+        "4": true
+      }
+    },
+    {
+      "hh_budget": 1024,
+      "captured": true,
+      "needle_in_hh": 3,
+      "in_hh_positions": [
+        4130,
+        4131,
+        4132
+      ],
+      "neighbor_covered": {
+        "1": true,
+        "2": true,
+        "4": true
+      }
+    }
+  ]
+}

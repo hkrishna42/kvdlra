@@ -1,0 +1,152 @@
+{
+  "model": "unsloth/Llama-3.2-1B-Instruct",
+  "task": "niah_multikey",
+  "ctx": 8268,
+  "rank": 32,
+  "code": "10903",
+  "n_planted": 8,
+  "needle_tokens": 3,
+  "needle_positions": [
+    1860,
+    1861,
+    1862
+  ],
+  "smallest_capturing_hh": 64,
+  "sweep": [
+    {
+      "hh_budget": 64,
+      "captured": true,
+      "needle_in_hh": 3,
+      "in_hh_positions": [
+        1860,
+        1861,
+        1862
+      ],
+      "neighbor_covered": {
+        "1": true,
+        "2": true,
+        "4": true
+      },
+      "codes_captured": 7,
+      "codes_total": 8,
+      "per_code": {
+        "63971": false,
+        "10903": true,
+        "57914": true,
+        "37037": true,
+        "39296": true,
+        "88371": true,
+        "33185": true,
+        "51092": true
+      }
+    },
+    {
+      "hh_budget": 128,
+      "captured": true,
+      "needle_in_hh": 3,
+      "in_hh_positions": [
+        1860,
+        1861,
+        1862
+      ],
+      "neighbor_covered": {
+        "1": true,
+        "2": true,
+        "4": true
+      },
+      "codes_captured": 7,
+      "codes_total": 8,
+      "per_code": {
+        "63971": false,
+        "10903": true,
+        "57914": true,
+        "37037": true,
+        "39296": true,
+        "88371": true,
+        "33185": true,
+        "51092": true
+      }
+    },
+    {
+      "hh_budget": 256,
+      "captured": true,
+      "needle_in_hh": 3,
+      "in_hh_positions": [
+        1860,
+        1861,
+        1862
+      ],
+      "neighbor_covered": {
+        "1": true,
+        "2": true,
+        "4": true
+      },
+      "codes_captured": 7,
+      "codes_total": 8,
+      "per_code": {
+        "63971": false,
+        "10903": true,
+        "57914": true,
+        "37037": true,
+        "39296": true,
+        "88371": true,
+        "33185": true,
+        "51092": true
+      }
+    },
+    {
+      "hh_budget": 512,
+      "captured": true,
+      "needle_in_hh": 3,
+      "in_hh_positions": [
+        1860,
+        1861,
+        1862
+      ],
+      "neighbor_covered": {
+        "1": true,
+        "2": true,
+        "4": true
+      },
+      "codes_captured": 7,
+      "codes_total": 8,
+      "per_code": {
+        "63971": false,
+        "10903": true,
+        "57914": true,
+        "37037": true,
+        "39296": true,
+        "88371": true,
+        "33185": true,
+        "51092": true
+      }
+    },
+    {
+      "hh_budget": 1024,
+      "captured": true,
+      "needle_in_hh": 3,
+      "in_hh_positions": [
+        1860,
+        1861,
+        1862
+      ],
+      "neighbor_covered": {
+        "1": true,
+        "2": true,
+        "4": true
+      },
+      "codes_captured": 7,
+      "codes_total": 8,
+      "per_code": {
+        "63971": false,
+        "10903": true,
+        "57914": true,
+        "37037": true,
+        "39296": true,
+        "88371": true,
+        "33185": true,
+        "51092": true
+      }
+    }
+  ]
+}

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 
 import _paths  # noqa: F401  (prepends src/ to sys.path if needed)
 import torch
@@ -76,17 +77,25 @@ def probe(args: argparse.Namespace) -> dict[str, object]:
 
     pre, _query, targets = build_task(
         tok,
-        "niah_single",
+        args.task,
         args.ctx,
         trial=args.trial,
         seed=args.seed,
-        n_keys=1,
+        n_keys=args.n_keys,
         n_values=1,
         n_hops=1,
     )
     pre = pre.to(args.device)
     code = targets[0]
-    needle_pos = _needle_positions(tok, pre, code)
+    # ALL planted codes (the hard-task crux: n_keys codes COMPETE for the hh
+    # tier; build_task only returns the queried one, so re-extract from text).
+    text = str(tok.decode(pre[0], skip_special_tokens=True))
+    if args.task == "niah_multikey":
+        planted = re.findall(r"The ([a-z]+) code is (\d{5})\.", text)
+    else:
+        planted = [("secret", m) for m in re.findall(r"The secret passcode is (\d{5})\.", text)]
+    code_pos = {c: _needle_positions(tok, pre, c) for _lab, c in planted}
+    needle_pos = code_pos.get(code) or _needle_positions(tok, pre, code)
     t = int(pre.shape[1])
     rows: list[dict[str, object]] = []
     for hh in args.hh_budgets:
@@ -118,6 +127,10 @@ def probe(args: argparse.Namespace) -> dict[str, object]:
         # like SnapKV's window) close the gap? The needle tokens are contiguous, so
         # if ANY is a strong outlier a small window should grab the rest verbatim.
         nbr = {w: _neighbor_covered(needle_pos, hh_set, w) for w in (1, 2, 4)}
+        per_code = {
+            c: len(pos) > 0 and all(p in hh_set for p in pos) for c, pos in code_pos.items()
+        }
+        n_cap = sum(per_code.values())
         rows.append(
             {
                 "hh_budget": hh,
@@ -125,19 +138,24 @@ def probe(args: argparse.Namespace) -> dict[str, object]:
                 "needle_in_hh": n_in,
                 "in_hh_positions": in_hh,
                 "neighbor_covered": nbr,
+                "codes_captured": n_cap,
+                "codes_total": len(per_code),
+                "per_code": per_code,
             }
         )
         print(
             f"[ctx{t} r{args.rank}] hh={hh:>5}  needle_in_hh={n_in}/{len(needle_pos)}  "
-            f"captured={captured}  nbr(w1/2/4)={int(nbr[1])}/{int(nbr[2])}/{int(nbr[4])}  "
-            f"ratio~={hh / t:.4f}"
+            f"captured={captured}  codes={n_cap}/{len(per_code)}  "
+            f"nbr(w1/2/4)={int(nbr[1])}/{int(nbr[2])}/{int(nbr[4])}  ratio~={hh / t:.4f}"
         )
     smallest = next((r["hh_budget"] for r in rows if r["captured"]), None)
     result = {
         "model": args.model,
+        "task": args.task,
         "ctx": t,
         "rank": args.rank,
         "code": code,
+        "n_planted": len(code_pos),
         "needle_tokens": len(needle_pos),
         "needle_positions": needle_pos,
         "smallest_capturing_hh": smallest,
@@ -150,6 +168,8 @@ def probe(args: argparse.Namespace) -> dict[str, object]:
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--model", default="unsloth/Llama-3.2-1B-Instruct")
+    p.add_argument("--task", default="niah_single", choices=["niah_single", "niah_multikey"])
+    p.add_argument("--n-keys", type=int, default=8)
     p.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
     p.add_argument("--dtype", default="float32", choices=["float32", "bfloat16", "float16"])
     p.add_argument("--ctx", type=int, default=4096)

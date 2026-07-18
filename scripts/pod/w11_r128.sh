@@ -76,10 +76,23 @@ firm(){ # firm <tag> <ctx>
   echo "===${tag}_DONE==="
 }
 
+ppl(){ # ppl <ctx> -- standalone ppl block (hedge: new32's RULER host is slow and
+  # its inline ppl runs last; a separate fast pod lands the Q2 ppl data early)
+  local ctx="$1"
+  echo "===PPLONLY${ctx}_BEGIN==="
+  PYTHONPATH=src python -u scripts/w10_frontier.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+    --T "$ctx" --chunk "$CHUNK" --window 512 --n-samples 2 \
+    --methods bugslash --ranks 128 256 --hh-budgets $HH --hh-neighbor 1 --no-ruler \
+    --out-json "results/w11-new-ppl$((ctx/1024)).json" 2>&1
+  emit "PPL$((ctx/1024))" "results/w11-new-ppl$((ctx/1024)).json"
+  echo "===PPLONLY${ctx}_DONE==="
+}
+
 case "$MODE" in
   new16)  new NEW16 16384 ;;
   new32)  new NEW32 32768 ;;
   firm16) firm FIRM16 16384 ;;
   firm32) firm FIRM32 32768 ;;
+  ppl32)  ppl 32768 ;;
 esac
 echo "===ALL_DONE==="

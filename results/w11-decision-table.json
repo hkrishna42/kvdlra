@@ -1,262 +1,626 @@
 {
- "16384": {
-  "full": {
-   "mem": 1.0,
-   "ppl": 4.076,
-   "niah_single": 1.0,
-   "niah_multikey": 1.0,
-   "niah_multivalue": 1.0,
-   "vt": 1.0
+  "16384": {
+    "full": {
+      "mem": 1.0,
+      "ppl": 4.076,
+      "niah_single": 1.0,
+      "niah_multikey": 1.0,
+      "niah_multivalue": 1.0,
+      "vt": 1.0,
+      "n_niah_multikey": 8,
+      "n_niah_multivalue": 8,
+      "n_niah_single": 8,
+      "n_vt": 8
+    },
+    "ea-k0.1": {
+      "mem": 0.1,
+      "ppl": 4.289,
+      "niah_single": 1.0,
+      "niah_multikey": 0.9167,
+      "niah_multivalue": 1.0,
+      "vt": 0.1667,
+      "n_niah_multikey": 12,
+      "n_niah_multivalue": 12,
+      "n_niah_single": 8,
+      "n_vt": 12
+    },
+    "bugS-r32-h256": {
+      "mem": 0.053,
+      "ppl": 4.477,
+      "niah_single": 1.0,
+      "niah_multikey": 0.1429,
+      "niah_multivalue": 0.0,
+      "vt": 0.0,
+      "n_niah_multikey": 7,
+      "n_niah_multivalue": 7,
+      "n_niah_single": 3,
+      "n_vt": 7
+    },
+    "bugS-r32-h1024": {
+      "mem": 0.098,
+      "ppl": 4.305,
+      "niah_single": 1.0,
+      "niah_multikey": 0.3333,
+      "niah_multivalue": 0.0,
+      "vt": 0.0,
+      "n_niah_multikey": 3,
+      "n_niah_multivalue": 3,
+      "n_niah_single": 3,
+      "n_vt": 3
+    },
+    "bugEVICT-h256": {
+      "mem": 0.018,
+      "ppl": 4.442,
+      "niah_single": 1.0,
+      "niah_multikey": 0.1429,
+      "niah_multivalue": 0.0,
+      "vt": 0.0,
+      "n_niah_multikey": 7,
+      "n_niah_multivalue": 7,
+      "n_niah_single": 3,
+      "n_vt": 7
+    },
+    "bugEVICT-h1024": {
+      "mem": 0.065,
+      "ppl": 4.356,
+      "niah_single": 1.0,
+      "niah_multikey": 0.3333,
+      "niah_multivalue": 0.0,
+      "vt": 0.0,
+      "n_niah_multikey": 3,
+      "n_niah_multivalue": 3,
+      "n_niah_single": 3,
+      "n_vt": 3
+    },
+    "bug-r32": {
+      "mem": 0.036,
+      "ppl": 4.566,
+      "niah_single": 0.0,
+      "niah_multikey": 0.0,
+      "niah_multivalue": 0.0,
+      "vt": 0.0,
+      "n_niah_multikey": 8,
+      "n_niah_multivalue": 8,
+      "n_niah_single": 8,
+      "n_vt": 8
+    },
+    "bug-r128": {
+      "mem": 0.135,
+      "ppl": null,
+      "niah_single": 0.25,
+      "niah_multikey": 0.375,
+      "niah_multivalue": 0.375,
+      "vt": 0.0,
+      "n_niah_multikey": 8,
+      "n_niah_multivalue": 8,
+      "n_niah_single": 8,
+      "n_vt": 8
+    },
+    "morph-k0.25": {
+      "mem": 0.312,
+      "ppl": 4.076,
+      "niah_single": 0.75,
+      "niah_multikey": 0.5,
+      "niah_multivalue": 0.875,
+      "vt": 0.125,
+      "n_niah_multikey": 8,
+      "n_niah_multivalue": 8,
+      "n_niah_single": 8,
+      "n_vt": 8
+    },
+    "morph-k0.5": {
+      "mem": 0.624,
+      "ppl": 4.06,
+      "niah_single": 1.0,
+      "niah_multikey": 1.0,
+      "niah_multivalue": 1.0,
+      "vt": 0.75,
+      "n_niah_multikey": 8,
+      "n_niah_multivalue": 8,
+      "n_niah_single": 8,
+      "n_vt": 8
+    },
+    "snapkv-k0.1": {
+      "mem": 0.1,
+      "ppl": 4.108,
+      "niah_single": 0.875,
+      "niah_multikey": 0.25,
+      "niah_multivalue": 0.75,
+      "vt": 0.0,
+      "n_niah_multikey": 8,
+      "n_niah_multivalue": 8,
+      "n_niah_single": 8,
+      "n_vt": 8
+    },
+    "snapkv-k0.25": {
+      "mem": 0.25,
+      "ppl": 4.044,
+      "niah_single": 1.0,
+      "niah_multikey": 0.5,
+      "niah_multivalue": 1.0,
+      "vt": 0.0,
+      "n_niah_multikey": 8,
+      "n_niah_multivalue": 8,
+      "n_niah_single": 8,
+      "n_vt": 8
+    },
+    "think-c0.3": {
+      "mem": 0.852,
+      "ppl": 4.092,
+      "niah_single": 1.0,
+      "niah_multikey": 1.0,
+      "niah_multivalue": 1.0,
+      "vt": 1.0,
+      "n_niah_multikey": 8,
+      "n_niah_multivalue": 8,
+      "n_niah_single": 8,
+      "n_vt": 8
+    },
+    "think-c0.5": {
+      "mem": 0.75,
+      "ppl": 4.189,
+      "niah_single": 1.0,
+      "niah_multikey": 1.0,
+      "niah_multivalue": 1.0,
+      "vt": 0.375,
+      "n_niah_multikey": 8,
+      "n_niah_multivalue": 8,
+      "n_niah_single": 8,
+      "n_vt": 8
+    },
+    "palu-r0.5": {
+      "mem": 0.504,
+      "ppl": 5.236,
+      "niah_single": 1.0,
+      "niah_multikey": 1.0,
+      "niah_multivalue": 1.0,
+      "vt": 0.0,
+      "n_niah_multikey": 8,
+      "n_niah_multivalue": 8,
+      "n_niah_single": 8,
+      "n_vt": 8
+    },
+    "shadow-r64": {
+      "mem": 0.815,
+      "ppl": 4.108,
+      "niah_single": 0.0,
+      "niah_multikey": 0.0,
+      "niah_multivalue": 0.0,
+      "vt": 0.0,
+      "n_niah_multikey": 8,
+      "n_niah_multivalue": 8,
+      "n_niah_single": 8,
+      "n_vt": 8
+    },
+    "bug-r256": {
+      "mem": 0.268,
+      "niah_multikey": 0.0,
+      "n_niah_multikey": 8,
+      "niah_multivalue": 0.0,
+      "n_niah_multivalue": 8,
+      "niah_single": 0.0,
+      "n_niah_single": 8,
+      "vt": 0.0,
+      "n_vt": 8
+    },
+    "bug-r64": {
+      "mem": 0.069,
+      "niah_multikey": 0.0,
+      "n_niah_multikey": 8,
+      "niah_multivalue": 0.0,
+      "n_niah_multivalue": 8,
+      "niah_single": 0.0,
+      "n_niah_single": 8,
+      "vt": 0.0,
+      "n_vt": 8
+    },
+    "ea-k0.25": {
+      "mem": 0.25,
+      "niah_multikey": 0.875,
+      "n_niah_multikey": 8,
+      "niah_multivalue": 1.0,
+      "n_niah_multivalue": 8,
+      "niah_single": 1.0,
+      "n_niah_single": 8,
+      "vt": 0.5,
+      "n_vt": 8
+    },
+    "ea-k0.5": {
+      "mem": 0.5,
+      "niah_multikey": 1.0,
+      "n_niah_multikey": 8,
+      "niah_multivalue": 1.0,
+      "n_niah_multivalue": 8,
+      "niah_single": 1.0,
+      "n_niah_single": 8,
+      "vt": 0.875,
+      "n_vt": 8
+    },
+    "morph-k0.1": {
+      "mem": 0.124,
+      "niah_multikey": 0.0,
+      "n_niah_multikey": 8,
+      "niah_multivalue": 0.0,
+      "n_niah_multivalue": 8,
+      "niah_single": 0.0,
+      "n_niah_single": 8,
+      "vt": 0.0,
+      "n_vt": 8
+    },
+    "palu-r0.25": {
+      "mem": 0.252,
+      "niah_multikey": 0.0,
+      "n_niah_multikey": 8,
+      "niah_multivalue": 0.0,
+      "n_niah_multivalue": 8,
+      "niah_single": 0.0,
+      "n_niah_single": 8,
+      "vt": 0.0,
+      "n_vt": 8
+    },
+    "shadow-r128": {
+      "mem": 1.066,
+      "niah_multikey": 0.0,
+      "n_niah_multikey": 8,
+      "niah_multivalue": 0.0,
+      "n_niah_multivalue": 8,
+      "niah_single": 0.0,
+      "n_niah_single": 8,
+      "vt": 0.0,
+      "n_vt": 8
+    },
+    "snapkv-k0.5": {
+      "mem": 0.5,
+      "niah_multikey": 1.0,
+      "n_niah_multikey": 8,
+      "niah_multivalue": 1.0,
+      "n_niah_multivalue": 8,
+      "niah_single": 1.0,
+      "n_niah_single": 8,
+      "vt": 0.0,
+      "n_vt": 8
+    },
+    "think-c0.7": {
+      "mem": 0.648,
+      "niah_multikey": 0.0,
+      "n_niah_multikey": 8,
+      "niah_multivalue": 0.0,
+      "n_niah_multivalue": 8,
+      "niah_single": 0.0,
+      "n_niah_single": 8,
+      "vt": 0.0,
+      "n_vt": 8
+    },
+    "bugS-r128-h1024": {
+      "mem": 0.191,
+      "niah_single": 1.0,
+      "n_niah_single": 10,
+      "niah_multikey": 0.25,
+      "n_niah_multikey": 4,
+      "niah_multivalue": 0.25,
+      "n_niah_multivalue": 4,
+      "vt": 0.0,
+      "n_vt": 4,
+      "ppl": 4.156
+    },
+    "bugS-r128-h256": {
+      "mem": 0.15,
+      "niah_single": 1.0,
+      "n_niah_single": 10,
+      "niah_multikey": 0.25,
+      "n_niah_multikey": 4,
+      "niah_multivalue": 0.25,
+      "n_niah_multivalue": 4,
+      "vt": 0.0,
+      "n_vt": 4,
+      "ppl": 4.173
+    },
+    "bugS-r256-h1024": {
+      "ppl": 4.124,
+      "mem": 0.316
+    },
+    "bugS-r256-h256": {
+      "ppl": 4.124,
+      "mem": 0.281
+    }
   },
-  "ea-k0.1": {
-   "mem": 0.1,
-   "ppl": 4.289,
-   "niah_single": 1.0,
-   "niah_multikey": 0.88,
-   "niah_multivalue": 1.0,
-   "vt": 0.12
-  },
-  "bugS-r32-h256": {
-   "mem": 0.053,
-   "ppl": 4.477,
-   "niah_single": 1.0,
-   "niah_multikey": 0.33,
-   "niah_multivalue": 0.0,
-   "vt": 0.0
-  },
-  "bugS-r32-h1024": {
-   "mem": 0.098,
-   "ppl": 4.305,
-   "niah_single": 1.0,
-   "niah_multikey": 0.33,
-   "niah_multivalue": 0.0,
-   "vt": 0.0
-  },
-  "bugEVICT-h256": {
-   "mem": 0.018,
-   "ppl": 4.442,
-   "niah_single": 1.0,
-   "niah_multikey": 0.33,
-   "niah_multivalue": 0.0,
-   "vt": 0.0
-  },
-  "bugEVICT-h1024": {
-   "mem": 0.065,
-   "ppl": 4.356,
-   "niah_single": 1.0,
-   "niah_multikey": 0.33,
-   "niah_multivalue": 0.0,
-   "vt": 0.0
-  },
-  "bug-r32": {
-   "mem": 0.036,
-   "ppl": 4.566,
-   "niah_single": 0.0,
-   "niah_multikey": 0.0,
-   "niah_multivalue": 0.0,
-   "vt": 0.0
-  },
-  "bug-r128": {
-   "mem": 0.135,
-   "ppl": null,
-   "niah_single": 0.25,
-   "niah_multikey": 0.38,
-   "niah_multivalue": 0.38,
-   "vt": 0.0
-  },
-  "morph-k0.25": {
-   "mem": 0.312,
-   "ppl": 4.076,
-   "niah_single": 0.75,
-   "niah_multikey": 0.5,
-   "niah_multivalue": 0.88,
-   "vt": 0.12
-  },
-  "morph-k0.5": {
-   "mem": 0.624,
-   "ppl": 4.06,
-   "niah_single": 1.0,
-   "niah_multikey": 1.0,
-   "niah_multivalue": 1.0,
-   "vt": 0.75
-  },
-  "snapkv-k0.1": {
-   "mem": 0.1,
-   "ppl": 4.108,
-   "niah_single": 0.88,
-   "niah_multikey": 0.25,
-   "niah_multivalue": 0.75,
-   "vt": 0.0
-  },
-  "snapkv-k0.25": {
-   "mem": 0.25,
-   "ppl": 4.044,
-   "niah_single": 1.0,
-   "niah_multikey": 0.5,
-   "niah_multivalue": 1.0,
-   "vt": 0.0
-  },
-  "think-c0.3": {
-   "mem": 0.852,
-   "ppl": 4.092,
-   "niah_single": 1.0,
-   "niah_multikey": 1.0,
-   "niah_multivalue": 1.0,
-   "vt": 1.0
-  },
-  "think-c0.5": {
-   "mem": 0.75,
-   "ppl": 4.189,
-   "niah_single": 1.0,
-   "niah_multikey": 1.0,
-   "niah_multivalue": 1.0,
-   "vt": 0.38
-  },
-  "palu-r0.5": {
-   "mem": 0.504,
-   "ppl": 5.236,
-   "niah_single": 1.0,
-   "niah_multikey": 1.0,
-   "niah_multivalue": 1.0,
-   "vt": 0.0
-  },
-  "shadow-r64": {
-   "mem": 0.815,
-   "ppl": 4.108,
-   "niah_single": 0.0,
-   "niah_multikey": 0.0,
-   "niah_multivalue": 0.0,
-   "vt": 0.0
+  "32768": {
+    "full": {
+      "mem": 1.0,
+      "ppl": 7.624,
+      "niah_single": 1.0,
+      "niah_multikey": 1.0,
+      "niah_multivalue": 1.0,
+      "vt": 1.0,
+      "n_niah_multikey": 8,
+      "n_niah_multivalue": 2,
+      "n_niah_single": 8,
+      "n_vt": 2
+    },
+    "ea-k0.1": {
+      "mem": 0.1,
+      "ppl": 8.277,
+      "niah_single": 1.0,
+      "niah_multikey": 0.6667,
+      "niah_multivalue": 1.0,
+      "vt": 0.8333,
+      "n_niah_multikey": 6,
+      "n_niah_multivalue": 6,
+      "n_niah_single": 8,
+      "n_vt": 6
+    },
+    "bugS-r32-h256": {
+      "mem": 0.043,
+      "ppl": 9.164,
+      "niah_single": 1.0,
+      "niah_multikey": 0.6667,
+      "niah_multivalue": 1.0,
+      "vt": 1.0,
+      "n_niah_multikey": 12,
+      "n_niah_multivalue": 6,
+      "n_niah_single": 14,
+      "n_vt": 6
+    },
+    "bugS-r32-h1024": {
+      "mem": 0.066,
+      "ppl": 8.881,
+      "niah_single": 1.0,
+      "niah_multikey": 0.5,
+      "niah_multivalue": 1.0,
+      "vt": 1.0,
+      "n_niah_multikey": 2,
+      "n_niah_multivalue": 2,
+      "n_niah_single": 8,
+      "n_vt": 2
+    },
+    "bugEVICT-h256": {
+      "mem": 0.009,
+      "ppl": 8.951,
+      "niah_single": 1.0,
+      "niah_multikey": 0.0,
+      "niah_multivalue": 0.0,
+      "vt": 0.0,
+      "n_niah_multikey": 6,
+      "n_niah_multivalue": 6,
+      "n_niah_single": 8,
+      "n_vt": 6
+    },
+    "bugEVICT-h1024": {
+      "mem": 0.033,
+      "ppl": 8.812,
+      "niah_single": 1.0,
+      "niah_multikey": 0.5,
+      "niah_multivalue": 0.0,
+      "vt": 1.0,
+      "n_niah_multikey": 2,
+      "n_niah_multivalue": 2,
+      "n_niah_single": 8,
+      "n_vt": 2
+    },
+    "bug-r32": {
+      "mem": 0.034,
+      "ppl": 9.308,
+      "niah_single": 0.0,
+      "niah_multikey": 0.0,
+      "niah_multivalue": 0.0,
+      "vt": 0.0,
+      "n_niah_multikey": 2,
+      "n_niah_multivalue": 2,
+      "n_niah_single": 2,
+      "n_vt": 2
+    },
+    "bug-r128": {
+      "mem": 0.13,
+      "ppl": 8.053,
+      "niah_single": 0.0,
+      "niah_multikey": null,
+      "niah_multivalue": null,
+      "vt": null
+    },
+    "morph-k0.25": {
+      "mem": 0.312,
+      "ppl": 7.535,
+      "niah_single": 1.0,
+      "niah_multikey": 1.0,
+      "niah_multivalue": 1.0,
+      "vt": 0.5,
+      "n_niah_multikey": 2,
+      "n_niah_multivalue": 2,
+      "n_niah_single": 2,
+      "n_vt": 2
+    },
+    "morph-k0.5": {
+      "mem": 0.624,
+      "ppl": 7.565,
+      "niah_single": 1.0,
+      "niah_multikey": 1.0,
+      "niah_multivalue": 1.0,
+      "vt": 1.0,
+      "n_niah_multikey": 2,
+      "n_niah_multivalue": 2,
+      "n_niah_single": 2,
+      "n_vt": 2
+    },
+    "snapkv-k0.1": {
+      "mem": 0.1,
+      "ppl": 7.867,
+      "niah_single": 1.0,
+      "niah_multikey": 0.0,
+      "niah_multivalue": 0.5,
+      "vt": 0.0,
+      "n_niah_multikey": 2,
+      "n_niah_multivalue": 2,
+      "n_niah_single": 2,
+      "n_vt": 2
+    },
+    "snapkv-k0.25": {
+      "mem": 0.25,
+      "ppl": 7.684,
+      "niah_single": 1.0,
+      "niah_multikey": 0.0,
+      "niah_multivalue": 1.0,
+      "vt": 0.0,
+      "n_niah_multikey": 2,
+      "n_niah_multivalue": 2,
+      "n_niah_single": 2,
+      "n_vt": 2
+    },
+    "think-c0.3": {
+      "mem": 0.852,
+      "ppl": 7.654,
+      "niah_single": 1.0,
+      "niah_multikey": 1.0,
+      "niah_multivalue": 1.0,
+      "vt": 1.0,
+      "n_niah_multikey": 2,
+      "n_niah_multivalue": 2,
+      "n_niah_single": 2,
+      "n_vt": 2
+    },
+    "think-c0.5": {
+      "mem": 0.75,
+      "ppl": 7.897,
+      "niah_single": 1.0,
+      "niah_multikey": 1.0,
+      "niah_multivalue": 1.0,
+      "vt": 0.5,
+      "n_niah_multikey": 2,
+      "n_niah_multivalue": 2,
+      "n_niah_single": 2,
+      "n_vt": 2
+    },
+    "palu-r0.5": {
+      "mem": 0.502,
+      "ppl": 9.236,
+      "niah_single": 1.0,
+      "niah_multikey": 1.0,
+      "niah_multivalue": 1.0,
+      "vt": 1.0,
+      "n_niah_multikey": 2,
+      "n_niah_multivalue": 2,
+      "n_niah_single": 2,
+      "n_vt": 2
+    },
+    "shadow-r64": {
+      "mem": 0.814,
+      "ppl": null,
+      "niah_single": 0.0,
+      "niah_multikey": 0.0,
+      "niah_multivalue": 0.0,
+      "vt": 0.0,
+      "n_niah_multikey": 2,
+      "n_niah_multivalue": 2,
+      "n_niah_single": 2,
+      "n_vt": 2
+    },
+    "bugS-r32-h512": {
+      "mem": 0.05,
+      "niah_multikey": 0.8333,
+      "n_niah_multikey": 6,
+      "niah_single": 1.0,
+      "n_niah_single": 6
+    },
+    "bugEVICT-h2048": {
+      "mem": 0.064,
+      "niah_single": 1.0,
+      "n_niah_single": 6
+    },
+    "bugEVICT-h512": {
+      "mem": 0.017,
+      "niah_single": 1.0,
+      "n_niah_single": 6
+    },
+    "bugS-r32-h2048": {
+      "mem": 0.096,
+      "niah_single": 1.0,
+      "n_niah_single": 6
+    },
+    "morph-k0.1": {
+      "mem": 0.125,
+      "niah_multikey": 0.0,
+      "n_niah_multikey": 2,
+      "niah_multivalue": 0.0,
+      "n_niah_multivalue": 2,
+      "niah_single": 0.0,
+      "n_niah_single": 2,
+      "vt": 0.0,
+      "n_vt": 2
+    },
+    "palu-r0.25": {
+      "mem": 0.251,
+      "niah_multikey": 0.0,
+      "n_niah_multikey": 2,
+      "niah_multivalue": 0.0,
+      "n_niah_multivalue": 2,
+      "niah_single": 0.0,
+      "n_niah_single": 2,
+      "vt": 0.0,
+      "n_vt": 2
+    },
+    "shadow-r128": {
+      "mem": 1.064,
+      "niah_multikey": 0.0,
+      "n_niah_multikey": 2,
+      "niah_multivalue": 0.0,
+      "n_niah_multivalue": 2,
+      "niah_single": 0.0,
+      "n_niah_single": 2,
+      "vt": 0.0,
+      "n_vt": 2
+    },
+    "snapkv-k0.5": {
+      "mem": 0.5,
+      "niah_multikey": 1.0,
+      "n_niah_multikey": 2,
+      "niah_multivalue": 1.0,
+      "n_niah_multivalue": 2,
+      "niah_single": 1.0,
+      "n_niah_single": 2,
+      "vt": 1.0,
+      "n_vt": 2
+    },
+    "think-c0.7": {
+      "mem": 0.648,
+      "niah_multikey": 0.0,
+      "n_niah_multikey": 2,
+      "niah_multivalue": 0.0,
+      "n_niah_multivalue": 2,
+      "niah_single": 0.5,
+      "n_niah_single": 2,
+      "vt": 0.0,
+      "n_vt": 2
+    },
+    "bugS-r128-h1024": {
+      "mem": 0.159,
+      "niah_multikey": 0.75,
+      "n_niah_multikey": 4,
+      "niah_multivalue": 1.0,
+      "n_niah_multivalue": 4,
+      "niah_single": 1.0,
+      "n_niah_single": 4,
+      "vt": 0.75,
+      "n_vt": 4,
+      "ppl": 8.117
+    },
+    "bugS-r128-h256": {
+      "mem": 0.139,
+      "niah_multikey": 0.75,
+      "n_niah_multikey": 4,
+      "niah_multivalue": 1.0,
+      "n_niah_multivalue": 4,
+      "niah_single": 1.0,
+      "n_niah_single": 4,
+      "vt": 0.75,
+      "n_vt": 4,
+      "ppl": 8.149
+    },
+    "bugS-r256-h1024": {
+      "ppl": 7.744,
+      "mem": 0.284
+    },
+    "bugS-r256-h256": {
+      "ppl": 7.744,
+      "mem": 0.266
+    }
   }
- },
- "32768": {
-  "full": {
-   "mem": 1.0,
-   "ppl": 7.624,
-   "niah_single": 1.0,
-   "niah_multikey": 1.0,
-   "niah_multivalue": 1.0,
-   "vt": 1.0
-  },
-  "ea-k0.1": {
-   "mem": 0.1,
-   "ppl": 8.277,
-   "niah_single": 1.0,
-   "niah_multikey": 0.5,
-   "niah_multivalue": 1.0,
-   "vt": 1.0
-  },
-  "bugS-r32-h256": {
-   "mem": 0.043,
-   "ppl": 9.164,
-   "niah_single": 1.0,
-   "niah_multikey": 0.83,
-   "niah_multivalue": 1.0,
-   "vt": 1.0
-  },
-  "bugS-r32-h1024": {
-   "mem": 0.066,
-   "ppl": 8.881,
-   "niah_single": 1.0,
-   "niah_multikey": 0.5,
-   "niah_multivalue": 1.0,
-   "vt": 1.0
-  },
-  "bugEVICT-h256": {
-   "mem": 0.009,
-   "ppl": 8.951,
-   "niah_single": 1.0,
-   "niah_multikey": 0.0,
-   "niah_multivalue": 0.0,
-   "vt": 0.0
-  },
-  "bugEVICT-h1024": {
-   "mem": 0.033,
-   "ppl": 8.812,
-   "niah_single": 1.0,
-   "niah_multikey": 0.5,
-   "niah_multivalue": 0.0,
-   "vt": 1.0
-  },
-  "bug-r32": {
-   "mem": 0.034,
-   "ppl": 9.308,
-   "niah_single": 0.0,
-   "niah_multikey": 0.0,
-   "niah_multivalue": 0.0,
-   "vt": 0.0
-  },
-  "bug-r128": {
-   "mem": 0.13,
-   "ppl": 8.053,
-   "niah_single": 0.0,
-   "niah_multikey": null,
-   "niah_multivalue": null,
-   "vt": null
-  },
-  "morph-k0.25": {
-   "mem": 0.312,
-   "ppl": 7.535,
-   "niah_single": 1.0,
-   "niah_multikey": 1.0,
-   "niah_multivalue": 1.0,
-   "vt": 0.5
-  },
-  "morph-k0.5": {
-   "mem": 0.624,
-   "ppl": 7.565,
-   "niah_single": 1.0,
-   "niah_multikey": 1.0,
-   "niah_multivalue": 1.0,
-   "vt": 1.0
-  },
-  "snapkv-k0.1": {
-   "mem": 0.1,
-   "ppl": 7.867,
-   "niah_single": 1.0,
-   "niah_multikey": 0.0,
-   "niah_multivalue": 0.5,
-   "vt": 0.0
-  },
-  "snapkv-k0.25": {
-   "mem": 0.25,
-   "ppl": 7.684,
-   "niah_single": 1.0,
-   "niah_multikey": 0.0,
-   "niah_multivalue": 1.0,
-   "vt": 0.0
-  },
-  "think-c0.3": {
-   "mem": 0.852,
-   "ppl": 7.654,
-   "niah_single": 1.0,
-   "niah_multikey": 1.0,
-   "niah_multivalue": 1.0,
-   "vt": 1.0
-  },
-  "think-c0.5": {
-   "mem": 0.75,
-   "ppl": 7.897,
-   "niah_single": 1.0,
-   "niah_multikey": 1.0,
-   "niah_multivalue": 1.0,
-   "vt": 0.5
-  },
-  "palu-r0.5": {
-   "mem": 0.502,
-   "ppl": 9.236,
-   "niah_single": 1.0,
-   "niah_multikey": 1.0,
-   "niah_multivalue": 1.0,
-   "vt": 1.0
-  },
-  "shadow-r64": {
-   "mem": 0.814,
-   "ppl": null,
-   "niah_single": 0.0,
-   "niah_multikey": 0.0,
-   "niah_multivalue": 0.0,
-   "vt": 0.0
-  }
- }
 }

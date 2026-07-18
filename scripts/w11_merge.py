@@ -30,16 +30,13 @@ RULER_LOGS: list[tuple[str, dict[str, int]]] = [  # (path, trials-per-row by ctx
     ("results/w11-goalA-ruler-lines.txt", {"16384": 8}),
     ("results/w11-goalB-ruler-lines.txt", {"32768": 6}),
     ("results/w11-base-ruler-lines.txt", {"32768": 2}),
-    # -- this session: salvaged v1 pods (3 trials x 2 seeds)
-    ("results/gpu_logs/w11_r128_16k.acc.log", {"16384": 6}),
-    ("results/gpu_logs/w11_r128_firm32.acc.log", {"32768": 6}),
+    # -- this session: salvaged v1 pods (3 trials x 2 seeds; lines extracted from
+    #    the gitignored gpu_logs into committed files)
+    ("results/w11-r128v1-ruler-lines.txt", {"16384": 6, "32768": 6}),
     # -- this session: v2 pods (2 trials x 2 seeds)
-    ("results/gpu_logs/w11v2_new16.acc.log", {"16384": 4}),
-    ("results/gpu_logs/w11v2_new32.acc.log", {"32768": 4}),
-    ("results/gpu_logs/w11v2_firm16.acc.log", {"16384": 4}),
-    ("results/gpu_logs/w11v2_firm32.acc.log", {"32768": 4}),
+    ("results/w11-r128v2-ruler-lines.txt", {"16384": 4, "32768": 4}),
 ]
-PPL_LOGS = ["results/gpu_logs/w11v2_new16.acc.log", "results/gpu_logs/w11v2_ppl32.acc.log"]
+PPL_LOGS = ["results/w11-r128-ppl-lines.txt"]
 
 
 def merge() -> dict[str, dict[str, dict[str, float]]]:

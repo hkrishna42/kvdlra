@@ -88,11 +88,26 @@ ppl(){ # ppl <ctx> -- standalone ppl block (hedge: new32's RULER host is slow an
   echo "===PPLONLY${ctx}_DONE==="
 }
 
+r256(){ # r256 <tag> <ctx> -- budget-trimmed r256 retrieval: h1024 only (the
+  # balanced line), 3 HARD tasks (needle saturates for the bugS family), n=2x2.
+  local tag="$1" ctx="$2"
+  echo "===${tag}_BEGIN==="
+  PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+    --context-lens "$ctx" --tasks niah_multikey niah_multivalue vt \
+    --methods bugslash --ranks 256 --hh-budgets 1024 --hh-neighbor 1 \
+    --chunk "$CHUNK" --n-trials 2 --seeds 0 1 \
+    --out-json "results/w11-r256-r$((ctx/1024)).json" 2>&1
+  emit "$tag" "results/w11-r256-r$((ctx/1024)).json"
+  echo "===${tag}_DONE==="
+}
+
 case "$MODE" in
-  new16)  new NEW16 16384 ;;
-  new32)  new NEW32 32768 ;;
-  firm16) firm FIRM16 16384 ;;
-  firm32) firm FIRM32 32768 ;;
-  ppl32)  ppl 32768 ;;
+  new16)   new NEW16 16384 ;;
+  new32)   new NEW32 32768 ;;
+  firm16)  firm FIRM16 16384 ;;
+  firm32)  firm FIRM32 32768 ;;
+  ppl32)   ppl 32768 ;;
+  r256_16) r256 R256_16 16384 ;;
+  r256_32) r256 R256_32 32768 ;;
 esac
 echo "===ALL_DONE==="

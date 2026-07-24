@@ -88,16 +88,17 @@ ppl(){ # ppl <ctx> -- standalone ppl block (hedge: new32's RULER host is slow an
   echo "===PPLONLY${ctx}_DONE==="
 }
 
-r256(){ # r256 <tag> <ctx> -- budget-trimmed r256 retrieval: h1024 only (the
-  # balanced line), 3 HARD tasks (needle saturates for the bugS family), n=2x2.
+R256_HH="${R256_HH:-1024}"
+r256(){ # r256 <tag> <ctx> -- r256 retrieval: one hh arm (R256_HH), 3 HARD tasks
+  # (needle saturates for the bugS family), n=2x2.
   local tag="$1" ctx="$2"
   echo "===${tag}_BEGIN==="
   PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
     --context-lens "$ctx" --tasks niah_multikey niah_multivalue vt \
-    --methods bugslash --ranks 256 --hh-budgets 1024 --hh-neighbor 1 \
+    --methods bugslash --ranks 256 --hh-budgets $R256_HH --hh-neighbor 1 \
     --chunk "$CHUNK" --n-trials 2 --seeds 0 1 \
-    --out-json "results/w11-r256-r$((ctx/1024)).json" 2>&1
-  emit "$tag" "results/w11-r256-r$((ctx/1024)).json"
+    --out-json "results/w11-r256-h${R256_HH}-r$((ctx/1024)).json" 2>&1
+  emit "$tag" "results/w11-r256-h${R256_HH}-r$((ctx/1024)).json"
   echo "===${tag}_DONE==="
 }
 

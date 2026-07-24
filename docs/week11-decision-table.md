@@ -14,8 +14,8 @@ memory = share of full KV cache, ALL floats counted. Pooled across every run thi
 | ea-k0.1 | 0.100× | 4.29 | 100 | 92 | 100 | 17 | 8-12 |
 | bugS-r128-h256 | 0.150× | 4.17 | 100 | 25 | 25 | 0 | 4-10 |
 | bugS-r128-h1024 | 0.191× | 4.16 | 100 | 25 | 25 | 0 | 4-10 |
-| bugS-r256-h256 | 0.281× | 4.12 | — | — | — | — | — |
-| bugS-r256-h1024 | 0.316× | 4.12 | — | — | — | — | — |
+| bugS-r256-h256 | 0.281× | 4.12 | — | 0 | 0 | 0 | 4 |
+| bugS-r256-h1024 | 0.316× | 4.12 | — | 0 | 0 | 0 | 4 |
 | bugS-r32-h256 | 0.053× | 4.48 | 100 | 14 | 0 | 0 | 3-7 |
 | bugS-r32-h1024 | 0.098× | 4.30 | 100 | 33 | 0 | 0 | 3 |
 | bugEVICT-h256 | 0.018× | 4.44 | 100 | 14 | 0 | 0 | 3-7 |
@@ -39,8 +39,8 @@ memory = share of full KV cache, ALL floats counted. Pooled across every run thi
 | ea-k0.1 | 0.100× | 8.28 | 100 | 67 | 100 | 83 | 6-8 |
 | bugS-r128-h256 | 0.139× | 8.15 | 100 | 75 | 100 | 75 | 4 |
 | bugS-r128-h1024 | 0.159× | 8.12 | 100 | 75 | 100 | 75 | 4 |
-| bugS-r256-h256 | 0.266× | 7.74 | — | — | — | — | — |
-| bugS-r256-h1024 | 0.284× | 7.74 | — | — | — | — | — |
+| bugS-r256-h256 | 0.266× | 7.74 | — | 0 | 0 | 0 | 4 |
+| bugS-r256-h1024 | 0.284× | 7.74 | — | 0 | 0 | 0 | 4 |
 | bugS-r32-h256 | 0.043× | 9.16 | 100 | 67 | 100 | 100 | 6-14 |
 | bugS-r32-h1024 | 0.066× | 8.88 | 100 | 50 | 100 | 100 | 2-8 |
 | bugEVICT-h256 | 0.009× | 8.95 | 100 | 0 | 0 | 0 | 6-8 |
@@ -63,7 +63,8 @@ memory = share of full KV cache, ALL floats counted. Pooled across every run thi
   is real (9.16 vs EA 8.28).
 - **Balanced quality+retrieval at ≥32K: `bugS-r128-h1024` (~0.16×).** Beats EA on ppl (8.12 vs
   8.28) AND multi-key (75 vs 67), ties multi-value (100), loses var-track narrowly (75 vs 83;
-  n=4). A quality-first point bought with 1.6× EA's memory — not a free win.
+  n=4). A quality-first point bought with 1.6× EA's memory — not a free win. Do NOT go
+  higher: r256 buys more ppl (7.74) but loses retrieval entirely (0 on all hard tasks).
 - **At 16K: EA (or SnapKV for pure ppl).** The BUG family's basis warm-up window (Q1) makes it
   weak on hard tasks below ~32K: bugS-r32-h256 pooled 14/0/0, r128 25/25/0, vs EA 92/100/17.
   bugS is a ≥32K method — state this plainly.
@@ -92,21 +93,30 @@ never evidence of a task artifact. The n≥5 rerun confirms: bugS-r32-h256 @16K 
 
 Rank is the ppl lever, confirmed: bugS-r128 ppl 4.17/4.16 (h256/h1024) at 16K vs EA 4.29;
 8.15/8.12 at 32K vs EA 8.28 — at 0.14-0.19× memory. r256 reaches 4.12/7.74 at 0.27-0.32×
-(diminishing returns; full = 4.08/7.62). 32K retrieval largely holds (n=4/cell): needle 100,
-mk 75, mv 100, vt 75. **Surprise — attribution is OPEN:** the probe shows the r128 exact tier
-is STARVED (0/8 planted codes captured at both contexts for hh≤256, and never more than
-3/8 at any budget up to 2048 — the richer basis fits
-the codes, so their residual surprise is low), yet bugS-r128 retrieves at 32K where plain
-FIFO bug-r128 scores 0 on the needle. So the win is NOT the exact tier holding the codes and
-NOT the plain gist; likely candidate is that withholding top-surprise outliers from
-absorption keeps the basis cleaner. Next ablation: bugS-r128 with hh_budget=0. At 16K the
-hard tasks stay weak at r128 too (mk 25, mv 25, vt 0) — same ≥32K caveat as r32.
+(diminishing returns; full = 4.08/7.62). 32K retrieval largely holds at r128 (n=4/cell):
+needle 100, mk 75, mv 100, vt 75. At 16K the hard tasks stay weak at r128 (mk 25, mv 25,
+vt 0) — same ≥32K caveat as r32.
+
+**r256 follow-up (2026-07-18): retrieval COLLAPSES — r128 is a narrow sweet spot.** All 12
+r256 hard-task cells (h256 and h1024, 16K and 32K, n=4 each) score **0.00 accuracy AND 0.00
+recall** — not even partial values, where r128@16K still recalled 0.81 — while r256 ppl is
+the best sub-full number we have (7.74/4.12). A healthy-for-language cache that retrieves
+nothing. This REFUTES the plain "cleaner basis / richer gist" candidate for r128's win: if
+gist reconstruction carried retrieval, r256's better-fitting gist should be at least as
+good, and it is strictly worse. The rank ladder now reads: r32 retrieves via the exact tier
+(post-warm-up), r256 retrieves via nothing, and r128 retrieves via a mechanism we have NOT
+attributed — a sweet spot between too-blurry-to-hold and too-well-fitted-to-select-or-
+surface. The hh_budget=0 ablation at r128 is now the top-priority next experiment; an r192
+point and a probe matched to the exact RULER trials are the follow-ups.
 
 ## Honest caveats
 
 - 32K non-BUG baselines and all r128 retrieval cells are n=2-4 — all-or-nothing metrics are
   noisy at that n; the r128-vs-EA multi-key edge (75 vs 67) is inside the noise.
-- bugS-r256 retrieval is unmeasured (ppl only).
-- The r128 retrieval mechanism is unattributed (see Q2) — flagging, not hiding, it.
+- bugS-r256 retrieval is now measured on the HARD tasks (0 across all 12 cells, n=4);
+  its needle cells remain unmeasured (the family saturates needle at every measured arm,
+  so budget went to discriminating cells).
+- The r128 retrieval mechanism is unattributed and now bracketed from BOTH sides by the
+  r256 collapse (see Q2) — flagging, not hiding, it.
 - bug-r128 16K ppl and shadow-r64 32K ppl are unmeasured (—).
 - EA's 32K var-track softened 100→83 with more trials; expect other n≤4 cells to move too.

@@ -316,12 +316,24 @@
       "ppl": 4.173
     },
     "bugS-r256-h1024": {
-      "ppl": 4.124,
-      "mem": 0.316
+      "mem": 0.316,
+      "niah_multikey": 0.0,
+      "n_niah_multikey": 4,
+      "niah_multivalue": 0.0,
+      "n_niah_multivalue": 4,
+      "vt": 0.0,
+      "n_vt": 4,
+      "ppl": 4.124
     },
     "bugS-r256-h256": {
-      "ppl": 4.124,
-      "mem": 0.281
+      "mem": 0.281,
+      "niah_multikey": 0.0,
+      "n_niah_multikey": 4,
+      "niah_multivalue": 0.0,
+      "n_niah_multivalue": 4,
+      "vt": 0.0,
+      "n_vt": 4,
+      "ppl": 4.124
     }
   },
   "32768": {
@@ -615,12 +627,24 @@
       "ppl": 8.149
     },
     "bugS-r256-h1024": {
-      "ppl": 7.744,
-      "mem": 0.284
+      "mem": 0.284,
+      "niah_multikey": 0.0,
+      "n_niah_multikey": 4,
+      "niah_multivalue": 0.0,
+      "n_niah_multivalue": 4,
+      "vt": 0.0,
+      "n_vt": 4,
+      "ppl": 7.744
     },
     "bugS-r256-h256": {
-      "ppl": 7.744,
-      "mem": 0.266
+      "mem": 0.266,
+      "niah_multikey": 0.0,
+      "n_niah_multikey": 4,
+      "niah_multivalue": 0.0,
+      "n_niah_multivalue": 4,
+      "vt": 0.0,
+      "n_vt": 4,
+      "ppl": 7.744
     }
   }
 }

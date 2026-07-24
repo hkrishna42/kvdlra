@@ -1,0 +1,12 @@
+[niah_multikey ctx16384] bugS-r256-h1024 acc=0.00 recall=0.00 ratio=0.316
+[niah_multikey ctx16384] bugS-r256-h256 acc=0.00 recall=0.00 ratio=0.281
+[niah_multikey ctx32768] bugS-r256-h1024 acc=0.00 recall=0.00 ratio=0.284
+[niah_multikey ctx32768] bugS-r256-h256 acc=0.00 recall=0.00 ratio=0.266
+[niah_multivalue ctx16384] bugS-r256-h1024 acc=0.00 recall=0.00 ratio=0.316
+[niah_multivalue ctx16384] bugS-r256-h256 acc=0.00 recall=0.00 ratio=0.281
+[niah_multivalue ctx32768] bugS-r256-h1024 acc=0.00 recall=0.00 ratio=0.284
+[niah_multivalue ctx32768] bugS-r256-h256 acc=0.00 recall=0.00 ratio=0.266
+[vt ctx16384] bugS-r256-h1024 acc=0.00 recall=0.00 ratio=0.316
+[vt ctx16384] bugS-r256-h256 acc=0.00 recall=0.00 ratio=0.281
+[vt ctx32768] bugS-r256-h1024 acc=0.00 recall=0.00 ratio=0.284
+[vt ctx32768] bugS-r256-h256 acc=0.00 recall=0.00 ratio=0.267

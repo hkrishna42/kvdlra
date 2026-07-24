@@ -35,6 +35,8 @@ RULER_LOGS: list[tuple[str, dict[str, int]]] = [  # (path, trials-per-row by ctx
     ("results/w11-r128v1-ruler-lines.txt", {"16384": 6, "32768": 6}),
     # -- this session: v2 pods (2 trials x 2 seeds)
     ("results/w11-r128v2-ruler-lines.txt", {"16384": 4, "32768": 4}),
+    # -- r256 retrieval follow-up (hard tasks only; needle unmeasured, 2 x 2 seeds)
+    ("results/w11-r256-ruler-lines.txt", {"16384": 4, "32768": 4}),
 ]
 PPL_LOGS = ["results/w11-r128-ppl-lines.txt"]
 

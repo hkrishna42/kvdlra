@@ -1,7 +1,7 @@
 # Week 12 — next-session plan (attribute the r128 sweet spot, test the 64K prediction)
 
 > Continuation after the Week-11 pooled-table + r256 follow-up run. Repo
-> `/Users/hari/Desktop/kv-dlra`, branch `week7` (**== `main` == `8df36d4`, pushed**).
+> `/Users/hari/Desktop/kv-dlra`, branch `week7` (**== `main`, pushed; verify with `git log --oneline -1`**).
 > Suite **265 passed / 1 skipped**, ruff + mypy clean. Credit **~$25.94**
 > (`uvx vastai show user --raw` → `credit`; the CLI "Balance" column is misleading).
 > **Read first:** `docs/week11-session-handover.md` (ops + full context) and
@@ -26,7 +26,8 @@
   EA's memory. 16K r128 retrieval is weak (mk 25, mv 25, vt 0) — consistent with Q1.
 - **r256 follow-up — retrieval COLLAPSES.** All 12 hard-task cells (h256+h1024 ×
   16K+32K, n=4) = **0.00 accuracy AND 0.00 recall**, while r256 ppl is the best
-  sub-full number (4.12/7.74 at 0.27–0.32×; full 4.08/7.62). This REFUTES the plain
+  BUG-family sub-full number (4.12/7.74 at 0.27–0.32×; full 4.08/7.62 — MorphKV/SnapKV/
+  ThinK still post lower ppl at ≥0.25×). This REFUTES the plain
   "cleaner basis" story: a richer gist should retrieve at least as well; it retrieves
   nothing. (r256 needle cells unmeasured — the family saturates needle.)
 - **The rank ladder:** r32 = exact tier does the retrieving (post-warm-up); r256 =

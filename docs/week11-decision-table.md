@@ -58,7 +58,8 @@ memory = share of full KV cache, ALL floats counted. Pooled across every run thi
 
 ## Recommendation (three operating points, honest)
 
-- **Retrieval-per-byte at ≥32K: `bugS-r32-h256` (0.043×).** The only sub-0.1× method covering
+- **Retrieval-per-byte at ≥32K: `bugS-r32-h256` (0.043×).** The cheapest point of the only
+  sub-0.1×-capable family covering
   all four tasks: 100/67/100/100 pooled (n=6-14). EA at 0.100× is 100/67/100/83. The ppl cost
   is real (9.16 vs EA 8.28).
 - **Balanced quality+retrieval at ≥32K: `bugS-r128-h1024` (~0.16×).** Beats EA on ppl (8.12 vs
@@ -100,7 +101,8 @@ vt 0) — same ≥32K caveat as r32.
 **r256 follow-up (2026-07-18): retrieval COLLAPSES — r128 is a narrow sweet spot.** All 12
 r256 hard-task cells (h256 and h1024, 16K and 32K, n=4 each) score **0.00 accuracy AND 0.00
 recall** — not even partial values, where r128@16K still recalled 0.81 — while r256 ppl is
-the best sub-full number we have (7.74/4.12). A healthy-for-language cache that retrieves
+the best BUG-family sub-full ppl (7.74/4.12; MorphKV/SnapKV/ThinK still post lower ppl at
+≥0.25× memory). A healthy-for-language cache that retrieves
 nothing. This REFUTES the plain "cleaner basis / richer gist" candidate for r128's win: if
 gist reconstruction carried retrieval, r256's better-fitting gist should be at least as
 good, and it is strictly worse. The rank ladder now reads: r32 retrieves via the exact tier

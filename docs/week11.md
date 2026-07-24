@@ -18,11 +18,12 @@
 > the closest prior art), `docs/week10-handover.md` (the 7-method map and this
 > wall), and `docs/week7-dominance.md` (the two measured walls).
 
-Model: `unsloth/Llama-3.1-8B-Instruct`, GPU bf16 (RTX 3090 via vast.ai), `n =
+Model: `unsloth/Meta-Llama-3.1-8B-Instruct`, GPU bf16 (vast.ai RTX 3090 early runs;
+A100 for the pooled/finalizing campaign), `n =
 head_dim · num_kv_heads = 128 · 8 = 1024` (1 token = `2n = 2048` floats/layer).
 Every arm's memory is counted honestly in the same float-equivalent unit
 (`stored_state_numel`), reported as `ratio` vs the full cache, and audited
-`mem_max ≤ budget`. Suite: **263 pass / 1 skip**.
+`mem_max ≤ budget`. Suite: **265 pass / 1 skip**.
 
 ## Status table
 
@@ -328,7 +329,8 @@ is now an honest tie).
 
 ### The pod campaign
 
-The session ran as six vast.ai pods after a **cost replan**: measured per-RULER-trial
+The finalizing campaign ran as ten vast.ai pods (~$20 GPU total incl. the ~$4.6 r256
+follow-up; credit ~$25.94 after a mid-session top-up) after a **cost replan**: measured per-RULER-trial
 cost came in at **~8–13 min** (far above the naive plan), so scope was cut to fit
 budget. What ran: **four "v2" RULER pods** (16K/32K × two seeds — the n≥5 rerun of
 the r32/EVICT cells plus the new `bugS-r128`/`r256` cells), **one 32K-perplexity
@@ -400,8 +402,9 @@ the codes too, so their residual surprise is low and they are not selected. Yet
 `bugS-r128` retrieves at 32K where plain FIFO `bug-r128` scores **0** on the needle.
 So the win is **not** the exact tier holding the codes, and **not** the plain gist.
 Likely candidate: **withholding the top-surprise outliers from absorption keeps the
-basis cleaner** — but this is unproven. **Attribution is OPEN — flag it.** Proposed
-next ablation: `bugS-r128` with `hh_budget=0`.
+basis cleaner** — but this is unproven. **Attribution is OPEN — flag it.** (The
+"cleaner basis" candidate is *weakened* by the r256 follow-up below; the
+`hh_budget=0` ablation is now the top next-session task.)
 
 ### Firmed 32K leans (pooled, both seeds)
 
@@ -422,19 +425,54 @@ next ablation: `bugS-r128` with `hh_budget=0`.
 
 ### Recommendation shape (three operating points, honest)
 
-1. **Retrieval-per-byte at ≥32K: `bugS-r32-h256` (0.043×)** — the only sub-0.1×
+1. **Retrieval-per-byte at ≥32K: `bugS-r32-h256` (0.043×)** — the cheapest point of
+   the only sub-0.1×-capable
    method covering all four tasks.
 2. **Balanced quality+retrieval at ≥32K: `bugS-r128-h1024` (~0.16×)** — beats EA on
    ppl *and* multi-key; a quality-first point bought with 1.6× EA's memory.
 3. **At 16K: EA** (or SnapKV for ppl) — the BUG family's warm-up window makes it weak
    on hard tasks below ~32K. State this plainly; do not sell `bugS` under 32K.
 
+### r256 follow-up: the rank dial has a cliff (2026-07-18)
+
+The user asked for the r256 retrieval cells after all (both arms `bugS-r256-h256` /
+`-h1024`, both contexts 16K + 32K, the three hard tasks, n=4/cell; needle skipped —
+the family saturates it). The result is the sharpest negative of the week:
+
+- **All 12 hard-task cells are 0.00 accuracy — and 0.00 recall.** Not partial
+  degradation: nothing surfaces. Contrast r128@16K, which fails accuracy but still
+  shows partial multi-value recall (0.81). r256 retrieves *nothing* at either budget
+  or context.
+- **While holding the best BUG-family sub-full perplexity measured** (MorphKV/SnapKV/
+  ThinK still post lower ppl at ≥0.25×): 4.12 / 7.74 at
+  0.27–0.32× (full: 4.08 / 7.62). The best text-modelling arm in the family is its
+  worst retriever.
+- **This refutes the plain "cleaner basis" candidate for the r128 mystery.** If
+  withholding outliers simply left a cleaner, richer gist, a rank-256 gist should
+  retrieve *at least* as well as rank-128 — instead it collapses to zero. Whatever
+  lets `bugS-r128` retrieve at 32K is not "more basis fidelity".
+- **The rank ladder, stated honestly.** r32: retrieval lives in the surprise-selected
+  exact tier (post-warm-up). r256: the basis fits the codes so well nothing is
+  surprising, nothing is selected, and the gist itself never surfaces them — zero.
+  r128: an **unattributed narrow sweet spot** between too-blurry-to-hold and
+  too-well-fitted-to-select-or-surface. The r128 attribution stays OPEN, now with a
+  cliff on its high side. (r256 needle cells stay unmeasured — saturated task.)
+
+**Reprioritized next steps:** (1) **`hh_budget=0` ablation at r128 @32K** — now the
+top task: if retrieval survives with *no* exact tier, the surprise-aware
+retention/withholding path is the mechanism; if it dies, the tier matters despite
+not holding the codes. Either way the attribution closes in. (2) **r192 point**
+(RULER hard tasks @32K + ppl) to measure how narrow the sweet spot is, plus the
+probe re-run on the *exact* RULER (trial, seed) combos to close the sampling gap.
+(3) **The 64K prediction test** for the warm-up window.
+
 ### Next session
 
-- **`hh_budget=0` ablation at r128** — settles the open attribution (is the win the
-  cleaner basis from withholding outliers?).
+- **`hh_budget=0` ablation at r128 @32K (TOP)** — settles the open attribution
+  (retention/withholding vs the tier itself; see the r256 follow-up above).
+- **r192 point + trial-matched probe** — how narrow is the r128 sweet spot?
 - **64K prediction (falsifiable):** at 64K *all* planted items exit the warm-up
   window, so multikey capture should rise further (8B went 6/8 @16K → 7/8 @32K;
   predict 8/8-ish @64K). A clean pre-registered test of the mechanism.
-- **r256 retrieval** only if a use-case ever demands it (ppl 7.74 @ 0.27–0.32× is
-  already near-full; retrieval cells unmeasured).
+- ~~r256 retrieval~~ — **run (see above): all 12 hard-task cells 0.00.** Closed as
+  a negative.

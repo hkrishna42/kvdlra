@@ -130,16 +130,17 @@ because its real strength is *speed*, which we deliberately don't reward here.
 
 ## Honest caveats (so nobody over-claims)
 
-- These tests are **small** (2–6 samples per cell; the perplexity numbers are 2
-  samples each). The big gaps in the table (0% vs 100%) are clear, but treat the exact
+- These tests are **small** (2–14 pooled trials per cell after the confirming reruns;
+  the perplexity numbers are 2 samples each). The big gaps in the table (0% vs 100%) are clear, but treat the exact
   percentages as rough.
 - On plain text quality (perplexity) the blurry summary still barely helps — that part
   of the earlier "overhead" finding stands. The summary earns its keep on **multi-fact
   retrieval**, not on perplexity.
-- **Variable-tracking is hard for every compressed method** except at light
-  compression — even ExpectedAttention only clears it because it keeps more memory.
-- Still to do: a run on the smaller **1B model**, and more samples to tighten the
-  numbers.
+- **At 16K, variable-tracking is hard for every compressed method** at low memory.
+  At 32K the picture flips: bugS-r32-h256 holds it at 100 (0.043×) while pooled EA
+  softens to 83 (0.100×).
+- Still to do: a full decision-table run on the smaller **1B model** (1B probes exist),
+  and more samples for the n=4 cells.
 
 ## The one thing to remember
 
@@ -150,17 +151,17 @@ the method drops toward 0% the moment a question needs more than one fact (at le
 the exact shelf is small). So the win looks like it comes from **both** pieces — the
 "keep the surprising tokens" rule *and* the blurry summary — traded against slightly
 worse text quality than ExpectedAttention. It's a lean worth one confirming run. A real
-win, honestly attributed. (Cost: ~$17 of GPU credit, ~$9 left; the rented machines
-were shut down after.)
+win, honestly attributed. (Cost: ~$20 of GPU credit across the finalizing campaign incl. the rank-256 check;
+~$26 left after a top-up; every rented machine was shut down after.)
 
 ---
 
 ## Update (2026-07-18): a mystery solved, and a "balanced" setting
 
-Two things happened in the wrap-up session. We solved a genuinely weird mystery —
-why our method was *worse* at finding things in a **shorter** document — and we
-built a mid-range setting that also competes on plain text quality. Both come with
-honest fine print.
+Three things happened in the wrap-up session. We solved a genuinely weird mystery —
+why our method was *worse* at finding things in a **shorter** document — we built a
+mid-range setting that also competes on plain text quality, and we found a **cliff**
+just past that setting. All come with honest fine print.
 
 ### The mystery: why was 16K *harder* than 32K?
 
@@ -218,24 +219,42 @@ memory — about 0.16× instead of 0.043× — but here's what it buys at 32K:
 
 So the sharper-photo setting beats EA on text quality *and* multi-key at once — but
 it pays with memory (~1.6× EA's budget). A trade, not a free win. And it's still a
-32K-and-up method: at 16K the warm-up window bites it just like the blurrier version.
+32K-and-up method: at 16K it stays far below EA — for the blurrier version we can
+blame the warm-up window; for the sharper one the honest answer is we don't fully
+know yet (its mechanism is the open question below).
+
+**But the dial is not "sharper is better" — we tried the next notch, and there's a
+cliff.** If rank 128 beats EA on text quality, why not rank 256? We ran it. Text
+quality got even better (7.74 at 32K — the best of any BUG config, though heavier
+methods like MorphKV still score lower at ~0.3×+ memory — at ~0.3×
+memory) — but retrieval collapsed to **zero**. Every hard test — multi-key,
+multi-value, chain-following — scored 0% at *both* lengths and *both* pocket sizes,
+twelve cells of nothing; even the partial credit rank 128 still earned at 16K
+vanished. A better photo alone retrieves nothing. So the rank ladder reads: 32 too
+blurry to hold the codes, 256 apparently too well-fitted to ever surface them, and
+128 a **narrow sweet spot that works for reasons we honestly cannot yet name**.
 
 **One honest mystery remains.** With the sharper photo, we peeked inside the sharp
-pocket — and the code we ask for is *never in it* (a stray code or two shows up only at
-the largest pocket sizes). The sharper summary predicts the codes
+pocket — and the code we ask for is *never in it* (at most 1–3 stray codes appear, and only
+at the larger pocket sizes). The sharper summary predicts the codes
 well enough that they no longer look surprising, so they never get picked. Yet the
 method still retrieves them — while plain BUG at the same sharpness scores 0%. So
 the win isn't the pocket holding the codes, and it isn't the plain photo either. Our
 best guess: keeping the weirdest tokens *out* of the photo keeps the photo cleaner
-for everything else. We haven't proven that. Next session's test: switch the pocket
-**off** entirely at this sharpness and see if the retrieval survives.
+for everything else. We haven't proven that. The rank-256 cliff above makes the
+mystery sharper, not simpler: it can't be "the photo just got good enough to answer
+on its own," because an even better photo answers *nothing*. Whatever rank 128 is
+doing, the pocket is somehow involved — even though it isn't holding the codes.
+Next session's test: switch the pocket **off** entirely at this sharpness and see
+if the retrieval survives — either answer closes in on the mechanism.
 
 ### Where this leaves the recommendations
 
 - **Tightest memory, long documents (32K+):** BUG+surprise, blurry setting — all
   four retrieval tests covered at 0.043×, the only method under 0.1× that does it.
 - **Balanced quality + retrieval, long documents:** the sharper rank-128 setting at
-  ~0.16× — beats EA on text quality and multi-key.
+  ~0.16× — beats EA on text quality and multi-key. And stop there: rank 256 is past
+  the cliff (better text, zero retrieval).
 - **16K or shorter:** use ExpectedAttention. No hedging.
 
 And one tidy prediction we get to test next time: at **64K**, *every* hidden item

@@ -1,4 +1,4 @@
-# Week 12 — attributing the r128 sweet spot (T1/T2 landed, T3 pending)
+# Week 12 — attributing the r128 sweet spot (T1/T2/T3 landed)
 
 Week 12 asked two questions left open by Week 11: **what carries bugS-r128's 32K
 retrieval** (the mechanism was unattributed, bracketed by the starved-tier probe and the
@@ -17,7 +17,9 @@ bugS-r128's edge (H2/H3 family), and the trial-matched probe shows capture is
 which leans H2 (partial capture), a lean, not a slam dunk. Multi-key has a genuine
 gist-only component (bug-r128 alone scores 50); mv/vt have none. r192 collapses
 task-staggered, so r128 stays the largest rank covering all four tasks. The 64K
-prediction test is running; nothing below depends on it.
+prediction test **confirms the warm-up window for multi-key** (bugS-r32-h256 67@32K →
+100@64K as the earliest key exits the window; EA falls 67 → 50) but multi-value regresses
+to 50 at n=2 — the gain is multi-key-specific, stated honestly (see T3 below).
 
 ## The design finding: the pre-registered ablation could not run
 
@@ -82,19 +84,33 @@ Week-10/11 docs said "plain FIFO bug-r128 = 0" as if measured broadly. It was sc
 applied wherever the claim appears; do not present mk=50 as contradicting a measured
 wall — there was no wall, only a gap.
 
-## T3 — 64K prediction test: PENDING
+## T3 — 64K prediction test: mk CONFIRMED, mv regressed (honest)
 
-Pod `mk64` running: `bugS-r32-h256` + `ea` control @65536, mk n=4, mv/vt n=2.
-Pre-registered prediction from the warm-up-window mechanism: **mk rises above 67** as
-all planted items exit the ~4–5K absolute window. Results fold in when landed — this doc
-makes no claim about them.
+`bugS-r32-h256` + `ea` control @65536 (mk n=2×2, mv/vt n=1×2). Pre-registered prediction
+from the warm-up window: as context grows, relatively-planted items slide past the ~4–5K
+absolute window, so multi-key should rise above its 32K 67.
+
+| task @64K | bugS-r32-h256 (0.038×) | ea-k0.1 (0.100×) | vs 32K (bugS / ea) |
+|---|---|---|---|
+| multi-key | **100** | 50 | 67 → 100 / 67 → 50 |
+| multi-value | 50 (recall 0.88) | 100 | 100 → 50 / 100 → 100 |
+| var-track | 100 | 100 | 100 / 83 → 100 |
+
+**Multi-key confirms the prediction cleanly**: the single missed key at 32K was the
+earliest-planted; at 64K it exits the window and mk → 100, while `ea` multi-key *falls*
+67 → 50 (eviction degrades as the scored context grows). **Multi-value does not follow**:
+100 → 50 at n=2 (recall 0.88 = 3.5/4 values; the all-or-nothing cell fails whenever any
+one value stays inside the window, and one flipped trial moves it 50 points). Var-track
+holds at 100. So the "bugS gains with context" reading is **multi-key-specific and stated
+only there** — multi-value is noise-dominated at this n and EA keeps it at 100. Note the
+memory drops 0.043× → 0.038× as the fixed exact tier amortizes over the longer context.
 
 ## Cost ledger and pod inventory
 
-~**$5.1** of $25.94 spent through T1/T2 including the probe; credit **~$20.8** at T3
-launch (well above the $3 escalation floor). Pods `drop32` (45755397), `r192_32`
-(45755406), and `probe` (45755408) all completed their modes and were **destroyed**;
-only `mk64` is live.
+~**$8** of $25.94 spent across T1/T2/T3 (T3 the 64K run on an 80GB A100); credit
+**~$17.8** remaining (well above the $3 escalation floor). All four pods — `drop32`
+(45755397), `r192_32` (45755406), `probe` (45755408), `mk64` (45765306) — completed their
+modes and were **destroyed**. No OOM at 64K on the 80GB host.
 
 ## Honest caveats
 

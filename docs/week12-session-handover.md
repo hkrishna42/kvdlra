@@ -1,4 +1,4 @@
-# Week 12 — session handover (T1 H1-refutation + T2 r192/probe DONE; T3 64K RUNNING)
+# Week 12 — session handover (T1 H1-refutation + T2 r192/probe + T3 64K ALL DONE)
 
 > The single document a fresh session reads to resume work. Repo
 > `/Users/hari/Desktop/kv-dlra`. Read this, then `docs/week11-decision-table.md`
@@ -8,14 +8,9 @@
 
 ## 1. State
 
-- Branch `week7` == **`6a5a642`**, pushed to origin. `main` still at `69fe054`
-  (4 week-12 commits behind); the ff-merge to `main` is part of T4, **after T3
-  lands**. Working tree carries the UNCOMMITTED week-12 doc outputs (they go in
-  with the T4 commit): regenerated `docs/week11-decision-table.md` +
-  `results/w11-final-tables.md` (week-12 rows + update note), status-edited
-  `docs/week12-next-session.md`, new `docs/week12.md` and this handover, plus a
-  whitespace-only (trailing-newline) touch of `results/w11-decision-table.json`
-  from a merge rerun.
+- Branch `week7` pushed to origin; **`main` fast-forwarded to match** as the final
+  T4 step (all week-12 commits now on both). T3's 64K results, the regenerated
+  tables, the in-place dashboard 64K update, and this handover are all committed.
 - Suite **277 passed / 1 skipped** (278 collected), ruff + mypy clean. New week-12 anti-drift
   pins: the `hh_retain=False` select-and-discard mode is pinned **bit-identical
   in layer state to bugS given the same K/V stream** (unit test), and the r192
@@ -80,10 +75,9 @@
   - `w12-r192-ppl-lines.txt` — T2a ppl rows @16K/32K.
   - `w12-probe-r128-lines.txt` — T2b probe evidence with per-combo markers
     (`===PROBE_c<ctx>_t<t>s<s>_BEGIN/DONE===` blocks).
-- **Pending T3 lines-files, names already wired into `RULER_LOGS`**:
-  `w12-mk64-mk-lines.txt` ({"65536": 4}) and `w12-mk64-mvvt-lines.txt`
-  ({"65536": 2}) — harvest the mk64 pod rows into exactly these paths and rerun
-  the merge.
+- **T3 64K lines-files (DONE, merged)**: `w12-mk64-mk-lines.txt` ({"65536": 4},
+  2 mk rows) and `w12-mk64-mvvt-lines.txt` ({"65536": 2}, 2 mv + 2 vt rows) —
+  harvested from the mk64 pod, pooled into the 64K table section.
 - **Probe out-file naming convention**: the pod writes
   `results/w12-probe8b-mk-r128-c{16384,32768}-t{0,1}s{0,1}.json`
   (`--out-json` in `scripts/pod/w12_probe_r128.sh`), but those JSONs stay
@@ -119,11 +113,11 @@ New this week:
 
 ## 5. Dashboards (update IN PLACE — pass `url:` from a new session)
 
-**Updated in place 2026-07-24 with the Week-12 T1/T2 results** (bugSdrop +
-r192 rows, the H1-refuted attribution verdict, the r256 cliff added to the
-explainer; drafted via a 12-agent workflow with an adversarial
-number-verification pass, then republished at the same URLs). **The 64K rows
-are still pending** — fold them in after T3 lands.
+**Updated in place with the Week-12 T1/T2/T3 results** (bugSdrop + r192 rows and
+the H1-refuted attribution verdict; the r256 cliff added to the explainer; and
+the T3 64K section — mk 67→100 confirmed, mv regressed to 50 at n=2, EA mk
+67→50). T1/T2 drafted via a 12-agent workflow with an adversarial
+number-verification pass; all republished at the same URLs.
 
 - decision table (current): https://claude.ai/code/artifact/19e23647-d242-4310-896d-be2fb7e8ee0e
 - overview (current): https://claude.ai/code/artifact/e811be6a-abb6-408a-89ec-d3fa8fd311d1
@@ -131,12 +125,13 @@ are still pending** — fold them in after T3 lands.
 
 ## 6. Open questions
 
-- **T3 64K prediction test RUNNING** (pod MODE `mk64`: `bugS-r32-h256` + `ea`
-  @65536, mk n=4, mv/vt n=2). Prediction from W11 Q1: **mk rises above 67** as
-  all planted items exit the ~4–5K warm-up window. When it lands: harvest into
-  the two pre-wired `w12-mk64-*` lines-files, rerun `w11_merge.py`, regenerate
-  docs, update the three dashboards in place, update auto-memory, commit,
-  ff-merge `main`, push. OOM = escalate, don't grind.
+- **T3 64K prediction test DONE**: multi-key **confirmed** the warm-up window
+  (`bugS-r32-h256` 67@32K → 100@64K as the earliest key exits; `ea` falls
+  67 → 50), but multi-value **regressed** 100 → 50 (recall 0.88; all-or-nothing
+  fails when any value stays in-window, n=2 = one flipped trial), var-track holds
+  100. The "bugS gains with context" reading is multi-key-specific — mv is
+  noise-dominated at n=2 and EA keeps it at 100. Open follow-up: **re-run 64K mv
+  at higher n** to separate the warm-up regression from small-n noise.
 - **Capture↔win correlation is not closed**: the trial-matched probe gives
   per-instance capture, but RULER outcomes are cell aggregates — making the H2
   correlation airtight needs **per-trial RULER outcome rows, i.e. a harness

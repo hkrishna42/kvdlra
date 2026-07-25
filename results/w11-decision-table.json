@@ -672,5 +672,25 @@
       "n_vt": 4,
       "ppl": 7.867
     }
+  },
+  "65536": {
+    "bugS-r32-h256": {
+      "mem": 0.038,
+      "niah_multikey": 1.0,
+      "n_niah_multikey": 4,
+      "niah_multivalue": 0.5,
+      "n_niah_multivalue": 2,
+      "vt": 1.0,
+      "n_vt": 2
+    },
+    "ea-k0.1": {
+      "mem": 0.1,
+      "niah_multikey": 0.5,
+      "n_niah_multikey": 4,
+      "niah_multivalue": 1.0,
+      "n_niah_multivalue": 2,
+      "vt": 1.0,
+      "n_vt": 2
+    }
   }
 }

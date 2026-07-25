@@ -59,6 +59,24 @@ memory = share of full KV cache, ALL floats counted. Pooled across every run thi
 | palu-r0.5 | 0.502× | 9.24 | 100 | 100 | 100 | 100 | 2 |
 | shadow-r64 | 0.814× | — | 0 | 0 | 0 | 0 | 2 |
 
+## 64K context (Week-12 T3 — the warm-up-window prediction test)
+
+| method | memory | perplexity | needle | multi-key | multi-value | var-track | n/cell |
+|---|---|---|---|---|---|---|---|
+| ea-k0.1 | 0.100× | — | — | 50 | 100 | 100 | 2-4 |
+| bugS-r32-h256 | 0.038× | — | — | 100 | 50 | 100 | 2-4 |
+
+Prediction (from Q1's warm-up window): as context grows, relatively-planted items slide past
+the ~4–5K absolute warm-up window, so `bugS-r32-h256` multi-key should rise above its 32K 67.
+**Confirmed for multi-key: 67@32K → 100@64K** (the single missed key — the earliest-planted —
+exits the window), while `ea-k0.1` multi-key *falls* 67→50 (EA degrades as the context it must
+score over grows). **Multi-value does NOT follow: 100@32K → 50@64K** (recall 0.88 — 3.5/4 values
+retrieved; the all-or-nothing metric fails the cell when any single value remains inside the
+window, and at n=2 that is one flipped trial). Var-track holds at 100 both ways. So the
+"bugS gains with context" reading is **multi-key-specific and honest only there**; multi-value
+is noise-dominated at n=2 and EA keeps it at 100. Memory 0.038× (vs 0.043× at 32K — the fixed
+tier amortizes further over a longer context).
+
 ## Recommendation (three operating points, honest)
 
 - **Retrieval-per-byte at ≥32K: `bugS-r32-h256` (0.043×).** The cheapest point of the only

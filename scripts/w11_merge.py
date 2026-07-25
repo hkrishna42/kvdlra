@@ -37,8 +37,19 @@ RULER_LOGS: list[tuple[str, dict[str, int]]] = [  # (path, trials-per-row by ctx
     ("results/w11-r128v2-ruler-lines.txt", {"16384": 4, "32768": 4}),
     # -- r256 retrieval follow-up (hard tasks only; needle unmeasured, 2 x 2 seeds)
     ("results/w11-r256-ruler-lines.txt", {"16384": 4, "32768": 4}),
+    # -- Week-12 (pre-registered; the merge skip-logs files not yet harvested):
+    #    T1 H1 ablation (bugSdrop, 2x2) + bug-r128 gap-fill (1x2); T2 r192 (2x2);
+    #    T3 64K prediction test (mk 2x2, mv/vt 1x2).
+    ("results/w12-drop-ruler-lines.txt", {"32768": 4}),
+    ("results/w12-bugr128-ruler-lines.txt", {"32768": 2}),
+    ("results/w12-r192-ruler-lines.txt", {"32768": 4}),
+    ("results/w12-mk64-mk-lines.txt", {"65536": 4}),
+    ("results/w12-mk64-mvvt-lines.txt", {"65536": 2}),
 ]
-PPL_LOGS = ["results/w11-r128-ppl-lines.txt"]
+PPL_LOGS = [
+    "results/w11-r128-ppl-lines.txt",
+    "results/w12-r192-ppl-lines.txt",
+]
 
 
 def merge() -> dict[str, dict[str, dict[str, float]]]:
@@ -95,6 +106,8 @@ ORDER = [
     "ea-k0.1",
     "bugS-r128-h256",
     "bugS-r128-h1024",
+    "bugSdrop-r128-h1024",
+    "bugS-r192-h1024",
     "bugS-r256-h256",
     "bugS-r256-h1024",
     "bugS-r32-h256",
@@ -116,7 +129,9 @@ ORDER = [
 
 def fmt(table: dict[str, dict[str, dict[str, float]]]) -> str:
     out = []
-    for ctx in ("16384", "32768"):
+    for ctx in ("16384", "32768", "65536"):
+        if ctx not in table:  # 64K appears only once the T3 lines land
+            continue
         out.append(f"\n## {int(ctx) // 1024}K context\n")
         out.append(
             "| method | memory | perplexity | needle | multi-key "

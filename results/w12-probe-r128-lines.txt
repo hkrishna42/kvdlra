@@ -1,0 +1,32 @@
+===PROBE_c32768_t0s0_BEGIN===
+[ctx32835 r128] hh=  256  needle_in_hh=0/3  captured=False  codes=0/8  nbr(w1/2/4)=0/0/0  ratio~=0.0078
+[ctx32835 r128] hh= 1024  needle_in_hh=0/3  captured=False  codes=2/8  nbr(w1/2/4)=0/0/0  ratio~=0.0312
+===PROBE_c32768_t0s0_DONE===
+===PROBE_c32768_t0s1_BEGIN===
+[ctx32835 r128] hh=  256  needle_in_hh=0/3  captured=False  codes=0/8  nbr(w1/2/4)=0/0/0  ratio~=0.0078
+[ctx32835 r128] hh= 1024  needle_in_hh=0/3  captured=False  codes=2/8  nbr(w1/2/4)=0/0/0  ratio~=0.0312
+===PROBE_c32768_t0s1_DONE===
+===PROBE_c32768_t1s0_BEGIN===
+[ctx32835 r128] hh=  256  needle_in_hh=0/3  captured=False  codes=0/8  nbr(w1/2/4)=0/0/0  ratio~=0.0078
+[ctx32835 r128] hh= 1024  needle_in_hh=3/3  captured=True  codes=1/8  nbr(w1/2/4)=1/1/1  ratio~=0.0312
+===PROBE_c32768_t1s0_DONE===
+===PROBE_c32768_t1s1_BEGIN===
+[ctx32835 r128] hh=  256  needle_in_hh=2/3  captured=False  codes=0/8  nbr(w1/2/4)=1/1/1  ratio~=0.0078
+[ctx32835 r128] hh= 1024  needle_in_hh=2/3  captured=False  codes=1/8  nbr(w1/2/4)=1/1/1  ratio~=0.0312
+===PROBE_c32768_t1s1_DONE===
+===PROBE_c16384_t0s0_BEGIN===
+[ctx16457 r128] hh=  256  needle_in_hh=0/3  captured=False  codes=0/8  nbr(w1/2/4)=0/0/0  ratio~=0.0156
+[ctx16457 r128] hh= 1024  needle_in_hh=0/3  captured=False  codes=0/8  nbr(w1/2/4)=0/0/0  ratio~=0.0622
+===PROBE_c16384_t0s0_DONE===
+===PROBE_c16384_t0s1_BEGIN===
+[ctx16457 r128] hh=  256  needle_in_hh=0/3  captured=False  codes=0/8  nbr(w1/2/4)=0/0/0  ratio~=0.0156
+[ctx16457 r128] hh= 1024  needle_in_hh=0/3  captured=False  codes=0/8  nbr(w1/2/4)=0/0/0  ratio~=0.0622
+===PROBE_c16384_t0s1_DONE===
+===PROBE_c16384_t1s0_BEGIN===
+[ctx16457 r128] hh=  256  needle_in_hh=0/3  captured=False  codes=0/8  nbr(w1/2/4)=0/0/0  ratio~=0.0156
+[ctx16457 r128] hh= 1024  needle_in_hh=0/3  captured=False  codes=0/8  nbr(w1/2/4)=0/0/0  ratio~=0.0622
+===PROBE_c16384_t1s0_DONE===
+===PROBE_c16384_t1s1_BEGIN===
+[ctx16457 r128] hh=  256  needle_in_hh=0/3  captured=False  codes=0/8  nbr(w1/2/4)=0/0/0  ratio~=0.0156
+[ctx16457 r128] hh= 1024  needle_in_hh=0/3  captured=False  codes=0/8  nbr(w1/2/4)=0/0/0  ratio~=0.0622
+===PROBE_c16384_t1s1_DONE===

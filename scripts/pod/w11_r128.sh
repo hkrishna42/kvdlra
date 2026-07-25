@@ -102,6 +102,64 @@ r256(){ # r256 <tag> <ctx> -- r256 retrieval: one hh arm (R256_HH), 3 HARD tasks
   echo "===${tag}_DONE==="
 }
 
+drop(){ # drop <tag> <ctx> -- Week-12 T1: the H1 ablation. Headline bugSdrop
+  # (select-and-discard: withholding identical to bugS, pool invisible to
+  # attention) FIRST so it lands even if the pod dies; then the bug-r128
+  # gap-fill (its 32K hard-task cells are unmeasured). Hard tasks only.
+  local tag="$1" ctx="$2"
+  echo "===${tag}_BEGIN==="
+  PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+    --context-lens "$ctx" --tasks niah_multikey niah_multivalue vt \
+    --methods bugslash --ranks 128 --hh-budgets 1024 --hh-neighbor 1 --hh-discard \
+    --chunk "$CHUNK" --n-trials 2 --seeds 0 1 \
+    --out-json "results/w12-drop-r$((ctx/1024)).json" 2>&1
+  echo "===${tag}_DONE==="
+  echo "===${tag}_GAPFILL_BEGIN==="
+  PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+    --context-lens "$ctx" --tasks niah_multikey niah_multivalue vt \
+    --methods bug --ranks 128 --chunk "$CHUNK" --n-trials 1 --seeds 0 1 \
+    --out-json "results/w12-bugr128-r$((ctx/1024)).json" 2>&1
+  echo "===${tag}_GAPFILL_DONE==="
+}
+
+r192(){ # r192 <tag> <ctx> -- Week-12 T2: how narrow is the r128 sweet spot?
+  # RULER hard tasks at ctx, then ppl at BOTH 16K and 32K (one invocation).
+  local tag="$1" ctx="$2"
+  echo "===${tag}_BEGIN==="
+  PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+    --context-lens "$ctx" --tasks niah_multikey niah_multivalue vt \
+    --methods bugslash --ranks 192 --hh-budgets 1024 --hh-neighbor 1 \
+    --chunk "$CHUNK" --n-trials 2 --seeds 0 1 \
+    --out-json "results/w12-r192-r$((ctx/1024)).json" 2>&1
+  echo "===${tag}_DONE==="
+  echo "===R192PPL_BEGIN==="
+  PYTHONPATH=src python -u scripts/w10_frontier.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+    --T 16384 32768 --chunk "$CHUNK" --window 512 --n-samples 2 \
+    --methods bugslash --ranks 192 --hh-budgets 1024 --hh-neighbor 1 --no-ruler \
+    --out-json "results/w12-r192-ppl.json" 2>&1
+  echo "===R192PPL_DONE==="
+}
+
+mk64(){ # Week-12 T3: the 64K prediction test (needs an 80GB card -- 48GB OOMs
+  # at 64K, docs/week5.md). bugS-r32-h256 + ea control interleaved in ONE
+  # invocation per task block (a per-trial exception SKIP-logs, so an ea OOM
+  # cannot kill the bugS rows). mk at n=2x2 (the prediction), mv/vt at n=1x2.
+  echo "===MK64_BEGIN==="
+  PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+    --context-lens 65536 --tasks niah_multikey \
+    --methods bugslash ea --ranks 32 --hh-budgets 256 --hh-neighbor 1 \
+    --evict-keeps $EVICT --chunk "$CHUNK" --n-trials 2 --seeds 0 1 \
+    --out-json "results/w12-mk64.json" 2>&1
+  echo "===MK64_DONE==="
+  echo "===MVVT64_BEGIN==="
+  PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+    --context-lens 65536 --tasks niah_multivalue vt \
+    --methods bugslash ea --ranks 32 --hh-budgets 256 --hh-neighbor 1 \
+    --evict-keeps $EVICT --chunk "$CHUNK" --n-trials 1 --seeds 0 1 \
+    --out-json "results/w12-mvvt64.json" 2>&1
+  echo "===MVVT64_DONE==="
+}
+
 case "$MODE" in
   new16)   new NEW16 16384 ;;
   new32)   new NEW32 32768 ;;
@@ -110,5 +168,8 @@ case "$MODE" in
   ppl32)   ppl 32768 ;;
   r256_16) r256 R256_16 16384 ;;
   r256_32) r256 R256_32 32768 ;;
+  drop32)  drop DROP32 32768 ;;
+  r192_32) r192 R192_32 32768 ;;
+  mk64)    mk64 ;;
 esac
 echo "===ALL_DONE==="

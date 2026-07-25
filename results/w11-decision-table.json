@@ -334,6 +334,10 @@
       "vt": 0.0,
       "n_vt": 4,
       "ppl": 4.124
+    },
+    "bugS-r192-h1024": {
+      "ppl": 4.124,
+      "mem": 0.254
     }
   },
   "32768": {
@@ -425,9 +429,12 @@
       "mem": 0.13,
       "ppl": 8.053,
       "niah_single": 0.0,
-      "niah_multikey": null,
-      "niah_multivalue": null,
-      "vt": null
+      "niah_multikey": 0.5,
+      "niah_multivalue": 0.0,
+      "vt": 0.0,
+      "n_niah_multikey": 2,
+      "n_niah_multivalue": 2,
+      "n_vt": 2
     },
     "morph-k0.25": {
       "mem": 0.312,
@@ -645,6 +652,25 @@
       "vt": 0.0,
       "n_vt": 4,
       "ppl": 7.744
+    },
+    "bugSdrop-r128-h1024": {
+      "mem": 0.159,
+      "niah_multikey": 0.5,
+      "n_niah_multikey": 4,
+      "niah_multivalue": 0.0,
+      "n_niah_multivalue": 4,
+      "vt": 0.0,
+      "n_vt": 4
+    },
+    "bugS-r192-h1024": {
+      "mem": 0.222,
+      "niah_multikey": 1.0,
+      "n_niah_multikey": 4,
+      "niah_multivalue": 0.0,
+      "n_niah_multivalue": 4,
+      "vt": 0.0,
+      "n_vt": 4,
+      "ppl": 7.867
     }
   }
 }

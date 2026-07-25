@@ -1,0 +1,2 @@
+  bugS-r192-h1024 [T=16384] ppl=4.124 tok_eq/layer=4140.9 ratio=0.254
+  bugS-r192-h1024 [T=32768] ppl=7.867 tok_eq/layer=7228.9 ratio=0.222

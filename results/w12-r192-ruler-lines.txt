@@ -1,0 +1,3 @@
+[niah_multikey ctx32768] bugS-r192-h1024 acc=1.00 recall=1.00 ratio=0.222
+[niah_multivalue ctx32768] bugS-r192-h1024 acc=0.00 recall=0.25 ratio=0.222
+[vt ctx32768] bugS-r192-h1024 acc=0.00 recall=0.00 ratio=0.222

@@ -1,0 +1,3 @@
+[niah_multikey ctx32768] bug-r128       acc=0.50 recall=0.50 ratio=0.130
+[niah_multivalue ctx32768] bug-r128       acc=0.00 recall=0.75 ratio=0.130
+[vt ctx32768] bug-r128       acc=0.00 recall=0.00 ratio=0.130

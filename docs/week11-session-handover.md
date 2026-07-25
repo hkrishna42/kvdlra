@@ -41,7 +41,8 @@
   r256 = nothing, **r128 = unattributed narrow sweet spot**.
 - **Probe detail behind that**: r128 exact tier is starved (0/8 codes at hh≤256 both
   ctx, never >3/8 up to 2048; the queried code is never in the tier) yet bugS-r128
-  retrieves at 32K where plain FIFO bug-r128 = 0.
+  retrieves at 32K where plain FIFO bug-r128 = 0 on needle (n=2; its 32K hard-task
+  cells were unmeasured at the time — Week-12 gap-fill: mk 50 / mv 0 / vt 0, n=2).
 - **Recommendation (3 operating points)**: bugS-r32-h256 for retrieval/byte ≥32K;
   bugS-r128-h1024 for ~0.16× balanced (don't go higher in rank); EA at 16K.
 

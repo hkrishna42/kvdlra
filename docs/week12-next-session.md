@@ -60,7 +60,22 @@ T1 discriminates 1 vs {2,3}; the T2 trial-matched probe discriminates 2 vs 3.
 Either way the attribution closes in — a clean negative is a result.
 
 ## The tasks (T1+T2 pods in parallel first; T3 after they land)
-1. **T1 — `hh_budget=0` ablation at r128 @32K (~$1).** Does bugS-r128 retrieval survive
+
+> **STATUS 2026-07-24** (details in `docs/week12-session-handover.md`):
+> **T1 DONE** — hh=0 degenerates to plain bug, so the ablation ran as
+> `bugSdrop` (`--hh-discard` select-and-discard): retrieval **dies** (mk 50 /
+> mv 0 / vt 0, identical to plain bug-r128) → **H1 REFUTED at r128**; the
+> visible tier is the mechanism (H2/H3).
+> **T2 DONE** — r192 = task-staggered collapse (mk 100, mv/vt 0; ppl
+> 4.124/7.867 @ 0.22–0.25×); trial-matched probe shows **instance-dependent**
+> capture (t1 combos capture at hh=1024, t0 starved) — H2 suggestive, not
+> airtight.
+> **T3 RUNNING** — mk64 pod @65536 (bugS-r32-h256 + ea); prediction mk > 67.
+> **T4 IN PROGRESS** — T1/T2 merged+pooled; dashboards **updated in place 2026-07-24 (T1/T2; 64K rows pending)**
+> (live-fetch check 2026-07-24: all three still serve the week-11 state);
+> final merge + dashboard passes + memory + `main` ff + push after T3 lands.
+
+1. **T1 — `hh_budget=0` ablation at r128 @32K (~$1). [DONE — H1 refuted; ran as `bugSdrop --hh-discard`, retrieval dies: 50/0/0 = plain bug-r128]** Does bugS-r128 retrieval survive
    with NO exact tier at all? Run `bugslash` r128, hh=0, 32K, hard tasks (mk/mv/vt),
    n = 2 trials × 2 seeds per cell.
    - **Survives** → the surprise-aware retention/withholding path is the mechanism (H1);
@@ -71,19 +86,19 @@ Either way the attribution closes in — a clean negative is a result.
      (the single-shot guard and arm naming both need checking). If a code change is
      needed, it gets a unit test + a `stored_state_numel` anti-drift pin BEFORE any pod
      launches.
-2. **T2 — r192 point + trial-matched probe (~$1.5).** (a) `bugS-r192-h1024`: RULER hard
+2. **T2 — r192 point + trial-matched probe (~$1.5). [DONE — r192 task-staggered collapse (mk 100, mv/vt 0; ppl 4.124/7.867); probe: capture is instance-dependent, W11 "never captured" premise doesn't hold trial-matched]** (a) `bugS-r192-h1024`: RULER hard
    tasks @32K n=4 + ppl @16K/32K — how narrow is the sweet spot between r128 (works)
    and r256 (collapse)? New rank ⇒ unit test + `stored_state_numel` pin. (b) Rerun
    `scripts/w11_probe.py --task niah_multikey` at r128 on the EXACT RULER (trial,seed)
    combos t{0,1} × s{0,1} to close the probe/RULER sampling gap (was the starved-tier
    probe measuring the same instances the RULER wins came from?).
-3. **T3 — 64K prediction test (~$3–4, launch after T1/T2 land if credit allows).**
+3. **T3 — 64K prediction test (~$3–4, launch after T1/T2 land if credit allows). [RUNNING — pod MODE mk64 @65536; mk n=4, mv/vt n=2; harvest into the pre-wired `w12-mk64-*` lines-files]**
    `bugS-r32-h256` + **`ea` control** on multikey/mv/vt @65536, n=4. Prediction from Q1:
    mk rises above 67 (all planted items exit the ~4–5K warm-up window). **VRAM caution:**
    a 40GB A100 holds it on paper (weights 16GB + coords ~0.3GB + activations) but 64K
    sdpa chunk peaks are untested — prefer an 80GB host, or fall back to `--chunk 2048`;
    **OOM = escalate, don't grind.**
-4. **T4 — merge, regenerate, publish.** Extend `RULER_LOGS` in `scripts/w11_merge.py`
+4. **T4 — merge, regenerate, publish. [IN PROGRESS — T1/T2 lines-files merged + pooled; all three dashboards updated in place 2026-07-24 (T1/T2 rows + verdict); remaining: fold in T3, auto-memory, `main` ff-merge + push]** Extend `RULER_LOGS` in `scripts/w11_merge.py`
    with the new lines-files → rerun (idempotent via
    `results/w11-decision-table-base.json`) → regenerate the docs tables from its stdout
    → update dashboards **IN PLACE** (full URLs — pass as `url` to the Artifact tool;

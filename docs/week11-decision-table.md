@@ -14,6 +14,7 @@ memory = share of full KV cache, ALL floats counted. Pooled across every run thi
 | ea-k0.1 | 0.100× | 4.29 | 100 | 92 | 100 | 17 | 8-12 |
 | bugS-r128-h256 | 0.150× | 4.17 | 100 | 25 | 25 | 0 | 4-10 |
 | bugS-r128-h1024 | 0.191× | 4.16 | 100 | 25 | 25 | 0 | 4-10 |
+| bugS-r192-h1024 | 0.254× | 4.12 | — | — | — | — | — |
 | bugS-r256-h256 | 0.281× | 4.12 | — | 0 | 0 | 0 | 4 |
 | bugS-r256-h1024 | 0.316× | 4.12 | — | 0 | 0 | 0 | 4 |
 | bugS-r32-h256 | 0.053× | 4.48 | 100 | 14 | 0 | 0 | 3-7 |
@@ -39,6 +40,8 @@ memory = share of full KV cache, ALL floats counted. Pooled across every run thi
 | ea-k0.1 | 0.100× | 8.28 | 100 | 67 | 100 | 83 | 6-8 |
 | bugS-r128-h256 | 0.139× | 8.15 | 100 | 75 | 100 | 75 | 4 |
 | bugS-r128-h1024 | 0.159× | 8.12 | 100 | 75 | 100 | 75 | 4 |
+| bugSdrop-r128-h1024 | 0.159× | — | — | 50 | 0 | 0 | 4 |
+| bugS-r192-h1024 | 0.222× | 7.87 | — | 100 | 0 | 0 | 4 |
 | bugS-r256-h256 | 0.266× | 7.74 | — | 0 | 0 | 0 | 4 |
 | bugS-r256-h1024 | 0.284× | 7.74 | — | 0 | 0 | 0 | 4 |
 | bugS-r32-h256 | 0.043× | 9.16 | 100 | 67 | 100 | 100 | 6-14 |
@@ -46,7 +49,7 @@ memory = share of full KV cache, ALL floats counted. Pooled across every run thi
 | bugEVICT-h256 | 0.009× | 8.95 | 100 | 0 | 0 | 0 | 6-8 |
 | bugEVICT-h1024 | 0.033× | 8.81 | 100 | 50 | 0 | 100 | 2-8 |
 | bug-r32 | 0.034× | 9.31 | 0 | 0 | 0 | 0 | 2 |
-| bug-r128 | 0.130× | 8.05 | 0 | — | — | — | — |
+| bug-r128 | 0.130× | 8.05 | 0 | 50 | 0 | 0 | 2 |
 | morph-k0.25 | 0.312× | 7.54 | 100 | 100 | 100 | 50 | 2 |
 | morph-k0.5 | 0.624× | 7.57 | 100 | 100 | 100 | 100 | 2 |
 | snapkv-k0.1 | 0.100× | 7.87 | 100 | 0 | 50 | 0 | 2 |
@@ -101,15 +104,24 @@ vt 0) — same ≥32K caveat as r32.
 **r256 follow-up (2026-07-18): retrieval COLLAPSES — r128 is a narrow sweet spot.** All 12
 r256 hard-task cells (h256 and h1024, 16K and 32K, n=4 each) score **0.00 accuracy AND 0.00
 recall** — not even partial values, where r128@16K still recalled 0.81 — while r256 ppl is
-the best BUG-family sub-full ppl (7.74/4.12; MorphKV/SnapKV/ThinK still post lower ppl at
-≥0.25× memory). A healthy-for-language cache that retrieves
+the best BUG-family sub-full ppl at 32K (7.74; at 16K the new r192 point ties its 4.12 at
+less memory). Non-BUG methods still beat it: MorphKV/SnapKV/ThinK post lower ppl at ≥0.25×
+memory at both lengths, and at 16K SnapKV-k0.1 already does at 0.100× (4.11 vs 4.12).
+A healthy-for-language cache that retrieves
 nothing. This REFUTES the plain "cleaner basis / richer gist" candidate for r128's win: if
 gist reconstruction carried retrieval, r256's better-fitting gist should be at least as
 good, and it is strictly worse. The rank ladder now reads: r32 retrieves via the exact tier
 (post-warm-up), r256 retrieves via nothing, and r128 retrieves via a mechanism we have NOT
 attributed — a sweet spot between too-blurry-to-hold and too-well-fitted-to-select-or-
-surface. The hh_budget=0 ablation at r128 is now the top-priority next experiment; an r192
-point and a probe matched to the exact RULER trials are the follow-ups.
+surface. **Week-12 update:** the pre-registered hh_budget=0 ablation could not run as designed —
+hh=0 provably degenerates to plain bug-r128 (hh_enabled goes False and the whole SLASH path
+turns off), so it could not discriminate H1. It was superseded by the hh_retain=False
+select-and-discard ablation (bugSdrop-r128-h1024: selection and withholding identical to bugS,
+tier invisible to attention). Result: **H1 refuted at r128** — hiding the tier kills mv/vt
+outright (100→0, 75→0) and halves mk (75→50), matching plain bug-r128's 50/0/0 profile; the
+**visible exact tier is the mechanism** of the r128 edge (n=4/cell). The r192 follow-up point
+also landed: task-staggered collapse (mk 100, mv/vt 0), not a single cliff. Details:
+`docs/week12.md`.
 
 ## Honest caveats
 
@@ -118,7 +130,15 @@ point and a probe matched to the exact RULER trials are the follow-ups.
 - bugS-r256 retrieval is now measured on the HARD tasks (0 across all 12 cells, n=4);
   its needle cells remain unmeasured (the family saturates needle at every measured arm,
   so budget went to discriminating cells).
-- The r128 retrieval mechanism is unattributed and now bracketed from BOTH sides by the
-  r256 collapse (see Q2) — flagging, not hiding, it.
+- The r128 retrieval mechanism is now attributed IN PART (Week 12): the visible exact tier
+  carries the edge (H1 withholding refuted via the bugSdrop select-and-discard ablation), and
+  the trial-matched probe shows instance-dependent partial-to-full capture — consistent with
+  partial capture carrying the wins, but per-trial RULER outcomes are cell aggregates, so the
+  capture↔win link is suggestive, not airtight. See `docs/week12.md`.
+- "Plain FIFO bug-r128 = 0" (as stated in earlier write-ups) was always a needle@32K claim
+  (n=2); the 32K hard-task cells were unmeasured until the Week-12 gap-fill, which reads
+  mk 50 / mv 0 / vt 0 (n=2; mv per-value recall 0.75). mk=50 shows a genuine gist-only
+  component on multi-key (the tier adds 50→75); it does not contradict a previously measured
+  wall (16K precedent: mk 38 / mv 38 / vt 0).
 - bug-r128 16K ppl and shadow-r64 32K ppl are unmeasured (—).
 - EA's 32K var-track softened 100→83 with more trials; expect other n≤4 cells to move too.

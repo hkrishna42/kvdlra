@@ -136,7 +136,11 @@ class CapturingCache(DynamicCache):
 
 
 @contextmanager
-def capture_pre_rope_keys(snapshots: list[torch.Tensor]) -> Iterator[None]:
+def capture_pre_rope_keys(
+    snapshots: list[torch.Tensor],
+    query_sink: list[torch.Tensor] | None = None,
+    rope_sink: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+) -> Iterator[None]:
     """Patch ``apply_rotary_pos_emb`` to record pre-RoPE keys, then restore it.
 
     Appends a detached CPU copy of the ``k`` argument (the key tensor *before*
@@ -145,17 +149,31 @@ def capture_pre_rope_keys(snapshots: list[torch.Tensor]) -> Iterator[None]:
     ``LlamaAttention.forward`` calls ``apply_rotary_pos_emb`` once per decoder
     layer in layer order during a single prefill, ``snapshots[i]`` is the
     pre-RoPE key of layer ``i``. The original is always restored on exit.
+
+    Week-12 Q-BUG probe: the same hook sees the pre-RoPE **query** ``q`` and the
+    RoPE angles ``cos``/``sin``. When ``query_sink`` is given, the pre-RoPE query
+    of each layer is appended alongside the key (``(1, num_attn_heads, T,
+    head_dim)`` -- all query heads, GQA-ungrouped). When ``rope_sink`` is given,
+    the ``(cos, sin)`` pair is captured **once** (layer 0); it is position-only
+    and identical across layers, so the probe can rotate a reconstructed pre-RoPE
+    key/query with the model's exact operator.
     """
     original = llama_mod.apply_rotary_pos_emb
 
     def patched(
         q: torch.Tensor,
         k: torch.Tensor,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
         *args: Any,
         **kwargs: Any,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         snapshots.append(k.detach().to("cpu"))
-        result: tuple[torch.Tensor, torch.Tensor] = original(q, k, *args, **kwargs)
+        if query_sink is not None:
+            query_sink.append(q.detach().to("cpu"))
+        if rope_sink is not None and not rope_sink:
+            rope_sink.append((cos.detach().to("cpu"), sin.detach().to("cpu")))
+        result: tuple[torch.Tensor, torch.Tensor] = original(q, k, cos, sin, *args, **kwargs)
         return result
 
     llama_mod.apply_rotary_pos_emb = patched
@@ -203,7 +221,16 @@ def main() -> None:
         default="auto",
         help="auto (cuda if available else cpu), or an explicit device string",
     )
+    parser.add_argument(
+        "--with-q",
+        action="store_true",
+        help="Week-12 Q-BUG probe: also dump the pre-RoPE query per layer "
+        "(``Q_pre``) and the shared RoPE angles (``rope.pt``). Requires "
+        "--rope pre|both (the pre-RoPE monkey-patch is the capture hook).",
+    )
     args = parser.parse_args()
+    if args.with_q and args.rope == "post":
+        parser.error("--with-q requires --rope pre or both (needs the pre-RoPE hook)")
 
     seed_everything(args.seed)
     device = resolve_device(args.device)
@@ -238,9 +265,20 @@ def main() -> None:
 
     capture_pre = args.rope in ("pre", "both")
     pre_rope_keys: list[torch.Tensor] = []
+    pre_rope_queries: list[torch.Tensor] = []
+    rope_angles: list[tuple[torch.Tensor, torch.Tensor]] = []
 
     cache = CapturingCache(config=config)
-    with torch.no_grad(), capture_pre_rope_keys(pre_rope_keys) if capture_pre else _noop():
+    hook = (
+        capture_pre_rope_keys(
+            pre_rope_keys,
+            query_sink=pre_rope_queries if args.with_q else None,
+            rope_sink=rope_angles if args.with_q else None,
+        )
+        if capture_pre
+        else _noop()
+    )
+    with torch.no_grad(), hook:
         model(input_ids=input_ids, past_key_values=cache, use_cache=True)
 
     head_dim = config.head_dim
@@ -266,6 +304,20 @@ def main() -> None:
         print(f"layer-0 ||K_pre - K_post||_F = {diff:.6e}")
         assert diff > 0.0, "K_pre == K_post: monkey-patch did not capture an unrotated tensor"
 
+    if args.with_q:
+        n_layers = len(cache.snapshots)
+        assert len(pre_rope_queries) == n_layers, (
+            f"captured {len(pre_rope_queries)} pre-RoPE queries != {n_layers} layers"
+        )
+        num_attn_heads = config.num_attention_heads
+        q_expected = (1, num_attn_heads, seq_len, head_dim)
+        q0 = pre_rope_queries[0]
+        assert tuple(q0.shape) == q_expected, (
+            f"layer-0 Q_pre shape {tuple(q0.shape)} != {q_expected}"
+        )
+        assert len(rope_angles) == 1, f"expected one captured (cos,sin), got {len(rope_angles)}"
+        print(f"layer-0 Q_pre shape = {tuple(q0.shape)}  ({num_attn_heads} attn heads)")
+
     slug = hashlib.md5(doc["text"][:200].encode()).hexdigest()[:8]
     dir_name = f"doc{args.doc_idx}_{slug}_len{seq_len}"
     # Keep the post-only default dir name unchanged; tag pre/both so dumps don't collide.
@@ -290,17 +342,28 @@ def main() -> None:
                 "V": v_layer,
                 "input_ids": ids_cpu,
             }
+        if args.with_q:
+            # Pre-RoPE query, all attention heads (GQA-ungrouped): (H_q, T, head_dim).
+            blob["Q_pre"] = pre_rope_queries[layer_idx].squeeze(0)
         torch.save(blob, out_dir / f"layer_{layer_idx:02d}.pt")
+
+    if args.with_q:
+        # RoPE angles are position-only and shared across layers -- store once so
+        # the probe can rotate reconstructed pre-RoPE K/Q with the exact operator.
+        cos, sin = rope_angles[0]
+        torch.save({"cos": cos.squeeze(0), "sin": sin.squeeze(0)}, out_dir / "rope.pt")
 
     meta = {
         "model": args.model,
         "seq_len": seq_len,
         "doc_idx": args.doc_idx,
         "num_key_value_heads": int(num_kv_heads),
+        "num_attention_heads": int(config.num_attention_heads),
         "head_dim": int(head_dim),
         "device": device,
         "dtype": str(dtype),
         "rope": args.rope,
+        "with_q": bool(args.with_q),
         # Back-compat field consumed by older tooling; True iff the dumped "K" is post-RoPE.
         "post_rope": args.rope != "pre",
     }

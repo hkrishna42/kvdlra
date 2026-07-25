@@ -150,6 +150,27 @@ def test_balanced_config_ratio_pin() -> None:
     assert 0.12 < ratio < 0.20  # "~0.15x": rank is the ppl lever, paid in memory
 
 
+def test_r192_h1024_ratio_pin() -> None:
+    """Week-12 sweet-spot probe bugS-r192-h1024 at 32K on 8B: the formula puts it
+    at ~0.22x -- between r128 (~0.16x) and r256 (~0.28x), as the memory cost the
+    r192 RULER/ppl point is bought at. Anti-drift for the new rank knob."""
+    n, t, rank, hh = 1024, 32768, 192, 1024
+    rw, sink = 32, 4
+    coord = t - hh - rw - sink
+    fp = acc.bug_footprint(
+        n,
+        rank=rank,
+        coord_count=coord,
+        recent_len=rw,
+        n_sink=sink,
+        retention="lowrank_surprise",
+        hh_count=hh,
+        hh_select="surprise",
+    )
+    ratio = fp.ratio_fp16(t, n)
+    assert 0.19 < ratio < 0.25  # computed 0.2216 at authoring time
+
+
 def test_bug_footprint_saturated_matches_bug_budget_floats() -> None:
     """The high-water helper reproduces ``w5_streamppl.bug_budget_floats`` (fifo)."""
     from w5_streamppl import bug_budget_floats  # scripts on sys.path via conftest/_paths

@@ -412,6 +412,12 @@ def main() -> None:
     parser.add_argument(
         "--hh-neighbor", type=int, default=0, help="SurpriseSLASH span-expansion window (0=off)"
     )
+    parser.add_argument(
+        "--hh-discard",
+        action="store_true",
+        help="Week-12 H1 ablation: bugslash arms select-and-DISCARD (hh_retain=False; "
+        "pool invisible to attention) -> bugSdrop-* arm names",
+    )
     parser.add_argument("--chunk", type=int, default=0, help="chunked-prefill block size")
     parser.add_argument("--n-trials", type=int, default=4)
     parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1])

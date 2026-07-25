@@ -188,11 +188,17 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
         # MUST prefill via chunked ingest (--chunk > 0) -- single-shot bypasses the
         # exact tier. coord_budget >= mid keeps the whole (non-hh) bulk low-rank.
         cb = t + rw + ab
+        # Week-12 H1 ablation: --hh-discard keeps selection + withholding
+        # identical but hides the pool from attention (hh_retain=False). The
+        # name prefix is deliberately NOT a superstring/substring of "bugS-"
+        # so ad-hoc greps over mixed logs cannot pool the two arm families.
+        retain = not getattr(args, "hh_discard", False)
+        prefix = "bugS" if retain else "bugSdrop"
         for r in args.ranks:
             for hh in args.hh_budgets:
                 arms.append(
                     {
-                        "name": f"bugS-r{r}-h{hh}",
+                        "name": f"{prefix}-r{r}-h{hh}",
                         "kind": "bug",
                         "rank": r,
                         "retention": "lowrank_surprise",
@@ -210,6 +216,7 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                                 hh_budget=hh,
                                 hh_select="surprise",
                                 hh_neighbor=args.hh_neighbor,
+                                hh_retain=retain,
                             )
                         ),
                     }
@@ -589,6 +596,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--hh-neighbor", type=int, default=0, help="SurpriseSLASH span-expansion window (0=off)"
+    )
+    parser.add_argument(
+        "--hh-discard",
+        action="store_true",
+        help="Week-12 H1 ablation: bugslash arms select-and-DISCARD (hh_retain=False; "
+        "pool invisible to attention) -> bugSdrop-* arm names",
     )
     parser.add_argument(
         "--chunk", type=int, default=0, help="chunked-prefill block size (0=single-shot)"

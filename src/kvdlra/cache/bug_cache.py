@@ -329,6 +329,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         hh_budget: int = 0,
         hh_select: str = "attn",
         hh_neighbor: int = 0,
+        hh_retain: bool = True,
         merge: bool = False,
         coord_codebook: ProductQuantizer | None = None,
         anchor_rank: int = 0,
@@ -366,6 +367,23 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             raise ValueError(f"hh_neighbor must be >= 0, got {hh_neighbor}")
         if hh_neighbor > 0 and hh_select != "surprise":
             raise ValueError("hh_neighbor (span expansion) requires hh_select='surprise'")
+        # Week-12 H1 ablation: ``hh_retain=False`` keeps the surprise selection +
+        # withholding-from-absorption mechanics bit-identical (the pool still
+        # lives in hh_k/hh_v and feeds re-selection/demotion each absorb) but the
+        # pool is invisible to attention. Discarding an *empty* tier would be the
+        # silent hh=0 degeneration to plain BUG; an attn-selected tier receives
+        # no attention mass once invisible -- both are config errors, fail loud.
+        if not hh_retain and hh_budget < 1:
+            raise ValueError(
+                "hh_retain=False (select-and-discard ablation) requires hh_budget >= 1: "
+                "with hh_budget=0 the SLASH path is disabled entirely and the config "
+                "silently degenerates to plain BUG"
+            )
+        if not hh_retain and hh_select != "surprise":
+            raise ValueError(
+                "hh_retain=False requires hh_select='surprise': a discarded tier is "
+                "invisible to attention, so attention-mass selection is incoherent"
+            )
         # Week-11 SurpriseSLASH: the exact heavy-hitter tier can be selected by
         # recent-attention mass ("attn", the Week-7 default -- needs the attach()
         # score hook) OR by low-rank surprise ("surprise" -- the out-of-subspace
@@ -391,6 +409,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.hh_budget = hh_budget
         self.hh_select = hh_select
         self.hh_neighbor = hh_neighbor
+        self.hh_retain = hh_retain
         self.merge = merge
         # rank=0 / coord_budget=0 => no low-rank middle => StreamingLLM baseline.
         self.lowrank_enabled = rank >= 1 and coord_budget >= 1
@@ -603,8 +622,14 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         """Exact heavy-hitter tokens currently held (SLASH)."""
         return 0 if self.hh_k is None else int(self.hh_k.shape[1])
 
+    def _hh_attended_len(self) -> int:
+        """Exact-tier tokens attention can see: the full tier normally, 0 under
+        the Week-12 select-and-discard ablation (the pool still exists and feeds
+        selection/demotion, but is never returned to attention)."""
+        return self._hh_len() if self.hh_retain else 0
+
     def _mid_len(self) -> int:
-        return self._hh_len() + self._q_len() + self._f_len()
+        return self._hh_attended_len() + self._q_len() + self._f_len()
 
     def _post_update_lengths(self, query_length: int) -> tuple[int, int, int]:
         """Predict ``(sink, mid, recent)`` lengths *after* an ``update`` of
@@ -615,11 +640,23 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             return 0, 0, query_length
         recent = self._recent_len() + query_length
         mid = self._mid_len()
-        mid_cap = self.coord_budget + self._second_tier_budget + self.hh_budget
+        mid_cap = (
+            self.coord_budget + self._second_tier_budget + (self.hh_budget if self.hh_retain else 0)
+        )
+        # Under hh_retain=False the *visible* middle grows per absorb by the
+        # DEMOTED count (candidates minus what the pool keeps) -- 0 while the
+        # pool is still filling -- so the invisible pool must be simulated here
+        # or decode-time mask sizes desync from the returned K length.
+        wh = self._hh_len() if (self.hh_enabled and not self.hh_retain) else -1
         while recent >= self.recent_window + self.absorb_block:
             recent -= self.absorb_block
             if self.lowrank_enabled:
-                mid = min(mid_cap, mid + self.absorb_block)
+                if wh >= 0:
+                    new_wh = min(self.hh_budget, wh + self.absorb_block)
+                    mid = min(mid_cap, mid + (wh + self.absorb_block - new_wh))
+                    wh = new_wh
+                else:
+                    mid = min(mid_cap, mid + self.absorb_block)
         return self._sink_len(), mid, recent
 
     # ------------------------------------------------------------- BUG step
@@ -1209,7 +1246,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         aggregated over all query heads). Called by the attach() hook."""
         if not self.track_scores:
             return
-        s, hh = self._sink_len(), self._hh_len()
+        s, hh = self._sink_len(), self._hh_attended_len()
         q, f, rlen = self._q_len(), self._f_len(), self._recent_len()
         if mass.shape != (s + hh + q + f + rlen,):
             raise ValueError(
@@ -1375,7 +1412,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             assert self.sink_v is not None
             parts_k.append(self.sink_k)
             parts_v.append(self.sink_v)
-        if self._hh_len() > 0:  # SLASH exact tier: verbatim post-RoPE, like sinks
+        if self._hh_attended_len() > 0:  # SLASH exact tier: verbatim post-RoPE, like sinks
             assert self.hh_k is not None and self.hh_v is not None
             parts_k.append(self.hh_k)
             parts_v.append(self.hh_v)
@@ -1604,6 +1641,7 @@ class BugStreamingCache(Cache):
         hh_budget: int = 0,
         hh_select: str = "attn",
         hh_neighbor: int = 0,
+        hh_retain: bool = True,
         merge: bool = False,
         coord_codebook: ProductQuantizer | None = None,
         anchor_rank: int = 0,
@@ -1642,6 +1680,7 @@ class BugStreamingCache(Cache):
                 hh_budget=hh_budget,
                 hh_select=hh_select,
                 hh_neighbor=hh_neighbor,
+                hh_retain=hh_retain,
                 merge=merge,
                 coord_codebook=coord_codebook,
                 anchor_rank=anchor_rank,

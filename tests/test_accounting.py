@@ -72,21 +72,30 @@ def _bug_layer(cache: BugStreamingCache) -> BugStreamingLayer:
 
 
 @pytest.mark.parametrize(
-    "rank,retention,hh_budget,hh_select",
+    "rank,retention,hh_budget,hh_select,hh_retain",
     [
-        (8, "fifo", 0, "attn"),
-        (8, "attn", 0, "attn"),
-        (8, "attn", 6, "attn"),
+        (8, "fifo", 0, "attn", True),
+        (8, "attn", 0, "attn", True),
+        (8, "attn", 6, "attn", True),
         # Week-11 SurpriseSLASH: surprise-selected exact tier (no hh_score) on a
         # lowrank_surprise tail -- the tier the retrieval arms deploy.
-        (8, "lowrank_surprise", 6, "surprise"),
+        (8, "lowrank_surprise", 6, "surprise", True),
         # Week-11 balanced-config shape: high rank (n/2) + exact tier bigger than
         # the coord tier, mirroring bugS-r128-h1024 (rank >> typical, hh dominant).
-        (16, "lowrank_surprise", 12, "surprise"),
+        (16, "lowrank_surprise", 12, "surprise", True),
+        # Week-12 select-and-discard ablation (bugSdrop): the pool is invisible
+        # to attention but is LIVE stored state (feeds re-selection/demotion), so
+        # the SAME formula must hold -- the discard arm is not a cheaper point.
+        (8, "lowrank_surprise", 6, "surprise", False),
     ],
 )
 def test_bug_footprint_matches_stored_state_numel(
-    tiny_model: LlamaForCausalLM, rank: int, retention: str, hh_budget: int, hh_select: str
+    tiny_model: LlamaForCausalLM,
+    rank: int,
+    retention: str,
+    hh_budget: int,
+    hh_select: str,
+    hh_retain: bool,
 ) -> None:
     """``bug_footprint`` computed from the live layer's actual counts equals the
     measured ``stored_state_numel`` -- the pin across the frontier configs."""
@@ -100,6 +109,7 @@ def test_bug_footprint_matches_stored_state_numel(
         retention=retention,
         hh_budget=hh_budget,
         hh_select=hh_select,
+        hh_retain=hh_retain,
     )
     _drive(tiny_model, cache)
     layer = _bug_layer(cache)

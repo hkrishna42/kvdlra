@@ -1,0 +1,77 @@
+{
+  "ALL_TRACE_FACTS_CONFIRMED": true,
+  "F1_prefill_calls_absorb_columns": {
+    "lines": [
+      1442
+    ],
+    "value": true
+  },
+  "F1_prefill_never_calls_absorb_block_slash": {
+    "lines": [],
+    "value": true
+  },
+  "F2_prefill_never_calls_absorb_block_into_stream": {
+    "callers": {
+      "_decode_step": [
+        1456
+      ],
+      "consolidate": [
+        1414
+      ]
+    },
+    "value": true
+  },
+  "F2_slash_only_caller_is_absorb_block_into_stream": {
+    "callers": {
+      "_absorb_block_into_stream": [
+        731
+      ]
+    },
+    "value": true
+  },
+  "F3_prefill_branch_precedes_ingest_branch": {
+    "ingest_return_line": 1366,
+    "prefill_return_line": 1362,
+    "value": true
+  },
+  "F4_ingest_chunk_defers_absorb": {
+    "self_calls": [
+      "_decode_peek",
+      "_to_mat"
+    ],
+    "value": true
+  },
+  "F5_reset_state_inits_tier_none": {
+    "assigned_none": [
+      "hh_k",
+      "hh_pos",
+      "hh_score",
+      "hh_v"
+    ],
+    "value": true
+  },
+  "F6_stored_state_numel_counts_hh": {
+    "lines": {
+      "hh_k": [
+        1587
+      ],
+      "hh_pos": [
+        1619
+      ],
+      "hh_score": [
+        1620
+      ],
+      "hh_v": [
+        1588
+      ]
+    },
+    "value": true
+  },
+  "warmup_window_estimate": {
+    "deployed_chunk": 4096,
+    "first_chunk_mid_tokens_bypassing_slash": 4028,
+    "n_sink": 4,
+    "note": "tokens 4..(chunk-recent) of the FIRST chunk go _prefill->_absorb_columns, never entering hh_k; config-dependent via recent_window. Matches the Week-12 ~4-5K absolute warm-up window at 64K.",
+    "recent_window_assumed": 64
+  }
+}

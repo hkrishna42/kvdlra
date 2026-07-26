@@ -84,23 +84,53 @@ import torch
 
 N_SINK = 4  # StreamingLLM sink columns dropped before factoring (conventions.md)
 W9_JSON = "results/w9-surprise-sweep-1b.json"
-_SVD_FALLBACKS = [0]  # count of fp32 SVDs that needed an fp64 retry (small blocks)
+_SVD_FALLBACKS = [0]  # count of gesdd SVDs that needed the eigh fallback (small blocks)
+
+
+def _eigh_svd(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Thin SVD via a symmetric eigendecomposition of the smaller Gram (fp64).
+
+    ``torch.linalg.eigh`` handles the repeated/near-repeated singular values that make
+    LAPACK's divide-and-conquer ``gesdd`` fail at tiny block sizes. Returns
+    ``(u, s, vh)`` matching ``svd(full_matrices=False)`` (descending ``s``).
+    """
+    xd = x.double()
+    p, q = xd.shape
+
+    def _eig(gram: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        # Diagonal jitter guarantees SPD + convergence on pathological small blocks.
+        n = gram.shape[0]
+        jit = 1e-12 * (torch.diagonal(gram).mean().abs() + 1e-30)
+        w, v = torch.linalg.eigh(gram + jit * torch.eye(n, dtype=gram.dtype))
+        return torch.flip(w, (0,)), torch.flip(v, (1,))
+
+    if p <= q:
+        w, u = _eig(xd @ xd.mT)  # (p,p)
+        s = torch.sqrt(torch.clamp(w, min=0.0))
+        vh = (u * (1.0 / torch.clamp(s, min=1e-300))).mT @ xd  # (p, q)
+        vh = torch.where((s > 0).unsqueeze(1), vh, torch.zeros_like(vh))
+    else:
+        w, vsel = _eig(xd.mT @ xd)  # (q,q)
+        s = torch.sqrt(torch.clamp(w, min=0.0))
+        vh = vsel.mT  # (q, q)
+        u = xd @ vsel * (1.0 / torch.clamp(s, min=1e-300))  # (p, q)
+        u = torch.where((s > 0).unsqueeze(0), u, torch.zeros_like(u))
+    return u.to(x.dtype), s.to(x.dtype), vh.to(x.dtype)
 
 
 def _safe_svd(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """``torch.linalg.svd`` with an fp64 fallback for ill-conditioned tiny blocks.
+    """``torch.linalg.svd`` (fast gesdd) with a robust jittered-eigh fallback.
 
     The deployed integrator runs fp32; at very small block sizes (the erosion-count
-    stress runs) fp32 gedd can fail to converge (repeated singular values). Retry in
-    fp64 and cast back so the sweep completes; fallbacks are counted and reported.
+    stress runs) fp32 gesdd can fail to converge on repeated singular values. The
+    fallback keeps the sweep alive and its use is counted and reported.
     """
     try:
         u, s, vh = torch.linalg.svd(x, full_matrices=False)
+        return u, s, vh
     except RuntimeError:
         _SVD_FALLBACKS[0] += 1
-        u64, s64, vh64 = torch.linalg.svd(x.double(), full_matrices=False)
-        u, s, vh = u64.to(x.dtype), s64.to(x.dtype), vh64.to(x.dtype)
-    return u, s, vh
+        return _eigh_svd(x)
 
 
 def load_key_matrix(dump_dir: Path, layer: int, n_sink: int) -> torch.Tensor:
@@ -186,18 +216,28 @@ def stream_subspace(
     block_size: int,
     variant: str,
     mu_c: float,
-) -> torch.Tensor:
+) -> tuple[torch.Tensor, bool]:
     """Stream a blocked augmented-BUG basis over ``m``'s columns with ``variant`` at
-    the single truncation site; return the FINAL orthonormal basis ``(n, r)``."""
+    the single truncation site; return ``(final basis (n, r), stable)``.
+
+    ``stable`` is False if the tracked basis went non-finite (e.g. ``tik_ridge``'s
+    per-step energy injection compounds and blows up over many re-truncations); the
+    last finite basis is returned so the caller can flag the cell without crashing.
+    """
     n, t = m.shape
     u: torch.Tensor | None = None
+    u_prev: torch.Tensor | None = None
     b: torch.Tensor | None = None
     coords: torch.Tensor | None = None  # (r, N) carried per-token coords (energy_faithful)
     g_data: torch.Tensor | None = None  # (n, n) raw-data gram (energy_rawdata)
+    stable = True
 
     for start in range(0, t, block_size):
         block = m[:, start : start + block_size]  # (n, b)
         u_aug, b_fac, r_old = _augment(u, b, block)
+        if not torch.isfinite(b_fac).all():
+            stable = False
+            break
         u_loc, sigma, _ = _safe_svd(b_fac)
         keep = min(rank_cap, int(sigma.shape[0]))
 
@@ -219,14 +259,17 @@ def stream_subspace(
             weight = sigma * torch.sqrt(torch.clamp(e, min=0.0))
 
         sel, core = _select_core(sigma, keep, variant, mu_c, weight)
+        u_prev = u
         u = u_aug @ u_loc[:, sel]  # (n, keep)
         b = torch.diag(core)
         if variant == "energy_faithful" and c_cand is not None:
             coords = c_cand[sel, :]
 
+    if not stable and u_prev is not None:
+        u = u_prev  # revert to the last finite basis
     if u is None:  # empty matrix guard
         u = torch.zeros(n, 1, dtype=m.dtype)
-    return u
+    return u, stable
 
 
 def oracle_subspace(m: torch.Tensor, rank_cap: int) -> torch.Tensor:
@@ -262,16 +305,26 @@ def probe_layer(
     block_size: int,
     bin_size: int,
     variants: list[tuple[str, float]],
-) -> dict[str, list[float]]:
-    """Per-bin relative error for every (variant, mu) at one rank on one matrix."""
+) -> tuple[dict[str, list[float]], list[str]]:
+    """Per-bin relative error for every (variant, mu) on one matrix.
+
+    Returns ``(per_bin_errs, unstable_labels)``; an unstable variant's bins are
+    filled with NaN so it is excluded from aggregates but still counted.
+    """
     res: dict[str, list[float]] = {}
+    unstable: list[str] = []
     res["oracle"] = binned_rel_err(m, oracle_subspace(m, rank_cap), bin_size)
+    n_bins = len(res["oracle"])
     for name, mu_c in variants:
         fixed = ("raw", "energy_faithful", "energy_rawdata")
         label = name if name in fixed else f"{name}_mu{mu_c:g}"
-        u = stream_subspace(m, rank_cap, block_size, name, mu_c)
-        res[label] = binned_rel_err(m, u, bin_size)
-    return res
+        u, stable = stream_subspace(m, rank_cap, block_size, name, mu_c)
+        if stable and torch.isfinite(u).all():
+            res[label] = binned_rel_err(m, u, bin_size)
+        else:
+            res[label] = [float("nan")] * n_bins
+            unstable.append(label)
+    return res, unstable
 
 
 def summarize(
@@ -285,9 +338,11 @@ def summarize(
     Deltas are (variant - raw) / raw, averaged across cells, per bin.
     """
     mean_bins: dict[str, list[float]] = {}
+    n_unstable: dict[str, int] = {}
     for lab in labels:
         stack = np.array([c[lab] for c in per_cell if lab in c])  # (cells, n_bins)
-        mean_bins[lab] = stack.mean(axis=0).tolist()
+        n_unstable[lab] = int(np.isnan(stack).any(axis=1).sum())
+        mean_bins[lab] = np.nanmean(stack, axis=0).tolist()
 
     raw = np.array([c["raw"] for c in per_cell])  # (cells, n_bins)
     mod_lo, mod_hi = 2, max(3, n_bins - 2)
@@ -297,22 +352,20 @@ def summarize(
             continue
         var = np.array([c[lab] for c in per_cell])
         rd = (var - raw) / np.clip(raw, 1e-12, None)  # (cells, n_bins) relative delta
-        rd_mean = rd.mean(axis=0)  # per-bin mean relative delta
-        deep = float(rd_mean[0])
-        moderate_max = float(rd_mean[mod_lo:mod_hi].max())
-        moderate_mean = float(rd_mean[mod_lo:mod_hi].mean())
-        recent = float(rd_mean[-2:].mean())
-        deep_improved_frac = float((rd[:, 0] < 0).mean())
+        rd_mean = np.nanmean(rd, axis=0)  # per-bin mean relative delta (nan cells dropped)
+        finite = ~np.isnan(rd[:, 0])
         rel_delta[lab] = {
-            "deep_bin0_rel_delta": deep,
-            "moderate_band_max_rel_delta": moderate_max,
-            "moderate_band_mean_rel_delta": moderate_mean,
-            "recent_band_rel_delta": recent,
-            "deep_improved_frac_cells": deep_improved_frac,
+            "deep_bin0_rel_delta": float(rd_mean[0]),
+            "moderate_band_max_rel_delta": float(np.nanmax(rd_mean[mod_lo:mod_hi])),
+            "moderate_band_mean_rel_delta": float(np.nanmean(rd_mean[mod_lo:mod_hi])),
+            "recent_band_rel_delta": float(np.nanmean(rd_mean[-2:])),
+            "deep_improved_frac_cells": float((rd[finite, 0] < 0).mean()) if finite.any() else 0.0,
+            "n_unstable_cells": n_unstable[lab],
             "per_bin_rel_delta": rd_mean.tolist(),
         }
     return {
         "moderate_band_bins": [mod_lo, mod_hi],
+        "n_unstable_cells": n_unstable,
         "mean_rel_err_by_bin": mean_bins,
         "rel_delta_vs_raw": rel_delta,
     }
@@ -330,12 +383,14 @@ def verdict_for_rank(summary: dict[str, object], deployable: list[str]) -> dict[
     any_deployable_pass = False
     for lab, d in rd.items():
         assert isinstance(d, dict)
-        deep_ok = d["deep_bin0_rel_delta"] < tol_improve
-        mod_ok = d["moderate_band_max_rel_delta"] <= tol_regress
+        stable = int(d.get("n_unstable_cells", 0)) == 0
+        deep_ok = stable and d["deep_bin0_rel_delta"] < tol_improve
+        mod_ok = stable and d["moderate_band_max_rel_delta"] <= tol_regress
         passed = bool(deep_ok and mod_ok)
         out[lab] = {
             "deep_improves": bool(deep_ok),
             "moderate_no_regress": bool(mod_ok),
+            "stable": stable,
             "passed": passed,
             "deployable": lab in deployable,
         }
@@ -419,7 +474,7 @@ def main() -> None:
                 dp = Path(d)
                 for layer in args.layers:
                     m = load_key_matrix(dp, layer, N_SINK)
-                    cell = probe_layer(m, rank_cap, block_size, bin_size, variants)
+                    cell, _unstable = probe_layer(m, rank_cap, block_size, bin_size, variants)
                     if not labels:
                         labels = list(cell.keys())
                     per_cell.append(cell)

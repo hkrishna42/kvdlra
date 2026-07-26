@@ -160,6 +160,43 @@ mk64(){ # Week-12 T3: the 64K prediction test (needs an 80GB card -- 48GB OOMs
   echo "===MVVT64_DONE==="
 }
 
+qbug(){ # Week-12 bugS-ppl Track 1: the Q-BUG GPU confirm. Calibrate the frozen
+  # per-layer key-whitening diagonal on 8B, then bugS-vs-bugSQ ppl @16K/32K for
+  # both operating points (the ppl bars: r32<=8.90, r128<8.00), then the RULER
+  # 32K retrieval-preservation GATE (bugSQ must stay within noise of bugS).
+  # Ordered cheap+high-value first so ppl + the r32 gate land even if the pod
+  # dies during the expensive r128 RULER.
+  echo "===CALIB_BEGIN==="
+  PYTHONPATH=src python -u scripts/w12_calibrate_qkey.py --model "$MODEL" \
+    --n-docs 8 --seq-len 4096 --device cuda --out results/w12-wkey-8b.pt 2>&1
+  echo "===CALIB_DONE==="
+  local WK=results/w12-wkey-8b.pt
+  for cfg in "32 256" "128 1024"; do
+    set -- $cfg; local r="$1" hh="$2"
+    echo "===PPL_bugS_r${r}_BEGIN==="
+    PYTHONPATH=src python -u scripts/w10_frontier.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+      --T 16384 32768 --chunk "$CHUNK" --window 512 --n-samples 2 \
+      --methods bugslash --ranks "$r" --hh-budgets "$hh" --hh-neighbor 1 --no-ruler 2>&1
+    echo "===PPL_bugSQ_r${r}_BEGIN==="
+    PYTHONPATH=src python -u scripts/w10_frontier.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+      --T 16384 32768 --chunk "$CHUNK" --window 512 --n-samples 2 \
+      --methods bugslash --ranks "$r" --hh-budgets "$hh" --hh-neighbor 1 --qwhiten-file "$WK" --no-ruler 2>&1
+    echo "===PPL_r${r}_DONE==="
+  done
+  echo "===RULER_bugSQ_r32_BEGIN==="
+  PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+    --context-lens 32768 --tasks niah_multikey niah_multivalue vt \
+    --methods bugslash --ranks 32 --hh-budgets 256 --hh-neighbor 1 --qwhiten-file "$WK" \
+    --chunk "$CHUNK" --n-trials 2 --seeds 0 1 --out-json "results/w12-qbug-r32.json" 2>&1
+  echo "===RULER_bugSQ_r32_DONE==="
+  echo "===RULER_bugSQ_r128_BEGIN==="
+  PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+    --context-lens 32768 --tasks niah_multikey niah_multivalue vt \
+    --methods bugslash --ranks 128 --hh-budgets 1024 --hh-neighbor 1 --qwhiten-file "$WK" \
+    --chunk "$CHUNK" --n-trials 2 --seeds 0 1 --out-json "results/w12-qbug-r128.json" 2>&1
+  echo "===RULER_bugSQ_r128_DONE==="
+}
+
 case "$MODE" in
   new16)   new NEW16 16384 ;;
   new32)   new NEW32 32768 ;;
@@ -171,5 +208,6 @@ case "$MODE" in
   drop32)  drop DROP32 32768 ;;
   r192_32) r192 R192_32 32768 ;;
   mk64)    mk64 ;;
+  qbug)    qbug ;;
 esac
 echo "===ALL_DONE==="

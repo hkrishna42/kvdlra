@@ -197,6 +197,54 @@ qbug(){ # Week-12 bugS-ppl Track 1: the Q-BUG GPU confirm. Calibrate the frozen
   echo "===RULER_bugSQ_r128_DONE==="
 }
 
+wseed(){ # Week-13 T-B: warm-up-seed retrieval gate. bugS vs bugSseed (--warmup-seed
+  # -> bugSseed-* arms). Ordered cheap-decisive-first so the payoff lands even if the
+  # pod dies: (1) 16K RULER (the warm-up window is the biggest fraction of context
+  # there -- does early-needle mk/vt rise?), r32 then r128, all 4 tasks; (2) ppl
+  # 16K/32K both operating points (no-regression check); (3) 32K RULER r32 hard tasks
+  # (wins-regression). r128 @32K RULER deferred (a follow-up if 16K funds it).
+  echo "===RULER16_BEGIN==="
+  for cfg in "32 256" "128 1024"; do
+    set -- $cfg; local r="$1" hh="$2"
+    echo "===RULER16_bugS_r${r}_BEGIN==="
+    PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+      --context-lens 16384 --tasks niah_single niah_multikey niah_multivalue vt \
+      --methods bugslash --ranks "$r" --hh-budgets "$hh" --hh-neighbor 1 \
+      --chunk "$CHUNK" --n-trials 2 --seeds 0 1 --out-json "results/w13-wseed-bugS-r${r}-16k.json" 2>&1
+    echo "===RULER16_bugSseed_r${r}_BEGIN==="
+    PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+      --context-lens 16384 --tasks niah_single niah_multikey niah_multivalue vt \
+      --methods bugslash --ranks "$r" --hh-budgets "$hh" --hh-neighbor 1 --warmup-seed \
+      --chunk "$CHUNK" --n-trials 2 --seeds 0 1 --out-json "results/w13-wseed-bugSseed-r${r}-16k.json" 2>&1
+    echo "===RULER16_r${r}_DONE==="
+  done
+  echo "===PPL_BEGIN==="
+  for cfg in "32 256" "128 1024"; do
+    set -- $cfg; local r="$1" hh="$2"
+    echo "===PPL_bugS_r${r}_BEGIN==="
+    PYTHONPATH=src python -u scripts/w10_frontier.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+      --T 16384 32768 --chunk "$CHUNK" --window 512 --n-samples 2 \
+      --methods bugslash --ranks "$r" --hh-budgets "$hh" --hh-neighbor 1 --no-ruler 2>&1
+    echo "===PPL_bugSseed_r${r}_BEGIN==="
+    PYTHONPATH=src python -u scripts/w10_frontier.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+      --T 16384 32768 --chunk "$CHUNK" --window 512 --n-samples 2 \
+      --methods bugslash --ranks "$r" --hh-budgets "$hh" --hh-neighbor 1 --warmup-seed --no-ruler 2>&1
+    echo "===PPL_r${r}_DONE==="
+  done
+  echo "===RULER32_BEGIN==="
+  echo "===RULER32_bugS_r32_BEGIN==="
+  PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+    --context-lens 32768 --tasks niah_multikey niah_multivalue vt \
+    --methods bugslash --ranks 32 --hh-budgets 256 --hh-neighbor 1 \
+    --chunk "$CHUNK" --n-trials 2 --seeds 0 1 --out-json "results/w13-wseed-bugS-r32-32k.json" 2>&1
+  echo "===RULER32_bugSseed_r32_BEGIN==="
+  PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+    --context-lens 32768 --tasks niah_multikey niah_multivalue vt \
+    --methods bugslash --ranks 32 --hh-budgets 256 --hh-neighbor 1 --warmup-seed \
+    --chunk "$CHUNK" --n-trials 2 --seeds 0 1 --out-json "results/w13-wseed-bugSseed-r32-32k.json" 2>&1
+  echo "===RULER32_r32_DONE==="
+}
+
 case "$MODE" in
   new16)   new NEW16 16384 ;;
   new32)   new NEW32 32768 ;;
@@ -209,5 +257,6 @@ case "$MODE" in
   r192_32) r192 R192_32 32768 ;;
   mk64)    mk64 ;;
   qbug)    qbug ;;
+  wseed)   wseed ;;
 esac
 echo "===ALL_DONE==="

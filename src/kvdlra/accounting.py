@@ -120,6 +120,7 @@ def bug_footprint(
     u_present: bool = True,
     quant_count: int = 0,
     quant_bits: int | None = None,
+    w_key: bool = False,
 ) -> Footprint:
     """Per-layer footprint of one ``BugStreamingCache`` layer state, mirroring
     :meth:`BugStreamingLayer.stored_state_numel` to the float.
@@ -158,6 +159,8 @@ def bug_footprint(
     if quant_count and quant_bits is not None:
         code_bits = 2 * rank * quant_count * quant_bits  # K + V codes
         aux += 2 * quant_count  # one fp32 norm per K,V quantised column
+    if w_key:
+        aux += n  # Week-12 Q-BUG: frozen per-feature key-whitening diagonal (fp32)
     return Footprint(verbatim_elems=verbatim, quant_code_bits=code_bits, aux_words=aux)
 
 

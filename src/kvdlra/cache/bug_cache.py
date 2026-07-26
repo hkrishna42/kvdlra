@@ -330,6 +330,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         hh_select: str = "attn",
         hh_neighbor: int = 0,
         hh_retain: bool = True,
+        w_key: Tensor | None = None,
         merge: bool = False,
         coord_codebook: ProductQuantizer | None = None,
         anchor_rank: int = 0,
@@ -410,6 +411,23 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.hh_select = hh_select
         self.hh_neighbor = hh_neighbor
         self.hh_retain = hh_retain
+        # Week-12 Q-BUG: a frozen per-feature query-metric whitening L for the
+        # low-rank KEY gist. BUG minimizes ||M - M_hat||_F on keys, but attention
+        # weights error by the query directions; whitening the tracked keys by
+        # ``w_key`` (= sqrt of the calibrated per-feature query energy) reallocates
+        # the rank-r fidelity toward what attention reads (probe: -30..44% attn
+        # error at matched rank). Diagonal only -- a length-``n_features`` vector
+        # in the cache's (head*head_dim + dim) layout. The exact tier / sinks /
+        # recent ring are verbatim and untouched, so retrieval is preserved.
+        self.w_key: Tensor | None = None
+        self._w_key_col: Tensor | None = None
+        self._w_key_inv_col: Tensor | None = None
+        if w_key is not None:
+            if w_key.ndim != 1:
+                raise ValueError(f"w_key must be 1-D (per-feature diagonal), got {w_key.ndim}-D")
+            if not bool(torch.all(w_key > 0)):
+                raise ValueError("w_key must be strictly positive (it is a sqrt of query energy)")
+            self.w_key = w_key.detach().to(torch.float32)
         self.merge = merge
         # rank=0 / coord_budget=0 => no low-rank middle => StreamingLLM baseline.
         self.lowrank_enabled = rank >= 1 and coord_budget >= 1
@@ -417,6 +435,10 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             raise ValueError("quant_budget > 0 requires an enabled low-rank middle")
         if hh_budget > 0 and not self.lowrank_enabled:
             raise ValueError("hh_budget > 0 requires an enabled low-rank middle")
+        if self.w_key is not None and not self.lowrank_enabled:
+            raise ValueError("w_key (query-metric whitening) requires an enabled low-rank middle")
+        if self.w_key is not None and coord_codebook is not None:
+            raise ValueError("w_key and the CodeBUG frozen anchor are mutually exclusive")
         if merge and not self.lowrank_enabled:
             raise ValueError("merge requires an enabled low-rank middle")
         if merge and quant_budget > 0:
@@ -568,6 +590,15 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.num_heads = int(key_states.shape[1])
         self.head_dim = int(key_states.shape[3])
         self.n_features = self.num_heads * self.head_dim
+        if self.w_key is not None:
+            if tuple(self.w_key.shape) != (self.n_features,):
+                raise ValueError(
+                    f"w_key shape {tuple(self.w_key.shape)} != (n_features,) = ({self.n_features},)"
+                )
+            # Precompute the (n, 1) whitening / un-whitening columns (fp32).
+            col = self.w_key.to(self.device).reshape(self.n_features, 1)
+            self._w_key_col = col
+            self._w_key_inv_col = 1.0 / col
         self.is_initialized = True
 
     # ----------------------------------------------------------- conversions
@@ -576,6 +607,21 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         """``(1, H, T, D)`` -> feature-by-token ``(H*D, T)``."""
         h, t, d = x.shape[1], x.shape[2], x.shape[3]
         return x[0].permute(0, 2, 1).reshape(h * d, t)
+
+    def _whiten_key(self, mat: Tensor) -> Tensor:
+        """Apply the query-metric whitening ``L^T`` to a pre-RoPE key block
+        ``(n, m)`` (identity when ``w_key`` is unset). Diagonal ``L`` => a
+        per-feature rescale; the tracked basis then summarizes whitened keys."""
+        if self._w_key_col is None:
+            return mat
+        return mat * self._w_key_col.to(mat.dtype)
+
+    def _unwhiten_key(self, mat: Tensor) -> Tensor:
+        """Invert :meth:`_whiten_key` (``L^{-T}``) on a reconstructed pre-RoPE key
+        gist ``(n, m)`` before RoPE is re-applied for attention."""
+        if self._w_key_inv_col is None:
+            return mat
+        return mat * self._w_key_inv_col.to(mat.dtype)
 
     def _to_hf(self, mat: Tensor) -> Tensor:
         """Feature-by-token ``(H*D, T)`` -> ``(1, H, T, D)``."""
@@ -735,9 +781,12 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         keep_n = min(self.hh_budget, n_cand)
         cand_k_pre: Tensor | None = None
         if self.hh_select == "surprise":
-            # Score the whole pool by its CURRENT out-of-subspace residual.
+            # Score the whole pool by its CURRENT out-of-subspace residual. Under
+            # Q-BUG the basis is whitened, so the surprise must be measured in the
+            # same metric (whiten the pool for scoring only); the raw cand_k_pre is
+            # kept for the demote path, which re-whitens inside _absorb_columns.
             cand_k_pre = self._mat_rope_at(cand_k, cand_pos, inverse=True)
-            sel = self._surprise_scores(cand_k_pre)
+            sel = self._surprise_scores(self._whiten_key(cand_k_pre))
             if self.hh_neighbor > 0:  # span-boost so needle neighbours are kept too
                 sel = self._span_boost(sel, cand_pos, self.hh_neighbor)
         else:
@@ -769,6 +818,11 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         m = int(block_k.shape[1])
         if m == 0:
             return
+        # Week-12 Q-BUG: track the query-WHITENED key. The basis, coordinates and
+        # (lowrank-)surprise then all live in the whitened metric; the read path
+        # un-whitens before RoPE. Identity when w_key is unset (bit-for-bit BUG).
+        # V is never whitened (Track 1 is a key-side objective change).
+        block_k = self._whiten_key(block_k)
         # Week-9 D3: low-rank surprise = out-of-subspace fraction of the incoming
         # K columns, measured against the basis built from *strictly older*
         # history (pre-step u_k -- the true novelty signal). By Pythagoras (u_k
@@ -1470,6 +1524,9 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             parts_v.append(self.u_v @ self.c_v)
         k_pre_hat = torch.cat(parts_k, dim=1) if len(parts_k) > 1 else parts_k[0]
         v_hat = torch.cat(parts_v, dim=1) if len(parts_v) > 1 else parts_v[0]
+        # Q-BUG: the whole low-rank gist (both tiers) is reconstructed in the
+        # whitened metric; un-whiten back to the true pre-RoPE keys before RoPE.
+        k_pre_hat = self._unwhiten_key(k_pre_hat)
         if self.track_positions:
             k_hat = self._mat_rope_at(k_pre_hat, self._mid_positions(), inverse=False)
         else:
@@ -1573,6 +1630,11 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             for surp in (self.mid_surprise, self.q_surprise):
                 if surp is not None:
                     total += int(surp.numel())
+        # Week-12 Q-BUG: the frozen per-feature key-whitening diagonal is stored
+        # per-layer state (n floats, fp32), context-length-independent. Counted
+        # honestly like everything else; ~1.6% of the r32 basis at n=1024.
+        if self.w_key is not None:
+            total += int(self.w_key.numel())
         return int(total)
 
     def workspace_numel(self) -> int:
@@ -1642,6 +1704,7 @@ class BugStreamingCache(Cache):
         hh_select: str = "attn",
         hh_neighbor: int = 0,
         hh_retain: bool = True,
+        w_key: list[Tensor] | Tensor | None = None,
         merge: bool = False,
         coord_codebook: ProductQuantizer | None = None,
         anchor_rank: int = 0,
@@ -1661,6 +1724,16 @@ class BugStreamingCache(Cache):
         self._quant_bank = _QuantBank(quant_bits, seed=quant_seed) if quant_bits else None
         self._codebook = coord_codebook  # shared PQ side info, counted once
         n_layers = int(model.config.num_hidden_layers)
+        # Q-BUG whitening: one frozen per-feature diagonal per layer. Accept a
+        # per-layer list, a single (n,) vector broadcast to all layers, or None.
+        if w_key is None:
+            w_key_per_layer: list[Tensor | None] = [None] * n_layers
+        elif isinstance(w_key, list):
+            if len(w_key) != n_layers:
+                raise ValueError(f"w_key list has {len(w_key)} entries != {n_layers} layers")
+            w_key_per_layer = list(w_key)
+        else:
+            w_key_per_layer = [w_key] * n_layers
         layers: list[CacheLayerMixin | LinearAttentionCacheLayerMixin] = [
             BugStreamingLayer(
                 rope=rope,
@@ -1681,13 +1754,14 @@ class BugStreamingCache(Cache):
                 hh_select=hh_select,
                 hh_neighbor=hh_neighbor,
                 hh_retain=hh_retain,
+                w_key=w_key_per_layer[layer_idx],
                 merge=merge,
                 coord_codebook=coord_codebook,
                 anchor_rank=anchor_rank,
                 anchor_seal_absorbs=anchor_seal_absorbs,
                 code_budget=code_budget,
             )
-            for _ in range(n_layers)
+            for layer_idx in range(n_layers)
         ]
         super().__init__(layers=layers)
 

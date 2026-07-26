@@ -1,0 +1,8 @@
+  bugS-r32-h256  [T=16384] ppl=4.477 tok_eq/layer=842.7 ratio=0.052
+  bugS-r32-h256  [T=32768] ppl=9.164 tok_eq/layer=1370.7 ratio=0.043
+  bugSQ-r32-h256 [T=16384] ppl=4.425 tok_eq/layer=843.2 ratio=0.052
+  bugSQ-r32-h256 [T=32768] ppl=9.092 tok_eq/layer=1371.2 ratio=0.043
+  bugS-r128-h1024 [T=16384] ppl=4.156 tok_eq/layer=3119.1 ratio=0.191
+  bugS-r128-h1024 [T=32768] ppl=8.117 tok_eq/layer=5183.1 ratio=0.159
+  bugSQ-r128-h1024 [T=16384] ppl=4.124 tok_eq/layer=3119.6 ratio=0.191
+  bugSQ-r128-h1024 [T=32768] ppl=8.085 tok_eq/layer=5183.6 ratio=0.159

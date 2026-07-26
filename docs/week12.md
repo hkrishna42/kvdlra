@@ -122,3 +122,13 @@ modes and were **destroyed**. No OOM at 64K on the 80GB host.
   at this n, or at other ranks, is not excluded.
 - The capture↔win link is trial-matched but aggregate-scored — suggestive, not airtight.
 - r192 needle cells unmeasured (family saturates needle at every measured arm).
+
+## Track 1 (Q-BUG) — 8B GPU confirm: a bounded ppl gain (see `results/w12-qbug-summary.md`)
+
+Query-metric key whitening (`w_key`) gives a **real but small** ppl gain and **misses both
+aggressive bars**: `bugSQ-r32` 9.164 -> **9.092** (bar <=8.90) and `bugSQ-r128` 8.117 ->
+**8.085** (bar <8.00), i.e. 0.4-1.2% at 32K. Retrieval preserved within +/-1 trial of the
+pooled bugS baseline (multi-value exact; multi-key softened ~1 trial). `w_key` ships
+**default-off**. Key lesson: the CPU attention-error probe over-predicted the end-to-end ppl
+gain ~30-40x (a documented proxy-vs-downstream gap). Full numbers + caveats:
+`results/w12-qbug-summary.md`, data `results/w12-qbug-{ppl,ruler}-lines.txt`.

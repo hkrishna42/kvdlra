@@ -418,6 +418,12 @@ def main() -> None:
         help="Week-12 H1 ablation: bugslash arms select-and-DISCARD (hh_retain=False; "
         "pool invisible to attention) -> bugSdrop-* arm names",
     )
+    parser.add_argument(
+        "--qwhiten-file",
+        default=None,
+        help="Week-12 Q-BUG: calibrated per-layer key-whitening diagonal "
+        "(scripts/w12_calibrate_qkey.py) -> bugSQ-* arms (query-metric gist)",
+    )
     parser.add_argument("--chunk", type=int, default=0, help="chunked-prefill block size")
     parser.add_argument("--n-trials", type=int, default=4)
     parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1])

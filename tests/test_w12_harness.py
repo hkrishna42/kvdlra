@@ -66,6 +66,30 @@ def test_hh_discard_builds_bugsdrop_arms() -> None:
     assert layer.hh_budget == 4 and layer.hh_select == "surprise"
 
 
+def test_qwhiten_builds_bugsq_arms(tmp_path: object) -> None:
+    import pathlib
+
+    model = _tiny_model()
+    n_feat = 2 * 16  # num_kv_heads * head_dim
+    wfile = pathlib.Path(str(tmp_path)) / "wkey.pt"
+    torch.save({"w_key": torch.rand(2, n_feat) + 0.5}, wfile)  # (n_layers, n_features)
+    arms = w10_frontier.build_arms(_args(qwhiten_file=str(wfile)), model, t=64)
+    assert [a["name"] for a in arms] == ["bugSQ-r8-h4"]
+    layer = _first_layer(arms[0]["make"]())
+    assert layer.w_key is not None and tuple(layer.w_key.shape) == (n_feat,)
+    assert layer.hh_retain is True and layer.hh_select == "surprise"
+
+
+def test_qwhiten_not_combined_with_discard(tmp_path: object) -> None:
+    import pathlib
+
+    model = _tiny_model()
+    wfile = pathlib.Path(str(tmp_path)) / "wkey.pt"
+    torch.save({"w_key": torch.rand(2, 32) + 0.5}, wfile)
+    with pytest.raises(ValueError, match="not combined with --hh-discard"):
+        w10_frontier.build_arms(_args(qwhiten_file=str(wfile), hh_discard=True), model, t=64)
+
+
 def test_default_stays_bugs_with_retain() -> None:
     model = _tiny_model()
     # No hh_discard attribute at all (older callers): getattr-default keeps bugS.

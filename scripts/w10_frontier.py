@@ -137,6 +137,18 @@ def score_press(
 # ------------------------------------------------------------------- the arms
 
 
+def _load_wkey(path: str | None) -> list[Any] | None:
+    """Load a calibrated Q-BUG whitening file -> per-layer list of ``(n,)`` vectors.
+
+    The file (``scripts/w12_calibrate_qkey.py``) holds ``{"w_key": (L, n)}``; the
+    cache takes a per-layer list, so unbind the layer axis. ``None`` when unset."""
+    if not path:
+        return None
+    blob = torch.load(path, weights_only=False)
+    w = blob["w_key"] if isinstance(blob, dict) else blob
+    return [row.contiguous() for row in w]
+
+
 def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, Any]]:
     """Each arm: name, kind ("bug"|"morph"|"press"|"full"), and a zero-arg factory
     for a fresh cache/press (stateful -> rebuilt per sample), for context length ``t``."""
@@ -193,7 +205,14 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
         # name prefix is deliberately NOT a superstring/substring of "bugS-"
         # so ad-hoc greps over mixed logs cannot pool the two arm families.
         retain = not getattr(args, "hh_discard", False)
+        # Week-12 Q-BUG: --qwhiten-file loads a calibrated per-layer key-whitening
+        # diagonal (scripts/w12_calibrate_qkey.py) -> arm name gains a "Q".
+        w_key = _load_wkey(getattr(args, "qwhiten_file", None))
         prefix = "bugS" if retain else "bugSdrop"
+        if w_key is not None:
+            if not retain:
+                raise ValueError("--qwhiten-file (Q-BUG) is not combined with --hh-discard")
+            prefix = "bugSQ"
         for r in args.ranks:
             for hh in args.hh_budgets:
                 arms.append(
@@ -217,6 +236,7 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                                 hh_select="surprise",
                                 hh_neighbor=args.hh_neighbor,
                                 hh_retain=retain,
+                                w_key=w_key,
                             )
                         ),
                     }
@@ -375,6 +395,7 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
             hh_count=layer._hh_len(),
             hh_select=arm.get("hh_select", "attn"),
             u_present=layer.u_k is not None,
+            w_key=layer.w_key is not None,  # Q-BUG: count the frozen whitening diagonal
         )
     if kind == "morph":
         assert isinstance(cache, MorphKVCache)
@@ -602,6 +623,12 @@ def main() -> None:
         action="store_true",
         help="Week-12 H1 ablation: bugslash arms select-and-DISCARD (hh_retain=False; "
         "pool invisible to attention) -> bugSdrop-* arm names",
+    )
+    parser.add_argument(
+        "--qwhiten-file",
+        default=None,
+        help="Week-12 Q-BUG: calibrated per-layer key-whitening diagonal "
+        "(scripts/w12_calibrate_qkey.py) -> bugSQ-* arms (query-metric gist)",
     )
     parser.add_argument(
         "--chunk", type=int, default=0, help="chunked-prefill block size (0=single-shot)"

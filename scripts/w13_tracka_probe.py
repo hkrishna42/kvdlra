@@ -56,13 +56,24 @@ docs/notes/conventions.md), reconstruct EVERY column from the FINAL rank-r basis
 ``blocked_bug_project``) and report the relative Frobenius reconstruction error
 BINNED BY TOKEN POSITION with ``bin_size`` loaded from
 results/w9-surprise-sweep-1b.json. Bin 0 = earliest-entering = the deep-horizon
-(most re-truncated) bin.
+(most re-truncated) bin. (NB: w9's ``ppl_bins`` index query/generation positions,
+a DIFFERENT axis than these key/context bins.)
+
+EROSION-COUNT SWEEP. The mechanism is about the *number* of re-truncations an old
+column survives, not T alone. The dumps are len4096, so block 128 gives only 32
+re-truncations; the deployed 32K regime is ~256 (32K/128). We therefore SWEEP the
+block size at the primary rank to emulate the truncation COUNT on the 4096 data:
+block 128->32, 32->128, 16->256 (== 32K@block128), 8->512 (== 64K). This isolates
+"does re-truncation count alone erode the deep horizon"; it does NOT reproduce the
+DATA volume/diversity/RoPE-range of true 32K (no 32K dumps) -- a stated gap.
 
 PROXY CAVEAT. The number is *pre-RoPE key reconstruction error*, NOT perplexity.
 Week-12 saw a CPU attention-output proxy over-predict end-to-end ppl ~30-40x; the
 error->ppl mapping here is UNCERTAIN and the ">0.05 ppl" target is only nominal.
 A bar met here is a CEILING, not a promise. Reconstruction is also on pre-RoPE
-keys; attention reads post-RoPE, a second proxy gap.
+keys; attention reads post-RoPE, a second proxy gap. Because the finding is a
+NEGATIVE (no error improvement is available), the ceiling argument runs in reverse:
+a fix cannot help downstream ppl on what is not broken in reconstruction.
 
 Usage::
 
@@ -387,6 +398,8 @@ def verdict_for_rank(summary: dict[str, object], deployable: list[str]) -> dict[
     any_deployable_pass = False
     for lab, d in rd.items():
         assert isinstance(d, dict)
+        base = lab.split("_mu")[0]  # strip the mu suffix ("tik_a_mu0.25" -> "tik_a")
+        is_deployable = base in deployable
         stable = int(d.get("n_unstable_cells", 0)) == 0
         deep_ok = stable and d["deep_bin0_rel_delta"] < tol_improve
         mod_ok = stable and d["moderate_band_max_rel_delta"] <= tol_regress
@@ -396,9 +409,9 @@ def verdict_for_rank(summary: dict[str, object], deployable: list[str]) -> dict[
             "moderate_no_regress": bool(mod_ok),
             "stable": stable,
             "passed": passed,
-            "deployable": lab in deployable,
+            "deployable": is_deployable,
         }
-        if passed and lab in deployable:
+        if passed and is_deployable:
             any_deployable_pass = True
     out["any_deployable_pass"] = any_deployable_pass
     return out

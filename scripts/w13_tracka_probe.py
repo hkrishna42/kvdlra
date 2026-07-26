@@ -76,6 +76,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import warnings
 from pathlib import Path
 
 import _paths  # noqa: F401  # bootstrap kvdlra import path (mirrors repo scripts)
@@ -337,6 +338,9 @@ def summarize(
     Deep bin = 0; recent band = last 2 bins; moderate band = bins [2, n_bins-2).
     Deltas are (variant - raw) / raw, averaged across cells, per bin.
     """
+    # Fully-unstable variants yield all-NaN rows; nanmean/nanmax warn benignly on them.
+    warnings.filterwarnings("ignore", message="Mean of empty slice")
+    warnings.filterwarnings("ignore", message="All-NaN slice encountered")
     mean_bins: dict[str, list[float]] = {}
     n_unstable: dict[str, int] = {}
     for lab in labels:
@@ -465,9 +469,15 @@ def main() -> None:
 
     ranks_out = out["ranks"]
     assert isinstance(ranks_out, dict)
+    out["block_policy"] = (
+        "primary rank (ranks[0]) runs the full erosion-count block sweep; larger ranks "
+        "run only the deployed block (max block) to bound cost"
+    )
     for rank_cap in args.ranks:
         blocks_out: dict[str, object] = {}
-        for block_size in args.block_list:
+        # Erosion-count sweep at the primary rank; deployed block only for larger ranks.
+        blocks_for_rank = args.block_list if rank_cap == args.ranks[0] else [max(args.block_list)]
+        for block_size in blocks_for_rank:
             per_cell: list[dict[str, list[float]]] = []
             labels: list[str] = []
             for d in dirs:
@@ -506,6 +516,12 @@ def main() -> None:
             )
             for lab, dd in rd.items():
                 assert isinstance(dd, dict)
+                if dd.get("n_unstable_cells", 0):
+                    print(
+                        f"  {lab:20s} UNSTABLE ({dd['n_unstable_cells']}/{len(per_cell)} cells "
+                        "blew up over re-truncations)"
+                    )
+                    continue
                 print(
                     f"  {lab:20s} deep(bin0) {dd['deep_bin0_rel_delta']:+.4f}  "
                     f"mod_max {dd['moderate_band_max_rel_delta']:+.4f}  "

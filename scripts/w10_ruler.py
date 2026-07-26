@@ -424,6 +424,12 @@ def main() -> None:
         help="Week-12 Q-BUG: calibrated per-layer key-whitening diagonal "
         "(scripts/w12_calibrate_qkey.py) -> bugSQ-* arms (query-metric gist)",
     )
+    parser.add_argument(
+        "--warmup-seed",
+        action="store_true",
+        help="Week-13 T-B: seed the exact tier from the first ingest chunk's outliers "
+        "-> bugSseed-* arms (fixes the warm-up window; requires --chunk>0)",
+    )
     parser.add_argument("--chunk", type=int, default=0, help="chunked-prefill block size")
     parser.add_argument("--n-trials", type=int, default=4)
     parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1])

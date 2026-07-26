@@ -229,6 +229,198 @@ def test_single_shot_prefill_leaves_hh_empty(tiny_model: LlamaForCausalLM) -> No
     assert layer._hh_len() == 0
 
 
+# ------------------------------------------- Week-13 T-B: warm-up seed (chunked)
+# The first ingest chunk routes through _prefill and (before this fix) could never
+# seed the exact tier -- an early-planted needle was lost to the warm-up window. The
+# fix routes the first chunk's middle through _absorb_block_slash in sub-blocks
+# (prefill_block_size), so each sub-block is scored for surprise against the basis of
+# STRICTLY OLDER sub-blocks (needle-free) -- exactly the steady-state mechanism that
+# already captures needles at 32K. A needle past the first sub-block is caught even
+# at higher rank, unlike the rejected "warm-then-select" variant which scored against
+# a basis that had already absorbed the needle (CPU-verified failure at rank>=8 /
+# diverse backgrounds). Needles are placed past sub-block 1 (depth > n_sink +
+# prefill_block_size) so scoring is against a warm basis. The seed fires ONLY on
+# chunked ingest; single-shot stays empty (test above).
+
+
+def test_first_chunk_needle_seeded_into_hh(tiny_model: LlamaForCausalLM) -> None:
+    """A needle in the FIRST ingest chunk, past the first sub-block, lands verbatim
+    in the exact ``hh`` tier via the warm-up seed (single-chunk ingest isolates it)."""
+    depth, t = 40, 64  # depth > n_sink(4) + prefill_block_size(8): scored warm
+    ids = _needle_prompt(bg_id=5, needle_id=200, t=t, depth=depth)
+    bug = BugStreamingCache(
+        tiny_model,
+        rank=4,
+        coord_budget=128,
+        recent_window=8,
+        absorb_block=4,
+        prefill_block_size=8,  # multiple sub-blocks -> basis warms before the needle
+        retention="lowrank_surprise",
+        hh_budget=1,
+        hh_select="surprise",
+        seed_hh_warmup=True,
+    )
+    with torch.no_grad():  # chunk == t -> one chunk, ingested (not single-shot)
+        _chunked_prefill(tiny_model, bug, ids, chunk=t, attach=False)
+    layer = _bug_layer(bug)
+    assert layer.hh_pos is not None and depth in layer.hh_pos.tolist()  # seeded verbatim
+    mid = layer.mid_pos.tolist() if layer.mid_pos is not None else []
+    assert depth not in mid  # disjoint: not double-counted in the low-rank tail
+
+
+def test_seed_captures_needle_at_rank8(tiny_model: LlamaForCausalLM) -> None:
+    """Finding-7 guard: SLASH-routing scores against a needle-free older basis, so it
+    captures the needle at rank 8 -- the regime where the rejected warm-then-select
+    variant failed (it had already absorbed the needle, collapsing its surprise)."""
+    depth, t = 40, 64
+    ids = _needle_prompt(bg_id=5, needle_id=200, t=t, depth=depth)
+    bug = BugStreamingCache(
+        tiny_model,
+        rank=8,
+        coord_budget=128,
+        recent_window=8,
+        absorb_block=4,
+        prefill_block_size=8,
+        retention="lowrank_surprise",
+        hh_budget=1,
+        hh_select="surprise",
+        seed_hh_warmup=True,
+    )
+    with torch.no_grad():
+        _chunked_prefill(tiny_model, bug, ids, chunk=t, attach=False)
+    layer = _bug_layer(bug)
+    assert layer.hh_pos is not None and depth in layer.hh_pos.tolist()
+
+
+def test_warmup_seed_default_off_leaves_first_chunk_unseeded(tiny_model: LlamaForCausalLM) -> None:
+    """Default off (the A/B baseline): the SAME single-chunk ingest without
+    ``seed_hh_warmup`` leaves the first-chunk needle in the low-rank tail, not the
+    exact tier -- so ``bugS`` vs ``bugSseed`` is a clean matched comparison."""
+    depth, t = 40, 64
+    ids = _needle_prompt(bg_id=5, needle_id=200, t=t, depth=depth)
+    bug = BugStreamingCache(
+        tiny_model,
+        rank=4,
+        coord_budget=128,
+        recent_window=8,
+        absorb_block=4,
+        prefill_block_size=8,
+        retention="lowrank_surprise",
+        hh_budget=1,
+        hh_select="surprise",
+    )  # seed_hh_warmup defaults False
+    with torch.no_grad():
+        _chunked_prefill(tiny_model, bug, ids, chunk=t, attach=False)
+    layer = _bug_layer(bug)
+    assert layer._hh_len() == 0  # no later chunk -> steady-state SLASH never ran
+    assert layer.mid_pos is not None and depth in layer.mid_pos.tolist()  # only a coordinate
+
+
+def test_first_chunk_needle_survives_later_chunks(tiny_model: LlamaForCausalLM) -> None:
+    """End-to-end warm-up fix: a first-chunk needle seeded at prefill is still
+    verbatim in ``hh`` after later chunks ingest (steady-state SLASH re-scores it as
+    persistently surprising and never demotes it)."""
+    depth, t = 20, 96  # needle in the first (chunk=32) block, past sub-block 1
+    ids = _needle_prompt(bg_id=5, needle_id=200, t=t, depth=depth)
+    bug = BugStreamingCache(
+        tiny_model,
+        rank=4,
+        coord_budget=128,
+        recent_window=8,
+        absorb_block=4,
+        prefill_block_size=8,
+        retention="lowrank_surprise",
+        hh_budget=1,
+        hh_select="surprise",
+        seed_hh_warmup=True,
+    )
+    with torch.no_grad():
+        _chunked_prefill(tiny_model, bug, ids, chunk=32, attach=False)
+    layer = _bug_layer(bug)
+    assert layer.hh_pos is not None and depth in layer.hh_pos.tolist()
+    mid = layer.mid_pos.tolist() if layer.mid_pos is not None else []
+    assert depth not in mid
+
+
+def test_seed_preserves_disjointness_and_caps(tiny_model: LlamaForCausalLM) -> None:
+    """The seed keeps ``hh`` and the low-rank tail disjoint and both within budget,
+    even when in-prefill eviction (tight ``coord_budget``) already dropped columns."""
+    depth = 40
+    ids = _needle_prompt(bg_id=5, needle_id=200, t=80, depth=depth)
+    bug = BugStreamingCache(
+        tiny_model,
+        rank=4,
+        coord_budget=16,  # force in-prefill eviction of the tail
+        recent_window=8,
+        absorb_block=4,
+        prefill_block_size=8,
+        retention="lowrank_surprise",
+        hh_budget=3,
+        hh_select="surprise",
+        seed_hh_warmup=True,
+    )
+    with torch.no_grad():
+        _chunked_prefill(tiny_model, bug, ids, chunk=80, attach=False)
+    layer = _bug_layer(bug)
+    assert layer.hh_pos is not None
+    hh = set(layer.hh_pos.tolist())
+    mid = set(layer.mid_pos.tolist()) if layer.mid_pos is not None else set()
+    assert hh.isdisjoint(mid)  # SLASH invariant preserved
+    assert len(hh) <= 3  # hh_budget
+    assert layer._f_len() <= 16  # coord_budget
+    assert depth in hh  # the needle is a top-surprise promotion
+
+
+def test_seed_warmup_rejects_coded_and_merge(tiny_model: LlamaForCausalLM) -> None:
+    """Finding-3 guard: the warm-up seed reasons over the fp32 tail only, so it is
+    rejected with a coded/quant tier or merge (build_arms never emits these combos;
+    the guard blocks a silent future miswire that could double-count a token)."""
+    for kw in ({"merge": True}, {"quant_bits": 4, "quant_budget": 16}):
+        with pytest.raises(ValueError, match="fp32 low-rank tail only"):
+            BugStreamingCache(
+                tiny_model,
+                rank=4,
+                coord_budget=64,
+                recent_window=8,
+                absorb_block=4,
+                retention="lowrank_surprise",
+                hh_budget=2,
+                hh_select="surprise",
+                seed_hh_warmup=True,
+                **kw,
+            )
+
+
+def test_seed_lossless_at_full_rank(tiny_model: LlamaForCausalLM) -> None:
+    """Warm-up seed preserves losslessness: full rank + full budget + seed on still
+    reconstructs the exact past (routing the first chunk through SLASH moves outliers
+    to verbatim ``hh``; the full-rank tail stays exact)."""
+    g = torch.Generator().manual_seed(1)
+    ids = torch.randint(0, 256, (1, 64), generator=g)
+    win = torch.randint(0, 256, (1, 16), generator=torch.Generator().manual_seed(9))
+    ref = DynamicCache()
+    with torch.no_grad():
+        tiny_model(ids, past_key_values=ref, use_cache=True)
+        ref_out = tiny_model(win, past_key_values=ref, use_cache=True, position_ids=_pos(64, 16))
+    bug = BugStreamingCache(
+        tiny_model,
+        rank=N_FEATURES,
+        coord_budget=4096,
+        recent_window=8,
+        absorb_block=4,
+        prefill_block_size=8,
+        retention="lowrank_surprise",
+        hh_budget=8,
+        hh_select="surprise",
+        seed_hh_warmup=True,
+    )
+    with torch.no_grad():
+        _chunked_prefill(tiny_model, bug, ids, chunk=16, attach=False)
+        with bug.frozen_scoring():
+            out = tiny_model(win, past_key_values=bug, use_cache=True, position_ids=_pos(64, 16))
+    assert torch.allclose(out.logits, cast(torch.Tensor, ref_out.logits), atol=2e-3, rtol=2e-3)
+
+
 # --------------------------------------------------------- span expansion
 
 

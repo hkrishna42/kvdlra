@@ -330,6 +330,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         hh_select: str = "attn",
         hh_neighbor: int = 0,
         hh_retain: bool = True,
+        seed_hh_warmup: bool = False,
         w_key: Tensor | None = None,
         merge: bool = False,
         coord_codebook: ProductQuantizer | None = None,
@@ -411,6 +412,10 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.hh_select = hh_select
         self.hh_neighbor = hh_neighbor
         self.hh_retain = hh_retain
+        # Week-13 T-B: seed the exact tier from the first ingest chunk's outliers
+        # (default off). Only fires under chunked ingest (self._mode == "ingest") so
+        # single-shot prefill keeps the tier empty, matching the deployed contract.
+        self.seed_hh_warmup = seed_hh_warmup
         # Week-12 Q-BUG: a frozen per-feature query-metric whitening L for the
         # low-rank KEY gist. BUG minimizes ||M - M_hat||_F on keys, but attention
         # weights error by the query directions; whitening the tracked keys by
@@ -439,6 +444,16 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             raise ValueError("w_key (query-metric whitening) requires an enabled low-rank middle")
         if self.w_key is not None and coord_codebook is not None:
             raise ValueError("w_key and the CodeBUG frozen anchor are mutually exclusive")
+        # Week-13 T-B: the warm-up seed's tail-eviction/candidate-pool logic reasons
+        # over the fp32 low-rank tail only. A coded/quant second tier or merged
+        # (non-unique-position) columns would let a promoted token be double-counted
+        # or evict the wrong column, so the combination is rejected (never emitted by
+        # build_arms; guarded so a future caller cannot wire it silently).
+        if self.seed_hh_warmup and (coord_codebook is not None or quant_budget > 0 or merge):
+            raise ValueError(
+                "seed_hh_warmup operates on the fp32 low-rank tail only; it is not "
+                "combined with a coded/quant tier (coord_codebook/quant_budget) or merge"
+            )
         if merge and not self.lowrank_enabled:
             raise ValueError("merge requires an enabled low-rank middle")
         if merge and quant_budget > 0:
@@ -1432,6 +1447,18 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             self.ring_score = torch.zeros(recent, dtype=torch.float32, device=k_mat.device)
 
         if mid > 0 and self.lowrank_enabled:
+            # Week-13 T-B: when seeding (chunked ingest + an exact tier), route the
+            # first chunk's middle through the SLASH path in sub-blocks. Each
+            # sub-block's surprise is scored against the basis of STRICTLY OLDER
+            # sub-blocks (which have not seen it), so an early outlier is caught
+            # verbatim into the exact tier exactly as in steady-state decode --
+            # shrinking the warm-up window from the whole first chunk to one
+            # sub-block. Scoring against a needle-free basis is the crux: the
+            # rejected "warm-then-select" variant scored the middle against a basis
+            # that had already absorbed the needle, so the needle no longer read as
+            # surprising (CPU-verified failure at realistic rank/diversity). Off (the
+            # default) absorbs the middle directly, bit-for-bit the prior path.
+            seed = self.seed_hh_warmup and self.hh_enabled and self._mode == "ingest"
             k_pre = self._mat_rope(k_mat[:, n_sink : n_sink + mid], n_sink, inverse=True)
             v_mid = v_mat[:, n_sink : n_sink + mid].to(torch.float32)
             for start in range(0, mid, self.prefill_block_size):
@@ -1439,7 +1466,17 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
                 pos = torch.arange(
                     n_sink + start, n_sink + stop, dtype=torch.int64, device=k_pre.device
                 )
-                self._absorb_columns(k_pre[:, start:stop], v_mid[:, start:stop], pos, None)
+                if seed:
+                    # post-RoPE K + raw V, exactly as the steady-state graduating
+                    # block feeds _absorb_block_slash from the recent ring.
+                    self._absorb_block_slash(
+                        k_mat[:, n_sink + start : n_sink + stop],
+                        v_mat[:, n_sink + start : n_sink + stop],
+                        pos,
+                        None,
+                    )
+                else:
+                    self._absorb_columns(k_pre[:, start:stop], v_mid[:, start:stop], pos, None)
         self.cumulative_length = t
         return key_states, value_states
 
@@ -1704,6 +1741,7 @@ class BugStreamingCache(Cache):
         hh_select: str = "attn",
         hh_neighbor: int = 0,
         hh_retain: bool = True,
+        seed_hh_warmup: bool = False,
         w_key: list[Tensor] | Tensor | None = None,
         merge: bool = False,
         coord_codebook: ProductQuantizer | None = None,
@@ -1754,6 +1792,7 @@ class BugStreamingCache(Cache):
                 hh_select=hh_select,
                 hh_neighbor=hh_neighbor,
                 hh_retain=hh_retain,
+                seed_hh_warmup=seed_hh_warmup,
                 w_key=w_key_per_layer[layer_idx],
                 merge=merge,
                 coord_codebook=coord_codebook,

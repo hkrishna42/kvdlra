@@ -80,6 +80,19 @@ def test_qwhiten_builds_bugsq_arms(tmp_path: object) -> None:
     assert layer.hh_retain is True and layer.hh_select == "surprise"
 
 
+def test_warmup_seed_builds_bugsseed_arms() -> None:
+    # Week-13 T-B: --warmup-seed flips seed_hh_warmup and renames the arm family so
+    # bugS vs bugSseed is a clean A/B (and stays separable from bugS-* under an
+    # anchored/hyphenated grep, like bugSdrop).
+    model = _tiny_model()
+    arms = w10_frontier.build_arms(_args(warmup_seed=True), model, t=64)
+    assert [a["name"] for a in arms] == ["bugSseed-r8-h4"]
+    layer = _first_layer(arms[0]["make"]())
+    assert layer.seed_hh_warmup is True
+    assert layer.hh_retain is True and layer.hh_select == "surprise"
+    assert "bugS-" not in "bugSseed-r8-h4"
+
+
 def test_qwhiten_not_combined_with_discard(tmp_path: object) -> None:
     import pathlib
 

@@ -1,5 +1,21 @@
 # Week-13 Track-B: warm-up retrieval fix (design-check)
 
+> **SHIPPED DESIGN NOTE (reconciled post-adversarial-review).** The Phase-2
+> implementation ships the **§2 Alternative (route the first chunk's middle through
+> `_absorb_block_slash` in sub-blocks)**, NOT the §2 Primary (`_seed_hh_from_prefill`
+> warm-then-select). The adversarial review's CPU probes showed the Primary fails to
+> keep the needle surprising at realistic rank / diverse backgrounds because it scores
+> the middle against a basis that has ALREADY absorbed the needle. SLASH-routing scores
+> each sub-block against a **needle-free** older basis — the proven steady-state
+> mechanism — so it captures early outliers robustly (verified in tests at rank 4 and
+> rank 8, the regime the Primary failed). Two further deviations from the text below,
+> both safer: (a) it is behind a **default-off** `seed_hh_warmup` flag / `bugSseed-*`
+> arm (clean A/B), not on-by-default; (b) it is gated to `self._mode=="ingest"`, so the
+> pinned `test_single_shot_prefill_leaves_hh_empty` is **preserved**, not inverted.
+> Residual warm-up window shrinks to the first sub-block (`prefill_block_size`). The
+> retrieval payoff remains the Phase-2 GPU question. The static bypass trace (§1) and
+> the accounting argument (§4) below are unchanged and still hold.
+
 **Verdict: the first-ingest-chunk SLASH bypass is REAL, and a clean, test-backed,
 accounting-neutral seed hook exists. Design FUNDS (a lean, not a slam dunk): the
 control-flow proof is airtight and static-checked, but "seeding recovers

@@ -208,11 +208,16 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
         # Week-12 Q-BUG: --qwhiten-file loads a calibrated per-layer key-whitening
         # diagonal (scripts/w12_calibrate_qkey.py) -> arm name gains a "Q".
         w_key = _load_wkey(getattr(args, "qwhiten_file", None))
+        # Week-13 T-B: --warmup-seed seeds the exact tier from the first ingest
+        # chunk's outliers -> arm name gains a "seed" suffix (bugS vs bugSseed A/B).
+        warmup = bool(getattr(args, "warmup_seed", False))
         prefix = "bugS" if retain else "bugSdrop"
         if w_key is not None:
             if not retain:
                 raise ValueError("--qwhiten-file (Q-BUG) is not combined with --hh-discard")
             prefix = "bugSQ"
+        if warmup:
+            prefix += "seed"
         for r in args.ranks:
             for hh in args.hh_budgets:
                 arms.append(
@@ -236,6 +241,7 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                                 hh_select="surprise",
                                 hh_neighbor=args.hh_neighbor,
                                 hh_retain=retain,
+                                seed_hh_warmup=warmup,
                                 w_key=w_key,
                             )
                         ),
@@ -629,6 +635,12 @@ def main() -> None:
         default=None,
         help="Week-12 Q-BUG: calibrated per-layer key-whitening diagonal "
         "(scripts/w12_calibrate_qkey.py) -> bugSQ-* arms (query-metric gist)",
+    )
+    parser.add_argument(
+        "--warmup-seed",
+        action="store_true",
+        help="Week-13 T-B: seed the exact tier from the first ingest chunk's outliers "
+        "-> bugSseed-* arms (fixes the warm-up window; requires --chunk>0)",
     )
     parser.add_argument(
         "--chunk", type=int, default=0, help="chunked-prefill block size (0=single-shot)"

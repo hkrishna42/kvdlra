@@ -3,98 +3,151 @@
 **Streaming KV-cache compression for LLMs via Dynamical Low-Rank Approximation** — the
 Ceruti–Lubich *BUG* integrator from numerical analysis
 ([arXiv:2010.02022](https://arxiv.org/abs/2010.02022),
-[arXiv:2104.05247](https://arxiv.org/abs/2104.05247)) — composed with
-[TurboQuant](https://arxiv.org/abs/2504.19874) residual quantization, wired into NVIDIA's
-[kvpress](https://github.com/NVIDIA/kvpress) as `BUGPress`.
+[arXiv:2104.05247](https://arxiv.org/abs/2104.05247)) turned into an *online* KV-cache
+compressor: a rank-`r` low-rank **gist** of the past, a **surprise-selected exact tier** for
+the sharp facts a summary can't hold, and a **warm-up seed** that repairs early-context
+retrieval — a principled alternative to greedy eviction (H2O, SnapKV, ExpectedAttention).
 
 DLRA tracks a moving low-rank matrix without the σ_min stiffness that breaks naive (U, S, V)
-ODE schemes, with a robust error bound *independent of the smallest singular value*. kvdlra
-uses it as a principled, streaming, near-oracle alternative to greedy KV-cache eviction
-heuristics (H2O, SnapKV).
+ODE schemes, with an error bound *independent of the smallest singular value*. kvdlra uses it
+as a near-oracle streaming tracker and builds a bounded-memory decode cache on top. It is also
+wired into NVIDIA's [kvpress](https://github.com/NVIDIA/kvpress) as `BUGPress`.
 
-## Result (honestly)
+## What it is
+
+`BugStreamingCache` ([`cache/bug_cache.py`](src/kvdlra/cache/bug_cache.py)) is a drop-in
+HuggingFace cache that compresses the KV stream online into parts, all counted in **one
+honest float-equivalent unit** (`accounting.py`, every buffer charged):
+
+- a **rank-`r` BUG gist** of the bulk — the low-rank summary;
+- a small **exact "SLASH" tier** — the highest-*surprise* (out-of-subspace residual) tokens
+  kept verbatim, exactly the sharp facts a low-rank gist reproduces worst (a planted needle, a
+  rare code), selected attach-free;
+- **attention sinks + a recent ring** (StreamingLLM-style).
+
+**Week 13 adds a warm-up seed** (`--warmup-seed`, default off). The first ingest chunk used to
+bypass the exact tier, so the earliest-planted facts were structurally lost — the *warm-up
+window* that made the family a ≥32K-only method. Routing that first chunk through the same
+surprise path (scored against the strictly-older, needle-free basis) fixes it.
+
+## Where it stands (honestly)
+
+BUG is a **competitive compressor with distinct niches — not a universal SOTA**. At moderate
+compression, token eviction (ExpectedAttention, MorphKV) is near-lossless and often ahead. A
+*dominance program* ([`docs/week7-dominance.md`](docs/week7-dominance.md)) proved BUG cannot
+beat eviction everywhere: a regime split bounded by two **measured walls** — a near-oracle
+tracking ceiling (~1% off the Eckart–Young optimum; BUG beats Frequent Directions, incremental
+SVD, and Oja) and a structural basis-overhead floor that whole-token eviction doesn't pay.
+
+Where BUG **wins**:
+
+- **Extreme compression (<0.05× memory).** Eviction turns catastrophic; the low-rank gist
+  degrades gracefully. `bugEVICT` finds the single needle at **0.009×**, ~11× under
+  ExpectedAttention.
+- **Long-context retrieval-per-byte** (RULER, Llama-3.1-8B @ 32K). `bugS-r32-h256` covers all
+  four tasks — needle / multi-key / multi-value / var-track = **100 / 67 / 100 / 100 at
+  0.043×** — the cheapest point of the only sub-0.1× family that does.
+- **Constant-memory streaming decode** (Weeks 5–6).
+
+**Week-13 headline — the warm-up seed fixes 16K.** At 16K the family used to collapse on the
+hard tasks. With the seed, a matched A/B at *identical* memory (Llama-3.1-8B, RULER n=2×2):
+
+| 16K RULER — single / multi-key / multi-value / var-track | `bugS` | `bugSseed` |
+|---|---|---|
+| **r32-h256** (0.05×) | 100 / 0 / 0 / 0 | **100 / 100 / 100 / 100** |
+| **r128-h1024** (0.19×) | 100 / 25 / 25 / 0 | 75 / 100 / 25 / 75 |
+
+Perplexity is unchanged-to-slightly-better at the same footprint (r32 @32K 9.16 → 9.09). Full
+accounting: [`results/w13-trackb-summary.md`](results/w13-trackb-summary.md).
+
+### The compression tradeoff (Week 4, the fair control)
 
 ![Fair comparison: every mechanism × TurboQuant](figures/week4/fair.png)
 
-Perplexity vs. stored KV-cache memory (Llama-3.2-1B, WikiText-2, ctx 1024), **every
-mechanism quantized equally** (the fair control). Low-rank (feature axis) and quantization
-(bit axis) genuinely **compose** — 4-bit coordinates ~halve BUG's memory for a negligible
-perplexity cost. But with a fair comparison, **BUG×TurboQuant is a *competitive* low-rank
-compressor, not the winner**: Expected Attention×TurboQuant is on/ahead of BUG's Pareto
-frontier through the mid-aggressive band, and pure 4-bit TurboQuant is near-lossless at
-0.25×. **BUG wins only at the extreme edge (<0.07× memory)**, where token eviction turns
-catastrophic and low-rank degrades gracefully. BUG's real case: extreme-compression
-robustness, **needle-retrieval parity** with the best (SnapKV drops the needle; BUG doesn't),
-and the **streaming/online** niche (Week 5). Full accounting — including the retracted
-unfair-comparison claim — in [`docs/week4.md`](docs/week4.md).
+Perplexity vs. stored KV memory (Llama-3.2-1B, WikiText-2, ctx 1024), **every mechanism
+quantized equally**. Low-rank (feature axis) and quantization (bit axis) genuinely *compose*,
+but under a fair comparison **BUG×TurboQuant is competitive, not the winner** — Expected
+Attention is on/ahead of BUG's frontier through the mid-aggressive band. BUG's edge is the
+extreme edge and the retrieval/streaming niches above. Full accounting (incl. a retracted
+unfair-comparison claim) in [`docs/week4.md`](docs/week4.md).
 
 ## How it works
 
 1. **Streaming BUG tracker** ([`integrators/streaming.py`](src/kvdlra/integrators/streaming.py),
    [`streaming_torch.py`](src/kvdlra/integrators/streaming_torch.py)) — a rank-adaptive
-   augmented-BUG subspace tracker for the column-streamed KV matrix. Near-oracle: within
-   1.01–1.03× of the truncated-SVD optimum, beating incremental SVD and Oja's rule
-   ([`docs/week2-pilot.md`](docs/week2-pilot.md)). A blocked torch variant runs on GPU.
-2. **`BUGPress`** ([`press/bug_press.py`](src/kvdlra/press/bug_press.py)) — a `kvpress` press
-   that replaces the KV cache with its rank-`r` reconstruction during pre-fill, operating
-   **pre-RoPE** (roughly halves the error). Preserves greedy generation; graceful perplexity
-   degradation ([`docs/week3.md`](docs/week3.md)).
-3. **TurboQuant** ([`quant/`](src/kvdlra/quant/)) — PolarQuant (rotated Lloyd–Max, within
-   2.7× of the distortion floor) + QJL (1-bit, unbiased inner products), composed with BUG by
-   quantizing the coordinate factors ([`docs/week4.md`](docs/week4.md)).
+   augmented-BUG subspace tracker for the column-streamed KV matrix; near-oracle (within
+   ~1.01–1.03× of truncated SVD). Operates **pre-RoPE** (roughly halves the error); a blocked
+   torch variant runs on GPU.
+2. **`BugStreamingCache`** ([`cache/bug_cache.py`](src/kvdlra/cache/bug_cache.py)) — the decode
+   cache: BUG gist + surprise-selected exact tier (SLASH) + sinks/recent ring + the warm-up
+   seed; chunked ingest for OOM-safe 32K/64K pre-fill. Footprint pinned by `accounting.py`.
+3. **`BUGPress`** ([`press/bug_press.py`](src/kvdlra/press/bug_press.py)) — a `kvpress` press
+   that reconstructs the KV cache at rank `r` during pre-fill (pre-RoPE), for the
+   perplexity/compression track ([`docs/week3.md`](docs/week3.md)).
+4. **TurboQuant** ([`quant/`](src/kvdlra/quant/)) — PolarQuant + QJL + product quantization,
+   composable with the coordinate factors ([`docs/week4.md`](docs/week4.md)).
 
 ## Install
 
 ```bash
 uv venv --python 3.12 && uv pip install -e ".[dev]"
-uv run pytest -q          # 83 passed, 1 skipped (bf16 QR skips on CPU LAPACK)
+uv run pytest -q          # 295 passed, 1 skipped (bf16 QR skips on CPU LAPACK)
 ```
 
-## Reproduce the hero figure
+## Reproduce
+
+Long-context retrieval + perplexity (the current headline; one A100):
+
+```bash
+# RULER retrieval, bugS vs bugSseed A/B at 16K (drop --warmup-seed for the bugS baseline)
+PYTHONPATH=src uv run python scripts/w10_ruler.py --model unsloth/Meta-Llama-3.1-8B-Instruct \
+    --device cuda --context-lens 16384 --tasks niah_single niah_multikey niah_multivalue vt \
+    --methods bugslash --ranks 32 --hh-budgets 256 --hh-neighbor 1 --chunk 4096 --warmup-seed \
+    --n-trials 2 --seeds 0 1
+
+# perplexity frontier
+PYTHONPATH=src uv run python scripts/w10_frontier.py --model unsloth/Meta-Llama-3.1-8B-Instruct \
+    --device cuda --T 16384 32768 --chunk 4096 --methods bugslash --ranks 32 128 --no-ruler
+```
+
+GPU runs are orchestrated as vast.ai pods via MODE-dispatched `scripts/pod/*.sh`. The Week-4
+compression figure:
 
 ```bash
 uv run python scripts/w4_hybrid_sweep.py --ranks 32 64 128 --bits fp 4 3 2 \
-    --context-len 1024 --target-len 512 --n-windows 16
-uv run python scripts/w4_head_to_head.py --ratios 0.5 0.75 0.9 \
     --context-len 1024 --target-len 512 --n-windows 16
 ```
 
 ## Layout
 
-- `src/kvdlra/integrators/` — BUG (`bug.py`, `bug_adaptive.py`), torch port (`bug_torch.py`),
-  streaming trackers (`streaming.py` numpy, `streaming_torch.py` blocked/GPU)
-- `src/kvdlra/press/` — `BUGPress` (`bug_press.py`), transformers≥5.8 compat shim (`compat.py`)
-- `src/kvdlra/quant/` — TurboQuant: `polar.py` (PolarQuant), `qjl.py` (QJL)
-- `scripts/` — KV capture, SV-decay figure, generation parity, perplexity + hybrid + head-to-head sweeps
-- `docs/` — [plan](docs/PLAN.md), weekly writeups ([1](docs/week1.md), [2](docs/week2-pilot.md),
-  [3](docs/week3.md), [4](docs/week4.md)), [conventions](docs/notes/conventions.md),
-  [RoPE pitfall](docs/notes/rope-pitfall.md), [TurboQuant×RoPE](docs/notes/turboquant-rope-interaction.md)
+- `src/kvdlra/cache/` — `BugStreamingCache` (`bug_cache.py`: BUG gist + SLASH exact tier +
+  warm-up seed; chunked ingest), MorphKV / ShadowKV baselines
+- `src/kvdlra/integrators/` — BUG (`bug.py`, `bug_adaptive.py`, `bug_class.py`), torch port
+  (`bug_torch.py`), streaming trackers (`streaming.py`, `streaming_torch.py`), baselines
+  (`oja.py`, `frequent_directions.py`)
+- `src/kvdlra/press/` — `BUGPress` (`bug_press.py`), Palu/Turbo presses, transformers≥5.8 shim
+- `src/kvdlra/quant/` — TurboQuant: `polar.py` (PolarQuant), `qjl.py` (QJL), `product_quant.py`
+- `src/kvdlra/accounting.py` — the one-unit float-equivalent memory accounting (all buffers)
+- `scripts/` — KV capture, RULER (`w10_ruler.py`), perplexity/frontier (`w10_frontier.py`),
+  Q-BUG calibration (`w12_calibrate_qkey.py`), Week-13 CPU probes (`w13_*`), pod launchers (`pod/`)
+- `docs/` — weekly writeups `week1.md … week13-*`; key ones: [week4](docs/week4.md) (fair
+  comparison), [week7-dominance](docs/week7-dominance.md) (the walls),
+  [week9](docs/week9.md) (recovery-tier recall), [week11-decision-table](docs/week11-decision-table.md),
+  [week12](docs/week12.md) (attribution + Q-BUG), [week13-plan](docs/week13-plan.md) (the portfolio)
 - `paper/` — arXiv-style preprint draft (`main.tex`)
-
-## Status — decode-time streaming (Weeks 6–7) and the dominance program
-
-The project's real niche is **constant-memory decode**: `BugStreamingCache` with
-attention-scored coordinate retention wins the moderate-compression regime
-(1B: 10.62 vs MorphKV 11.81) and **un-inverts an 8B deep-horizon loss** to
-eviction (bugA 7.71 < morph 7.74). A follow-up *dominance program* asked whether
-BUG can *defeat* eviction everywhere and found — honestly — **no**: a regime
-split bounded by two *measured* walls, a near-oracle tracking ceiling (BUG beats
-Frequent Directions, ~1% off the oracle) and a structural basis-overhead floor
-(85% of a tiny budget, which whole-token eviction doesn't pay), so eviction wins
-extreme compression. Full accounting in `docs/week7.md` and
-`docs/week7-dominance.md`.
-
-**Next (committed): Week 8 — CodeBUG** (`docs/week8-codebook-plan.md`): amortize
-the per-token cost with a shared, calibrated product-quantization codebook on the
-coordinates, targeting a single falsifiable number — beat eviction at the
-aggressive budget at matched memory.
 
 ## Honest caveats
 
-Absolute low-rank compression is moderate — the heavy-tailed KV spectrum limits pure
-low-rank, and aggressive ranks cost real perplexity. Results are WikiText-2/103 perplexity at
-1B–8B scale (not long-context LongBench/RULER); reported memory is the dtype-agnostic
-factored-storage cost, all buffers counted. See each week's writeup for the full accounting.
+- **Competitive, not universal SOTA.** Eviction is near-lossless at moderate compression; BUG's
+  edges are extreme compression, streaming decode, and long-context retrieval-per-byte.
+- **Small-n on retrieval.** RULER cells are n=2–4 (25–50 pts/trial) — a single flipped trial
+  moves a cell. Headline claims need a higher-n (n≥8) re-run with error bars; the two Week-13
+  single-cell dips (r128@16K single, r32@32K var-track) are one-trial effects.
+- **Single model family** (Llama-3.1-8B + 3.2-1B) and **no systems metrics yet** — reported
+  memory is the honest float-equivalent ratio, not measured throughput / latency / peak-VRAM.
+  LongBench coverage is partial.
+- New arms (`bugSseed` warm-up seed, `w_key` Q-BUG query-whitening) ship **default-off** pending
+  higher-n confirmation.
 
 ## License
 

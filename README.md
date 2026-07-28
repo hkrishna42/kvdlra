@@ -60,6 +60,30 @@ hard tasks. With the seed, a matched A/B at *identical* memory (Llama-3.1-8B, RU
 Perplexity is unchanged-to-slightly-better at the same footprint (r32 @32K 9.16 → 9.09). Full
 accounting: [`results/w13-trackb-summary.md`](results/w13-trackb-summary.md).
 
+### Current focus (Week 13 — the parallel portfolio)
+
+Week 13 opened four independent tracks to find the next *real* lever, each gated by a **$0 CPU
+probe** before any GPU spend and every surviving number re-derived by an adversarial verifier.
+The scoreboard so far:
+
+- **T-B · warm-up seed — FUNDED WIN.** The 16K collapse was a structural bypass, now fixed
+  (table above); default-off pending a higher-n confirmation with error bars.
+- **Q-BUG (Week-12 Track 1) · query-metric whitened gist — funded but BOUNDED.** Whitening the
+  keys by where queries look (`w_key`, a frozen per-feature diagonal) lowers perplexity a real
+  but small ~0.4–1.2% (r32 @32K 9.164 → 9.092; both aggressive bars missed) at ~zero memory,
+  retrieval preserved within trial-noise. The CPU attention-error probe **over-predicted the
+  end-to-end ppl gain ~30–40×** — a proxy-vs-downstream lesson now on the record. Ships
+  default-off ([`docs/week12-qbug-explainer.md`](docs/week12-qbug-explainer.md)).
+- **T-C · long-document Q-BUG recalibration — killed** ($0): the long-doc whitening is 99.6%
+  aligned with the short-doc one, so calibration is not the ppl bottleneck.
+- **T-X · depth-continuous / cross-layer (PDE-in-depth) basis — lean-kill** ($0): adjacent-layer
+  pre-RoPE key subspaces sit at 57.7° vs a 62° random control (a shared basis needs <40°), so
+  amortizing the basis-overhead floor across depth won't pay.
+
+**Next:** higher-n (n≥8) confirmation of the warm-up seed and Q-BUG retrieval softening with
+error bars; the remaining perplexity lever is Track-A integrator surgery (damped / attention-
+weighted truncation for deep-horizon erosion). Plan: [`docs/week13-plan.md`](docs/week13-plan.md).
+
 ### The compression tradeoff (Week 4, the fair control)
 
 ![Fair comparison: every mechanism × TurboQuant](figures/week4/fair.png)
@@ -135,6 +159,31 @@ uv run python scripts/w4_hybrid_sweep.py --ranks 32 64 128 --bits fp 4 3 2 \
   [week9](docs/week9.md) (recovery-tier recall), [week11-decision-table](docs/week11-decision-table.md),
   [week12](docs/week12.md) (attribution + Q-BUG), [week13-plan](docs/week13-plan.md) (the portfolio)
 - `paper/` — arXiv-style preprint draft (`main.tex`)
+- `dashboards/` — self-contained HTML visual writeups (see below)
+
+## Visual writeups (the story, without the code)
+
+Two self-contained HTML dashboards in [`dashboards/`](dashboards/) — open either file in a
+browser, no server needed:
+
+- **[The research story, explained simply](dashboards/research_story_dashboard.html)** — the
+  plain-language arc (weeks 1–11): the problem (a KV cache costs more than the weights), the
+  idea (a physics-simulation low-rank integrator as an online compressor), the week-by-week
+  journey, the *map of who-wins-where*, the two clearest wins (extreme-compression needle at
+  0.009×; long-context retrieval-per-byte), and how we keep ourselves honest.
+- **[Beyond the Two Walls: a mathematical attack plan](dashboards/research_brainstorm_dashboard.html)**
+  — the research brainstorm treating the two measured walls (near-oracle tracking ceiling,
+  basis-overhead floor) and the retrieval fidelity wall as *axioms*, then eight
+  mechanism-targeted proposals — each naming the wall it attacks, the math, an adversarial
+  pre-mortem, and a **falsifiable bar with a kill criterion**. It seeded the Week-11→13 work
+  (the SLASH exact tier, Q-BUG's query-metric geometry, the integrator-surgery track).
+
+Live interactive companions (rendered from the results JSON) are also published as Claude
+Artifacts — the pooled **decision table** (every method side-by-side at 16K / 32K / 64K), the
+**overview** (BUG finds a needle at 32K, the warm-up window, the Week-12 attribution + Q-BUG),
+and the **plain-language explainer** (*"Finding a needle you've already thrown away"*, 11 steps
+through to the Q-BUG quality knob). The committed `dashboards/*.html` above are the openable,
+version-controlled record; the source data is under [`results/`](results/).
 
 ## Honest caveats
 

@@ -1,0 +1,8 @@
+[niah_single ctx16384] bugS-r32-h256  acc=1.00 recall=1.00 ratio=0.052
+[niah_multikey ctx16384] bugS-r32-h256  acc=0.50 recall=0.50 ratio=0.053
+[niah_multivalue ctx16384] bugS-r32-h256  acc=0.00 recall=0.75 ratio=0.053
+[vt ctx16384] bugS-r32-h256  acc=0.00 recall=0.00 ratio=0.053
+[niah_single ctx16384] bugSseed-r32-h256 acc=1.00 recall=1.00 ratio=0.052
+[niah_multikey ctx16384] bugSseed-r32-h256 acc=1.00 recall=1.00 ratio=0.053
+[niah_multivalue ctx16384] bugSseed-r32-h256 acc=1.00 recall=1.00 ratio=0.053
+[vt ctx16384] bugSseed-r32-h256 acc=0.88 recall=0.88 ratio=0.053

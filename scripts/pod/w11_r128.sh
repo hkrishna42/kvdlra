@@ -245,6 +245,76 @@ wseed(){ # Week-13 T-B: warm-up-seed retrieval gate. bugS vs bugSseed (--warmup-
   echo "===RULER32_r32_DONE==="
 }
 
+wseed8(){ # Week-14: FIRM the warm-up-seed win to decision-grade stats. Matched A/B
+  # bugS vs bugSseed (--warmup-seed -> bugSseed-* arms), same pod/trials/seeds/footprint,
+  # at n=8/cell. n=8 SPELLING = --n-trials 4 --seeds 0 1 (NOT --n-trials 2 --seeds 0 1 2 3):
+  # RULER seeds its RNG with seed*131+trial (w10_ruler.py:94), so 4 trials x 2 seeds gives
+  # 8 distinct samples {0,1,2,3,131,132,133,134} (no collision, 131>4); AND `trial` also
+  # spreads task structure -- multikey qi=trial%n_keys (n_keys=8) queries 4 DISTINCT keys /
+  # context depths, niah_single needle pos=n//2+trial%5 -> 4 positions -- so 4 trials probe
+  # the needle-DEPTH axis the warm-up window acts on, twice as broadly as 2 trials (which
+  # would hit only the 2 frontmost keys). It is also a strict SUPERSET of the Week-13 n=2x2
+  # (--n-trials 2 --seeds 0 1): same (seed,trial) pairs for trials {0,1} -> identical
+  # haystacks, so n=8 re-runs AND extends the original n=4. RULER only (ppl no-regression
+  # already measured Week-13: r32 -0.38%/-0.79%, r128@32K -0.39%, tok_eq/layer identical).
+  # Ordered cheap-decisive-first so the headline lands even if the pod dies:
+  #   (1) 16K r32-h256, all 4 tasks   -- the headline (bugS 0/0/0 -> bugSseed 100/100/100)
+  #   (2) 32K r32-h256, hard tasks    -- firms mk 50->100 and the vt 100->75 one-trial dip
+  #   (3) 32K r128-h1024, hard tasks  -- the Week-13 DEFERRED cell (new coverage)
+  # out-json prefixed results/w14-wseed8-* (distinct from the Week-13 w13-wseed-* files).
+  echo "===W14_16K_R32_BEGIN==="
+  echo "===W14_16K_R32_bugS_BEGIN==="
+  PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+    --context-lens 16384 --tasks niah_single niah_multikey niah_multivalue vt \
+    --methods bugslash --ranks 32 --hh-budgets 256 --hh-neighbor 1 \
+    --chunk "$CHUNK" --n-trials 4 --seeds 0 1 --out-json "results/w14-wseed8-bugS-r32-16k.json" 2>&1
+  echo "===W14_16K_R32_bugSseed_BEGIN==="
+  PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+    --context-lens 16384 --tasks niah_single niah_multikey niah_multivalue vt \
+    --methods bugslash --ranks 32 --hh-budgets 256 --hh-neighbor 1 --warmup-seed \
+    --chunk "$CHUNK" --n-trials 4 --seeds 0 1 --out-json "results/w14-wseed8-bugSseed-r32-16k.json" 2>&1
+  echo "===W14_16K_R32_DONE==="
+  echo "===W14_32K_R32_BEGIN==="
+  echo "===W14_32K_R32_bugS_BEGIN==="
+  PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+    --context-lens 32768 --tasks niah_multikey niah_multivalue vt \
+    --methods bugslash --ranks 32 --hh-budgets 256 --hh-neighbor 1 \
+    --chunk "$CHUNK" --n-trials 4 --seeds 0 1 --out-json "results/w14-wseed8-bugS-r32-32k.json" 2>&1
+  echo "===W14_32K_R32_bugSseed_BEGIN==="
+  PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+    --context-lens 32768 --tasks niah_multikey niah_multivalue vt \
+    --methods bugslash --ranks 32 --hh-budgets 256 --hh-neighbor 1 --warmup-seed \
+    --chunk "$CHUNK" --n-trials 4 --seeds 0 1 --out-json "results/w14-wseed8-bugSseed-r32-32k.json" 2>&1
+  echo "===W14_32K_R32_DONE==="
+  echo "===W14_32K_R128_BEGIN==="
+  echo "===W14_32K_R128_bugS_BEGIN==="
+  PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+    --context-lens 32768 --tasks niah_multikey niah_multivalue vt \
+    --methods bugslash --ranks 128 --hh-budgets 1024 --hh-neighbor 1 \
+    --chunk "$CHUNK" --n-trials 4 --seeds 0 1 --out-json "results/w14-wseed8-bugS-r128-32k.json" 2>&1
+  echo "===W14_32K_R128_bugSseed_BEGIN==="
+  PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+    --context-lens 32768 --tasks niah_multikey niah_multivalue vt \
+    --methods bugslash --ranks 128 --hh-budgets 1024 --hh-neighbor 1 --warmup-seed \
+    --chunk "$CHUNK" --n-trials 4 --seeds 0 1 --out-json "results/w14-wseed8-bugSseed-r128-32k.json" 2>&1
+  echo "===W14_32K_R128_DONE==="
+}
+
+# OPTIONAL RIDER (NOT wired into wseed8 -- +cost/+complexity; see docs/w14-sizing.md).
+# bugSQseed = warm-up seed + Q-BUG whitening (--warmup-seed --qwhiten-file). NOTE the
+# emitted arm name is bugSQseed (w10_frontier.py:214-220: prefix bugS -> bugSQ via w_key
+# -> +seed), NOT "bugSseedQ". It is guard-legal (bug_cache.py:452 rejects seed+coded/
+# quant/merge only; w_key is allowed). To test Q-BUG subsumption at ONE 32K r32 cell it
+# needs an on-pod CALIB step FIRST (as in the qbug() MODE):
+#   PYTHONPATH=src python -u scripts/w12_calibrate_qkey.py --model "$MODEL" \
+#     --n-docs 8 --seq-len 4096 --device cuda --out results/w12-wkey-8b.pt
+# then one extra arm compared against wseed8's existing bugSseed-r32-32k baseline:
+#   PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+#     --context-lens 32768 --tasks niah_multikey niah_multivalue vt \
+#     --methods bugslash --ranks 32 --hh-budgets 256 --hh-neighbor 1 --warmup-seed \
+#     --qwhiten-file results/w12-wkey-8b.pt --chunk "$CHUNK" --n-trials 4 --seeds 0 1 \
+#     --out-json results/w14-wseed8-bugSQseed-r32-32k.json
+
 case "$MODE" in
   new16)   new NEW16 16384 ;;
   new32)   new NEW32 32768 ;;
@@ -258,5 +328,6 @@ case "$MODE" in
   mk64)    mk64 ;;
   qbug)    qbug ;;
   wseed)   wseed ;;
+  wseed8)  wseed8 ;;
 esac
 echo "===ALL_DONE==="

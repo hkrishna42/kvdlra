@@ -1,0 +1,216 @@
+{
+  "ALL_CHECKS_PASS": true,
+  "phase1_static_trace": {
+    "ALL_TRACE_FACTS_CONFIRMED": true,
+    "G1_hh_kvpos_written_only_by_absorb_block_slash": {
+      "value": true,
+      "writers": {
+        "hh_k": {
+          "_absorb_block_slash": [
+            813
+          ]
+        },
+        "hh_pos": {
+          "_absorb_block_slash": [
+            815
+          ]
+        },
+        "hh_v": {
+          "_absorb_block_slash": [
+            814
+          ]
+        }
+      }
+    },
+    "G1b_hh_score_writers": {
+      "note": "observe_attention only re-weights an existing attn-selected tier.",
+      "value": true,
+      "writers": {
+        "_absorb_block_slash": [
+          817
+        ],
+        "observe_attention": [
+          1333
+        ]
+      }
+    },
+    "G2_slash_callers_are_graduation_and_seed": {
+      "callers": {
+        "_absorb_block_into_stream": [
+          746
+        ],
+        "_prefill": [
+          1472
+        ]
+      },
+      "note": "_absorb_block_into_stream = steady-state graduation gateway; _prefill = Week-13 bugSseed warm-up seed (gated by seed_hh_warmup). In Week-13's pre-merge design-check the only caller was _absorb_block_into_stream; the seed added the _prefill route (the fix).",
+      "value": true
+    },
+    "G3_absorb_block_into_stream_callers": {
+      "callers": {
+        "_decode_step": [
+          1493
+        ],
+        "consolidate": [
+          1429
+        ]
+      },
+      "value": true
+    },
+    "G4_absorb_columns_callers": {
+      "callers": {
+        "_absorb_block_into_stream": [
+          750
+        ],
+        "_absorb_block_slash": [
+          825
+        ],
+        "_prefill": [
+          1479
+        ]
+      },
+      "note": "_absorb_block_slash's call is the post-SLASH demote path (not a bypass); _absorb_block_into_stream's call is unreachable when hh_enabled (see G6); _prefill's call is the FIRST-CHUNK bypass (seed off).",
+      "value": true
+    },
+    "G5_update_dispatch_prefill_before_ingest": {
+      "return_lines": {
+        "_decode_step": 1388,
+        "_ingest_chunk": 1381,
+        "_prefill": 1377
+      },
+      "value": true
+    },
+    "G6_slash_guarded_by_return_before_direct_absorb": {
+      "absorb_columns_call_line": 750,
+      "return_lines": [
+        739,
+        747
+      ],
+      "slash_call_line": 746,
+      "value": true
+    },
+    "G7_prefill_has_both_bypass_and_seed_slash": {
+      "absorb_block_slash_lines": [
+        1472
+      ],
+      "absorb_columns_lines": [
+        1479
+      ],
+      "value": true
+    },
+    "G8_ingest_chunk_defers_no_absorb": {
+      "self_calls": [
+        "_decode_peek",
+        "_to_mat"
+      ],
+      "value": true
+    }
+  },
+  "phase2_dynamic_tiny_model": {
+    "ALL_DYNAMIC_CHECKS_PASS": true,
+    "cases": [
+      {
+        "chunk": 32,
+        "depth": 64,
+        "in_first_chunk": false,
+        "in_hh": true,
+        "in_mid_tail": false,
+        "label": "mid_chunk_boundary",
+        "offered_to_slash": true,
+        "on_chunk_boundary": true,
+        "seed_on": false,
+        "t": 192
+      },
+      {
+        "chunk": 32,
+        "depth": 96,
+        "in_first_chunk": false,
+        "in_hh": true,
+        "in_mid_tail": false,
+        "label": "mid_chunk_boundary",
+        "offered_to_slash": true,
+        "on_chunk_boundary": true,
+        "seed_on": false,
+        "t": 192
+      },
+      {
+        "chunk": 32,
+        "depth": 50,
+        "in_first_chunk": false,
+        "in_hh": true,
+        "in_mid_tail": false,
+        "label": "mid_deep_in_block",
+        "offered_to_slash": true,
+        "on_chunk_boundary": false,
+        "seed_on": false,
+        "t": 192
+      },
+      {
+        "chunk": 32,
+        "depth": 130,
+        "in_first_chunk": false,
+        "in_hh": true,
+        "in_mid_tail": false,
+        "label": "mid_deep_in_block",
+        "offered_to_slash": true,
+        "on_chunk_boundary": false,
+        "seed_on": false,
+        "t": 192
+      },
+      {
+        "chunk": 32,
+        "depth": 15,
+        "in_first_chunk": true,
+        "in_hh": false,
+        "in_mid_tail": true,
+        "label": "first_chunk_middle_seed_off",
+        "offered_to_slash": false,
+        "on_chunk_boundary": false,
+        "seed_on": false,
+        "t": 192
+      },
+      {
+        "chunk": 32,
+        "depth": 15,
+        "in_first_chunk": true,
+        "in_hh": true,
+        "in_mid_tail": false,
+        "label": "first_chunk_middle_seed_on",
+        "offered_to_slash": true,
+        "on_chunk_boundary": false,
+        "seed_on": true,
+        "t": 192
+      }
+    ],
+    "checks": {
+      "first_chunk_needle_barred_seed_off": true,
+      "first_chunk_needle_captured_seed_on": true,
+      "midstream_needles_enter_hh": true
+    },
+    "config": {
+      "chunk": 32,
+      "coord_budget": 256,
+      "hh_budget": 1,
+      "rank": 4,
+      "t": 192
+    }
+  },
+  "phase3_real_dump_selection": {
+    "basis_prefix_cols": 1024,
+    "checks": {
+      "needle_is_top1": true,
+      "needle_separated_from_background": true
+    },
+    "dump": "doc411_047d060d_len4096_rope-both",
+    "max_background_surprise": 0.277,
+    "median_background_surprise": 0.2028,
+    "needle_rank_in_block": 0,
+    "needle_surprise": 1.0,
+    "note": "Real diverse background reads low-surprise vs a real streamed rank-32 basis; a routed out-of-subspace needle is top-1 -> the CAPTURE half holds on real data. STRUCTURAL routing verdict is from Phases 1-2.",
+    "rank": 32
+  },
+  "pre_registered_bar": "FUND if a second real structural bypass exists AND has a cheap fix; KILL if the first chunk is the only structural gap (steady-state SLASH captures mid-stream / boundary needles).",
+  "question": "Is the first ingest chunk the ONLY place a needle is structurally barred from the exact hh tier, or is there a SECOND bypass (chunk boundary mid-stream / graduation-eviction transition)?",
+  "verdict": "KILL",
+  "verdict_reason": "No second structural bypass: every mid-stream and chunk-boundary needle reaches _absorb_block_slash (via consolidate/_decode_step -> _absorb_block_into_stream) and enters the exact tier under steady-state SLASH; the first-chunk middle (routed _prefill -> _absorb_columns, seed off) is the ONLY path that never reaches the tier's sole writer."
+}

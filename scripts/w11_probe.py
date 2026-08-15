@@ -110,6 +110,7 @@ def probe(args: argparse.Namespace) -> dict[str, object]:
             hh_budget=hh,
             hh_select="surprise",
             hh_neighbor=args.hh_neighbor,
+            score_rank=args.score_rank,
         )
         with torch.no_grad(), cache.ingesting():
             for s in range(0, t, args.chunk):
@@ -146,7 +147,8 @@ def probe(args: argparse.Namespace) -> dict[str, object]:
         print(
             f"[ctx{t} r{args.rank}] hh={hh:>5}  needle_in_hh={n_in}/{len(needle_pos)}  "
             f"captured={captured}  codes={n_cap}/{len(per_code)}  "
-            f"nbr(w1/2/4)={int(nbr[1])}/{int(nbr[2])}/{int(nbr[4])}  ratio~={hh / t:.4f}"
+            f"nbr(w1/2/4)={int(nbr[1])}/{int(nbr[2])}/{int(nbr[4])}  ratio~={hh / t:.4f}  "
+            f"s={args.score_rank if args.score_rank is not None else 'full'}"
         )
     smallest = next((r["hh_budget"] for r in rows if r["captured"]), None)
     result = {
@@ -154,6 +156,7 @@ def probe(args: argparse.Namespace) -> dict[str, object]:
         "task": args.task,
         "ctx": t,
         "rank": args.rank,
+        "score_rank": args.score_rank,
         "code": code,
         "n_planted": len(code_pos),
         "needle_tokens": len(needle_pos),
@@ -179,6 +182,13 @@ def main() -> None:
     p.add_argument("--recent-window", type=int, default=32)
     p.add_argument("--absorb-block", type=int, default=16)
     p.add_argument("--hh-neighbor", type=int, default=0, help="span-expansion window (0=off)")
+    p.add_argument(
+        "--score-rank",
+        type=int,
+        default=None,
+        help="Week-15 T2: cap SurpriseSLASH selection scoring to the leading "
+        "score_rank basis columns (default None = full basis, the pre-Week-15 path)",
+    )
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--trial", type=int, default=0)
     p.add_argument("--out-json", default="")

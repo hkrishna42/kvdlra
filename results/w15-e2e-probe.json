@@ -1,0 +1,358 @@
+{
+  "captured_by_arm": {
+    "e2e_r128_s32": {
+      "128": true,
+      "32": true,
+      "64": true
+    },
+    "e2e_r128_sfull": {
+      "128": false,
+      "32": false,
+      "64": false
+    },
+    "e2e_r256_s32": {
+      "128": true,
+      "32": true,
+      "64": true
+    },
+    "e2e_r256_sfull": {
+      "128": false,
+      "32": false,
+      "64": false
+    }
+  },
+  "config": {
+    "chunk": 1024,
+    "code": "72234",
+    "ctx": 4104,
+    "hh_budgets": [
+      32,
+      64,
+      128
+    ],
+    "model": "unsloth/Llama-3.2-1B-Instruct",
+    "needle_positions": [
+      2078,
+      2079,
+      2080
+    ],
+    "task": "niah_single"
+  },
+  "fund_budgets": [
+    32,
+    64,
+    128
+  ],
+  "pre_registered_bar": "FUND: needle captured (ALL needle tokens in hh) at r128+s32 AND r256+s32 at an hh_budget where uncapped fails. KILL: dump-level funds but capture never materializes end-to-end.",
+  "question": "End-to-end (real 1B model, chunked ingest, real RULER niah_single needle): does score_rank=32 land the needle verbatim in the exact hh tier at storage ranks where the uncapped (full-basis) selection fails?",
+  "runs": {
+    "e2e_r128_s32": {
+      "code": "72234",
+      "ctx": 4104,
+      "model": "unsloth/Llama-3.2-1B-Instruct",
+      "n_planted": 1,
+      "needle_positions": [
+        2078,
+        2079,
+        2080
+      ],
+      "needle_tokens": 3,
+      "rank": 128,
+      "score_rank": 32,
+      "smallest_capturing_hh": 32,
+      "sweep": [
+        {
+          "captured": true,
+          "codes_captured": 1,
+          "codes_total": 1,
+          "hh_budget": 32,
+          "in_hh_positions": [
+            2078,
+            2079,
+            2080
+          ],
+          "needle_in_hh": 3,
+          "neighbor_covered": {
+            "1": true,
+            "2": true,
+            "4": true
+          },
+          "per_code": {
+            "72234": true
+          }
+        },
+        {
+          "captured": true,
+          "codes_captured": 1,
+          "codes_total": 1,
+          "hh_budget": 64,
+          "in_hh_positions": [
+            2078,
+            2079,
+            2080
+          ],
+          "needle_in_hh": 3,
+          "neighbor_covered": {
+            "1": true,
+            "2": true,
+            "4": true
+          },
+          "per_code": {
+            "72234": true
+          }
+        },
+        {
+          "captured": true,
+          "codes_captured": 1,
+          "codes_total": 1,
+          "hh_budget": 128,
+          "in_hh_positions": [
+            2078,
+            2079,
+            2080
+          ],
+          "needle_in_hh": 3,
+          "neighbor_covered": {
+            "1": true,
+            "2": true,
+            "4": true
+          },
+          "per_code": {
+            "72234": true
+          }
+        }
+      ],
+      "task": "niah_single"
+    },
+    "e2e_r128_sfull": {
+      "code": "72234",
+      "ctx": 4104,
+      "model": "unsloth/Llama-3.2-1B-Instruct",
+      "n_planted": 1,
+      "needle_positions": [
+        2078,
+        2079,
+        2080
+      ],
+      "needle_tokens": 3,
+      "rank": 128,
+      "score_rank": null,
+      "smallest_capturing_hh": null,
+      "sweep": [
+        {
+          "captured": false,
+          "codes_captured": 0,
+          "codes_total": 1,
+          "hh_budget": 32,
+          "in_hh_positions": [
+            2079,
+            2080
+          ],
+          "needle_in_hh": 2,
+          "neighbor_covered": {
+            "1": true,
+            "2": true,
+            "4": true
+          },
+          "per_code": {
+            "72234": false
+          }
+        },
+        {
+          "captured": false,
+          "codes_captured": 0,
+          "codes_total": 1,
+          "hh_budget": 64,
+          "in_hh_positions": [
+            2079,
+            2080
+          ],
+          "needle_in_hh": 2,
+          "neighbor_covered": {
+            "1": true,
+            "2": true,
+            "4": true
+          },
+          "per_code": {
+            "72234": false
+          }
+        },
+        {
+          "captured": false,
+          "codes_captured": 0,
+          "codes_total": 1,
+          "hh_budget": 128,
+          "in_hh_positions": [
+            2079,
+            2080
+          ],
+          "needle_in_hh": 2,
+          "neighbor_covered": {
+            "1": true,
+            "2": true,
+            "4": true
+          },
+          "per_code": {
+            "72234": false
+          }
+        }
+      ],
+      "task": "niah_single"
+    },
+    "e2e_r256_s32": {
+      "code": "72234",
+      "ctx": 4104,
+      "model": "unsloth/Llama-3.2-1B-Instruct",
+      "n_planted": 1,
+      "needle_positions": [
+        2078,
+        2079,
+        2080
+      ],
+      "needle_tokens": 3,
+      "rank": 256,
+      "score_rank": 32,
+      "smallest_capturing_hh": 32,
+      "sweep": [
+        {
+          "captured": true,
+          "codes_captured": 1,
+          "codes_total": 1,
+          "hh_budget": 32,
+          "in_hh_positions": [
+            2078,
+            2079,
+            2080
+          ],
+          "needle_in_hh": 3,
+          "neighbor_covered": {
+            "1": true,
+            "2": true,
+            "4": true
+          },
+          "per_code": {
+            "72234": true
+          }
+        },
+        {
+          "captured": true,
+          "codes_captured": 1,
+          "codes_total": 1,
+          "hh_budget": 64,
+          "in_hh_positions": [
+            2078,
+            2079,
+            2080
+          ],
+          "needle_in_hh": 3,
+          "neighbor_covered": {
+            "1": true,
+            "2": true,
+            "4": true
+          },
+          "per_code": {
+            "72234": true
+          }
+        },
+        {
+          "captured": true,
+          "codes_captured": 1,
+          "codes_total": 1,
+          "hh_budget": 128,
+          "in_hh_positions": [
+            2078,
+            2079,
+            2080
+          ],
+          "needle_in_hh": 3,
+          "neighbor_covered": {
+            "1": true,
+            "2": true,
+            "4": true
+          },
+          "per_code": {
+            "72234": true
+          }
+        }
+      ],
+      "task": "niah_single"
+    },
+    "e2e_r256_sfull": {
+      "code": "72234",
+      "ctx": 4104,
+      "model": "unsloth/Llama-3.2-1B-Instruct",
+      "n_planted": 1,
+      "needle_positions": [
+        2078,
+        2079,
+        2080
+      ],
+      "needle_tokens": 3,
+      "rank": 256,
+      "score_rank": null,
+      "smallest_capturing_hh": null,
+      "sweep": [
+        {
+          "captured": false,
+          "codes_captured": 0,
+          "codes_total": 1,
+          "hh_budget": 32,
+          "in_hh_positions": [
+            2079,
+            2080
+          ],
+          "needle_in_hh": 2,
+          "neighbor_covered": {
+            "1": true,
+            "2": true,
+            "4": true
+          },
+          "per_code": {
+            "72234": false
+          }
+        },
+        {
+          "captured": false,
+          "codes_captured": 0,
+          "codes_total": 1,
+          "hh_budget": 64,
+          "in_hh_positions": [
+            2079,
+            2080
+          ],
+          "needle_in_hh": 2,
+          "neighbor_covered": {
+            "1": true,
+            "2": true,
+            "4": true
+          },
+          "per_code": {
+            "72234": false
+          }
+        },
+        {
+          "captured": false,
+          "codes_captured": 0,
+          "codes_total": 1,
+          "hh_budget": 128,
+          "in_hh_positions": [
+            2079,
+            2080
+          ],
+          "needle_in_hh": 2,
+          "neighbor_covered": {
+            "1": true,
+            "2": true,
+            "4": true
+          },
+          "per_code": {
+            "72234": false
+          }
+        }
+      ],
+      "task": "niah_single"
+    }
+  },
+  "uncapped_failure_mode": "s=full misses the FIRST needle token (2/3 in hh: positions 2079,2080 kept, 2078 missed) at every tested hh_budget, for BOTH r128 and r256 -- captured (strict all-tokens) = False",
+  "verdict": "FUND"
+}

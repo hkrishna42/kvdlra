@@ -211,6 +211,11 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
         # Week-13 T-B: --warmup-seed seeds the exact tier from the first ingest
         # chunk's outliers -> arm name gains a "seed" suffix (bugS vs bugSseed A/B).
         warmup = bool(getattr(args, "warmup_seed", False))
+        # Week-15 T2: --score-rank caps the SLASH surprise-scoring basis at a
+        # leading-column subview (selection-rank decoupled from storage-rank) ->
+        # arm name gains a "-s{k}" SUFFIX after -h{hh} (suffix, not prefix, so the
+        # bugS-* prefix-grep discipline over mixed logs stays intact).
+        score_rank = getattr(args, "score_rank", None)
         prefix = "bugS" if retain else "bugSdrop"
         if w_key is not None:
             if not retain:
@@ -218,11 +223,12 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
             prefix = "bugSQ"
         if warmup:
             prefix += "seed"
+        suffix = f"-s{score_rank}" if score_rank is not None else ""
         for r in args.ranks:
             for hh in args.hh_budgets:
                 arms.append(
                     {
-                        "name": f"{prefix}-r{r}-h{hh}",
+                        "name": f"{prefix}-r{r}-h{hh}{suffix}",
                         "kind": "bug",
                         "rank": r,
                         "retention": "lowrank_surprise",
@@ -243,6 +249,7 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                                 hh_retain=retain,
                                 seed_hh_warmup=warmup,
                                 w_key=w_key,
+                                score_rank=score_rank,
                             )
                         ),
                     }
@@ -476,6 +483,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             try:
                 with peak_ctx as peak_get:
                     total_nll, total_tok = 0.0, 0
+                    window_nlls: list[float] = []  # per-window MEAN nll (nats/token)
+                    window_toks: list[int] = []  # per-window scored-token counts
                     fp: acc.Footprint | None = None
                     arm_chunk = args.chunk if arm.get("chunkable", True) else 0
                     for ctx_ids, win_ids in samples:
@@ -489,19 +498,46 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                             nll, ntok = score_streaming(model, cache, ctx_ids, win_ids, arm_chunk)
                         total_nll += nll
                         total_tok += ntok
+                        window_nlls.append(nll / ntok)
+                        window_toks.append(ntok)
                         if fp is None:
                             fp = _footprint(arm, cache, t, n, h_kv)
                         del cache
                         gc.collect()
                     peak = peak_get()
                 assert fp is not None
+                # Pooled ppl: BYTE-IDENTICAL to the pre-Week-15 computation (summed
+                # nats / summed tokens, then exp). window_nlls/window_toks are a pure
+                # ADDITION so error bars exist (docs/week15-significance.md); the
+                # pin: ppl == exp(sum(nll_i*tok_i)/sum(tok_i)) recomputed from them.
                 ppl = float(torch.tensor(total_nll / total_tok).exp())
+                # [pplw] per-window mean NLLs -- one line per (arm, T), greppable
+                # ^\[pplw (the ^\[niah harvest discipline). vast logs truncate at
+                # ~500 chars, so a would-be >400-char line splits into part=i/N
+                # lines of 8 values each. Windows are uniform-length by
+                # construction (exact slices); ntok is that per-window count, and
+                # the JSON row stays authoritative for exact per-window weights.
+                # Format (harvest regex):
+                #   ^\[pplw\] T=(\d+) (\S+) ntok=(\d+)
+                #     (?: part=(\d+)/(\d+))? nlls=([0-9.,]+)$
+                vals = [f"{v:.6f}" for v in window_nlls]
+                head = f"[pplw] T={t} {arm['name']} ntok={window_toks[0]}"
+                line = f"{head} nlls={','.join(vals)}"
+                if len(line) <= 400:
+                    print(line, flush=True)
+                else:
+                    groups = [vals[i : i + 8] for i in range(0, len(vals), 8)]
+                    for pi, grp in enumerate(groups, 1):
+                        part = f"{head} part={pi}/{len(groups)} nlls={','.join(grp)}"
+                        print(part, flush=True)
                 row = {
                     "method": arm["name"],
                     "kind": arm["kind"],
                     "rank": arm["rank"],
                     "T": t,
                     "ppl": ppl,
+                    "window_nlls": window_nlls,
+                    "window_toks": window_toks,
                     "float_equiv_per_layer": fp.float_equiv(),
                     "tok_equiv_per_layer": fp.tok_equiv(n),
                     "ratio_fp16": fp.ratio_fp16(t, n),
@@ -641,6 +677,14 @@ def main() -> None:
         action="store_true",
         help="Week-13 T-B: seed the exact tier from the first ingest chunk's outliers "
         "-> bugSseed-* arms (fixes the warm-up window; requires --chunk>0)",
+    )
+    parser.add_argument(
+        "--score-rank",
+        type=int,
+        default=None,
+        help="Week-15 T2: cap the SLASH surprise-scoring basis at this many leading "
+        "columns (selection-rank decoupled from storage-rank) -> '-s{k}' arm suffix; "
+        "storage/footprint unchanged; requires 1 <= k <= rank",
     )
     parser.add_argument(
         "--chunk", type=int, default=0, help="chunked-prefill block size (0=single-shot)"

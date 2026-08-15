@@ -87,10 +87,14 @@ framework** ([`docs/week15-significance.md`](docs/week15-significance.md)) — e
 9.0 vs 7.5 is 0.263 bits/token, a large, decisively-significant difference; 0.04 bits/token is a
 tie.
 
-**Honest notes:** the decoupling is dead at r256 (past the rank-retrieval cliff); s32
-multivalue@32K is unmeasured (~100 expected); the airtight single result is 32K var-track.
-Result record: [`results/w15-confirm-summary.md`](results/w15-confirm-summary.md); plan in
-`~/.claude/plans/`.
+**Completed (n=8):** the `s32` arm scores a clean **100/100/100/100 at both 16K and 32K**, and
+its 16K perplexity (5.434) ties ThinK/Palu within 0.006 bits/token — near full-KV — at 2.6–3.9×
+less memory. **Honest notes:** the decoupling is dead at r256 (past the rank-retrieval cliff);
+the airtight single retrieval result is 32K var-track (0/4→4/4, Wilson-disjoint); some 16K lifts
+are marginal-n; vs uncompressed full KV, BUG is ~5% higher perplexity at 32K. Record:
+[`results/w15-confirm-summary.md`](results/w15-confirm-summary.md),
+[`results/w15-complete-summary.md`](results/w15-complete-summary.md); explainer
+[`docs/week15-explained.md`](docs/week15-explained.md).
 
 ### The compression tradeoff (Week 4, the fair control)
 

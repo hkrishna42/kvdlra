@@ -38,7 +38,7 @@ pip install -q 'transformers==5.8.0' 'datasets==2.21.0' 2>&1 | tail -5
 echo "===DEPS_DONE==="
 python -c "import torch,transformers,kvpress; print('torch',torch.__version__,'cuda',torch.cuda.is_available())" || echo "===DEPS_FAILED==="
 
-RULER(){ PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" "$@" 2>&1; }
+RULER(){ PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" --chunk "$CHUNK" "$@" 2>&1; }
 PPL(){ PYTHONPATH=src python -u scripts/w10_frontier.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
         --chunk "$CHUNK" --window 512 --n-samples 8 --no-ruler "$@" 2>&1; }
 

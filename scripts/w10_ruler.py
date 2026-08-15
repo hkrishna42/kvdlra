@@ -39,7 +39,7 @@ import gc
 import json
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import _paths  # noqa: F401
 import matplotlib
@@ -58,7 +58,9 @@ import matplotlib.pyplot as plt
 DEFAULT_MODEL = "unsloth/Llama-3.2-1B-Instruct"
 JSON_BEGIN = "===W10_RULER_JSON_BEGIN==="
 JSON_END = "===W10_RULER_JSON_END==="
-_TAIL_K = 48  # question + assistant header fed AFTER compression (as in w4/w5)
+_TAIL_K = 48  # FLOOR for the decoded query tail (question + assistant header, as in
+# w4/w5); the actual tail is template-derived per family (see _templated) and never
+# shorter than this, so Llama's validated 48-token slice is preserved bit-for-bit.
 TASKS = ("niah_single", "niah_multikey", "niah_multivalue", "vt")
 
 
@@ -74,12 +76,60 @@ def _filler_to(tok: Any, ctx: int) -> list[str]:
     return sentences
 
 
+def _first_divergence(a: torch.Tensor, b: torch.Tensor) -> int:
+    """First index at which the 1-D id tensors ``a`` and ``b`` differ, or the shorter
+    length if one is a prefix of the other."""
+    m = min(int(a.shape[0]), int(b.shape[0]))
+    if m == 0:
+        return 0
+    diff = torch.nonzero(a[:m] != b[:m], as_tuple=False)
+    return int(diff[0].item()) if diff.numel() else m
+
+
+def _tail_len(full_ids: torch.Tensor, body_ids: torch.Tensor, floor: int) -> int:
+    """Number of trailing tokens of ``full_ids`` that are the decoded-at-true-position
+    query = ``max(floor, question + generation-header)``. ``body_ids`` is the SAME chat
+    template applied to the body alone (``add_generation_prompt=True``); the two share the
+    body prefix and first diverge where the question begins, so ``len(full) - divergence``
+    is exactly the question+header length -- template-derived and family-agnostic. The
+    ``floor`` (Llama's fixed 48) keeps validated Llama slices unchanged and is a safe
+    lower bound (a longer query only widens the uncompressed recent window; the mid-body
+    needle is never inside the last 48 tokens). Clamped to leave >=1 token to compress."""
+    div = _first_divergence(full_ids, body_ids)
+    tail = max(floor, int(full_ids.shape[0]) - div)
+    return min(tail, int(full_ids.shape[0]) - 1)
+
+
 def _templated(tok: Any, body: str, question: str) -> tuple[torch.Tensor, torch.Tensor]:
-    msgs = [{"role": "user", "content": body + question}]
-    ids = tok.apply_chat_template(
-        msgs, add_generation_prompt=True, return_tensors="pt", return_dict=True
-    )["input_ids"]
-    return ids[:, :-_TAIL_K], ids[:, -_TAIL_K:]
+    """Split the templated (body+question) into (compressed-prefill, decoded-query).
+
+    The tail is template-derived (``_tail_len``) so the whole question + generation
+    header lands in the decoded query for ANY chat template, not just Llama's -- the
+    fixed ``_TAIL_K=48`` mis-sliced Mistral/Qwen templates into silent needle failures.
+    Fails loud if the question is not fully inside the decoded query (the per-family
+    mis-slice tripwire)."""
+
+    def _ids(text: str) -> torch.Tensor:
+        out = tok.apply_chat_template(
+            [{"role": "user", "content": text}],
+            add_generation_prompt=True,
+            return_tensors="pt",
+            return_dict=True,
+        )["input_ids"]
+        return cast(torch.Tensor, out)
+
+    full = _ids(body + question)
+    tail_k = _tail_len(full[0], _ids(body)[0], _TAIL_K)
+    pre, query = full[:, :-tail_k], full[:, -tail_k:]
+    q_norm = " ".join(question.split())
+    if q_norm and q_norm not in " ".join(tok.decode(query[0]).split()):
+        raise ValueError(
+            f"RULER template mis-slice for model {getattr(tok, 'name_or_path', '?')!r}: "
+            f"the question is not fully inside the decoded query (tail_k={tail_k}). This "
+            f"chat template's question+header tail differs from the Llama assumption -- "
+            f"inspect apply_chat_template before running (a wrong slice = silent 0s)."
+        )
+    return pre, query
 
 
 def _codes(g: torch.Generator, k: int) -> list[int]:

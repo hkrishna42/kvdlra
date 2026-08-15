@@ -11,13 +11,15 @@ standard low-rank-KV operating point.
 
 Post-hoc realization (no fine-tuning): a reconstruct-then-attend press (Mode A,
 same-shape output, like :class:`BUGPress`). Per head-group of ``group`` KV heads we
-form the pre-RoPE key matrix ``(group*head_dim, T)`` and its value matrix, truncate
-each to rank ``r = round(rank_ratio * group * head_dim)``, and write back the rank-r
+form the pre-RoPE key matrix ``(group*head_dim, T)`` and its value matrix, keep the
+``n_sink`` leading token columns **exact** (the :class:`BUGPress` sink exemption --
+only columns ``n_sink:`` are reconstructed; Week-15 audit fix), truncate the rest to
+rank ``r = round(rank_ratio * group * head_dim)``, and write back the rank-r
 reconstruction (keys re-rotated to post-RoPE). ``rank_ratio in (0, 1]``;
 ``rank_ratio = 1`` is lossless. Memory is counted honestly by
-:func:`kvdlra.accounting.palu_footprint` (per-token latent ``r*T`` + basis
-``r*group*head_dim``, K+V) -- **not** the same-shape DynamicCache tensor, which is
-uncompressed by construction (Mode A).
+:func:`kvdlra.accounting.palu_footprint` (exact sinks + per-token latent
+``r*(T - n_sink)`` + basis ``r*group*head_dim``, K+V) -- **not** the same-shape
+DynamicCache tensor, which is uncompressed by construction (Mode A).
 
 Faithfulness note: real Palu low-rank-decomposes the projection *weights* offline
 (and can fine-tune / quantize). This post-hoc *activation*-SVD is the Eckart--Young
@@ -61,15 +63,30 @@ class PaluPress(BUGPress):
             raise ValueError(f"group must be >= 1, got {self.group}")
 
     def _compress_tensor(self, x: torch.Tensor) -> torch.Tensor:
-        """Per-head-group truncated-SVD low-rank reconstruction of ``(bsz, H, T, D)``."""
+        """Per-head-group truncated-SVD low-rank reconstruction of ``(bsz, H, T, D)``.
+
+        The ``n_sink`` leading token columns (attention sinks) are kept **exact**
+        and only columns ``n_sink:`` are low-ranked -- the same contract as
+        :class:`BUGPress` ("only columns ``n_sink:`` are reconstructed"), applied
+        to K and V alike. Week-15 audit fix: without this carve-out Palu was the
+        ONLY frontier arm that low-ranked the sinks; the high-norm sink columns
+        dominate each group's spectrum, so the truncated SVD spent its rank on
+        them and wrecked fluency (the incoherent-for-Eckart--Young 1B palu-r0.5
+        ppl signature). The carve-out is inline by design -- calling
+        ``BUGPress._lowrank_reconstruct`` would drag BUG's streaming-projector
+        semantics into this static Eckart--Young baseline.
+        """
         bsz, h, t, d = x.shape
-        out = torch.empty_like(x)
+        out = x.clone()  # sinks (columns :n_sink) stay bit-exact
+        s = min(self.n_sink, t)
+        if t <= s:
+            return out  # only sinks present; nothing to compress
         for b in range(bsz):
             for g0 in range(0, h, self.group):
                 g1 = min(h, g0 + self.group)
                 gd = (g1 - g0) * d
                 r = max(1, min(gd, round(self.rank_ratio * gd)))
                 blk = x[b, g0:g1].permute(0, 2, 1).reshape(gd, t)  # (group*D, T)
-                recon = _svd_lowrank_recon(blk, r)
-                out[b, g0:g1] = recon.reshape(g1 - g0, d, t).permute(0, 2, 1).to(x.dtype)
+                recon = _svd_lowrank_recon(blk[:, s:], r)  # non-sink block only
+                out[b, g0:g1, s:] = recon.reshape(g1 - g0, d, t - s).permute(0, 2, 1).to(x.dtype)
         return out

@@ -323,6 +323,39 @@ def test_reset_allows_reuse(tiny_model: LlamaForCausalLM) -> None:
     assert _shadow_layer(cache).cumulative_length == 40
 
 
+def test_unattached_selection_raises(tiny_model: LlamaForCausalLM) -> None:
+    """Week-15: decode WITHOUT attach() when selection matters (k_eff < n_chunks)
+    RAISES instead of silently falling back to the most recent chunks. The
+    silent fall-back was the harness defect behind the published shadow 0/0/0/0
+    RULER rows (decode ran outside attach -> most-recent-chunks retention ->
+    mid-context needle excluded by construction). Prefill alone stays legal
+    (no selection happens there)."""
+    cache = ShadowKVCache(tiny_model, rank_s=8, top_k=2, chunk=8, recent_window=8, n_sink=4)
+    layer = _shadow_layer(cache)
+    ids = _prompt(60)
+    with torch.no_grad():
+        out = tiny_model(ids, past_key_values=cache, use_cache=True)  # prefill: fine unattached
+    assert layer._k_eff() < layer.n_chunks  # the selection-matters regime
+    tok = out.logits[:, -1:].argmax(-1)
+    with torch.no_grad(), pytest.raises(RuntimeError, match="attach"):
+        tiny_model(tok, past_key_values=cache, use_cache=True)
+
+
+def test_unattached_decode_ok_when_all_chunks_selected(tiny_model: LlamaForCausalLM) -> None:
+    """k_eff >= n_chunks (small context / big top_k): every chunk is selected
+    regardless of the query, so the chronological fall-back IS the complete
+    correct selection and unattached decode keeps working -- the legitimate
+    path the Week-15 raise must NOT break."""
+    cache = ShadowKVCache(tiny_model, rank_s=8, top_k=1000, chunk=8, recent_window=8, n_sink=4)
+    layer = _shadow_layer(cache)
+    with torch.no_grad():
+        out = tiny_model(_prompt(60), past_key_values=cache, use_cache=True)
+        assert layer._k_eff() == layer.n_chunks
+        for _ in range(3):
+            tok = out.logits[:, -1:].argmax(-1)
+            out = tiny_model(tok, past_key_values=cache, use_cache=True)  # must not raise
+
+
 def test_non_mutating_frozen_scoring(tiny_model: LlamaForCausalLM) -> None:
     cache = ShadowKVCache(tiny_model, rank_s=8, top_k=2, recent_window=8)
     ids = _prompt(60)

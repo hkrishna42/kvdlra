@@ -22,8 +22,8 @@
 | snapkv-k0.25 | 0.250× | 4.04 | 100 | 50 | 100 | 0 | 8 |
 | think-c0.3 | 0.852× | 4.09 | 100 | 100 | 100 | 100 | 8 |
 | think-c0.5 | 0.750× | 4.19 | 100 | 100 | 100 | 38 | 8 |
-| palu-r0.5 | 0.504× | 5.24 | 100 | 100 | 100 | 0 | 8 |
-| shadow-r64 | 0.815× | 4.11 | 0 | 0 | 0 | 0 | 8 |
+| palu-r0.5 [INVALIDATED — harness/port defect, Week-15 audit; re-measure pending] | 0.504× | 5.24 | 100 | 100 | 100 | 0 | 8 |
+| shadow-r64 [INVALIDATED — harness/port defect, Week-15 audit; re-measure pending] | 0.815× | 4.11 | 0 | 0 | 0 | 0 | 8 |
 
 ## 32K context
 
@@ -49,8 +49,8 @@
 | snapkv-k0.25 | 0.250× | 7.68 | 100 | 0 | 100 | 0 | 2 |
 | think-c0.3 | 0.852× | 7.65 | 100 | 100 | 100 | 100 | 2 |
 | think-c0.5 | 0.750× | 7.90 | 100 | 100 | 100 | 50 | 2 |
-| palu-r0.5 | 0.502× | 9.24 | 100 | 100 | 100 | 100 | 2 |
-| shadow-r64 | 0.814× | — | 0 | 0 | 0 | 0 | 2 |
+| palu-r0.5 [INVALIDATED — harness/port defect, Week-15 audit; re-measure pending] | 0.502× | 9.24 | 100 | 100 | 100 | 100 | 2 |
+| shadow-r64 [INVALIDATED — harness/port defect, Week-15 audit; re-measure pending] | 0.814× | — | 0 | 0 | 0 | 0 | 2 |
 
 ## 64K context
 

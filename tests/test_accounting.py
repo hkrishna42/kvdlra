@@ -240,11 +240,29 @@ def test_think_ratio_is_one_minus_half_cr() -> None:
 
 
 def test_palu_ratio_tracks_rank_ratio() -> None:
-    """Palu low-rank K+V latents -> ratio ~ rank_ratio at long t (basis amortizes)."""
+    """Palu low-rank K+V latents -> ratio ~ rank_ratio at long t (basis + exact
+    sinks amortize)."""
     t, n, head_dim, h_kv = 8192, 512, 64, 8
     for rr in (0.25, 0.5):
         fp = acc.palu_footprint(t, n, head_dim, h_kv, rr)
         assert fp.ratio_fp16(t, n) == pytest.approx(rr, abs=0.03)
+
+
+def test_palu_footprint_counts_sinks() -> None:
+    """Week-15: ``PaluPress`` keeps the ``n_sink`` leading columns exact, so the
+    footprint counts them verbatim (``2*n*n_sink``, K+V at full feature width)
+    and pays the per-token latent only over ``t - n_sink`` columns -- the exact
+    sinks are stored, never free (the one-unit ethos)."""
+    t, n, head_dim, h_kv, rr, sink = 8192, 512, 64, 8, 0.5, 4
+    r = round(rr * head_dim)  # per-head rank (group=1)
+    fp = acc.palu_footprint(t, n, head_dim, h_kv, rr)  # default n_sink=4
+    expected = 2 * n * sink + 2 * (t - sink) * r * h_kv + 2 * r * head_dim * h_kv
+    assert fp.float_equiv() == expected
+    # n_sink=0 reproduces the pre-fix latent+basis-only formula ...
+    fp0 = acc.palu_footprint(t, n, head_dim, h_kv, rr, n_sink=0)
+    assert fp0.float_equiv() == 2 * t * r * h_kv + 2 * r * head_dim * h_kv
+    # ... and the delta is exactly (verbatim sinks added) - (sink latents removed).
+    assert fp.float_equiv() - fp0.float_equiv() == 2 * n * sink - 2 * sink * r * h_kv
 
 
 def test_full_cache_ratio_is_one() -> None:

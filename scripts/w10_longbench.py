@@ -132,13 +132,17 @@ def generate(
     streaming = arm["kind"] in ("bug", "morph", "shadow")
     if streaming:
         cache: Cache = arm["make"]()
+        # Week-15 A1 fix: attach() covers prefill AND decode (uniform for all
+        # streaming arms) -- decode outside attach left ShadowKV's selection hook
+        # unregistered, silently degrading it to most-recent-chunks retention
+        # (same defect as w10_ruler.py; those published rows are VOID).
         with cache.attach(model):  # type: ignore[attr-defined]
             if 0 < chunk < ctx_len:
                 _prefill_chunked(model, cache, pre, chunk)
             else:
                 model(pre, past_key_values=cache, use_cache=True, logits_to_keep=1)
-        fp = _footprint(arm, cache, ctx_len, n, h_kv)
-        text = _decode(model, tok, cache, last, ctx_len, device, block=False, max_new=max_new)
+            fp = _footprint(arm, cache, ctx_len, n, h_kv)
+            text = _decode(model, tok, cache, last, ctx_len, device, block=False, max_new=max_new)
     else:
         cache = DynamicCache()
         press = arm["make"]()

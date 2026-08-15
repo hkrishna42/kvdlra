@@ -268,22 +268,36 @@ def think_footprint(
 
 
 def palu_footprint(
-    t: int, n: int, head_dim: int, h_kv: int, rank_ratio: float, *, group: int = 1
+    t: int,
+    n: int,
+    head_dim: int,
+    h_kv: int,
+    rank_ratio: float,
+    *,
+    group: int = 1,
+    n_sink: int = N_SINK,
 ) -> Footprint:
     """Per-layer footprint of Palu (arXiv:2407.21118): low-rank projection of K AND
     V into a rank-``r`` latent per head-group, ``r = rank_ratio * head_dim * group``.
-    Stores the per-token latent ``H`` (``t*r``) for K and V, plus the reconstruction
-    basis ``B`` (``r*head_dim*group``) per group -- both counted. ``group`` = KV heads
-    sharing one projection (Palu's grouped low-rank; group=1 = per-head).
+    Stores the ``n_sink`` leading token columns **verbatim** (the sink exemption
+    :class:`kvdlra.press.PaluPress` applies since the Week-15 audit fix -- only
+    columns ``n_sink:`` are low-ranked, K+V), the per-token latent ``H``
+    (``(t-n_sink)*r``) for K and V, plus the reconstruction basis ``B``
+    (``r*head_dim*group``) per group -- all counted. ``group`` = KV heads sharing
+    one projection (Palu's grouped low-rank; group=1 = per-head).
 
-    ratio_fp16 ~ (r / (head_dim*group)) = rank_ratio at long t (the basis amortizes),
-    i.e. it compresses BOTH K and V to the rank fraction -- the low-rank analogue of
-    BUG with a *static* (weight-SVD) subspace rather than the streaming tracker."""
+    ratio_fp16 ~ (r / (head_dim*group)) = rank_ratio at long t (the basis and the
+    tiny exact-sink block amortize), i.e. it compresses BOTH K and V to the rank
+    fraction -- the low-rank analogue of BUG with a *static* (weight-SVD) subspace
+    rather than the streaming tracker."""
     n_groups = max(1, h_kv // group)
     r = max(1, round(rank_ratio * head_dim * group))
-    latent = 2 * t * r * n_groups  # K + V per-token latents H (t x r) per group
+    t_sink = min(n_sink, t)
+    t_pay = t - t_sink  # only columns n_sink: carry the low-rank latent
+    sinks = 2 * n * t_sink  # K + V exact sink columns (full feature width)
+    latent = 2 * t_pay * r * n_groups  # K + V per-token latents H (t_pay x r) per group
     basis = 2 * r * head_dim * group * n_groups  # K + V reconstruction bases B
-    return Footprint(verbatim_elems=latent + basis)
+    return Footprint(verbatim_elems=sinks + latent + basis)
 
 
 # ------------------------------------------------------------------ ShadowKV

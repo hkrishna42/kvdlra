@@ -211,15 +211,20 @@ def retrieve(
     streaming = arm["kind"] in ("bug", "morph", "shadow")
     if streaming:
         cache: Cache = arm["make"]()
+        # Week-15 A1 fix: the attach() scope covers prefill AND decode (uniform for
+        # all streaming arms). Previously only the prefill was attached, so
+        # ShadowKV's pre-attention selection hook never ran at decode and
+        # _selected_chunks fell back to the most-recent chunks -- excluding the
+        # mid-context needle by construction (the published 0/0/0/0 rows are VOID).
         with cache.attach(model):  # type: ignore[attr-defined]
             if 0 < chunk < ctx_len:
                 _prefill_chunked(model, cache, hay, chunk)
             else:
                 model(hay, past_key_values=cache, use_cache=True, logits_to_keep=1)
-        fp = _footprint(arm, cache, ctx_len, n, h_kv)
-        text = _decode(
-            model, tok, cache, query.to(device), ctx_len, device, block=False, max_new=max_new
-        )
+            fp = _footprint(arm, cache, ctx_len, n, h_kv)
+            text = _decode(
+                model, tok, cache, query.to(device), ctx_len, device, block=False, max_new=max_new
+            )
     else:
         # Scorer presses run SINGLE-SHOT (no ChunkPress): kvpress compresses in
         # prefill and SnapKVPress asserts q_len > window_size (64), which the small
@@ -429,6 +434,14 @@ def main() -> None:
         action="store_true",
         help="Week-13 T-B: seed the exact tier from the first ingest chunk's outliers "
         "-> bugSseed-* arms (fixes the warm-up window; requires --chunk>0)",
+    )
+    parser.add_argument(
+        "--score-rank",
+        type=int,
+        default=None,
+        help="Week-15 T2: cap the SLASH surprise-scoring basis at this many leading "
+        "columns (selection-rank decoupled from storage-rank) -> '-s{k}' arm suffix; "
+        "storage/footprint unchanged; requires 1 <= k <= rank",
     )
     parser.add_argument("--chunk", type=int, default=0, help="chunked-prefill block size")
     parser.add_argument("--n-trials", type=int, default=4)

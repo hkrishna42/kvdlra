@@ -83,7 +83,6 @@ Xiao et al., arXiv:2309.17453 (StreamingLLM; sinks + recent window).
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any, cast
@@ -95,8 +94,6 @@ from transformers.cache_utils import Cache, CacheLayerMixin, LinearAttentionCach
 from transformers.models.llama.modeling_llama import rotate_half
 
 from kvdlra.cache.bug_cache import _rope_unapply, _RopeAngles
-
-logger = logging.getLogger(__name__)
 
 __all__ = ["ShadowKVCache", "ShadowKVLayer"]
 
@@ -153,7 +150,6 @@ class ShadowKVLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.mid_basis: Tensor | None = None  # (H_kv, r, D) small key basis (pre-RoPE)
         self.landmarks: Tensor | None = None  # (H_kv, n_chunks, D) post-RoPE chunk means
         self._selected: Tensor | None = None  # (H_kv, k_eff) planned chunk ids (int64)
-        self._warned_unattached = False
 
     def lazy_initialization(self, key_states: Tensor, value_states: Tensor) -> None:
         if key_states.shape[0] != 1:
@@ -220,18 +216,27 @@ class ShadowKVLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self._selected = self._select_chunks(qf)
 
     def _selected_chunks(self) -> Tensor:
-        """The planned selection, or a fall-back (the most recent ``k_eff`` chunks)
-        if no pre-attention hook ran -- warned once, mirroring MorphKV/BUG."""
+        """The planned selection. If no pre-attention hook ran (cache not
+        ``attach()``ed / ``frozen_scoring()``) this **raises** whenever the
+        selection actually matters (``k_eff < n_chunks``): silently falling back
+        to the most recent chunks turns ShadowKV into recency-eviction and
+        excludes mid-context content by construction -- the Week-15-audited
+        harness defect behind the published 0/0/0/0 RULER rows. When ``k_eff >=
+        n_chunks`` every chunk is selected regardless of the query, so the
+        chronological fall-back below IS the complete, correct selection (small
+        contexts stay working without hooks)."""
         k_eff = self._k_eff()
         if self._selected is not None and int(self._selected.shape[1]) == k_eff:
             return self._selected
-        if not self._warned_unattached and k_eff < self.n_chunks:
-            logger.warning(
+        if k_eff < self.n_chunks:
+            raise RuntimeError(
                 "ShadowKV selecting with no planned chunks (cache not attach()ed / "
-                "frozen_scoring()?) -- falling back to the most recent %d chunks",
-                k_eff,
+                f"frozen_scoring()?) with k_eff={k_eff} < n_chunks={self.n_chunks}: "
+                "the most-recent-chunks fall-back would silently exclude mid-context "
+                "tokens. Wrap the WHOLE forward -- prefill AND decode -- in "
+                "`with cache.attach(model):` (or `cache.frozen_scoring()` for "
+                "windowed scoring) so the pre-attention hook plans the selection."
             )
-            self._warned_unattached = True
         recent = torch.arange(self.n_chunks - k_eff, self.n_chunks, device=self.device)
         return recent.unsqueeze(0).expand(self.num_kv_heads, -1)
 

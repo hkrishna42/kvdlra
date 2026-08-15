@@ -251,8 +251,8 @@ the previously-absent MorphKV / SnapKV / ShadowKV. Accuracy
 | morph-k0.25 (0.31×) | 0.75 | 0.50 | 0.88 | 0.12 |
 | plain bug-r128 (0.14×) | 0.25 | 0.38 | 0.38 | 0.00 |
 | think-c0.3 (0.85×) | 1.00 | 1.00 | 1.00 | 1.00 |
-| palu-r0.5 (0.50×) | 1.00 | 1.00 | 1.00 | 0.00 |
-| shadow-r64 (0.81×) | 0.00 | 0.00 | 0.00 | 0.00 |
+| palu-r0.5 (0.50×) [INVALIDATED — harness/port defect, Week-15 audit; re-measure pending] | 1.00 | 1.00 | 1.00 | 0.00 |
+| shadow-r64 (0.81×) [INVALIDATED — harness/port defect, Week-15 audit; re-measure pending] | 0.00 | 0.00 | 0.00 | 0.00 |
 
 **Findings (consistent with Week 10).**
 - **ExpectedAttention is strongest at low memory** — but even it collapses on
@@ -260,8 +260,19 @@ the previously-absent MorphKV / SnapKV / ShadowKV. Accuracy
   (only `full` and `think-c0.3` at 0.85× get it).
 - **Plain BUG is weak throughout** (the wall — this is exactly what motivated GOAL
   B): 0.25/0.38/0.38/0 at r128.
-- **ShadowKV fails on this float-equivalent axis** (0/0/0/0). Its niche is GPU
-  *throughput*, deliberately not rewarded by an honest memory-only metric.
+- **[CORRECTED — Week-15 audit] ShadowKV's 0/0/0/0 was OUR harness bug, not a
+  ShadowKV result.** `w10_ruler.retrieve()` wrapped only the *prefill* in
+  `cache.attach(model)`; `_decode` ran outside it, so ShadowKV's pre-attention
+  selection hook never fired at decode and `_selected_chunks` silently fell back
+  to the most-recent chunks — excluding the mid-context needle *by construction*
+  (the fallback warning fired 6,944× in `results/gpu_logs/w11_goalA.acc.log`;
+  same defect in `w10_longbench.py`). The shadow rows above are **VOID**;
+  re-measure pending (Week-15). The original interpretation here ("ShadowKV
+  fails on this float-equivalent axis; its niche is GPU throughput") was wrong
+  and is retracted. Relatedly, the palu rows used a press that low-ranked the
+  4 attention sinks (the only arm to do so — `PaluPress` skipped `BUGPress`'s
+  sink exemption), wrecking its perplexity unfairly; also void, re-measure
+  pending.
 - **`vt` is the universal hard task under compression** — full-cache-only among the
   aggressive arms.
 

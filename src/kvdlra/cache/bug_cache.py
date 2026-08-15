@@ -330,6 +330,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         hh_select: str = "attn",
         hh_neighbor: int = 0,
         hh_retain: bool = True,
+        score_rank: int | None = None,
         seed_hh_warmup: bool = False,
         w_key: Tensor | None = None,
         merge: bool = False,
@@ -396,6 +397,25 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
                 "hh_budget > 0 with hh_select='attn' (SLASH exact heavy-hitters) "
                 "requires retention='attn'"
             )
+        # Week-15 T2 (score-rank decoupling): cap SurpriseSLASH *selection* scoring
+        # to the leading ``score_rank`` basis columns (``u_k[:, :s]`` -- energy-
+        # ordered by the integrator's SVD, so a leading-column subview is the
+        # dominant subspace and orthonormal for free, the ``_seal_anchor`` fact).
+        # Applied ONLY at the SLASH selection site; the tail-retention surprise
+        # snapshot stays uncapped. Storage rank (and so accounting) is unchanged.
+        if score_rank is not None:
+            if not 1 <= score_rank <= rank:
+                raise ValueError(f"score_rank must be in [1, rank={rank}], got {score_rank}")
+            if hh_select != "surprise":
+                raise ValueError(
+                    "score_rank caps SurpriseSLASH selection scoring; it requires "
+                    f"hh_select='surprise', got {hh_select!r}"
+                )
+            if hh_budget < 1:
+                raise ValueError(
+                    "score_rank requires an enabled SLASH exact tier (hh_budget >= 1); "
+                    f"got hh_budget={hh_budget}"
+                )
         self.rope = rope
         self.rank = rank
         self.coord_budget = coord_budget
@@ -412,6 +432,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.hh_select = hh_select
         self.hh_neighbor = hh_neighbor
         self.hh_retain = hh_retain
+        self.score_rank = score_rank
         # Week-13 T-B: seed the exact tier from the first ingest chunk's outliers
         # (default off). Only fires under chunked ingest (self._mode == "ingest") so
         # single-shot prefill keeps the tier empty, matching the deployed contract.
@@ -801,7 +822,10 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             # same metric (whiten the pool for scoring only); the raw cand_k_pre is
             # kept for the demote path, which re-whitens inside _absorb_columns.
             cand_k_pre = self._mat_rope_at(cand_k, cand_pos, inverse=True)
-            sel = self._surprise_scores(self._whiten_key(cand_k_pre))
+            # Week-15 T2: selection may score against the leading score_rank basis
+            # columns only (None = full basis). The tail-retention surprise
+            # snapshot in _absorb_columns stays UNCAPPED.
+            sel = self._surprise_scores(self._whiten_key(cand_k_pre), cap=self.score_rank)
             if self.hh_neighbor > 0:  # span-boost so needle neighbours are kept too
                 sel = self._span_boost(sel, cand_pos, self.hh_neighbor)
         else:
@@ -903,7 +927,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             self._seal_anchor()
         self._enforce_budgets()
 
-    def _surprise_scores(self, block_k: Tensor) -> Tensor:
+    def _surprise_scores(self, block_k: Tensor, cap: int | None = None) -> Tensor:
         """Low-rank surprise of pre-RoPE K columns ``block_k`` ``(n, m)``: the
         out-of-subspace residual fraction ``||k - U Uᵀk|| / ||k||`` against the
         current (pre-step) basis ``self.u_k``. By Pythagoras (``u_k``
@@ -911,12 +935,23 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         norm is ``sqrt(||k||² - ||c_old||²)``; normalized to ``[0, 1]`` (sin of the
         angle to ``span(u_k)``, scale-free across columns). ``1.0`` when there is
         no basis yet. Shared by ``retention="lowrank_surprise"`` graduation
-        snapshots and Week-11 SurpriseSLASH exact-tier selection."""
+        snapshots and Week-11 SurpriseSLASH exact-tier selection.
+
+        Week-15 T2: ``cap`` scores against only the leading ``cap`` basis columns
+        ``u_k[:, :cap]`` -- the energy-dominant subspace (the integrator's SVD
+        orders columns by accumulated-history singular value every step), itself
+        orthonormal, so the Pythagoras identity holds unchanged. This decouples
+        *selection* rank from *storage* rank: a big basis fits needles (residual
+        -> 0 -> never selected -- the measured rank-retrieval coupling), while
+        the leading-``cap`` subview keeps them surprising. ``None`` = full basis
+        (bit-for-bit the pre-Week-15 behaviour); a no-op until ``u_k`` has more
+        than ``cap`` columns (effective cap ``min(cap, u_k.shape[1])``)."""
         m = int(block_k.shape[1])
         k_norm = block_k.norm(dim=0)
         if self.u_k is None:  # first absorb: nothing older to predict from
             return torch.ones(m, dtype=torch.float32, device=block_k.device)
-        c_old = self.u_k.mT @ block_k  # (r, m) coords in the OLD basis
+        u = self.u_k if cap is None else self.u_k[:, : min(cap, int(self.u_k.shape[1]))]
+        c_old = u.mT @ block_k  # (r, m) coords in the OLD (possibly capped) basis
         resid = (k_norm**2 - c_old.norm(dim=0) ** 2).clamp_min(0.0).sqrt()
         return cast(Tensor, (resid / k_norm.clamp_min(1e-12)).to(torch.float32))
 
@@ -1717,6 +1752,11 @@ class BugStreamingCache(Cache):
         or neither). Codes count ``quant_bits/32`` float-equivalents each.
     quant_seed:
         Seed for the shared PolarQuant rotation/codebook.
+    score_rank:
+        Week-15 T2 (default ``None`` = off): cap SurpriseSLASH *selection*
+        scoring to the leading ``score_rank`` basis columns (``1 <= score_rank
+        <= rank``; requires ``hh_select='surprise'`` and ``hh_budget >= 1``).
+        Storage rank, tail-retention snapshots and accounting are unchanged.
     recent_window, absorb_block, n_sink, theta, prefill_block_size:
         See :class:`BugStreamingLayer`.
     """
@@ -1741,6 +1781,7 @@ class BugStreamingCache(Cache):
         hh_select: str = "attn",
         hh_neighbor: int = 0,
         hh_retain: bool = True,
+        score_rank: int | None = None,
         seed_hh_warmup: bool = False,
         w_key: list[Tensor] | Tensor | None = None,
         merge: bool = False,
@@ -1792,6 +1833,7 @@ class BugStreamingCache(Cache):
                 hh_select=hh_select,
                 hh_neighbor=hh_neighbor,
                 hh_retain=hh_retain,
+                score_rank=score_rank,
                 seed_hh_warmup=seed_hh_warmup,
                 w_key=w_key_per_layer[layer_idx],
                 merge=merge,

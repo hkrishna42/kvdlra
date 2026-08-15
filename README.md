@@ -60,29 +60,37 @@ hard tasks. With the seed, a matched A/B at *identical* memory (Llama-3.1-8B, RU
 Perplexity is unchanged-to-slightly-better at the same footprint (r32 @32K 9.16 → 9.09). Full
 accounting: [`results/w13-trackb-summary.md`](results/w13-trackb-summary.md).
 
-### Current focus (Week 13 — the parallel portfolio)
+### Current focus (Week 15 — both axes at 3–5× less memory)
 
-Week 13 opened four independent tracks to find the next *real* lever, each gated by a **$0 CPU
-probe** before any GPU spend and every surviving number re-derived by an adversarial verifier.
-The scoreboard so far:
+**BUG now matches the low-rank KV-compression field on perplexity *and* beats it on retrieval,
+at a paper-grade memory advantage.** The headline arm `bugSseed-r128-h1024-s32` (0.159× memory)
+adds a **score-rank decoupling** knob to the Week-14 warm-up seed: `--score-rank 32` caps the
+surprise-scoring basis at a leading rank-32 subview (default-off, **zero** memory cost, +0.3%
+ppl), un-blinding the exact-tier selection that a large r128 gist otherwise "fits" into
+invisibility. Confirmed on Llama-3.1-8B (n=8 ppl / n=4–8 RULER, GPU):
 
-- **T-B · warm-up seed — FUNDED WIN.** The 16K collapse was a structural bypass, now fixed
-  (table above); default-off pending a higher-n confirmation with error bars.
-- **Q-BUG (Week-12 Track 1) · query-metric whitened gist — funded but BOUNDED.** Whitening the
-  keys by where queries look (`w_key`, a frozen per-feature diagonal) lowers perplexity a real
-  but small ~0.4–1.2% (r32 @32K 9.164 → 9.092; both aggressive bars missed) at ~zero memory,
-  retrieval preserved within trial-noise. The CPU attention-error probe **over-predicted the
-  end-to-end ppl gain ~30–40×** — a proxy-vs-downstream lesson now on the record. Ships
-  default-off ([`docs/week12-qbug-explainer.md`](docs/week12-qbug-explainer.md)).
-- **T-C · long-document Q-BUG recalibration — killed** ($0): the long-doc whitening is 99.6%
-  aligned with the short-doc one, so calibration is not the ppl bottleneck.
-- **T-X · depth-continuous / cross-layer (PDE-in-depth) basis — lean-kill** ($0): adjacent-layer
-  pre-RoPE key subspaces sit at 57.7° vs a 62° random control (a shared basis needs <40°), so
-  amortizing the basis-overhead floor across depth won't pay.
+- **Perplexity (32K, same 8 windows for every arm):** full 6.975 · think-c0.5 7.196 ·
+  palu-r0.5 *(fixed)* 7.232 · **bugSseed-r128-s32 7.353** — a statistical **tie** with ThinK
+  (+0.031 bits/tok) and Palu (+0.024), inside the pre-registered 0.05 band, at **3.2–4.7× less
+  memory**. (Versus uncompressed full it is +0.076 bits/tok — BUG matches the compression
+  *field*, not full KV.)
+- **Retrieval:** the s32 cap lifts the hardest tasks at r128 — **32K var-track 0→100** (Wilson-
+  disjoint), 16K multi-value 25→100, 16K var-track 75→100 — so it **beats ThinK (vt 50) and
+  Palu (vt 25) on var-track** at 3–5× less memory.
 
-**Next:** higher-n (n≥8) confirmation of the warm-up seed and Q-BUG retrieval softening with
-error bars; the remaining perplexity lever is Track-A integrator surgery (damped / attention-
-weighted truncation for deep-horizon erosion). Plan: [`docs/week13-plan.md`](docs/week13-plan.md).
+**Two "baselines" turned out to be our own bugs, now fixed and validated on 8B** (a prerequisite
+of any honest claim): ShadowKV's published 0/0/0/0 was a harness defect (decode ran outside
+`attach()`), now retrieving 100/100 single/multikey; Palu's worst-in-table perplexity was our
+port low-ranking the attention sinks, now a strong 7.232 (was 9.236). We also ship **per-window
+NLL error bars**, **Wilson intervals on every RULER cell**, and a **perplexity-significance
+framework** ([`docs/week15-significance.md`](docs/week15-significance.md)) — e.g. a ppl gap of
+9.0 vs 7.5 is 0.263 bits/token, a large, decisively-significant difference; 0.04 bits/token is a
+tie.
+
+**Honest notes:** the decoupling is dead at r256 (past the rank-retrieval cliff); s32
+multivalue@32K is unmeasured (~100 expected); the airtight single result is 32K var-track.
+Result record: [`results/w15-confirm-summary.md`](results/w15-confirm-summary.md); plan in
+`~/.claude/plans/`.
 
 ### The compression tradeoff (Week 4, the fair control)
 

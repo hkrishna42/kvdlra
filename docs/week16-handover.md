@@ -49,7 +49,14 @@ Both ran. A significant science finding emerged and reshaped the Tier-2 story.
 |---|---|---|---|---|---|---|
 | **Qwen2.5-7B** (n=512) | 6.22 | 0.053 / 8.15 | 0.085 / 7.91 | **0.148 / 8.18** | 0.275 / 7.81 (needle absorbed) | **1.00 / 1.00 / 1.00** |
 | **Mistral-7B-v0.3** (n=1024) | 4.87 | 0.036 / 5.89 | 0.052 / 5.95 | **0.085 / 5.50** | 0.150 / 43.9 (diverges) | **1.00 / 1.00 / 0.50** |
-| **Llama-3.1-8B** (n=1024) | — | — | (r32-h256: mv 1.00, vt 0.88 from W15) | *measuring this session* | r128-s32: 1.00/1.00/1.00 @0.16× | *measuring* |
+| **Llama-3.1-8B** (n=1024) | — | 1.00/1.00/0.75 | 1.00/1.00/1.00 | **0.085 / — · retr 1.00/1.00/0.75** | h256: single 1.00 but **mv 0.00**; h1024-**s32**: 1.00/1.00/1.00 @0.16× | **1.00 / 1.00 / 0.75** |
+
+**Llama r64-h256 measured (this session, pod 47895531 destroyed):** single/mv 1.00, vt 0.75 @0.085× — the
+extreme-compression config generalizes to Llama too. **Nuance:** even Llama's bare `r128-h256` hits the
+rank-retrieval wall (mv 0.00, single 1.00) — it's the deployed `r128-h1024-s32` (bigger exact tier + the
+Week-15 score-rank fix) that recovers Llama's r128 to 1.00/1.00/1.00. So at **r64 all three work with no fix
+needed**; at r128 only Llama is *recoverable* (via s32), Qwen isn't (s32 fails), Mistral diverges. Var-track
+at r64-h256 separates the families: **Qwen 1.00 > Llama 0.75 > Mistral 0.50** (n=4).
 
 Baselines @16K — Qwen: `full` 6.22, `think-c0.5` 6.42 @0.75× (mv 0.75), `palu-r0.5` 6.38 @0.50× (mv 0.88).
 Mistral: `full` 4.87, `think` 4.93 @0.75× (vt 0.88), `palu` 5.09 @0.50× (vt 0.38).

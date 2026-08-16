@@ -21,8 +21,8 @@ MODEL="${MODEL:-Qwen/Qwen2.5-7B-Instruct}"
 TAG="${TAG:-qwen}"
 CHUNK="${CHUNK:-4096}"
 DTYPE="${DTYPE:-bfloat16}"
-PRANKS="${PRANKS:-16 32 64 128 256 512}"   # ppl sweep (fluency needs HIGH rank; to full rank)
-RRANKS="${RRANKS:-16 32 64 128 256}"        # retrieval sweep (hh-tier niche; LOW-mid rank)
+PRANKS="${PRANKS:-16 32 64 128 256}"   # ppl sweep (spans the instability onset; near-full is slow+moot)
+RRANKS="${RRANKS:-16 32 64 128}"        # retrieval sweep (hh-tier extreme-compression niche)
 
 echo "===MODE_${MODE}_${TAG}==="
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
@@ -115,13 +115,18 @@ sweep(){ # r128 fails on non-Llama (bugSseed ppl 7.3->47->467). Map (memory, ppl
          # retrieval (favours LOW rank -- a big gist blinds selection), fluency needs HIGH rank.
          # So ppl sweeps to full rank (PRANKS), retrieval sweeps the low-mid niche (RRANKS).
          # memory = ratio_fp16 in each row; think/palu baselines come from the tier2 logs.
-  echo "===SWEEP_PPL16_BEGIN_${TAG}==="
-  PPL --T 16384 --methods bug bugslash --ranks $PRANKS --hh-budgets 256 \
-      --hh-neighbor 1 --warmup-seed --out-json "results/w16-${TAG}-sweepppl.json"
-  echo "===SWEEP_RULER16_BEGIN_${TAG}==="
+  # RULER FIRST (fast: short decode) -- the generality question. ppl second (slow: long
+  # scoring -> n-samples 4). NB at r16/r32 ppl is FINE (Qwen 9.3/8.2, Mistral 7.0/6.7) but
+  # r128 blows up -> integrator instability at high rank, not a compressibility limit.
+  echo "===SWEEP_RULER_BEGIN_${TAG}==="
   RULER --context-lens 16384 --tasks niah_single niah_multivalue vt \
     --methods bugslash --ranks $RRANKS --hh-budgets 256 --hh-neighbor 1 --warmup-seed \
     --n-trials 2 --seeds 0 1 --out-json "results/w16-${TAG}-sweepruler.json"
+  echo "===SWEEP_PPL_BEGIN_${TAG}==="
+  PYTHONPATH=src python -u scripts/w10_frontier.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+    --T 16384 --chunk "$CHUNK" --window 512 --n-samples 4 --no-ruler \
+    --methods bug bugslash --ranks $PRANKS --hh-budgets 256 --hh-neighbor 1 --warmup-seed \
+    --out-json "results/w16-${TAG}-sweepppl.json" 2>&1
   echo "===SWEEP_DONE_${TAG}==="
 }
 

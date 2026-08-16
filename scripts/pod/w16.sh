@@ -21,6 +21,8 @@ MODEL="${MODEL:-Qwen/Qwen2.5-7B-Instruct}"
 TAG="${TAG:-qwen}"
 CHUNK="${CHUNK:-4096}"
 DTYPE="${DTYPE:-bfloat16}"
+PRANKS="${PRANKS:-16 32 64 128 256 512}"   # ppl sweep (fluency needs HIGH rank; to full rank)
+RRANKS="${RRANKS:-16 32 64 128 256}"        # retrieval sweep (hh-tier niche; LOW-mid rank)
 
 echo "===MODE_${MODE}_${TAG}==="
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
@@ -108,15 +110,17 @@ tier1(){ # Llama-3.1-8B: add think-c0.5 (missing) + firm bugSseed/palu vt+mv; pp
     --n-trials 2 --seeds 0 1 --out-json "results/w16-${TAG}-32k-s32.json"
 }
 
-sweep(){ # DIAGNOSTIC: r128 fails on non-Llama (ppl 7.3->47->467). Is KV just higher-rank on
-         # these models? ppl-vs-rank with pure `bug` isolates low-rank gist quality; `bugslash`
-         # + RULER-vs-rank finds any retrieval sweet spot. hh fixed at 256 to isolate the rank axis.
+sweep(){ # r128 fails on non-Llama (bugSseed ppl 7.3->47->467). Map (memory, ppl, retrieval) vs
+         # rank per model. Retrieval & ppl want OPPOSITE ranks: the hh256 exact tier drives
+         # retrieval (favours LOW rank -- a big gist blinds selection), fluency needs HIGH rank.
+         # So ppl sweeps to full rank (PRANKS), retrieval sweeps the low-mid niche (RRANKS).
+         # memory = ratio_fp16 in each row; think/palu baselines come from the tier2 logs.
   echo "===SWEEP_PPL16_BEGIN_${TAG}==="
-  PPL --T 16384 --methods bug bugslash --ranks 16 32 64 128 256 512 --hh-budgets 256 \
+  PPL --T 16384 --methods bug bugslash --ranks $PRANKS --hh-budgets 256 \
       --hh-neighbor 1 --warmup-seed --out-json "results/w16-${TAG}-sweepppl.json"
   echo "===SWEEP_RULER16_BEGIN_${TAG}==="
   RULER --context-lens 16384 --tasks niah_single niah_multivalue vt \
-    --methods bugslash --ranks 32 64 128 256 --hh-budgets 256 --hh-neighbor 1 --warmup-seed \
+    --methods bugslash --ranks $RRANKS --hh-budgets 256 --hh-neighbor 1 --warmup-seed \
     --n-trials 2 --seeds 0 1 --out-json "results/w16-${TAG}-sweepruler.json"
   echo "===SWEEP_DONE_${TAG}==="
 }

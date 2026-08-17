@@ -153,6 +153,8 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
     """Each arm: name, kind ("bug"|"morph"|"press"|"full"), and a zero-arg factory
     for a fresh cache/press (stateful -> rebuilt per sample), for context length ``t``."""
     rw, ab = args.recent_window, args.absorb_block
+    msf = float(getattr(args, "min_sv_frac", 0.0))  # Week-17 integrator floor (0.0 = off)
+    fsuf = f"-f{msf:g}" if msf > 0.0 else ""
     arms: list[dict[str, Any]] = []
     want = set(args.methods)
 
@@ -175,7 +177,7 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
         for r in args.ranks:
             arms.append(
                 {
-                    "name": f"bug-r{r}",
+                    "name": f"bug-r{r}{fsuf}",
                     "kind": "bug",
                     "rank": r,
                     "make": (
@@ -187,6 +189,7 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                             absorb_block=ab,
                             n_sink=N_SINK,
                             retention="fifo",
+                            min_sv_frac=msf,
                         )
                     ),
                 }
@@ -228,7 +231,7 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
             for hh in args.hh_budgets:
                 arms.append(
                     {
-                        "name": f"{prefix}-r{r}-h{hh}{suffix}",
+                        "name": f"{prefix}-r{r}-h{hh}{suffix}{fsuf}",
                         "kind": "bug",
                         "rank": r,
                         "retention": "lowrank_surprise",
@@ -250,6 +253,7 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                                 seed_hh_warmup=warmup,
                                 w_key=w_key,
                                 score_rank=score_rank,
+                                min_sv_frac=msf,
                             )
                         ),
                     }
@@ -685,6 +689,14 @@ def main() -> None:
         help="Week-15 T2: cap the SLASH surprise-scoring basis at this many leading "
         "columns (selection-rank decoupled from storage-rank) -> '-s{k}' arm suffix; "
         "storage/footprint unchanged; requires 1 <= k <= rank",
+    )
+    parser.add_argument(
+        "--min-sv-frac",
+        type=float,
+        default=0.0,
+        help="Week-17: relative singular-value floor for the streaming integrator "
+        "(0.0=off; e.g. 1e-2 caps the tracked rank at the block's numerical rank to "
+        "stop high-rank divergence) -> '-f{v}' arm suffix; storage/footprint unchanged",
     )
     parser.add_argument(
         "--chunk", type=int, default=0, help="chunked-prefill block size (0=single-shot)"

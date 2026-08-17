@@ -86,6 +86,7 @@ def augmented_bug_step(
     rank_cap: int,
     *,
     theta: float | None = None,
+    min_sv_frac: float = 0.0,
 ) -> tuple[Tensor, Tensor, Tensor]:
     """One augmented rank-adaptive BUG step on a block of ``b`` new columns.
 
@@ -108,6 +109,13 @@ def augmented_bug_step(
         Hard upper bound on the tracked rank (``>= 1``).
     theta:
         Optional Frobenius-tail truncation tolerance (see :func:`_truncation_rank`).
+    min_sv_frac:
+        Optional relative singular-value floor in ``[0, 1)``: after truncation,
+        additionally drop directions whose singular value is ``<= min_sv_frac``
+        times the leading one. ``0.0`` (default) is a no-op, bit-for-bit the
+        archived path. Caps the tracked rank at the block's numerical rank so a
+        rank-deficient stream cannot pad the basis to ``rank_cap`` with near-null
+        tail directions (the Week-17 high-rank stability fix, docs/week17).
 
     Returns
     -------
@@ -183,6 +191,13 @@ def augmented_bug_step(
     keep = min(rank_cap, int(sigma.shape[0]))
     if theta is not None:
         keep = max(1, min(keep, _truncation_rank(sigma, theta)))
+    if min_sv_frac > 0.0 and sigma.numel() > 0 and sigma[0] > 0:
+        # Week-17: relative singular-value floor -- drop directions whose singular
+        # value is <= min_sv_frac of the leading one, so a rank-deficient block
+        # does not pad the basis to rank_cap with near-null tail directions (the
+        # high-rank divergence substrate: docs/week17). Self-scaling relative to
+        # sigma[0] so no per-stream tuning; 0.0 = off = the bit-for-bit archived path.
+        keep = max(1, min(keep, int((sigma > min_sv_frac * sigma[0]).sum().item())))
     u_new = u_aug @ u_loc[:, :keep]  # (n, keep)
     b_new = torch.diag(sigma[:keep])  # (keep, keep)
     rot = u_loc[:r_old, :keep].mT  # (keep, r_old)
@@ -195,6 +210,7 @@ def blocked_bug_subspace(
     block_size: int = 128,
     *,
     theta: float | None = None,
+    min_sv_frac: float = 0.0,
     compute_dtype: torch.dtype = torch.float32,
 ) -> Tensor:
     """Track the left (feature) subspace of ``M`` with a blocked augmented-BUG sweep.
@@ -209,6 +225,9 @@ def blocked_bug_subspace(
         Number of columns consumed per augmented-BUG step (``>= 1``).
     theta:
         Optional Frobenius-tail truncation tolerance (see :func:`_truncation_rank`).
+    min_sv_frac:
+        Optional relative singular-value floor (see :func:`augmented_bug_step`);
+        ``0.0`` (default) is a no-op.
     compute_dtype:
         Dtype for the QR/SVD/matmuls (default ``float32``); pass ``float64`` to
         compare against the numpy tracker at matched precision.
@@ -231,7 +250,9 @@ def blocked_bug_subspace(
 
     for start in range(0, t, block_size):
         block = mc[:, start : start + block_size]  # (n, b)
-        u, b_core, _ = augmented_bug_step(u, b_core, block, rank_cap, theta=theta)
+        u, b_core, _ = augmented_bug_step(
+            u, b_core, block, rank_cap, theta=theta, min_sv_frac=min_sv_frac
+        )
 
     if u is None:  # empty M (T == 0): return a trivial 1-column basis
         u = torch.zeros(n, 1, dtype=compute_dtype, device=M.device)
@@ -244,6 +265,7 @@ def blocked_bug_project(
     block_size: int = 128,
     *,
     theta: float | None = None,
+    min_sv_frac: float = 0.0,
     compute_dtype: torch.dtype = torch.float32,
 ) -> Tensor:
     """Orthogonal projection ``U (U^T M)`` of ``M`` onto the tracked subspace.
@@ -252,7 +274,9 @@ def blocked_bug_project(
     :meth:`kvdlra.integrators.streaming.StreamingBUG.project`), returned in ``M``'s
     original storage dtype.
     """
-    u = blocked_bug_subspace(M, rank_cap, block_size, theta=theta, compute_dtype=compute_dtype)
+    u = blocked_bug_subspace(
+        M, rank_cap, block_size, theta=theta, min_sv_frac=min_sv_frac, compute_dtype=compute_dtype
+    )
     mc = M.to(compute_dtype)
     recon = u @ (u.mT @ mc)
     return recon.to(M.dtype)

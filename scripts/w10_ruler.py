@@ -493,6 +493,13 @@ def main() -> None:
         "columns (selection-rank decoupled from storage-rank) -> '-s{k}' arm suffix; "
         "storage/footprint unchanged; requires 1 <= k <= rank",
     )
+    parser.add_argument(
+        "--min-sv-frac",
+        type=float,
+        default=0.0,
+        help="Week-17: relative singular-value floor for the streaming integrator "
+        "(0.0=off; e.g. 1e-2) -> '-f{v}' arm suffix; storage/footprint unchanged",
+    )
     parser.add_argument("--chunk", type=int, default=0, help="chunked-prefill block size")
     parser.add_argument("--n-trials", type=int, default=4)
     parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1])

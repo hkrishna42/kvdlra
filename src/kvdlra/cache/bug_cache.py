@@ -319,6 +319,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         absorb_block: int = 32,
         n_sink: int = 4,
         theta: float | None = None,
+        min_sv_frac: float = 0.0,
         prefill_block_size: int = 128,
         retention: str = "fifo",
         score_decay: float = 0.97,
@@ -416,6 +417,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
                     "score_rank requires an enabled SLASH exact tier (hh_budget >= 1); "
                     f"got hh_budget={hh_budget}"
                 )
+        if not 0.0 <= min_sv_frac < 1.0:
+            raise ValueError(f"min_sv_frac must be in [0, 1), got {min_sv_frac}")
         self.rope = rope
         self.rank = rank
         self.coord_budget = coord_budget
@@ -423,6 +426,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.absorb_block = absorb_block
         self.n_sink = n_sink
         self.theta = theta
+        self.min_sv_frac = min_sv_frac
         self.prefill_block_size = prefill_block_size
         self.retention = retention
         self.score_decay = score_decay
@@ -872,10 +876,10 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         if self.track_surprise or self._probe_surprise:
             surprise = self._surprise_scores(block_k)
         self.u_k, self.b_k, rot_k = augmented_bug_step(
-            self.u_k, self.b_k, block_k, self.rank, theta=self.theta
+            self.u_k, self.b_k, block_k, self.rank, theta=self.theta, min_sv_frac=self.min_sv_frac
         )
         self.u_v, self.b_v, rot_v = augmented_bug_step(
-            self.u_v, self.b_v, block_v, self.rank, theta=self.theta
+            self.u_v, self.b_v, block_v, self.rank, theta=self.theta, min_sv_frac=self.min_sv_frac
         )
         # Carry held fp32 coordinates into the new basis.
         if self.c_k is not None:
@@ -1757,7 +1761,7 @@ class BugStreamingCache(Cache):
         scoring to the leading ``score_rank`` basis columns (``1 <= score_rank
         <= rank``; requires ``hh_select='surprise'`` and ``hh_budget >= 1``).
         Storage rank, tail-retention snapshots and accounting are unchanged.
-    recent_window, absorb_block, n_sink, theta, prefill_block_size:
+    recent_window, absorb_block, n_sink, theta, min_sv_frac, prefill_block_size:
         See :class:`BugStreamingLayer`.
     """
 
@@ -1770,6 +1774,7 @@ class BugStreamingCache(Cache):
         absorb_block: int = 32,
         n_sink: int = 4,
         theta: float | None = None,
+        min_sv_frac: float = 0.0,
         prefill_block_size: int = 128,
         retention: str = "fifo",
         score_decay: float = 0.97,
@@ -1822,6 +1827,7 @@ class BugStreamingCache(Cache):
                 absorb_block=absorb_block,
                 n_sink=n_sink,
                 theta=theta,
+                min_sv_frac=min_sv_frac,
                 prefill_block_size=prefill_block_size,
                 retention=retention,
                 score_decay=score_decay,

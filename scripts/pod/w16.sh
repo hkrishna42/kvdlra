@@ -195,11 +195,25 @@ w17(){ # Week-17 confirm: firm bugSseed-r64-h256 @ n=12 (16K) / n=4 (32K) on
   echo "===W17_DONE_${TAG}==="
 }
 
+w17ppl(){ # Week-17 ppl-only re-run (recovery after a pod ppl crash): core ppl block only,
+          # no RULER/FLOOR. full/think/palu + bugSseed-r64-h256 @ 16K+32K, n-samples 4.
+  RH="--ranks 64 --hh-budgets 256 --hh-neighbor 1 --warmup-seed"
+  echo "===W17_PPL_BEGIN_${TAG}==="
+  for T in 16384 32768; do
+    PPL4 --T "$T" --methods full think palu --think-ratios 0.5 --palu-ranks 0.5 \
+        --out-json "results/w17-${TAG}-ppl${T}-base.json"
+    PPL4 --T "$T" --methods bugslash $RH \
+        --out-json "results/w17-${TAG}-ppl${T}-r64.json"
+  done
+  echo "===W17_DONE_${TAG}==="
+}
+
 case "$MODE" in
   tier2) tier2 ;;
   tier1) tier1 ;;
   sweep) sweep ;;
   w17) w17 ;;
+  w17ppl) w17ppl ;;
   *) echo "===UNKNOWN_MODE_${MODE}==="; exit 1 ;;
 esac
 echo "===ALL_DONE_${MODE}_${TAG}==="

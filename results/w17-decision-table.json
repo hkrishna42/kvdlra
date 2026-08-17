@@ -1,0 +1,357 @@
+{
+  "qwen2.5-7b": {
+    "16384": {
+      "bugSseed-r64-h256": {
+        "mem": 0.149,
+        "niah_multivalue": 1.0,
+        "n_niah_multivalue": 12.0,
+        "niah_single": 1.0,
+        "n_niah_single": 12.0,
+        "vt": 1.0,
+        "n_vt": 12.0,
+        "ppl": 8.181
+      },
+      "bugSseed-r64-h256-f0.01": {
+        "mem": 0.149,
+        "niah_multivalue": 1.0,
+        "n_niah_multivalue": 4.0,
+        "niah_single": 1.0,
+        "n_niah_single": 4.0,
+        "vt": 1.0,
+        "n_vt": 4.0
+      },
+      "palu-r0.5": {
+        "mem": 0.504,
+        "niah_multivalue": 0.92,
+        "n_niah_multivalue": 12.0,
+        "niah_single": 1.0,
+        "n_niah_single": 12.0,
+        "vt": 1.0,
+        "n_vt": 12.0,
+        "ppl": 6.355
+      },
+      "think-c0.5": {
+        "mem": 0.75,
+        "niah_multivalue": 0.83,
+        "n_niah_multivalue": 12.0,
+        "niah_single": 1.0,
+        "n_niah_single": 12.0,
+        "vt": 1.0,
+        "n_vt": 12.0,
+        "ppl": 6.405
+      },
+      "full": {
+        "ppl": 6.196,
+        "mem": 1.0
+      },
+      "bug-r64": {
+        "ppl": 7.867,
+        "mem": 0.131
+      },
+      "bug-r128": {
+        "ppl": 7.317,
+        "mem": 0.259
+      },
+      "bug-r256": {
+        "ppl": 27531.666,
+        "mem": 0.517
+      },
+      "bug-r64-f0.01": {
+        "ppl": 7.535,
+        "mem": 0.131
+      },
+      "bug-r128-f0.01": {
+        "ppl": 7.218,
+        "mem": 0.259
+      },
+      "bug-r256-f0.01": {
+        "ppl": 6.995,
+        "mem": 0.517
+      },
+      "bugSseed-r64-h1024": {
+        "ppl": 7.699,
+        "mem": 0.189
+      },
+      "bugSseed-r128-h1024": {
+        "ppl": 714.39,
+        "mem": 0.31
+      },
+      "bugSseed-r128-h1024-f0.01": {
+        "ppl": 6.941,
+        "mem": 0.31
+      }
+    },
+    "32768": {
+      "bugSseed-r64-h256": {
+        "mem": 0.139,
+        "niah_multivalue": 1.0,
+        "n_niah_multivalue": 4.0,
+        "niah_single": 1.0,
+        "n_niah_single": 4.0,
+        "vt": 1.0,
+        "n_vt": 4.0,
+        "ppl": 35.083
+      },
+      "palu-r0.5": {
+        "mem": 0.502,
+        "niah_multivalue": 0.25,
+        "n_niah_multivalue": 4.0,
+        "niah_single": 1.0,
+        "n_niah_single": 4.0,
+        "vt": 1.0,
+        "n_vt": 4.0,
+        "ppl": 7.928
+      },
+      "think-c0.5": {
+        "mem": 0.75,
+        "niah_multivalue": 1.0,
+        "n_niah_multivalue": 4.0,
+        "niah_single": 1.0,
+        "n_niah_single": 4.0,
+        "vt": 1.0,
+        "n_vt": 4.0,
+        "ppl": 7.975
+      },
+      "full": {
+        "ppl": 7.76,
+        "mem": 1.0
+      }
+    }
+  },
+  "mistral-7b-v0.3": {
+    "16384": {
+      "bugSseed-r64-h256": {
+        "mem": 0.085,
+        "niah_multivalue": 1.0,
+        "n_niah_multivalue": 12.0,
+        "niah_single": 1.0,
+        "n_niah_single": 12.0,
+        "vt": 0.5,
+        "n_vt": 12.0,
+        "ppl": 5.499
+      },
+      "bugSseed-r64-h256-f0.01": {
+        "mem": 0.086,
+        "niah_multivalue": 1.0,
+        "n_niah_multivalue": 4.0,
+        "niah_single": 1.0,
+        "n_niah_single": 4.0,
+        "vt": 0.5,
+        "n_vt": 4.0
+      },
+      "bugSseed-r64-h512": {
+        "mem": 0.1,
+        "niah_multivalue": 1.0,
+        "n_niah_multivalue": 12.0,
+        "niah_single": 1.0,
+        "n_niah_single": 12.0,
+        "vt": 0.25,
+        "n_vt": 12.0
+      },
+      "palu-r0.5": {
+        "mem": 0.504,
+        "niah_multivalue": 0.92,
+        "n_niah_multivalue": 12.0,
+        "niah_single": 1.0,
+        "n_niah_single": 12.0,
+        "vt": 0.33,
+        "n_vt": 12.0,
+        "ppl": 5.035
+      },
+      "think-c0.5": {
+        "mem": 0.75,
+        "niah_multivalue": 1.0,
+        "n_niah_multivalue": 12.0,
+        "niah_single": 1.0,
+        "n_niah_single": 12.0,
+        "vt": 0.83,
+        "n_vt": 12.0,
+        "ppl": 4.88
+      },
+      "full": {
+        "ppl": 4.823,
+        "mem": 1.0
+      },
+      "bug-r64": {
+        "ppl": 6.22,
+        "mem": 0.068
+      },
+      "bug-r128": {
+        "ppl": 138.317,
+        "mem": 0.135
+      },
+      "bug-r256": {
+        "ppl": 37.205,
+        "mem": 0.267
+      },
+      "bug-r64-f0.01": {
+        "ppl": 6.22,
+        "mem": 0.068
+      },
+      "bug-r128-f0.01": {
+        "ppl": 5.574,
+        "mem": 0.135
+      },
+      "bug-r256-f0.01": {
+        "ppl": 5.226,
+        "mem": 0.267
+      },
+      "bugSseed-r64-h1024": {
+        "ppl": 5.298,
+        "mem": 0.129
+      },
+      "bugSseed-r128-h1024": {
+        "ppl": 60.447,
+        "mem": 0.191
+      },
+      "bugSseed-r128-h1024-f0.01": {
+        "ppl": 5.045,
+        "mem": 0.191
+      }
+    },
+    "32768": {
+      "bugSseed-r64-h1024": {
+        "mem": 0.097,
+        "niah_multivalue": 0.75,
+        "n_niah_multivalue": 4.0,
+        "niah_single": 1.0,
+        "n_niah_single": 4.0,
+        "vt": 0.75,
+        "n_vt": 4.0
+      },
+      "bugSseed-r64-h256": {
+        "mem": 0.075,
+        "niah_multivalue": 0.75,
+        "n_niah_multivalue": 4.0,
+        "niah_single": 1.0,
+        "n_niah_single": 4.0,
+        "vt": 0.75,
+        "n_vt": 4.0,
+        "ppl": 3.762
+      },
+      "palu-r0.5": {
+        "mem": 0.502,
+        "niah_multivalue": 0.5,
+        "n_niah_multivalue": 4.0,
+        "niah_single": 1.0,
+        "n_niah_single": 4.0,
+        "vt": 0.5,
+        "n_vt": 4.0,
+        "ppl": 3.478
+      },
+      "think-c0.5": {
+        "mem": 0.75,
+        "niah_multivalue": 0.75,
+        "n_niah_multivalue": 4.0,
+        "niah_single": 1.0,
+        "n_niah_single": 4.0,
+        "vt": 1.0,
+        "n_vt": 4.0,
+        "ppl": 3.329
+      },
+      "full": {
+        "ppl": 3.312,
+        "mem": 1.0
+      }
+    }
+  },
+  "llama-3.1-8b": {
+    "16384": {
+      "bugSseed-r64-h256": {
+        "mem": 0.085,
+        "niah_multivalue": 1.0,
+        "n_niah_multivalue": 12.0,
+        "niah_single": 1.0,
+        "n_niah_single": 12.0,
+        "vt": 0.58,
+        "n_vt": 12.0,
+        "ppl": 5.308
+      },
+      "bugSseed-r64-h512": {
+        "mem": 0.1,
+        "niah_multivalue": 1.0,
+        "n_niah_multivalue": 12.0,
+        "niah_single": 1.0,
+        "n_niah_single": 12.0,
+        "vt": 0.58,
+        "n_vt": 12.0
+      },
+      "palu-r0.5": {
+        "mem": 0.504,
+        "niah_multivalue": 1.0,
+        "n_niah_multivalue": 12.0,
+        "niah_single": 1.0,
+        "n_niah_single": 12.0,
+        "vt": 0.83,
+        "n_vt": 12.0,
+        "ppl": 5.006
+      },
+      "think-c0.5": {
+        "mem": 0.75,
+        "niah_multivalue": 1.0,
+        "n_niah_multivalue": 12.0,
+        "niah_single": 1.0,
+        "n_niah_single": 12.0,
+        "vt": 0.42,
+        "n_vt": 12.0,
+        "ppl": 5.055
+      },
+      "full": {
+        "ppl": 4.909,
+        "mem": 1.0
+      }
+    },
+    "32768": {
+      "bugSseed-r128-h1024-s32": {
+        "mem": 0.159,
+        "niah_multivalue": 1.0,
+        "n_niah_multivalue": 16.0,
+        "vt": 0.94,
+        "n_vt": 16.0
+      },
+      "bugSseed-r64-h1024": {
+        "mem": 0.097,
+        "niah_multivalue": 1.0,
+        "n_niah_multivalue": 4.0,
+        "niah_single": 1.0,
+        "n_niah_single": 4.0,
+        "vt": 1.0,
+        "n_vt": 4.0
+      },
+      "bugSseed-r64-h256": {
+        "mem": 0.075,
+        "niah_multivalue": 1.0,
+        "n_niah_multivalue": 4.0,
+        "niah_single": 1.0,
+        "n_niah_single": 4.0,
+        "vt": 1.0,
+        "n_vt": 4.0,
+        "ppl": 8.326
+      },
+      "palu-r0.5": {
+        "mem": 0.502,
+        "niah_multivalue": 1.0,
+        "n_niah_multivalue": 16.0,
+        "niah_single": 1.0,
+        "n_niah_single": 4.0,
+        "vt": 0.56,
+        "n_vt": 16.0,
+        "ppl": 7.699
+      },
+      "think-c0.5": {
+        "mem": 0.75,
+        "niah_multivalue": 1.0,
+        "n_niah_multivalue": 16.0,
+        "niah_single": 1.0,
+        "n_niah_single": 4.0,
+        "vt": 0.31,
+        "n_vt": 16.0,
+        "ppl": 7.79
+      },
+      "full": {
+        "ppl": 7.52,
+        "mem": 1.0
+      }
+    }
+  }
+}

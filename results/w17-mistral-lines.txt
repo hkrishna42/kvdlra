@@ -1,0 +1,49 @@
+===W17_16K_CORE_BEGIN_mistral===
+[niah_single ctx16384] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.085
+[niah_single ctx16384] think-c0.5     acc=1.00 recall=1.00 ratio=0.750
+[niah_single ctx16384] palu-r0.5      acc=1.00 recall=1.00 ratio=0.504
+[niah_multivalue ctx16384] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.085
+[niah_multivalue ctx16384] think-c0.5     acc=1.00 recall=1.00 ratio=0.750
+[niah_multivalue ctx16384] palu-r0.5      acc=0.92 recall=0.98 ratio=0.504
+[vt ctx16384] bugSseed-r64-h256 acc=0.50 recall=0.50 ratio=0.086
+[vt ctx16384] think-c0.5     acc=0.83 recall=0.83 ratio=0.750
+[vt ctx16384] palu-r0.5      acc=0.33 recall=0.33 ratio=0.504
+===W17_32K_CORE_BEGIN_mistral===
+[niah_single ctx32768] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.075
+[niah_single ctx32768] think-c0.5     acc=1.00 recall=1.00 ratio=0.750
+[niah_single ctx32768] palu-r0.5      acc=1.00 recall=1.00 ratio=0.502
+[niah_multivalue ctx32768] bugSseed-r64-h256 acc=0.75 recall=0.94 ratio=0.075
+[niah_multivalue ctx32768] think-c0.5     acc=0.75 recall=0.94 ratio=0.750
+[niah_multivalue ctx32768] palu-r0.5      acc=0.50 recall=0.88 ratio=0.502
+[vt ctx32768] bugSseed-r64-h256 acc=0.75 recall=0.75 ratio=0.075
+[vt ctx32768] think-c0.5     acc=1.00 recall=1.00 ratio=0.750
+[vt ctx32768] palu-r0.5      acc=0.50 recall=0.50 ratio=0.502
+===W17_VTFIX_BEGIN_mistral===
+[niah_single ctx16384] bugSseed-r64-h512 acc=1.00 recall=1.00 ratio=0.100
+[niah_multivalue ctx16384] bugSseed-r64-h512 acc=1.00 recall=1.00 ratio=0.100
+[vt ctx16384] bugSseed-r64-h512 acc=0.25 recall=0.25 ratio=0.100
+[niah_single ctx32768] bugSseed-r64-h1024 acc=1.00 recall=1.00 ratio=0.097
+[niah_multivalue ctx32768] bugSseed-r64-h1024 acc=0.75 recall=0.94 ratio=0.097
+[vt ctx32768] bugSseed-r64-h1024 acc=0.75 recall=0.75 ratio=0.097
+===W17_PPL_BEGIN_mistral===
+  full           [T=16384] ppl=4.823 tok_eq/layer=16384.0 ratio=1.000
+  think-c0.5     [T=16384] ppl=4.880 tok_eq/layer=12288.2 ratio=0.750
+  palu-r0.5      [T=16384] ppl=5.035 tok_eq/layer=8258.0 ratio=0.504
+  bugSseed-r64-h256 [T=16384] ppl=5.499 tok_eq/layer=1377.7 ratio=0.085
+  full           [T=32768] ppl=3.312 tok_eq/layer=32768.0 ratio=1.000
+  think-c0.5     [T=32768] ppl=3.329 tok_eq/layer=24576.2 ratio=0.750
+  palu-r0.5      [T=32768] ppl=3.478 tok_eq/layer=16450.0 ratio=0.502
+  bugSseed-r64-h256 [T=32768] ppl=3.762 tok_eq/layer=2417.7 ratio=0.075
+===W17_FLOOR_BEGIN_mistral===
+  bug-r64        [T=16384] ppl=6.220 tok_eq/layer=1121.8 ratio=0.068
+  bug-r128       [T=16384] ppl=138.317 tok_eq/layer=2207.6 ratio=0.135
+  bug-r256       [T=16384] ppl=37.205 tok_eq/layer=4379.2 ratio=0.267
+  bug-r64-f0.01  [T=16384] ppl=6.220 tok_eq/layer=1121.8 ratio=0.068
+  bug-r128-f0.01 [T=16384] ppl=5.574 tok_eq/layer=2207.6 ratio=0.135
+  bug-r256-f0.01 [T=16384] ppl=5.226 tok_eq/layer=4379.2 ratio=0.267
+  bugSseed-r64-h1024 [T=16384] ppl=5.298 tok_eq/layer=2097.3 ratio=0.129
+  bugSseed-r128-h1024 [T=16384] ppl=60.447 tok_eq/layer=3119.1 ratio=0.191
+  bugSseed-r128-h1024-f0.01 [T=16384] ppl=5.045 tok_eq/layer=3119.1 ratio=0.191
+[niah_single ctx16384] bugSseed-r64-h256-f0.01 acc=1.00 recall=1.00 ratio=0.085
+[niah_multivalue ctx16384] bugSseed-r64-h256-f0.01 acc=1.00 recall=1.00 ratio=0.086
+[vt ctx16384] bugSseed-r64-h256-f0.01 acc=0.50 recall=0.50 ratio=0.086

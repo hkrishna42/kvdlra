@@ -1,0 +1,42 @@
+===W17_16K_CORE_BEGIN_qwen===
+[niah_single ctx16384] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.149
+[niah_single ctx16384] think-c0.5     acc=1.00 recall=1.00 ratio=0.750
+[niah_single ctx16384] palu-r0.5      acc=1.00 recall=1.00 ratio=0.504
+[niah_multivalue ctx16384] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.149
+[niah_multivalue ctx16384] think-c0.5     acc=0.83 recall=0.96 ratio=0.750
+[niah_multivalue ctx16384] palu-r0.5      acc=0.92 recall=0.98 ratio=0.504
+[vt ctx16384] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.149
+[vt ctx16384] think-c0.5     acc=1.00 recall=1.00 ratio=0.750
+[vt ctx16384] palu-r0.5      acc=1.00 recall=1.00 ratio=0.504
+===W17_32K_CORE_BEGIN_qwen===
+[niah_single ctx32768] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.139
+[niah_single ctx32768] think-c0.5     acc=1.00 recall=1.00 ratio=0.750
+[niah_single ctx32768] palu-r0.5      acc=1.00 recall=1.00 ratio=0.502
+[niah_multivalue ctx32768] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.139
+[niah_multivalue ctx32768] think-c0.5     acc=1.00 recall=1.00 ratio=0.750
+[niah_multivalue ctx32768] palu-r0.5      acc=0.25 recall=0.75 ratio=0.502
+[vt ctx32768] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.139
+[vt ctx32768] think-c0.5     acc=1.00 recall=1.00 ratio=0.750
+[vt ctx32768] palu-r0.5      acc=1.00 recall=1.00 ratio=0.502
+===W17_PPL_BEGIN_qwen===
+  full           [T=16384] ppl=6.196 tok_eq/layer=16384.0 ratio=1.000
+  think-c0.5     [T=16384] ppl=6.405 tok_eq/layer=12288.2 ratio=0.750
+  palu-r0.5      [T=16384] ppl=6.355 tok_eq/layer=8258.0 ratio=0.504
+  bugSseed-r64-h256 [T=16384] ppl=8.181 tok_eq/layer=2399.3 ratio=0.148
+  full           [T=32768] ppl=7.760 tok_eq/layer=32768.0 ratio=1.000
+  think-c0.5     [T=32768] ppl=7.975 tok_eq/layer=24576.2 ratio=0.750
+  palu-r0.5      [T=32768] ppl=7.928 tok_eq/layer=16450.0 ratio=0.502
+  bugSseed-r64-h256 [T=32768] ppl=35.083 tok_eq/layer=4479.3 ratio=0.139
+===W17_FLOOR_BEGIN_qwen===
+  bug-r64        [T=16384] ppl=7.867 tok_eq/layer=2143.6 ratio=0.131
+  bug-r128       [T=16384] ppl=7.317 tok_eq/layer=4251.2 ratio=0.259
+  bug-r256       [T=16384] ppl=27531.666 tok_eq/layer=8466.5 ratio=0.517
+  bug-r64-f0.01  [T=16384] ppl=7.535 tok_eq/layer=2143.6 ratio=0.131
+  bug-r128-f0.01 [T=16384] ppl=7.218 tok_eq/layer=4251.2 ratio=0.259
+  bug-r256-f0.01 [T=16384] ppl=6.995 tok_eq/layer=8466.5 ratio=0.517
+  bugSseed-r64-h1024 [T=16384] ppl=7.699 tok_eq/layer=3070.6 ratio=0.189
+  bugSseed-r128-h1024 [T=16384] ppl=714.390 tok_eq/layer=5050.2 ratio=0.310
+  bugSseed-r128-h1024-f0.01 [T=16384] ppl=6.941 tok_eq/layer=5050.2 ratio=0.310
+[niah_single ctx16384] bugSseed-r64-h256-f0.01 acc=1.00 recall=1.00 ratio=0.149
+[niah_multivalue ctx16384] bugSseed-r64-h256-f0.01 acc=1.00 recall=1.00 ratio=0.149
+[vt ctx16384] bugSseed-r64-h256-f0.01 acc=1.00 recall=1.00 ratio=0.149

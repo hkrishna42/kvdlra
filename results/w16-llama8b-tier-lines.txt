@@ -1,0 +1,17 @@
+# w16-llama8b-tier-lines.txt  n_by_ctx={'16384': 8, '32768': 4}  sources=['w16-llama8b-tier1-raw.log']
+[niah_multivalue ctx16384] bugSseed-r128-h1024 acc=0.50 recall=0.72 ratio=0.191
+[niah_multivalue ctx16384] think-c0.5 acc=1.00 recall=1.00 ratio=0.750
+[niah_multivalue ctx16384] palu-r0.5 acc=1.00 recall=1.00 ratio=0.504
+[vt ctx16384] bugSseed-r128-h1024 acc=0.75 recall=0.75 ratio=0.191
+[vt ctx16384] think-c0.5 acc=0.38 recall=0.38 ratio=0.750
+[vt ctx16384] palu-r0.5 acc=0.75 recall=0.75 ratio=0.504
+[niah_multivalue ctx16384] bugSseed-r128-h1024-s32 acc=1.00 recall=1.00 ratio=0.191
+[vt ctx16384] bugSseed-r128-h1024-s32 acc=1.00 recall=1.00 ratio=0.191
+[vt ctx32768] bugSseed-r128-h1024 acc=0.00 recall=0.00 ratio=0.160
+[vt ctx32768] think-c0.5 acc=0.50 recall=0.50 ratio=0.750
+[vt ctx32768] palu-r0.5 acc=0.25 recall=0.25 ratio=0.502
+[niah_multivalue ctx32768] bugSseed-r128-h1024 acc=0.00 recall=0.25 ratio=0.159
+[niah_multivalue ctx32768] think-c0.5 acc=1.00 recall=1.00 ratio=0.750
+[niah_multivalue ctx32768] palu-r0.5 acc=1.00 recall=1.00 ratio=0.502
+[vt ctx32768] bugSseed-r128-h1024-s32 acc=1.00 recall=1.00 ratio=0.160
+[niah_multivalue ctx32768] bugSseed-r128-h1024-s32 acc=1.00 recall=1.00 ratio=0.159

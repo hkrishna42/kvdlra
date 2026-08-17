@@ -1,0 +1,648 @@
+{
+  "meta": {
+    "interval": "wilson",
+    "z": 1.959963984540054,
+    "note": "hits = round(acc*n); lo/hi fractions in [0,1]"
+  },
+  "cells": {
+    "qwen2.5-7b": {
+      "16384": {
+        "bugSseed-r16-h256": {
+          "niah_single": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "niah_multivalue": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "vt": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          }
+        },
+        "bugSseed-r32-h256": {
+          "niah_single": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "niah_multivalue": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "vt": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          }
+        },
+        "bugSseed-r64-h256": {
+          "niah_single": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "niah_multivalue": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "vt": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          }
+        },
+        "bugSseed-r128-h256": {
+          "niah_single": {
+            "acc": 0.0,
+            "n": 4,
+            "hits": 0,
+            "lo": 0.0,
+            "hi": 0.4899
+          },
+          "niah_multivalue": {
+            "acc": 0.0,
+            "n": 4,
+            "hits": 0,
+            "lo": 0.0,
+            "hi": 0.4899
+          },
+          "vt": {
+            "acc": 0.0,
+            "n": 4,
+            "hits": 0,
+            "lo": 0.0,
+            "hi": 0.4899
+          }
+        },
+        "bugSseed-r128-h1024": {
+          "niah_single": {
+            "acc": 0.0,
+            "n": 8,
+            "hits": 0,
+            "lo": 0.0,
+            "hi": 0.3244
+          },
+          "niah_multivalue": {
+            "acc": 0.0,
+            "n": 8,
+            "hits": 0,
+            "lo": 0.0,
+            "hi": 0.3244
+          },
+          "vt": {
+            "acc": 0.0,
+            "n": 8,
+            "hits": 0,
+            "lo": 0.0,
+            "hi": 0.3244
+          }
+        },
+        "think-c0.5": {
+          "niah_single": {
+            "acc": 1.0,
+            "n": 8,
+            "hits": 8,
+            "lo": 0.6756,
+            "hi": 1.0
+          },
+          "niah_multivalue": {
+            "acc": 0.75,
+            "n": 8,
+            "hits": 6,
+            "lo": 0.4093,
+            "hi": 0.9285
+          },
+          "vt": {
+            "acc": 1.0,
+            "n": 8,
+            "hits": 8,
+            "lo": 0.6756,
+            "hi": 1.0
+          }
+        },
+        "palu-r0.5": {
+          "niah_single": {
+            "acc": 1.0,
+            "n": 8,
+            "hits": 8,
+            "lo": 0.6756,
+            "hi": 1.0
+          },
+          "niah_multivalue": {
+            "acc": 0.875,
+            "n": 8,
+            "hits": 7,
+            "lo": 0.5291,
+            "hi": 0.9776
+          },
+          "vt": {
+            "acc": 1.0,
+            "n": 8,
+            "hits": 8,
+            "lo": 0.6756,
+            "hi": 1.0
+          }
+        },
+        "bugSseed-r128-h1024-s32": {
+          "niah_multivalue": {
+            "acc": 0.0,
+            "n": 8,
+            "hits": 0,
+            "lo": 0.0,
+            "hi": 0.3244
+          },
+          "vt": {
+            "acc": 0.0,
+            "n": 8,
+            "hits": 0,
+            "lo": 0.0,
+            "hi": 0.3244
+          }
+        }
+      },
+      "32768": {
+        "bugSseed-r128-h1024": {
+          "vt": {
+            "acc": 0.0,
+            "n": 4,
+            "hits": 0,
+            "lo": 0.0,
+            "hi": 0.4899
+          }
+        },
+        "think-c0.5": {
+          "vt": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          }
+        },
+        "palu-r0.5": {
+          "vt": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          }
+        }
+      }
+    },
+    "mistral-7b-v0.3": {
+      "16384": {
+        "bugSseed-r16-h256": {
+          "niah_single": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "niah_multivalue": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "vt": {
+            "acc": 0.5,
+            "n": 4,
+            "hits": 2,
+            "lo": 0.15,
+            "hi": 0.85
+          }
+        },
+        "bugSseed-r32-h256": {
+          "niah_single": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "niah_multivalue": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "vt": {
+            "acc": 0.25,
+            "n": 4,
+            "hits": 1,
+            "lo": 0.0456,
+            "hi": 0.6994
+          }
+        },
+        "bugSseed-r64-h256": {
+          "niah_single": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "niah_multivalue": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "vt": {
+            "acc": 0.5,
+            "n": 4,
+            "hits": 2,
+            "lo": 0.15,
+            "hi": 0.85
+          }
+        },
+        "bugSseed-r128-h256": {
+          "niah_single": {
+            "acc": 0.5,
+            "n": 4,
+            "hits": 2,
+            "lo": 0.15,
+            "hi": 0.85
+          },
+          "niah_multivalue": {
+            "acc": 0.0,
+            "n": 4,
+            "hits": 0,
+            "lo": 0.0,
+            "hi": 0.4899
+          },
+          "vt": {
+            "acc": 0.0,
+            "n": 4,
+            "hits": 0,
+            "lo": 0.0,
+            "hi": 0.4899
+          }
+        },
+        "bugSseed-r128-h1024": {
+          "niah_single": {
+            "acc": 0.5,
+            "n": 8,
+            "hits": 4,
+            "lo": 0.2152,
+            "hi": 0.7848
+          },
+          "niah_multivalue": {
+            "acc": 0.0,
+            "n": 8,
+            "hits": 0,
+            "lo": 0.0,
+            "hi": 0.3244
+          },
+          "vt": {
+            "acc": 0.0,
+            "n": 8,
+            "hits": 0,
+            "lo": 0.0,
+            "hi": 0.3244
+          }
+        },
+        "think-c0.5": {
+          "niah_single": {
+            "acc": 1.0,
+            "n": 8,
+            "hits": 8,
+            "lo": 0.6756,
+            "hi": 1.0
+          },
+          "niah_multivalue": {
+            "acc": 1.0,
+            "n": 8,
+            "hits": 8,
+            "lo": 0.6756,
+            "hi": 1.0
+          },
+          "vt": {
+            "acc": 0.875,
+            "n": 8,
+            "hits": 7,
+            "lo": 0.5291,
+            "hi": 0.9776
+          }
+        },
+        "palu-r0.5": {
+          "niah_single": {
+            "acc": 1.0,
+            "n": 8,
+            "hits": 8,
+            "lo": 0.6756,
+            "hi": 1.0
+          },
+          "niah_multivalue": {
+            "acc": 1.0,
+            "n": 8,
+            "hits": 8,
+            "lo": 0.6756,
+            "hi": 1.0
+          },
+          "vt": {
+            "acc": 0.375,
+            "n": 8,
+            "hits": 3,
+            "lo": 0.1368,
+            "hi": 0.6943
+          }
+        },
+        "bugSseed-r128-h1024-s32": {
+          "niah_multivalue": {
+            "acc": 0.0,
+            "n": 8,
+            "hits": 0,
+            "lo": 0.0,
+            "hi": 0.3244
+          },
+          "vt": {
+            "acc": 0.0,
+            "n": 8,
+            "hits": 0,
+            "lo": 0.0,
+            "hi": 0.3244
+          }
+        }
+      },
+      "32768": {
+        "bugSseed-r128-h1024": {
+          "vt": {
+            "acc": 0.0,
+            "n": 4,
+            "hits": 0,
+            "lo": 0.0,
+            "hi": 0.4899
+          }
+        },
+        "think-c0.5": {
+          "vt": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          }
+        },
+        "palu-r0.5": {
+          "vt": {
+            "acc": 0.5,
+            "n": 4,
+            "hits": 2,
+            "lo": 0.15,
+            "hi": 0.85
+          }
+        }
+      }
+    },
+    "llama-3.1-8b": {
+      "16384": {
+        "bugSseed-r16-h256": {
+          "niah_single": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "niah_multivalue": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "vt": {
+            "acc": 0.75,
+            "n": 4,
+            "hits": 3,
+            "lo": 0.3006,
+            "hi": 0.9544
+          }
+        },
+        "bugSseed-r32-h256": {
+          "niah_single": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "niah_multivalue": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "vt": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          }
+        },
+        "bugSseed-r64-h256": {
+          "niah_single": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "niah_multivalue": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "vt": {
+            "acc": 0.75,
+            "n": 4,
+            "hits": 3,
+            "lo": 0.3006,
+            "hi": 0.9544
+          }
+        },
+        "bugSseed-r128-h256": {
+          "niah_single": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "niah_multivalue": {
+            "acc": 0.0,
+            "n": 4,
+            "hits": 0,
+            "lo": 0.0,
+            "hi": 0.4899
+          }
+        },
+        "bugSseed-r128-h1024": {
+          "niah_multivalue": {
+            "acc": 0.5,
+            "n": 8,
+            "hits": 4,
+            "lo": 0.2152,
+            "hi": 0.7848
+          },
+          "vt": {
+            "acc": 0.75,
+            "n": 8,
+            "hits": 6,
+            "lo": 0.4093,
+            "hi": 0.9285
+          }
+        },
+        "think-c0.5": {
+          "niah_multivalue": {
+            "acc": 1.0,
+            "n": 8,
+            "hits": 8,
+            "lo": 0.6756,
+            "hi": 1.0
+          },
+          "vt": {
+            "acc": 0.375,
+            "n": 8,
+            "hits": 3,
+            "lo": 0.1368,
+            "hi": 0.6943
+          }
+        },
+        "palu-r0.5": {
+          "niah_multivalue": {
+            "acc": 1.0,
+            "n": 8,
+            "hits": 8,
+            "lo": 0.6756,
+            "hi": 1.0
+          },
+          "vt": {
+            "acc": 0.75,
+            "n": 8,
+            "hits": 6,
+            "lo": 0.4093,
+            "hi": 0.9285
+          }
+        },
+        "bugSseed-r128-h1024-s32": {
+          "niah_multivalue": {
+            "acc": 1.0,
+            "n": 8,
+            "hits": 8,
+            "lo": 0.6756,
+            "hi": 1.0
+          },
+          "vt": {
+            "acc": 1.0,
+            "n": 8,
+            "hits": 8,
+            "lo": 0.6756,
+            "hi": 1.0
+          }
+        }
+      },
+      "32768": {
+        "bugSseed-r128-h1024": {
+          "niah_multivalue": {
+            "acc": 0.0,
+            "n": 4,
+            "hits": 0,
+            "lo": 0.0,
+            "hi": 0.4899
+          },
+          "vt": {
+            "acc": 0.0,
+            "n": 4,
+            "hits": 0,
+            "lo": 0.0,
+            "hi": 0.4899
+          }
+        },
+        "think-c0.5": {
+          "niah_multivalue": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "vt": {
+            "acc": 0.5,
+            "n": 4,
+            "hits": 2,
+            "lo": 0.15,
+            "hi": 0.85
+          }
+        },
+        "palu-r0.5": {
+          "niah_multivalue": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "vt": {
+            "acc": 0.25,
+            "n": 4,
+            "hits": 1,
+            "lo": 0.0456,
+            "hi": 0.6994
+          }
+        },
+        "bugSseed-r128-h1024-s32": {
+          "niah_multivalue": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          },
+          "vt": {
+            "acc": 1.0,
+            "n": 4,
+            "hits": 4,
+            "lo": 0.5101,
+            "hi": 1.0
+          }
+        }
+      }
+    }
+  }
+}

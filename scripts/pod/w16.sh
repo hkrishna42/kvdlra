@@ -43,6 +43,9 @@ python -c "import torch,transformers,kvpress; print('torch',torch.__version__,'c
 RULER(){ PYTHONPATH=src python -u scripts/w10_ruler.py --model "$MODEL" --device cuda --dtype "$DTYPE" --chunk "$CHUNK" "$@" 2>&1; }
 PPL(){ PYTHONPATH=src python -u scripts/w10_frontier.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
         --chunk "$CHUNK" --window 512 --n-samples 8 --no-ruler "$@" 2>&1; }
+PPL4(){ PYTHONPATH=src python -u scripts/w10_frontier.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+        --chunk "$CHUNK" --window 512 --n-samples 4 --no-ruler "$@" 2>&1; }  # Week-17: leaner ppl
+                                                                             # (deterministic windows; streaming ppl ~30min/arm at n=8)
 
 ppl_block(){ # $1=T $2=tag
   PPL --T "$1" --methods full think palu --think-ratios 0.5 --palu-ranks 0.5 \
@@ -167,23 +170,23 @@ w17(){ # Week-17 confirm: firm bugSseed-r64-h256 @ n=12 (16K) / n=4 (32K) on
       --n-trials 8 --seeds 0 1 --out-json "results/w17-${TAG}-32k-base-n16.json" # n=16
   fi
 
-  echo "===W17_PPL_BEGIN_${TAG}==="   # matched baselines + r64 sweet-spot fluency
+  echo "===W17_PPL_BEGIN_${TAG}==="   # matched baselines + r64 sweet-spot fluency (n=4, as Week-16 sweep)
   for T in 16384 32768; do
-    PPL --T "$T" --methods full think palu --think-ratios 0.5 --palu-ranks 0.5 \
+    PPL4 --T "$T" --methods full think palu --think-ratios 0.5 --palu-ranks 0.5 \
         --out-json "results/w17-${TAG}-ppl${T}-base.json"
-    PPL --T "$T" --methods bugslash $RH \
+    PPL4 --T "$T" --methods bugslash $RH \
         --out-json "results/w17-${TAG}-ppl${T}-r64.json"
   done
 
-  if [ -n "${FLOOR:-}" ]; then       # FIX 2: integrator floor (WS2 pure-gist + WS3 h1024)
+  if [ -n "${FLOOR:-}" ]; then       # FIX 2: integrator floor (WS2 pure-gist + WS3 h1024), n=4 diagnostic
     echo "===W17_FLOOR_BEGIN_${TAG}==="
-    PPL --T 16384 --methods bug --ranks 64 128 256 \
+    PPL4 --T 16384 --methods bug --ranks 64 128 256 \
         --out-json "results/w17-${TAG}-floor-off.json"                    # off: Mistral r128=138, Qwen r256=27531
-    PPL --T 16384 --methods bug --ranks 64 128 256 --min-sv-frac "$FLOOR" \
+    PPL4 --T 16384 --methods bug --ranks 64 128 256 --min-sv-frac "$FLOOR" \
         --out-json "results/w17-${TAG}-floor-on.json"                     # recovered toward the healthy band?
-    PPL --T 16384 --methods bugslash --ranks 16 32 64 128 --hh-budgets 1024 --hh-neighbor 1 --warmup-seed \
-        --out-json "results/w17-${TAG}-h1024-sweep-off.json"              # predict fine <=r64, blow @ r128 only
-    PPL --T 16384 --methods bugslash --ranks 128 --hh-budgets 1024 --hh-neighbor 1 --warmup-seed --min-sv-frac "$FLOOR" \
+    PPL4 --T 16384 --methods bugslash --ranks 64 128 --hh-budgets 1024 --hh-neighbor 1 --warmup-seed \
+        --out-json "results/w17-${TAG}-h1024-off.json"                    # re-confirm r128=467 (r64 = below-onset anchor)
+    PPL4 --T 16384 --methods bugslash --ranks 128 --hh-budgets 1024 --hh-neighbor 1 --warmup-seed --min-sv-frac "$FLOOR" \
         --out-json "results/w17-${TAG}-h1024-floor-on.json"              # 467 -> ~7.8 ?
     RULER --context-lens 16384 --tasks niah_single niah_multivalue vt \
       --methods bugslash $RH --min-sv-frac "$FLOOR" \

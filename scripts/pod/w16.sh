@@ -130,10 +130,73 @@ sweep(){ # r128 fails on non-Llama (bugSseed ppl 7.3->47->467). Map (memory, ppl
   echo "===SWEEP_DONE_${TAG}==="
 }
 
+w17(){ # Week-17 confirm: firm bugSseed-r64-h256 @ n=12 (16K) / n=4 (32K) on
+       # {single,mv,vt} + matched ppl (full/think/palu) + env-gated funded-fix arms.
+       # Reuses RULER()/PPL() (both already pass --chunk; NEVER drop it). Cheap-first:
+       # RULER (short decode) before ppl (slow scoring); 16K before 32K. One pod/model.
+       # Env gates: VTFIX=1 (Mistral-vt exact-tier raise), FLOOR=<v> e.g. 1e-2
+       # (integrator floor: WS2 pure-gist + WS3 h1024), MARQUEE=1 (Llama n=16 s32).
+  RH="--ranks 64 --hh-budgets 256 --hh-neighbor 1 --warmup-seed"   # r64-h256 flagship arm
+
+  echo "===W17_16K_CORE_BEGIN_${TAG}==="
+  RULER --context-lens 16384 --tasks niah_single niah_multivalue vt \
+    --methods bugslash think palu $RH --think-ratios 0.5 --palu-ranks 0.5 \
+    --n-trials 6 --seeds 0 1 --out-json "results/w17-${TAG}-16k-core.json"      # n=12
+  echo "===W17_32K_CORE_BEGIN_${TAG}==="
+  RULER --context-lens 32768 --tasks niah_single niah_multivalue vt \
+    --methods bugslash think palu $RH --think-ratios 0.5 --palu-ranks 0.5 \
+    --n-trials 2 --seeds 0 1 --out-json "results/w17-${TAG}-32k-core.json"      # n=4
+
+  if [ "${VTFIX:-0}" = "1" ]; then   # FIX 3: exact-tier budget raise for Mistral-vt
+    echo "===W17_VTFIX_BEGIN_${TAG}==="
+    RULER --context-lens 16384 --tasks niah_single niah_multivalue vt \
+      --methods bugslash --ranks 64 --hh-budgets 512 --hh-neighbor 1 --warmup-seed \
+      --n-trials 6 --seeds 0 1 --out-json "results/w17-${TAG}-16k-h512.json"    # n=12
+    RULER --context-lens 32768 --tasks niah_single niah_multivalue vt \
+      --methods bugslash --ranks 64 --hh-budgets 1024 --hh-neighbor 1 --warmup-seed \
+      --n-trials 2 --seeds 0 1 --out-json "results/w17-${TAG}-32k-h1024.json"   # n=4
+  fi
+
+  if [ "${MARQUEE:-0}" = "1" ]; then # Llama headline: r128-h1024-s32 32K vt/mv @ n=16
+    echo "===W17_MARQUEE_BEGIN_${TAG}==="
+    RULER --context-lens 32768 --tasks vt niah_multivalue \
+      --methods bugslash --ranks 128 --hh-budgets 1024 --hh-neighbor 1 --warmup-seed --score-rank 32 \
+      --n-trials 8 --seeds 0 1 --out-json "results/w17-${TAG}-32k-s32-n16.json"  # n=16
+    RULER --context-lens 32768 --tasks vt niah_multivalue \
+      --methods think palu --think-ratios 0.5 --palu-ranks 0.5 \
+      --n-trials 8 --seeds 0 1 --out-json "results/w17-${TAG}-32k-base-n16.json" # n=16
+  fi
+
+  echo "===W17_PPL_BEGIN_${TAG}==="   # matched baselines + r64 sweet-spot fluency
+  for T in 16384 32768; do
+    PPL --T "$T" --methods full think palu --think-ratios 0.5 --palu-ranks 0.5 \
+        --out-json "results/w17-${TAG}-ppl${T}-base.json"
+    PPL --T "$T" --methods bugslash $RH \
+        --out-json "results/w17-${TAG}-ppl${T}-r64.json"
+  done
+
+  if [ -n "${FLOOR:-}" ]; then       # FIX 2: integrator floor (WS2 pure-gist + WS3 h1024)
+    echo "===W17_FLOOR_BEGIN_${TAG}==="
+    PPL --T 16384 --methods bug --ranks 64 128 256 \
+        --out-json "results/w17-${TAG}-floor-off.json"                    # off: Mistral r128=138, Qwen r256=27531
+    PPL --T 16384 --methods bug --ranks 64 128 256 --min-sv-frac "$FLOOR" \
+        --out-json "results/w17-${TAG}-floor-on.json"                     # recovered toward the healthy band?
+    PPL --T 16384 --methods bugslash --ranks 16 32 64 128 --hh-budgets 1024 --hh-neighbor 1 --warmup-seed \
+        --out-json "results/w17-${TAG}-h1024-sweep-off.json"              # predict fine <=r64, blow @ r128 only
+    PPL --T 16384 --methods bugslash --ranks 128 --hh-budgets 1024 --hh-neighbor 1 --warmup-seed --min-sv-frac "$FLOOR" \
+        --out-json "results/w17-${TAG}-h1024-floor-on.json"              # 467 -> ~7.8 ?
+    RULER --context-lens 16384 --tasks niah_single niah_multivalue vt \
+      --methods bugslash $RH --min-sv-frac "$FLOOR" \
+      --n-trials 2 --seeds 0 1 --out-json "results/w17-${TAG}-floor-ruler.json"  # retrieval unchanged @ sweet spot
+  fi
+  echo "===W17_DONE_${TAG}==="
+}
+
 case "$MODE" in
   tier2) tier2 ;;
   tier1) tier1 ;;
   sweep) sweep ;;
+  w17) w17 ;;
   *) echo "===UNKNOWN_MODE_${MODE}==="; exit 1 ;;
 esac
 echo "===ALL_DONE_${MODE}_${TAG}==="

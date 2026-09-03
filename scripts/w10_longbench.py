@@ -308,6 +308,23 @@ def main() -> None:
     parser.add_argument("--recent-window", type=int, default=32)
     parser.add_argument("--absorb-block", type=int, default=16)
     parser.add_argument("--chunk", type=int, default=0, help="chunked-prefill block size")
+    # Week-18 W6: the SurpriseSLASH/flagship knobs build_arms needs for the bugslash arm
+    # (hh_budgets/hh_neighbor are read directly; the rest are getattr-defaulted). Without
+    # these the flagship bugSseed arm could not run on LongBench -- the panel's "flagship
+    # never LongBench-tested" gap. LongBench (real doc-QA) is eviction's home turf, so
+    # this is an appendix external anchor, not a headline.
+    parser.add_argument("--hh-budgets", type=int, nargs="+", default=[256, 1024])
+    parser.add_argument("--hh-neighbor", type=int, default=0)
+    parser.add_argument("--hh-discard", action="store_true")
+    parser.add_argument("--qwhiten-file", default=None)
+    parser.add_argument("--warmup-seed", action="store_true")
+    parser.add_argument("--score-rank", type=int, default=None)
+    parser.add_argument("--min-sv-frac", type=float, default=0.0)
+    parser.add_argument("--bug-quant-bits", type=int, default=None)
+    parser.add_argument("--bug-quant-budget", type=int, default=0)
+    parser.add_argument("--quant-nbits", type=int, nargs="+", default=[2, 4])
+    parser.add_argument("--quant-group", type=int, default=64)
+    parser.add_argument("--quant-residual", type=int, default=128)
     parser.add_argument(
         "--methods",
         nargs="+",

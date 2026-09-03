@@ -160,3 +160,14 @@ def test_seed_plus_quant_fails_loud() -> None:
     args = _bug_args(bug_quant_bits=4, bug_quant_budget=32, warmup_seed=True)
     with pytest.raises(ValueError, match="not yet combined with --warmup-seed"):
         build_arms(args, _model(), 160)
+
+
+def test_plot_survives_empty_results() -> None:
+    """A RULER run where every arm SKIPs (e.g. quant on a -runtime pod with no CUDA
+    kernel) yields empty results; _plot must skip cleanly, not crash plt.subplots on a
+    0-row grid (the non-fatal Traceback seen on the Week-18 G1 runtime pods)."""
+    from pathlib import Path
+
+    import w10_ruler
+
+    w10_ruler._plot({"results": [], "tasks": ["niah_single"], "model": "m"}, Path("/tmp/w18_empty"))

@@ -469,6 +469,11 @@ def _plot(blob: dict[str, Any], out: Path) -> None:
     results = blob["results"]
     tasks = blob["tasks"]
     ctxs = sorted({int(r["ctx"]) for r in results})
+    if not ctxs or not tasks:
+        # Every arm SKIP'd (e.g. a quant run on a -runtime pod without the CUDA kernel):
+        # nothing to plot. Skip cleanly instead of crashing plt.subplots on a 0-row grid.
+        print(f"[plot skipped: no result rows for {out}]", flush=True)
+        return
     fig, axes = plt.subplots(
         len(ctxs), len(tasks), figsize=(4.6 * len(tasks), 4.0 * len(ctxs)), squeeze=False
     )

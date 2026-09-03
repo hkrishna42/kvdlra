@@ -55,10 +55,13 @@ echo "===ENV_BEGIN==="
 echo "run_sha=${RUN_SHA}"
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader || true
 python - <<'PY' || echo "===DEPS_FAILED==="
-import sys, torch, transformers, kvpress
+import sys, importlib.metadata as md, torch, transformers, kvpress  # noqa: F401
+def _ver(pkg):
+    try: return md.version(pkg)
+    except Exception: return "?"
 print(f"python={sys.version.split()[0]}")
 print(f"torch={torch.__version__} cuda_build={torch.version.cuda} cuda_avail={torch.cuda.is_available()}")
-print(f"transformers={transformers.__version__} kvpress={kvpress.__version__}")
+print(f"transformers={transformers.__version__} kvpress={_ver('kvpress')}")
 if torch.cuda.is_available():
     print(f"device={torch.cuda.get_device_name(0)}")
 PY

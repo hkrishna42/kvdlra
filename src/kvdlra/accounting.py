@@ -414,6 +414,39 @@ def full_cache_footprint(t: int, n: int) -> Footprint:
     return Footprint(verbatim_elems=2 * t * n)
 
 
+# ------------------------------------------------------------- quantized KV (KIVI)
+
+
+def quant_footprint(
+    t: int,
+    n: int,
+    *,
+    nbits: int,
+    group: int = 64,
+    residual_length: int = 128,
+    scale_words: int = 2,
+) -> Footprint:
+    """KIVI-style 2/4-bit KV baseline (transformers ``QuantizedCache`` / quanto backend,
+    arm ``quant-{nbits}bit``). The ``residual_length`` most-recent tokens stay verbatim
+    in the model dtype; older tokens are quantized to ``nbits`` with a per-``group``
+    scale+shift. Billed honestly to match what quanto actually stores (verified via the
+    Week-18 probe: ``_data`` uint8 codes at ``nbits``, ``_scale``+``_shift`` fp32, one
+    pair per group, no zeropoint): code bits at ``nbits``, ``scale_words`` fp32 aux words
+    per group, residual as fp16 verbatim. Asymptote ``(nbits + scale_words*32/group)/16``
+    -> 2-bit/g64 = 0.1875x, 4-bit/g64 = 0.3125x (the KIVI/KVQuant 0.125-0.19x band).
+
+    ``fp32_verbatim_elems`` is 0 (the residual is model-dtype), so its honest
+    ``ratio_stored_bits`` equals ``ratio_fp16`` -- billed on the same footing as ThinK/
+    Palu, unlike BUG whose fp32 state splits the two."""
+    resid = min(residual_length, t)
+    payload = max(0, t - resid)
+    verbatim = 2 * resid * n  # K+V fp16 residual window
+    code_bits = 2 * payload * n * nbits  # K+V quantized codes at nbits
+    n_groups = 2 * math.ceil(payload * n / group) if payload else 0  # K+V groups
+    aux = float(n_groups * scale_words)  # fp32 scale + shift per group
+    return Footprint(verbatim_elems=verbatim, quant_code_bits=code_bits, aux_words=aux)
+
+
 # ------------------------------------------------------------- peak-GPU probe
 
 

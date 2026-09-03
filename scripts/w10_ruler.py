@@ -316,6 +316,15 @@ def retrieve(
             text = _decode(
                 model, tok, cache, query.to(device), ctx_len, device, block=False, max_new=max_new
             )
+    elif arm["kind"] == "quant":
+        # KIVI-style QuantizedCache baseline (Week-18): the arm supplies its OWN cache
+        # object (not a press over a DynamicCache); prefill + decode run into it directly.
+        cache = arm["make"]()
+        model(hay, past_key_values=cache, use_cache=True, logits_to_keep=1)
+        fp = _footprint(arm, cache, ctx_len, n, h_kv)
+        text = _decode(
+            model, tok, cache, query.to(device), ctx_len, device, block=True, max_new=max_new
+        )
     else:
         # Scorer presses run SINGLE-SHOT (no ChunkPress): kvpress compresses in
         # prefill and SnapKVPress asserts q_len > window_size (64), which the small
@@ -467,6 +476,8 @@ def _plot(blob: dict[str, Any], out: Path) -> None:
         "bug": ("tab:orange", "o"),
         "morph": ("tab:green", "s"),
         "press": ("tab:red", "^"),
+        "quant": ("tab:purple", "D"),
+        "shadow": ("tab:brown", "v"),
         "full": ("tab:blue", "*"),
     }
     for i, ctx in enumerate(ctxs):

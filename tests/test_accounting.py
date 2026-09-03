@@ -332,3 +332,47 @@ def test_stored_bits_matches_manual_split() -> None:
     assert fp.stored_bits() == pytest.approx(expected)
     # bits(16) (the fp16-equivalent) is unchanged by the new field.
     assert fp.bits(16) == 1000.0 * 16 + 640.0 + 50.0 * 32
+
+
+# ---------------------------------------------- Week-18 quantized-KV baseline
+
+
+def test_quant_footprint_asymptotic_ratios() -> None:
+    """KIVI-style QuantizedCache baseline sits just above the pure code-bit asymptote
+    (the fp32 scale+shift at group-64 and the fp16 residual window add overhead):
+    2-bit/g64 -> ~0.19x, 4-bit -> ~0.31x. The residual is a vanishing fraction as
+    t grows, so a huge context recovers the (nbits + 2*32/64)/16 asymptote."""
+    n = 1024
+    for t in (16384, 65536):
+        fp2 = acc.quant_footprint(t, n, nbits=2, group=64, residual_length=128)
+        fp4 = acc.quant_footprint(t, n, nbits=4, group=64, residual_length=128)
+        assert 0.185 < fp2.ratio_fp16(t, n) < 0.200  # near the KIVI 2-bit band top edge
+        assert 0.310 < fp4.ratio_fp16(t, n) < 0.320
+    huge = 4_000_000
+    r2 = acc.quant_footprint(huge, n, nbits=2).ratio_fp16(huge, n)
+    r4 = acc.quant_footprint(huge, n, nbits=4).ratio_fp16(huge, n)
+    assert r2 == pytest.approx(0.1875, abs=2e-3)
+    assert r4 == pytest.approx(0.3125, abs=2e-3)
+
+
+def test_quant_footprint_stored_equals_fp16() -> None:
+    """The quant baseline has no fp32-at-rest state (residual is model dtype), so its
+    honest ratio_stored_bits equals ratio_fp16 -- billed on the same footing as
+    ThinK/Palu, unlike BUG."""
+    t, n = 16384, 1024
+    fp = acc.quant_footprint(t, n, nbits=2)
+    assert fp.fp32_verbatim_elems == 0.0
+    assert fp.ratio_stored_bits(t, n) == pytest.approx(fp.ratio_fp16(t, n))
+
+
+def test_quant_footprint_components_match_quanto() -> None:
+    """Pin the component algebra against the Week-18 quanto probe: uint8 codes at nbits,
+    fp32 scale+shift (2 aux words) per group, no zeropoint; residual verbatim fp16."""
+    t, n, nbits, group, resid = 1000, 512, 2, 64, 128
+    fp = acc.quant_footprint(t, n, nbits=nbits, group=group, residual_length=resid)
+    payload = t - resid
+    assert fp.verbatim_elems == 2 * resid * n
+    assert fp.quant_code_bits == 2 * payload * n * nbits
+    import math as _m
+
+    assert fp.aux_words == 2 * _m.ceil(payload * n / group) * 2

@@ -134,6 +134,17 @@ def score_press(
     return nll, ntok, cache
 
 
+def score_quant(
+    model: Any, cache: Any, ctx_ids: torch.Tensor, win_ids: torch.Tensor
+) -> tuple[float, int]:
+    """Prefill into a caller-supplied QuantizedCache (KIVI baseline) then score the
+    window. Single-shot (HF QuantizedCache does not chunk); returns nll + token count."""
+    ctx = ctx_ids.unsqueeze(0)
+    ctx_len = int(ctx_ids.shape[0])
+    model(ctx, past_key_values=cache, use_cache=True, logits_to_keep=1)
+    return _score_window(model, cache, ctx_len, win_ids)
+
+
 # ------------------------------------------------------------------- the arms
 
 
@@ -390,6 +401,30 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                     ),
                 }
             )
+    if "quant" in want:  # Week-18: KIVI-style 2/4-bit KV baseline (transformers QuantizedCache)
+        from transformers.cache_utils import QuantizedCache
+
+        for nbits in args.quant_nbits:
+            arms.append(
+                {
+                    "name": f"quant-{nbits}bit",
+                    "kind": "quant",
+                    "rank": None,
+                    "nbits": nbits,
+                    "quant_group": args.quant_group,
+                    "quant_residual": args.quant_residual,
+                    "chunkable": False,  # HF QuantizedCache: single-shot prefill
+                    "make": (
+                        lambda nbits=nbits: QuantizedCache(
+                            backend="quanto",
+                            config=model.config,
+                            nbits=nbits,
+                            q_group_size=args.quant_group,
+                            residual_length=args.quant_residual,
+                        )
+                    ),
+                }
+            )
     return arms
 
 
@@ -435,6 +470,14 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
         )
     if kind == "full":
         return acc.full_cache_footprint(t, n)
+    if kind == "quant":  # QuantizedCache is NOT a DynamicCache subclass -> branch first
+        return acc.quant_footprint(
+            t,
+            n,
+            nbits=int(arm["nbits"]),
+            group=int(arm["quant_group"]),
+            residual_length=int(arm["quant_residual"]),
+        )
     if arm.get("press_type") == "think":
         # ThinK zeros channels (no measured gain) -> analytic footprint (K pruned).
         head_dim = n // h_kv
@@ -497,6 +540,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                             nll, ntok, cache = score_press(
                                 model, press, ctx_ids, win_ids, arm_chunk
                             )
+                        elif arm["kind"] == "quant":
+                            cache = arm["make"]()
+                            nll, ntok = score_quant(model, cache, ctx_ids, win_ids)
                         else:
                             cache = arm["make"]()
                             nll, ntok = score_streaming(model, cache, ctx_ids, win_ids, arm_chunk)
@@ -600,6 +646,8 @@ def _plot(blob: dict[str, Any], out: Path) -> None:
         "bug": ("tab:orange", "o"),
         "morph": ("tab:green", "s"),
         "press": ("tab:red", "^"),
+        "quant": ("tab:purple", "D"),
+        "shadow": ("tab:brown", "v"),
         "full": ("tab:blue", "*"),
     }
     ordered = sorted(per_t.items(), key=lambda kv: int(kv[0]))
@@ -657,6 +705,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--think-ratios", type=float, nargs="+", default=[0.3, 0.5, 0.7])
     parser.add_argument("--palu-ranks", type=float, nargs="+", default=[0.25, 0.5])
     parser.add_argument("--palu-group", type=int, default=1)
+    parser.add_argument(
+        "--quant-nbits",
+        type=int,
+        nargs="+",
+        default=[2, 4],
+        help="Week-18 KIVI-style quantized-KV baseline bit widths -> quant-{n}bit arms "
+        "(transformers QuantizedCache, quanto backend)",
+    )
+    parser.add_argument("--quant-group", type=int, default=64, help="quant per-group size")
+    parser.add_argument(
+        "--quant-residual", type=int, default=128, help="quant fp16 residual window length"
+    )
     parser.add_argument("--shadow-ranks", type=int, nargs="+", default=[64, 128])
     parser.add_argument("--shadow-topk", type=int, default=256)
     parser.add_argument("--recent-window", type=int, default=32)

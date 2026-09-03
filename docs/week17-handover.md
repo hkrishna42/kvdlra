@@ -11,8 +11,8 @@ Three questions about `bugSseed-r64-h256` (Week-16's extreme-compression config)
 
 1. **Does its cross-model generality hold with error bars?** → **YES.** single + multi-value = **1.00
    [0.76, 1.0] (12/12)** on Llama-3.1-8B, Qwen2.5-7B, Mistral-7B-v0.3 at 16K, at 0.085–0.149× memory
-   (5–13× under ThinK/Palu). Wilson-firm (n=12 needed — 8/8 only reaches 0.68). BUG beats both baselines
-   on multi-value (Qwen). The generality claim is now defensible.
+   (3.4–10× under ThinK/Palu; 6.7–13× vs full KV). Wilson-firm (n=12 needed — 8/8 only reaches 0.68). BUG
+   leads both baselines on multi-value (Qwen; point estimate, not Wilson-separated). The generality claim is now defensible.
 2. **Can the Mistral/Llama var-track weakness be fixed?** → **NO (refuted).** Raising the exact tier
    (h256→h512/h1024) gives **no** vt lift on the real 7B/8B (Mistral 0.50→0.25, Llama 0.58→0.58); the 1B
    CPU proxy over-predicted. With the CPU-refuted memory-free alternatives (score_rank, stickiness), the

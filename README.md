@@ -62,8 +62,9 @@ accounting: [`results/w13-trackb-summary.md`](results/w13-trackb-summary.md).
 
 ### Current focus (Week 15 — both axes at 3–5× less memory)
 
-**BUG now matches the low-rank KV-compression field on perplexity *and* beats it on retrieval,
-at a paper-grade memory advantage.** The headline arm `bugSseed-r128-h1024-s32` (0.159× memory)
+**BUG now matches the low-rank KV-compression field (`think-c0.5`, `palu-r0.5`) on perplexity *and*
+leads it on retrieval, at a paper-grade advantage in stored state.** The headline arm
+`bugSseed-r128-h1024-s32` (0.159× memory)
 adds a **score-rank decoupling** knob to the Week-14 warm-up seed: `--score-rank 32` caps the
 surprise-scoring basis at a leading rank-32 subview (default-off, **zero** memory cost, +0.3%
 ppl), un-blinding the exact-tier selection that a large r128 gist otherwise "fits" into
@@ -74,9 +75,11 @@ invisibility. Confirmed on Llama-3.1-8B (n=8 ppl / n=4–8 RULER, GPU):
   (+0.031 bits/tok) and Palu (+0.024), inside the pre-registered 0.05 band, at **3.2–4.7× less
   memory**. (Versus uncompressed full it is +0.076 bits/tok — BUG matches the compression
   *field*, not full KV.)
-- **Retrieval:** the s32 cap lifts the hardest tasks at r128 — **32K var-track 0→100** (Wilson-
-  disjoint), 16K multi-value 25→100, 16K var-track 75→100 — so it **beats ThinK (vt 50) and
-  Palu (vt 25) on var-track** at 3–5× less memory.
+- **Retrieval:** the s32 cap lifts the hardest tasks at r128 — **32K var-track 0→100**, 16K
+  multi-value 25→100, 16K var-track 75→100 (BUG's own arms, n=4–8). Firmed at **n=16** (the
+  Week-17 marquee, `docs/week17-explained.md`), 32K var-track is **0.94 [0.72, 0.99]** vs
+  `think-c0.5` 0.31 and `palu-r0.5` 0.56 — it **beats ThinK** (Wilson-separated) and **leads
+  Palu** (not separated: Palu's vt firmed *up* from the n=4 0.25 to 0.56) at 3–5× less memory.
 
 **Two "baselines" turned out to be our own bugs, now fixed and validated on 8B** (a prerequisite
 of any honest claim): ShadowKV's published 0/0/0/0 was a harness defect (decode ran outside
@@ -127,7 +130,7 @@ unfair-comparison claim) in [`docs/week4.md`](docs/week4.md).
 
 ```bash
 uv venv --python 3.12 && uv pip install -e ".[dev]"
-uv run pytest -q          # 295 passed, 1 skipped (bf16 QR skips on CPU LAPACK)
+uv run pytest -q          # 338 passed, 1 skipped (bf16 QR on CPU LAPACK), 1 xfail (Week-15 T3 latent bug)
 ```
 
 ## Reproduce

@@ -26,7 +26,8 @@ Both ran. A significant science finding emerged and reshaped the Tier-2 story.
 - 32K **var-track**: `-s32` lift **0.00 → 1.00**, beating **both** `palu` (0.25) **and** `think` (0.50).
 - 32K **multivalue**: `-s32` 1.00, ties palu/think.
 - The `think-c0.5` vt/mv baselines were **never measured before** — now they are. Honesty claim
-  strengthens from "beats Palu, ties ThinK" to **"beats Palu AND ThinK on var-track"** (n=4; Wilson pending).
+  strengthens to **"leads Palu AND ThinK on var-track"** (n=4; superseded by the Week-17 n=16 marquee:
+  beats ThinK Wilson-separated, leads Palu — Palu's vt firmed up to 0.56, not separated).
 
 **Tier-2 (generality) — the r128 config does NOT transfer, but BUG's extreme-compression niche DOES.**
 - `bugSseed-r128` collapses on Qwen + Mistral (retrieval 0.00; `-r128-h1024` ppl 467 / 47). **Geometry and
@@ -38,8 +39,9 @@ Both ran. A significant science finding emerged and reshaped the Tier-2 story.
   **absorb the needle** → retrieval 0 (the rank-vs-retrieval wall — at r128 here vs r256 on Llama; `-s32`
   does *not* rescue it). **Mistral** the **streaming integrator diverges** (deployed-config ppl 43.9;
   pure-`bug` gist diverges at r256 on Qwen, r128 on Mistral).
-- BUG does **not** beat baselines on perplexity; its edge is **memory at matched retrieval** — 3–8× less
-  (0.05–0.15× vs ThinK/Palu 0.50–0.75×), the regime eviction/channel-pruning cannot enter.
+- BUG does **not** beat baselines on perplexity; its edge is **stored state at matched retrieval** —
+  3.4–10× less (0.05–0.15× vs ThinK/Palu 0.50–0.75×). Channel-pruning/low-rank are floored at 0.50–0.75×;
+  eviction reaches 0.1× but loses var-track (ea-k0.1 vt 0.17) and multikey decays with length (Week-11).
 
 ---
 

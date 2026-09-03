@@ -24,9 +24,10 @@ At **16K, n=12** (the count needed to clear a Wilson-95% lower bound of 0.70 —
 | Mistral-7B-v0.3 | 1.00 [0.76,1.0] | 1.00 [0.76,1.0] | 0.50 [0.25,0.75] | 0.085× |
 | Llama-3.1-8B | 1.00 [0.76,1.0] | 1.00 [0.76,1.0] | 0.58 [0.32,0.80] | 0.085× |
 
-(Wilson 95% intervals, 12/12 = [0.758, 1.0].) At **0.085–0.149× of full KV** — **5–13× less memory than
-ThinK (0.75×) or Palu (0.50×)** — BUG matches or beats them on retrieval. It even **beats both baselines
-on multi-value**: Qwen 16K mv is bug 1.00 vs think 0.83 / palu 0.92; Qwen 32K mv is bug 1.00 vs palu 0.25.
+(Wilson 95% intervals, 12/12 = [0.758, 1.0].) At **0.085–0.149× of full KV** — **3.4–10× less
+float-equivalent stored state than `think-c0.5` (0.75×) or `palu-r0.5` (0.50×); 6.7–13× vs full KV** — BUG
+matches or leads them on retrieval. It even **leads both baselines on multi-value** (point estimate, not
+Wilson-separated): Qwen 16K mv is bug 1.00 vs think 0.83 / palu 0.92; Qwen 32K mv is bug 1.00 vs palu 0.25.
 Qwen additionally holds 1.00/1.00/1.00 at 32K. This is the paper's core claim — the extreme-compression
 frontier generalizes across three families — now with error bars instead of n=4 point estimates.
 
@@ -59,6 +60,10 @@ honest move — and it doesn't touch the single/multi-value frontier, which is w
 
 ## 3. The integrator floor — the clean win, and it raises the safe rank
 
+*Safe rank* here means the largest gist `rank` whose perplexity stays within the r64 operating point's
+band (no numerical blow-up); it is a within-method notion — a floored high-rank cell is still
+Palu-dominated at matched memory, so "raises the safe rank" is a stability claim, not a frontier claim.
+
 Week-16 left two unexplained numerical blow-ups: the pure-gist tracker diverged at high rank (Mistral
 `bug-r128` ppl **138**, Qwen `bug-r256` **27531**), and — the "puzzle" — a *larger* exact tier destroyed
 fluency (Qwen `bugSseed-r128-h1024` ppl **467**). The Phase-1 investigation showed these are **one defect**:
@@ -88,7 +93,7 @@ removes a whole failure mode and unlocks higher ranks on non-Llama families.
 
 ---
 
-## 4. The Llama marquee — beats Palu AND ThinK on var-track, firmed
+## 4. The Llama marquee — beats ThinK, leads Palu on var-track, firmed
 
 Firming Week-16's Tier-1 headline at **n=16**: Llama `bugSseed-r128-h1024-s32` at 32K gets **var-track
 0.94 [0.72, 0.99] (15/16)** and **multi-value 1.00 [0.81, 1.0] (16/16)** at 0.16× memory. Against the
@@ -122,6 +127,6 @@ makes higher rank safe, the natural 32K config where fluency matters is **r128/r
 ## Takeaway
 
 The r64 extreme-compression config is now a **validated cross-model result** (single+multi-value = 1.00 on
-three families at 5–13× less memory, Wilson-firm). The var-track axis on wide-KV models is an honest
+three families at 3.4–10× less stored state than ThinK/Palu, Wilson-firm). The var-track axis on wide-KV models is an honest
 open limitation. And the `min_sv_frac` floor is a clean, safe, general fix that **removes the high-rank
 numerical instability and raises the usable rank** — the most reusable artifact of the week.

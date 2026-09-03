@@ -65,10 +65,11 @@ Below the threshold (**rank 16–64**) everything works on both families:
 
 BUG's perplexity here is *above* ThinK/Palu (whose channel-pruning / low-rank factorization keep ppl very
 close to full). **BUG does not win on perplexity.** What it does is reach **full single+multivalue retrieval
-at 0.04–0.15× of full KV**, where ThinK and Palu sit at **0.50–0.75×**. That is a **3–8× memory advantage at
-matched retrieval, in a regime eviction and channel-pruning cannot enter at all** — you cannot evict your way
-to 0.05× and still answer a needle. This is exactly the frontier the paper is about, and it now holds on
-three model families.
+at 0.04–0.15× of full KV**, where ThinK and Palu sit at **0.50–0.75×**. That is a **3.4–10× advantage in
+float-equivalent stored state at matched retrieval**. Channel-pruning / low-rank factorization are
+structurally floored at 0.50–0.75×; eviction can reach 0.1× but loses var-track there (ea-k0.1 vt 0.17)
+and its multikey decays with length (92→67→50) — all Week-11 measured. This is exactly the frontier the
+paper is about, and it now holds on three model families.
 
 The one honest blemish: **Mistral variable-tracking** tops out at ~0.50 even at low rank. Following a
 `V0=…; V1=V0; …` chain needs *several* linked facts retained together; Mistral's exact tier doesn't keep the

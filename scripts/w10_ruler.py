@@ -521,7 +521,9 @@ def main() -> None:
         ],
     )
     parser.add_argument("--out-json", default="results/w10-ruler-1b.json")
-    parser.add_argument("--out-fig", default="figures/week10/ruler_accuracy")
+    # untracked scratch default so a local smoke run never clobbers a committed
+    # figure; pass --out-fig figures/weekN/... explicitly to update a real one.
+    parser.add_argument("--out-fig", default="figures/scratch/ruler_accuracy")
     parser.add_argument("--plot-only", action="store_true")
     args = parser.parse_args()
 

@@ -215,4 +215,22 @@ version-controlled record; the source data is under [`results/`](results/).
 
 ## License
 
-Apache-2.0.
+Apache-2.0 (this code).
+
+### Models and their licenses
+
+The evaluations run against third-party base models under their own terms; this repo ships no
+weights.
+
+| Model (HF id) | License | Access |
+|---|---|---|
+| `unsloth/Meta-Llama-3.1-8B-Instruct` | Llama 3.1 Community License (Meta) | ungated mirror |
+| `unsloth/Llama-3.2-1B-Instruct` | Llama 3.2 Community License (Meta) | ungated mirror |
+| `Qwen/Qwen2.5-7B-Instruct` | Apache-2.0 | ungated |
+| `mistralai/Mistral-7B-Instruct-v0.3` | Apache-2.0 | ungated |
+
+The two Llama runs use the `unsloth/` mirrors deliberately: they are config-identical to Meta's
+gated originals but require no HF token, which is what makes the SSH-less onstart-batch pod recipe
+(`scripts/pod/`) reproducible on a fresh vast.ai box. Anyone with Meta gated access can swap in
+`meta-llama/Meta-Llama-3.1-8B-Instruct` / `meta-llama/Llama-3.2-1B-Instruct` unchanged. Llama
+outputs and derivatives remain subject to Meta's Llama Community License and Acceptable Use Policy.

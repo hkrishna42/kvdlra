@@ -42,3 +42,9 @@ results/gpu_logs/
 
 # Session-generated research dashboards (not part of the library)
 dashboards/
+
+# Claude Code local worktrees (never commit)
+.claude/worktrees/
+
+# scratch plots from local smoke runs (never clobber tracked figures)
+figures/scratch/

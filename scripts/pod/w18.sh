@@ -133,9 +133,20 @@ g1quant(){
   done
 }
 
+# g1diag: is the quant baseline's zero retrieval a decode bug or real? full (control) +
+# quant-8bit (near-lossless: if IT scores 0 on a single needle, the decode path is broken)
+# + 4/2-bit, one task, n=4 -- fast + definitive.
+g1diag(){
+  echo "===W18_G1DIAG_BEGIN_${TAG}==="
+  RULER --context-lens 16384 --tasks niah_single \
+    --methods full quant --quant-nbits 8 4 2 --n-trials 2 --seeds 0 1 \
+    --out-json "results/w18-${TAG}-g1diag.json"; emit "G1DIAG" "results/w18-${TAG}-g1diag.json"
+}
+
 case "$MODE" in
   g1) g1 ;;
   g1quant) g1quant ;;
+  g1diag) g1diag ;;
   g2) g2 ;;
   g3) g3 ;;
   g4) g4 ;;

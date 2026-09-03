@@ -46,8 +46,10 @@ RUN_SHA="$(git rev-parse HEAD)"
 echo "===RUN_SHA_${RUN_SHA}==="
 
 pip install -q hf_transfer hf_xet numpy scipy matplotlib "kvpress==0.5.1" 2>&1 | tail -5
-pip install -q 'transformers==5.8.0' 'datasets==2.21.0' 2>&1 | tail -5
+pip install -q 'transformers==5.8.0' 'datasets==2.21.0' "optimum-quanto>=0.2.7" 2>&1 | tail -5
 echo "===DEPS_DONE==="
+# Fail loud if the quant baseline backend is missing (else G1's quant arms silently SKIP).
+python -c "import optimum.quanto" 2>/dev/null && echo "===QUANTO_OK===" || echo "===QUANTO_MISSING==="
 
 # Reproducibility header, INSIDE the log block (Week-18 evidentiary chain). Everything
 # a camera-ready compute-disclosure needs: commit, card, driver/CUDA, and library set.

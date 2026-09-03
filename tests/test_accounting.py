@@ -376,3 +376,46 @@ def test_quant_footprint_components_match_quanto() -> None:
     import math as _m
 
     assert fp.aux_words == 2 * _m.ceil(payload * n / group) * 2
+
+
+def test_bug_quant_footprint_matches_stored_state_numel(tiny_model: LlamaForCausalLM) -> None:
+    """Week-18: with a coordinate-quant tier the coded columns must be billed at nbits,
+    not as fp32 coords. Drive a small-budget quant config so the middle overflows into
+    the quantized tier, then pin the CORRECTED split (coord_count=_f_len(),
+    quant_count=_q_len(), quant_bits) against the measured stored_state_numel."""
+    cache = BugStreamingCache(
+        tiny_model,
+        rank=8,
+        coord_budget=16,
+        recent_window=8,
+        absorb_block=4,
+        n_sink=4,
+        quant_bits=4,
+        quant_budget=32,  # small -> the prefill middle demotes into the quant tier
+    )
+    _drive(tiny_model, cache)
+    layer = _bug_layer(cache)
+    assert layer._q_len() > 0, "test did not exercise the quant tier"
+    fp = acc.bug_footprint(
+        N_FEATURES,
+        rank=8,
+        coord_count=layer._f_len(),  # fp coords only
+        recent_len=layer._recent_len(),
+        n_sink=4,
+        hh_count=layer._hh_len(),
+        u_present=layer.u_k is not None,
+        quant_count=layer._q_len(),
+        quant_bits=layer.quant_bits,
+    )
+    assert fp.float_equiv() == layer.stored_state_numel()
+    # And the old lumped billing (coords + quant as fp32) OVER-counts -> the bug we fixed.
+    lumped = acc.bug_footprint(
+        N_FEATURES,
+        rank=8,
+        coord_count=layer._f_len() + layer._q_len(),
+        recent_len=layer._recent_len(),
+        n_sink=4,
+        hh_count=layer._hh_len(),
+        u_present=layer.u_k is not None,
+    )
+    assert lumped.float_equiv() > fp.float_equiv()

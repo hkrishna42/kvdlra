@@ -112,3 +112,51 @@ def test_quant_footprint_dispatch_matches_accounting() -> None:
     assert fp.ratio_fp16(16384, 1024) == acc.quant_footprint(
         16384, 1024, nbits=2, group=64, residual_length=128
     ).ratio_fp16(16384, 1024)
+
+
+# ---------------------------------------------- Week-18 W2: BUG x quant compose
+
+
+def _bug_args(**kw: Any) -> argparse.Namespace:
+    d: dict[str, Any] = {
+        "methods": ["bugslash"],
+        "ranks": [16],
+        "hh_budgets": [16],
+        "chunk": 40,
+        "recent_window": 16,
+        "absorb_block": 8,
+        "morph_keeps": [0.1],
+        "evict_keeps": [0.1],
+        "think_ratios": [0.5],
+        "palu_ranks": [0.5],
+        "palu_group": 1,
+        "shadow_ranks": [64],
+        "shadow_topk": 256,
+        "hh_neighbor": 0,
+        "hh_discard": False,
+        "qwhiten_file": None,
+        "warmup_seed": False,
+        "score_rank": None,
+        "min_sv_frac": 0.0,
+        "bug_quant_bits": None,
+        "bug_quant_budget": 0,
+    }
+    d.update(kw)
+    return argparse.Namespace(**d)
+
+
+def test_bug_quant_compose_arm_builds_with_q_suffix() -> None:
+    """--bug-quant-bits produces a bugS-...-q{bits} compose arm (no seed)."""
+    arms = build_arms(_bug_args(bug_quant_bits=4, bug_quant_budget=32), _model(), 160)
+    assert arms[0]["name"] == "bugS-r16-h16-q4"
+    assert arms[0]["kind"] == "bug"
+
+
+def test_seed_plus_quant_fails_loud() -> None:
+    """The seed+quant combo is fenced until GPU-validated: build_arms raises a clear
+    error rather than silently dropping the seed or hitting the deep cache guard."""
+    import pytest
+
+    args = _bug_args(bug_quant_bits=4, bug_quant_budget=32, warmup_seed=True)
+    with pytest.raises(ValueError, match="not yet combined with --warmup-seed"):
+        build_arms(args, _model(), 160)

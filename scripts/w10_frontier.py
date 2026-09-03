@@ -238,11 +238,24 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
         if warmup:
             prefix += "seed"
         suffix = f"-s{score_rank}" if score_rank is not None else ""
+        # Week-18 compose: --bug-quant-bits quantizes the coordinate tier (PolarQuant
+        # variant D) -> "-q{bits}" name suffix + a ~0.04-0.05x sub-cliff arm. The
+        # seed+quant combo is fenced by a cache guard (seed_hh_warmup operates on the
+        # fp32 tail) whose relaxation needs GPU retrieval validation -> fail loud here.
+        qbits = getattr(args, "bug_quant_bits", None)
+        qbudget = int(getattr(args, "bug_quant_budget", 0) or 0)
+        if qbits is not None and warmup:
+            raise ValueError(
+                "--bug-quant-bits is not yet combined with --warmup-seed: the seed+quant "
+                "guard (bug_cache.py) needs GPU validation that the warmup seed initializes "
+                "correctly alongside the quant tier. Run the bugS-...-q arm (no seed) for now."
+            )
+        qsuf = f"-q{qbits}" if qbits is not None else ""
         for r in args.ranks:
             for hh in args.hh_budgets:
                 arms.append(
                     {
-                        "name": f"{prefix}-r{r}-h{hh}{suffix}{fsuf}",
+                        "name": f"{prefix}-r{r}-h{hh}{suffix}{qsuf}{fsuf}",
                         "kind": "bug",
                         "rank": r,
                         "retention": "lowrank_surprise",
@@ -265,6 +278,8 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                                 w_key=w_key,
                                 score_rank=score_rank,
                                 min_sv_frac=msf,
+                                quant_bits=qbits,
+                                quant_budget=qbudget,
                             )
                         ),
                     }
@@ -437,16 +452,23 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
         # Thread the arm's retention + hh_select so surprise arms count their
         # position/surprise buffers honestly (fifo default keeps existing arms
         # byte-identical); the anti-drift pin guards this against drift.
+        # Split the fp32 coordinate tier from the quantized tier so the coded columns
+        # are billed at their nbits, not as fp32 coords (Week-18: the old
+        # _f_len()+_q_len() lumped them, mis-billing any bug quant arm). q_len==0 for
+        # every non-quant arm -> byte-identical there; the anti-drift pin covers both.
+        q_len = layer._q_len()
         return acc.bug_footprint(
             n,
             rank=int(arm["rank"]),
-            coord_count=layer._f_len() + layer._q_len(),
+            coord_count=layer._f_len(),
             recent_len=layer._recent_len(),
             n_sink=N_SINK,
             retention=arm.get("retention", "fifo"),
             hh_count=layer._hh_len(),
             hh_select=arm.get("hh_select", "attn"),
             u_present=layer.u_k is not None,
+            quant_count=q_len,
+            quant_bits=layer.quant_bits if q_len else None,
             w_key=layer.w_key is not None,  # Q-BUG: count the frozen whitening diagonal
         )
     if kind == "morph":
@@ -716,6 +738,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--quant-group", type=int, default=64, help="quant per-group size")
     parser.add_argument(
         "--quant-residual", type=int, default=128, help="quant fp16 residual window length"
+    )
+    parser.add_argument(
+        "--bug-quant-bits",
+        type=int,
+        default=None,
+        help="Week-18 compose: quantize the BUG coordinate tier to this many bits "
+        "(PolarQuant variant D) -> bugS-...-q{bits} sub-cliff arm (~0.04-0.05x). NOT "
+        "combined with --warmup-seed yet (the seed+quant guard needs GPU validation).",
+    )
+    parser.add_argument(
+        "--bug-quant-budget",
+        type=int,
+        default=0,
+        help="fp32 coordinate columns kept before demotion to the quant tier",
     )
     parser.add_argument("--shadow-ranks", type=int, nargs="+", default=[64, 128])
     parser.add_argument("--shadow-topk", type=int, default=256)

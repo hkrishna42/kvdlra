@@ -252,10 +252,11 @@ def retrieve(
     n: int,
     h_kv: int,
     max_new: int,
-) -> tuple[bool, float, Any]:
+) -> tuple[bool, float, float, float]:
     """Prefill the haystack (chunked, OOM-safe) then decode the query+answer. Returns
-    (hit, memory-ratio, hits_fraction). A hit requires ALL ``targets`` in the output.
-    Memory is the post-prefill compressed footprint (kvdlra.accounting)."""
+    (hit, fp16-memory-ratio, hits_fraction, stored-bits-ratio). A hit requires ALL
+    ``targets`` in the output. Memory is the post-prefill compressed footprint
+    (kvdlra.accounting); the stored-bits ratio bills fp32-at-rest state honestly."""
     hay = hay.to(device)
     ctx_len = int(hay.shape[1])
     streaming = arm["kind"] in ("bug", "morph", "shadow")
@@ -293,7 +294,7 @@ def retrieve(
     hit = frac >= 1.0
     del cache
     gc.collect()
-    return hit, fp.ratio_fp16(ctx_len, n), frac
+    return hit, fp.ratio_fp16(ctx_len, n), frac, fp.ratio_stored_bits(ctx_len, n)
 
 
 # ------------------------------------------------------------- runner
@@ -315,7 +316,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         for task in args.tasks:
             for arm in build_arms(args, model, ctx):
                 arm_chunk = args.chunk if arm.get("chunkable", True) else 0
-                hits, ratios, fracs = 0, [], []
+                hits, ratios, fracs, sbits = 0, [], [], []
                 for seed in args.seeds:
                     for trial in range(args.n_trials):
                         try:
@@ -329,7 +330,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                                 args.n_values,
                                 args.n_hops,
                             )
-                            hit, ratio, frac = retrieve(
+                            hit, ratio, frac, sratio = retrieve(
                                 model,
                                 tokenizer,
                                 arm,
@@ -356,6 +357,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         hits += int(hit)
                         ratios.append(ratio)
                         fracs.append(frac)
+                        sbits.append(sratio)
+                        # Per-trial evidentiary line (Week-18): one row per trial so
+                        # the exact per-cell n and hit/miss chain survives the pod log
+                        # (recovered by the w18 intervals builder without a hand table).
+                        print(
+                            f"[trial] task={task} ctx={ctx} arm={arm['name']} "
+                            f"seed={seed} trial={trial} hit={int(hit)} frac={frac:.3f}",
+                            flush=True,
+                        )
                 if not ratios:  # every trial failed -> arm produced no measurement
                     continue
                 total = len(ratios)
@@ -368,13 +378,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     "accuracy": hits / total,
                     "recall_frac": sum(fracs) / len(fracs),
                     "ratio_fp16": sum(ratios) / len(ratios),
+                    "ratio_stored_bits": sum(sbits) / len(sbits),
                     "hits": hits,
                     "total": total,
                 }
                 results.append(row)
+                # `n=` and `sbits=` are appended last so the archived-line regexes
+                # (w17_intervals.ROW, w11_merge.ROW_RE) keep matching unchanged.
                 print(
                     f"[{task} ctx{ctx}] {arm['name']:14s} acc={row['accuracy']:.2f} "
-                    f"recall={row['recall_frac']:.2f} ratio={row['ratio_fp16']:.3f}",
+                    f"recall={row['recall_frac']:.2f} ratio={row['ratio_fp16']:.3f} "
+                    f"sbits={row['ratio_stored_bits']:.3f} n={total}",
                     flush=True,
                 )
     return {

@@ -159,7 +159,7 @@ def _g_smoke(model: Any, tok: Any, args: argparse.Namespace) -> dict[str, Any]:
         )
         for arm in build_arms(smoke, model, args.ctx):
             arm_chunk = args.chunk if arm.get("chunkable", True) else 0
-            hit, ratio, frac = retrieve(
+            hit, ratio, frac, _sbits = retrieve(
                 model, tok, arm, hay, query, targets, args.device, arm_chunk, n, h_kv, 40
             )
             if arm["kind"] == "full" and not hit:

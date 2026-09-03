@@ -29,6 +29,7 @@ CPU example (1B)::
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 from pathlib import Path
 from typing import Any
@@ -157,7 +158,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "integrity_ok": ok,
         "results": rows,
     }
-    print(f"{JSON_BEGIN}{json.dumps(blob)}{JSON_END}")
+    # Base64-fold at 400 chars/line so `vastai logs` truncation (~500 chars) can't
+    # eat the payload -- decode with the scrape_w10.sh flip-flop (tr -d ' \r\n'|base64 -d).
+    payload = base64.b64encode(json.dumps(blob).encode()).decode()
+    print(JSON_BEGIN)
+    for i in range(0, len(payload), 400):
+        print(payload[i : i + 400])
+    print(JSON_END)
     return blob
 
 

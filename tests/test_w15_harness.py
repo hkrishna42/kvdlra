@@ -123,7 +123,7 @@ def test_ruler_decode_inside_attach_shadow(tiny_model: LlamaForCausalLM) -> None
 
     # The real, fixed retrieve(): decode inside attach -> completes cleanly.
     stub = _StubTok()
-    hit, ratio, frac = w10_ruler.retrieve(
+    hit, ratio, frac, _sbits = w10_ruler.retrieve(
         tiny_model, stub, arm, hay, query, ["999999"], "cpu", 0, N_FEATURES, H, 2
     )
     assert stub.decoded  # decode actually ran to completion

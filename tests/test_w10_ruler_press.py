@@ -77,7 +77,7 @@ def test_retrieve_snapkv_single_shot_survives_subwindow_chunk(
     }
     # chunk=48 < window(64): the old ChunkPress wrap raised "Query length 48 should be
     # greater than the window size 64"; the single-shot press path must not.
-    hit, ratio, frac = retrieve(
+    hit, ratio, frac, _sbits = retrieve(
         tiny_model, _StubTok(), arm, hay, query, ["needle"], "cpu", 48, n, h_kv, 4
     )
     assert isinstance(hit, bool)

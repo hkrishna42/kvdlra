@@ -545,6 +545,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     "float_equiv_per_layer": fp.float_equiv(),
                     "tok_equiv_per_layer": fp.tok_equiv(n),
                     "ratio_fp16": fp.ratio_fp16(t, n),
+                    "ratio_stored_bits": fp.ratio_stored_bits(t, n),
                     "gpu_ratio_fp16": fp.gpu_ratio_fp16(t, n),
                     "cpu_ratio_fp16": fp.cpu_ratio_fp16(t, n),
                     "peak_gpu_bytes": peak,
@@ -579,9 +580,12 @@ def _log_row(row: dict[str, Any]) -> None:
     if row["status"] != "ok":
         print(f"  {row['method']:14s} [T={row['T']}] {row['status']}", flush=True)
         return
+    # `sbits=` appended after `ratio=` -- PPL_RE (w11_merge) captures ratio= and
+    # ignores the tail, so archived ppl lines keep parsing unchanged.
     print(
         f"  {row['method']:14s} [T={row['T']}] ppl={row['ppl']:.3f} "
-        f"tok_eq/layer={row['tok_equiv_per_layer']:.1f} ratio={row['ratio_fp16']:.3f}",
+        f"tok_eq/layer={row['tok_equiv_per_layer']:.1f} ratio={row['ratio_fp16']:.3f} "
+        f"sbits={row.get('ratio_stored_bits', float('nan')):.3f}",
         flush=True,
     )
 

@@ -21,6 +21,10 @@ export HF_HUB_DISABLE_XET=1
 export DEBIAN_FRONTEND=noninteractive
 export TOKENIZERS_PARALLELISM=false
 export PIP_BREAK_SYSTEM_PACKAGES=1
+# optimum-quanto builds a CUDA kernel (quanto_cuda.so) on first quant use via torch's
+# cpp_extension, which needs the CUDA toolkit (nvcc) + CUDA_HOME. Requires the pytorch
+# *-devel* image (the -runtime image has no nvcc). Harmless when unset/unused.
+export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 
 export MODE="${MODE:-g1}"
 export MODEL="${MODEL:-Qwen/Qwen2.5-7B-Instruct}"

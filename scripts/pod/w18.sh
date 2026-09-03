@@ -116,8 +116,26 @@ g5(){
   emit "G5STORAGE" "results/w18-${TAG}-g5storage.json"
 }
 
+# g1quant: the KIVI quant baseline ONLY (RULER + ppl, 2/4-bit). Split out because
+# optimum-quanto needs the CUDA-toolkit (-devel) image to build its kernel, while the
+# flagship/eviction arms run fine on the lighter -runtime image -- so the quant baseline
+# rides its own devel pod and its line-files merge with the rest (quant acc/ppl are
+# image-independent: same model, same QuantizedCache config).
+g1quant(){
+  for T in 16384 32768; do
+    echo "===W18_G1QUANT_R${T}_BEGIN_${TAG}==="
+    RULER --context-lens "$T" --tasks niah_single niah_multikey niah_multivalue vt \
+      --methods quant --quant-nbits 2 4 --n-trials 6 --seeds 0 1 \
+      --out-json "results/w18-${TAG}-g1quant-r${T}.json"; emit "G1QUANT_R${T}" "results/w18-${TAG}-g1quant-r${T}.json"
+    echo "===W18_G1QUANT_PPL${T}_BEGIN_${TAG}==="
+    PPL4 --T "$T" --methods quant --quant-nbits 2 4 \
+      --out-json "results/w18-${TAG}-g1quant-ppl${T}.json"; emit "G1QUANT_PPL${T}" "results/w18-${TAG}-g1quant-ppl${T}.json"
+  done
+}
+
 case "$MODE" in
   g1) g1 ;;
+  g1quant) g1quant ;;
   g2) g2 ;;
   g3) g3 ;;
   g4) g4 ;;

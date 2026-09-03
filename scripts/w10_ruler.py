@@ -529,6 +529,13 @@ def main() -> None:
     parser.add_argument("--think-ratios", type=float, nargs="+", default=[0.3, 0.5, 0.7])
     parser.add_argument("--palu-ranks", type=float, nargs="+", default=[0.25, 0.5])
     parser.add_argument("--palu-group", type=int, default=1)
+    # Week-18 quant baseline + compose (mirror w10_frontier.build_parser so the quant/
+    # q4 arms build here too -- build_arms reads --quant-nbits directly for the quant arm).
+    parser.add_argument("--quant-nbits", type=int, nargs="+", default=[2, 4])
+    parser.add_argument("--quant-group", type=int, default=64)
+    parser.add_argument("--quant-residual", type=int, default=128)
+    parser.add_argument("--bug-quant-bits", type=int, default=None)
+    parser.add_argument("--bug-quant-budget", type=int, default=0)
     parser.add_argument("--shadow-ranks", type=int, nargs="+", default=[64, 128])
     parser.add_argument("--shadow-topk", type=int, default=256)
     parser.add_argument("--recent-window", type=int, default=32)

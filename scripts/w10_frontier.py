@@ -641,7 +641,10 @@ def _plot(blob: dict[str, Any], out: Path) -> None:
 # --------------------------------------------------------------------- main
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
+    """The full frontier argparse. Exposed so other harnesses (w16_storage) can build a
+    COMPLETE build_arms namespace via ``build_parser().parse_args([])`` instead of a
+    hand-listed one that silently goes stale when a new flag lands (Week-18 drift fix)."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
@@ -727,7 +730,11 @@ def main() -> None:
     parser.add_argument("--out-json", default="results/w10-frontier-1b.json")
     parser.add_argument("--out-fig", default="figures/week10/frontier_longctx")
     parser.add_argument("--plot-only", action="store_true")
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
 
     out_json = Path(args.out_json)
     if args.plot_only:

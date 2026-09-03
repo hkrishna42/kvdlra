@@ -38,7 +38,9 @@ import _paths  # noqa: F401  (prepends src/ to sys.path if needed)
 import matplotlib
 import torch
 from perplexity_sweep import load_model
-from w10_frontier import _footprint, _prefill_chunked, build_arms
+from w10_frontier import _footprint, _prefill_chunked, build_arms, build_parser
+
+from kvdlra.accounting import measure_peak_gpu
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # must follow matplotlib.use("Agg")
@@ -49,27 +51,20 @@ JSON_END = "===W16_STORAGE_JSON_END==="
 
 
 def _smoke_args(args: argparse.Namespace) -> argparse.Namespace:
-    """A full build_arms namespace (only the bug/full knobs vary here)."""
-    return argparse.Namespace(
-        methods=args.methods,
-        ranks=args.ranks,
-        hh_budgets=args.hh_budgets,
-        chunk=args.chunk,
-        morph_keeps=[0.25],
-        evict_keeps=[0.1],
-        think_ratios=[0.5],
-        palu_ranks=[0.5],
-        palu_group=1,
-        shadow_ranks=[64],
-        shadow_topk=256,
-        recent_window=32,
-        absorb_block=16,
-        hh_neighbor=1,
-        hh_discard=False,
-        qwhiten_file=None,
-        warmup_seed=args.warmup_seed,
-        score_rank=None,
-    )
+    """A COMPLETE build_arms namespace, built from the real frontier parser so a new
+    build_arms flag can never silently go missing here (Week-18 drift root-cause fix:
+    the old hand-listed namespace was already stale, missing min_sv_frac). We start
+    from every default, then override only the knobs this storage smoke varies."""
+    ns = build_parser().parse_args([])
+    ns.methods = args.methods
+    ns.ranks = args.ranks
+    ns.hh_budgets = args.hh_budgets
+    ns.chunk = args.chunk
+    ns.warmup_seed = args.warmup_seed
+    ns.hh_neighbor = 1
+    ns.recent_window = 32
+    ns.absorb_block = 16
+    return ns
 
 
 @torch.no_grad()
@@ -89,12 +84,15 @@ def _measure(
             "measured_floats": full_floats,
             "measured_ratio": 1.0,
             "ratio_fp16": 1.0,
+            "ratio_stored_bits": 1.0,  # cold-load size ratio (full KV persists all of it)
             "workspace_floats": 0.0,
             "workspace_ratio": 0.0,
+            "peak_bytes": None,
+            "peak_ratio": None,
             "integrity_rel_err": 0.0,
         }
     cache = arm["make"]()
-    with cache.attach(model):
+    with cache.attach(model), measure_peak_gpu(str(hay.device)) as peak_get:
         if 0 < chunk < ctx:
             _prefill_chunked(model, cache, hay, chunk)
         else:
@@ -104,18 +102,28 @@ def _measure(
         # One decode step materializes the reconstruct-then-attend working set (u_k @ c_k
         # rebuilds the full-length middle). Measured AFTER stored/fp so the cache advance
         # does not perturb them; workspace ~ full KV is exactly why naive peak-VRAM shows
-        # no win -- the honest cost the future Mode-B kernel would remove.
+        # no win -- the honest cost the future Mode-B kernel would remove. The peak-GPU
+        # probe now spans EVERY arm (Week-18 M2), not just eviction -> the ~1.06x resident
+        # is a disclosed measured number on CUDA (None on CPU, honestly unmeasured).
         pos = torch.arange(ctx, ctx + 1, device=hay.device).unsqueeze(0)
         model(hay[:, -1:], past_key_values=cache, use_cache=True, position_ids=pos)
         workspace = float(cache.workspace_numel()) if hasattr(cache, "workspace_numel") else 0.0
+        peak = peak_get()
     del cache
     analytic = fp.float_equiv() * n_layers
+    # Full-KV resident (fp16) is 2*ctx*n*n_layers*2 bytes; peak_ratio compares the arm's
+    # measured peak against it (CUDA only). The cold-load SIZE win is ratio_stored_bits
+    # itself (honest at-rest bits); the H2D/reconstruct TIMING is CUDA-only -> G5.
+    full_kv_bytes = float(2 * ctx * n * n_layers * 2)
     return {
         "measured_floats": measured,
         "measured_ratio": measured / full_floats,
         "ratio_fp16": fp.ratio_fp16(ctx, n),
+        "ratio_stored_bits": fp.ratio_stored_bits(ctx, n),
         "workspace_floats": workspace,
         "workspace_ratio": workspace / full_floats,
+        "peak_bytes": peak,
+        "peak_ratio": (peak / full_kv_bytes) if peak is not None else None,
         "integrity_rel_err": abs(measured - analytic) / analytic if analytic else 0.0,
     }
 
@@ -138,9 +146,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             worst_integrity = max(worst_integrity, float(m["integrity_rel_err"]))
             row = {"ctx": ctx, "method": arm["name"], "kind": arm["kind"], **m}
             rows.append(row)
+            peak_s = f"{m['peak_ratio']:.3f}" if m["peak_ratio"] is not None else "cpu"
             print(
                 f"[ctx{ctx:>6}] {arm['name']:22s} stored_ratio={m['measured_ratio']:.4f} "
-                f"ratio_fp16={m['ratio_fp16']:.4f} workspace_ratio={m['workspace_ratio']:.3f} "
+                f"ratio_fp16={m['ratio_fp16']:.4f} coldload_ratio={m['ratio_stored_bits']:.4f} "
+                f"workspace_ratio={m['workspace_ratio']:.3f} peak_ratio={peak_s} "
                 f"integrity={m['integrity_rel_err']:.1e}",
                 flush=True,
             )

@@ -138,9 +138,14 @@ g1quant(){
 # + 4/2-bit, one task, n=4 -- fast + definitive.
 g1diag(){
   echo "===W18_G1DIAG_BEGIN_${TAG}==="
-  RULER --context-lens 16384 --tasks niah_single \
-    --methods full quant --quant-nbits 8 4 2 --n-trials 2 --seeds 0 1 \
-    --out-json "results/w18-${TAG}-g1diag.json"; emit "G1DIAG" "results/w18-${TAG}-g1diag.json"
+  # full (control) + quant 4/2-bit at the DEFAULT per-channel value axis (expected ~0).
+  RULER --context-lens 16384 --tasks niah_single --methods full quant --quant-nbits 4 2 \
+    --quant-axis-value 0 --n-trials 2 --seeds 0 1 \
+    --out-json "results/w18-${TAG}-g1diag-a0.json"; emit "G1DIAG_A0" "results/w18-${TAG}-g1diag-a0.json"
+  # KIVI-faithful per-token value axis: does it rescue exact-needle retrieval?
+  RULER --context-lens 16384 --tasks niah_single --methods quant --quant-nbits 4 2 \
+    --quant-axis-value=-1 --n-trials 2 --seeds 0 1 \
+    --out-json "results/w18-${TAG}-g1diag-a1.json"; emit "G1DIAG_A1" "results/w18-${TAG}-g1diag-a1.json"
 }
 
 case "$MODE" in

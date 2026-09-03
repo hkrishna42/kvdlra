@@ -419,10 +419,16 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
     if "quant" in want:  # Week-18: KIVI-style 2/4-bit KV baseline (transformers QuantizedCache)
         from transformers.cache_utils import QuantizedCache
 
+        # axis_value=-1 quantizes VALUES per-token (KIVI-faithful); the transformers
+        # default 0 is per-channel, which the docstring flags as a deviation and which
+        # empirically wrecks exact-needle retrieval. Name the arm "-av{axis}" when != 0.
+        av = int(getattr(args, "quant_axis_value", 0))
+        ak = int(getattr(args, "quant_axis_key", 0))
+        asuf = f"-av{av}" if av != 0 else ""
         for nbits in args.quant_nbits:
             arms.append(
                 {
-                    "name": f"quant-{nbits}bit",
+                    "name": f"quant-{nbits}bit{asuf}",
                     "kind": "quant",
                     "rank": None,
                     "nbits": nbits,
@@ -434,6 +440,8 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                             backend="quanto",
                             config=model.config,
                             nbits=nbits,
+                            axis_key=ak,
+                            axis_value=av,
                             q_group_size=args.quant_group,
                             residual_length=args.quant_residual,
                         )
@@ -738,6 +746,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--quant-group", type=int, default=64, help="quant per-group size")
     parser.add_argument(
         "--quant-residual", type=int, default=128, help="quant fp16 residual window length"
+    )
+    parser.add_argument("--quant-axis-key", type=int, default=0, choices=[0, -1])
+    parser.add_argument(
+        "--quant-axis-value",
+        type=int,
+        default=0,
+        choices=[0, -1],
+        help="quanto value-quant axis: 0=per-channel (default), -1=per-token (KIVI-faithful)",
     )
     parser.add_argument(
         "--bug-quant-bits",

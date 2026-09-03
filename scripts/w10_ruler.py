@@ -539,6 +539,14 @@ def main() -> None:
     parser.add_argument("--quant-nbits", type=int, nargs="+", default=[2, 4])
     parser.add_argument("--quant-group", type=int, default=64)
     parser.add_argument("--quant-residual", type=int, default=128)
+    parser.add_argument("--quant-axis-key", type=int, default=0, choices=[0, -1])
+    parser.add_argument(
+        "--quant-axis-value",
+        type=int,
+        default=0,
+        choices=[0, -1],
+        help="quanto value-quant axis: 0=per-channel (default), -1=per-token (KIVI-faithful)",
+    )
     parser.add_argument("--bug-quant-bits", type=int, default=None)
     parser.add_argument("--bug-quant-budget", type=int, default=0)
     parser.add_argument("--shadow-ranks", type=int, nargs="+", default=[64, 128])

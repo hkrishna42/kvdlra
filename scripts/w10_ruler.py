@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import random
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, cast
@@ -44,7 +45,7 @@ from typing import Any, cast
 import _paths  # noqa: F401
 import matplotlib
 import torch
-from perplexity_sweep import load_model
+from perplexity_sweep import load_corpus_sentences, load_model
 from transformers.cache_utils import Cache, DynamicCache
 from w4_needle import _FILLER
 from w5_ruler import _LABELS
@@ -67,11 +68,30 @@ TASKS = ("niah_single", "niah_multikey", "niah_multivalue", "vt")
 # ------------------------------------------------------------- task builders
 
 
-def _filler_to(tok: Any, ctx: int) -> list[str]:
+def _filler_to(
+    tok: Any,
+    ctx: int,
+    *,
+    filler: str = "cycle",
+    pool: list[str] | None = None,
+    seed: int = 0,
+    trial: int = 0,
+) -> list[str]:
+    """Filler sentences up to ``ctx`` tokens. ``filler="cycle"`` (default) is the
+    bit-identical archived path: the fixed 10-sentence ``_FILLER`` cycled. Any other
+    value draws from a realistic-corpus ``pool`` (loaded once by the caller and passed
+    in, so tests need no network), seed-shuffled per (seed, trial) so every trial sees
+    a different natural-text haystack -- the Week-18 external-validity fix."""
+    base = _FILLER if filler == "cycle" else pool
+    if not base:
+        raise ValueError(f"filler={filler!r} requires a non-empty pool")
+    order = list(range(len(base)))
+    if filler != "cycle":
+        random.Random(seed * 131 + trial).shuffle(order)
     sentences: list[str] = []
     i = 0
     while len(tok(" ".join(sentences)).input_ids) < ctx:
-        sentences.append(_FILLER[i % len(_FILLER)])
+        sentences.append(base[order[i % len(order)]])
         i += 1
     return sentences
 
@@ -137,17 +157,37 @@ def _codes(g: torch.Generator, k: int) -> list[int]:
 
 
 def build_task(
-    tok: Any, task: str, ctx: int, trial: int, seed: int, n_keys: int, n_values: int, n_hops: int
+    tok: Any,
+    task: str,
+    ctx: int,
+    trial: int,
+    seed: int,
+    n_keys: int,
+    n_values: int,
+    n_hops: int,
+    *,
+    filler: str = "cycle",
+    pool: list[str] | None = None,
+    depths: list[float] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, list[str]]:
     """Return (prefill_ids, query_ids, targets) for one RULER trial. ``targets`` is a
-    list of strings that must ALL appear in the decoded answer for a hit."""
+    list of strings that must ALL appear in the decoded answer for a hit. ``filler``
+    selects the haystack corpus (``cycle`` = bit-identical archived path); ``depths``,
+    when given, sweeps the niah_single needle depth across trials (Week-18 depth grid)."""
     g = torch.Generator().manual_seed(seed * 131 + trial)
-    sents = _filler_to(tok, ctx)
+    sents = _filler_to(tok, ctx, filler=filler, pool=pool, seed=seed, trial=trial)
     n = len(sents)
 
     if task == "niah_single":
         code = _codes(g, 1)[0]
-        sents.insert(n // 2 + (trial % 5), f"The secret passcode is {code}.")
+        # Default placement is mid-depth with a small trial jitter (archived path). A
+        # --depths grid instead lands the needle at depths[trial % len] * n.
+        if depths:
+            depth = depths[trial % len(depths)]
+            insert_at = min(n, max(0, int(depth * n)))
+        else:
+            insert_at = n // 2 + (trial % 5)
+        sents.insert(insert_at, f"The secret passcode is {code}.")
         body = " ".join(sents)
         q = "\n\nWhat is the secret passcode? Reply with only the number."
         pre, query = _templated(tok, body, q)
@@ -309,7 +349,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     n = int(head_dim * cfg.num_key_value_heads)
     h_kv = int(cfg.num_key_value_heads)
     max_new = 12 if args.tasks == ["niah_single"] else 40  # multi-value needs room
-    print(f"model={args.model} n={n} tasks={args.tasks} ctxs={args.context_lens}", flush=True)
+    # Realistic-filler pool loaded ONCE (not per trial); None for the cycle default.
+    filler = getattr(args, "filler", "cycle")
+    depths = getattr(args, "depths", None)
+    pool = None if filler == "cycle" else load_corpus_sentences(filler)
+    print(
+        f"model={args.model} n={n} tasks={args.tasks} ctxs={args.context_lens} "
+        f"filler={filler} depths={depths}",
+        flush=True,
+    )
 
     results: list[dict[str, Any]] = []
     for ctx in args.context_lens:
@@ -329,6 +377,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                                 args.n_keys,
                                 args.n_values,
                                 args.n_hops,
+                                filler=filler,
+                                pool=pool,
+                                depths=depths,
                             )
                             hit, ratio, frac, sratio = retrieve(
                                 model,
@@ -515,6 +566,21 @@ def main() -> None:
         "(0.0=off; e.g. 1e-2) -> '-f{v}' arm suffix; storage/footprint unchanged",
     )
     parser.add_argument("--chunk", type=int, default=0, help="chunked-prefill block size")
+    parser.add_argument(
+        "--filler",
+        default="cycle",
+        choices=["cycle", "wikitext", "wikitext-103", "pg19"],
+        help="RULER haystack filler: 'cycle' (bit-identical 10-sentence loop) or a "
+        "realistic corpus, seed-shuffled per trial (Week-18 external-validity fix)",
+    )
+    parser.add_argument(
+        "--depths",
+        type=float,
+        nargs="+",
+        default=None,
+        help="niah_single needle-depth grid in [0,1] (swept across trials); "
+        "default None keeps the archived mid-depth+jitter placement",
+    )
     parser.add_argument("--n-trials", type=int, default=4)
     parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1])
     parser.add_argument("--n-keys", type=int, default=8)

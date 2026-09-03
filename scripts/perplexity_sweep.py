@@ -144,6 +144,49 @@ def load_wikitext_ids(tokenizer: PreTrainedTokenizerBase, device: str) -> torch.
     return load_corpus_ids(tokenizer, device, "wikitext-2")
 
 
+def load_corpus_sentences(corpus: str = "wikitext-2", max_sentences: int = 20_000) -> list[str]:
+    """A pool of natural-text sentences from ``corpus`` (Week-18 realistic RULER filler).
+
+    Returns up to ``max_sentences`` sentence strings split on terminal punctuation
+    from the same corpora as :func:`load_corpus_ids` (``wikitext``/``wikitext-2``,
+    ``wikitext-103``, ``pg19``). Used as the needle-in-a-haystack filler pool so the
+    RULER benchmark is not the self-authored 10-sentence cycle the review flagged. The
+    caller seed-shuffles this pool per trial; absolute content is corpus-relative only.
+    """
+    import re
+
+    name = "wikitext-2" if corpus == "wikitext" else corpus
+    if name == "wikitext-2":
+        ds = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="test")
+        text = "\n".join(line for line in ds["text"] if line.strip())
+    elif name in ("wikitext-103", "pg19"):
+        if name == "wikitext-103":
+            stream = load_dataset(
+                "Salesforce/wikitext", "wikitext-103-raw-v1", split="train", streaming=True
+            )
+        else:
+            stream = load_dataset(
+                "deepmind/pg19", split="test", streaming=True, trust_remote_code=True
+            )
+        parts: list[str] = []
+        for example in stream:
+            chunk = cast(str, example["text"])
+            if chunk.strip():
+                parts.append(chunk)
+            if len(parts) >= max_sentences // 4:  # each chunk yields several sentences
+                break
+        text = "\n".join(parts)
+    else:
+        raise ValueError(f"unknown corpus {corpus!r} (use 'wikitext-2', 'wikitext-103', 'pg19')")
+    # Split on sentence-terminal punctuation; keep sentences long enough to be real
+    # filler (drops headers like "= Valkyria =" and one-word fragments).
+    raw = re.split(r"(?<=[.!?])\s+", text.replace("\n", " "))
+    sentences = [s.strip() for s in raw if len(s.strip()) >= 20 and " " in s.strip()]
+    if not sentences:
+        raise RuntimeError(f"no usable filler sentences from corpus {corpus!r}")
+    return sentences[:max_sentences]
+
+
 @torch.no_grad()
 def window_nll(
     model: PreTrainedModel,

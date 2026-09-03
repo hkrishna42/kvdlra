@@ -65,6 +65,7 @@ class Footprint:
     aux_words: float = 0.0
     gpu_verbatim_elems: float | None = None
     cpu_verbatim_elems: float = 0.0
+    fp32_verbatim_elems: float = 0.0
 
     def float_equiv(self) -> float:
         """Float-equivalents / layer (fp32-word unit), byte-identical to
@@ -78,11 +79,34 @@ class Footprint:
         their native bit width; aux words are fp32)."""
         return self.verbatim_elems * store_bits + self.quant_code_bits + self.aux_words * FP32_BITS
 
+    def stored_bits(self) -> float:
+        """Honest at-rest bits / layer: the ``fp32_verbatim_elems`` subset of
+        ``verbatim_elems`` billed at its actual 32 bits, the remainder at 16, codes
+        native, aux at 32. Equals ``bits(16)`` for any method with no fp32-at-rest
+        state (ThinK/Palu/eviction/full/ShadowKV, ``fp32_verbatim_elems == 0``);
+        for BUG the fp32 basis ``U`` and coordinates ``C`` push it above ``bits(16)``.
+        This is what a naive ``ratio_fp16`` under-bills (Week-18 dual-billing)."""
+        fp16_part = (self.verbatim_elems - self.fp32_verbatim_elems) * FP16_BITS
+        return (
+            fp16_part
+            + self.fp32_verbatim_elems * FP32_BITS
+            + self.quant_code_bits
+            + self.aux_words * FP32_BITS
+        )
+
     def ratio_fp16(self, t: int, n: int) -> float:
         """Stored bits / full-fp16-cache bits at context ``t`` (K+V, ``2*t*n*16``
         bits/layer) -- byte-identical to ``kv_memory_ratio`` for the BUG prefill
-        model, and ``keep_frac`` for pure-fp16 eviction."""
+        model, and ``keep_frac`` for pure-fp16 eviction. This is the *fp16-equivalent*
+        headline (BUG's fp32 state billed as if fp16); see :meth:`ratio_stored_bits`
+        for the honest at-rest number."""
         return self.bits(FP16_BITS) / (2 * t * n * FP16_BITS)
+
+    def ratio_stored_bits(self, t: int, n: int) -> float:
+        """Honest at-rest stored-bits ratio (:meth:`stored_bits` / full-fp16-cache
+        bits). Equals :meth:`ratio_fp16` for every method with no fp32-at-rest state;
+        for BUG r64 it is ~0.15x/0.27x vs the 0.085x/0.149x fp16-equivalent number."""
+        return self.stored_bits() / (2 * t * n * FP16_BITS)
 
     def tok_equiv(self, n: int) -> float:
         """Token-equivalents / layer = float_equiv / ``2n`` (the ``tau`` x-axis of
@@ -143,9 +167,14 @@ def bug_footprint(
     n_cols = coord_count + quant_count  # all low-rank columns carry bookkeeping
 
     verbatim = 2 * n * n_sink + 2 * n * recent_len + 2 * rank * coord_count + 2 * n * hh_count
+    # fp32-at-rest subset of ``verbatim`` (bug_cache.py:575-577): the coordinate
+    # columns C and the basis U. Sinks/recent/hh are verbatim KV in the model dtype
+    # (fp16/bf16), so they are NOT fp32-at-rest. Reported via ratio_stored_bits.
+    fp32_verbatim = 2.0 * rank * coord_count
     aux = 0.0
     if u_present:
         verbatim += 2 * n * rank  # basis U (K + V)
+        fp32_verbatim += 2 * n * rank  # ...also fp32 at rest
         aux += 2 * rank  # diagonal core (K + V)
     aux += n_cols * (int(track_pos) + int(track_score) + int(merge) + int(track_surprise))
     if track_score:
@@ -161,7 +190,12 @@ def bug_footprint(
         aux += 2 * quant_count  # one fp32 norm per K,V quantised column
     if w_key:
         aux += n  # Week-12 Q-BUG: frozen per-feature key-whitening diagonal (fp32)
-    return Footprint(verbatim_elems=verbatim, quant_code_bits=code_bits, aux_words=aux)
+    return Footprint(
+        verbatim_elems=verbatim,
+        quant_code_bits=code_bits,
+        aux_words=aux,
+        fp32_verbatim_elems=fp32_verbatim,
+    )
 
 
 def bug_footprint_saturated(
@@ -204,10 +238,19 @@ def bug_prefill_footprint(
     t_pay = t - n_sink
     verbatim = 2 * n * n_sink + 2 * n * rank  # sinks + basis U (K+V)
     if quant_bits is None:
-        return Footprint(verbatim_elems=verbatim + 2 * rank * t_pay)
+        # fp32-at-rest: basis U + the fp coordinate columns (sinks are model-dtype).
+        return Footprint(
+            verbatim_elems=verbatim + 2 * rank * t_pay,
+            fp32_verbatim_elems=2.0 * n * rank + 2.0 * rank * t_pay,
+        )
     # kv_memory_ratio counts the per-token norm at fp16; fold it into verbatim so
     # bits(16) reproduces it exactly (norms are fp16 here, not the fp32 aux word).
-    return Footprint(verbatim_elems=verbatim + t_pay, quant_code_bits=2 * rank * t_pay * quant_bits)
+    # Only U is fp32 at rest here; coordinates live as quant codes.
+    return Footprint(
+        verbatim_elems=verbatim + t_pay,
+        quant_code_bits=2 * rank * t_pay * quant_bits,
+        fp32_verbatim_elems=2.0 * n * rank,
+    )
 
 
 # ------------------------------------------------------------------ eviction

@@ -278,3 +278,57 @@ def test_assert_all_within_gate() -> None:
     acc.assert_all_within({"a": 100.0, "b": 200.0}, budget_per_layer=200.0)
     with pytest.raises(ValueError, match="matched-memory audit FAILED"):
         acc.assert_all_within({"a": 100.0, "b": 201.0}, budget_per_layer=200.0)
+
+
+# ---------------------------------------------- Week-18 dual memory billing
+
+
+def test_ratio_stored_bits_equals_fp16_for_baselines() -> None:
+    """Every method with no fp32-at-rest state (ThinK/Palu/eviction/full) bills the
+    same honest ratio as ratio_fp16: fp32_verbatim_elems is 0, so the two coincide.
+    This is what makes the dual-billing safe to report for the baselines."""
+    t, n, head_dim, h_kv = 16384, 1024, 128, 8
+    fps = {
+        "think": acc.think_footprint(t, n, head_dim, h_kv, key_channel_ratio=0.5),
+        "palu": acc.palu_footprint(t, n, head_dim, h_kv, rank_ratio=0.5),
+        "evict": acc.evict_footprint(t, n, keep_frac=0.1),
+        "full": acc.full_cache_footprint(t, n),
+    }
+    for name, fp in fps.items():
+        assert fp.fp32_verbatim_elems == 0.0, name
+        assert fp.ratio_stored_bits(t, n) == pytest.approx(fp.ratio_fp16(t, n)), name
+
+
+def test_bug_ratio_stored_bits_exceeds_fp16_honest_band() -> None:
+    """BUG's basis U and coordinates C are fp32 at rest, so the honest stored-bits
+    ratio is strictly above the fp16-equivalent headline. Pins the review's numbers:
+    r64-h256 @16K is 0.085x (fp16) / 0.150x (honest) on Llama-8B (n=1024) and
+    0.148x / 0.275x on Qwen-7B (n=512). ratio_fp16 itself is unchanged."""
+    t, rank, hh, rw, sink = 16384, 64, 256, 32, 4
+    coord = t - hh - rw - sink
+    for n, fp16_exp, stored_exp in ((1024, 0.085, 0.150), (512, 0.148, 0.275)):
+        fp = acc.bug_footprint(
+            n,
+            rank=rank,
+            coord_count=coord,
+            recent_len=rw,
+            n_sink=sink,
+            retention="lowrank_surprise",
+            hh_count=hh,
+            hh_select="surprise",
+        )
+        assert fp.ratio_fp16(t, n) == pytest.approx(fp16_exp, abs=2e-3)
+        assert fp.ratio_stored_bits(t, n) == pytest.approx(stored_exp, abs=2e-3)
+        assert fp.ratio_stored_bits(t, n) > fp.ratio_fp16(t, n)
+
+
+def test_stored_bits_matches_manual_split() -> None:
+    """stored_bits() = (verbatim - fp32_verbatim)*16 + fp32_verbatim*32 + codes +
+    aux*32. A frozen algebra pin so the honest formula can't silently drift."""
+    fp = acc.Footprint(
+        verbatim_elems=1000.0, quant_code_bits=640.0, aux_words=50.0, fp32_verbatim_elems=300.0
+    )
+    expected = (1000.0 - 300.0) * 16 + 300.0 * 32 + 640.0 + 50.0 * 32
+    assert fp.stored_bits() == pytest.approx(expected)
+    # bits(16) (the fp16-equivalent) is unchanged by the new field.
+    assert fp.bits(16) == 1000.0 * 16 + 640.0 + 50.0 * 32

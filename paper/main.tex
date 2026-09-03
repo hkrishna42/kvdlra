@@ -1,157 +1,647 @@
-% kvdlra --- arXiv-style preprint draft (v0.1).
-% Uses \documentclass{article} so it compiles without the NeurIPS style file;
-% swap in \usepackage{neurips_2024} (final,preprint) for submission.
+% kvdlra --- arXiv v1 preprint.
+% \documentclass{article} so it compiles WITHOUT the NeurIPS style file (the
+% Week-4 header comment; swap in \usepackage{neurips_20xx}[preprint] later).
+%
+% This is the HONEST CURRENT story, written before the September GPU program:
+% NO 2-bit-quantization baseline yet (stated as ongoing work); the exclusive
+% frontier is scoped to measured collapse points. Purpose: timestamp the online
+% DLRA KV-tracking mechanism against concurrent 2026 work (MomentKV, ResKV).
+%
+% Honesty invariants enforced throughout (Week-18 review panel fixes):
+%  * memory = "3.4--10x less float-equivalent STORED STATE than ThinK/Palu
+%    (6.7--13x vs full KV)"; stored/persisted state is distinguished from
+%    resident memory everywhere (reconstruct-then-attend; workspace ~0.98x).
+%  * "beats" ONLY for the Wilson-separated marquee vt vs think-c0.5; "leads"
+%    everywhere else; comparators think-c0.5 / palu-r0.5 always named.
+%  * the 16K cross-model table is a NON-INFERIORITY result ("no detected loss").
+%  * var-track on 1024-dim models is an OPEN LIMITATION, not a solved axis.
+%  * min_sv_frac = a relative variant of the CKL truncation tolerance theta,
+%    not a new invention; the headline is the rank-siphoning diagnosis.
+%  * BUG vs quantization = compose, not compete; quant baseline is v2 work.
 \documentclass[11pt]{article}
 \usepackage[margin=1in]{geometry}
 \usepackage{amsmath,amssymb}
 \usepackage{booktabs}
 \usepackage{graphicx}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage[numbers,sort&compress]{natbib}
 \usepackage{hyperref}
 \usepackage{url}
 
-\title{Dynamical Low-Rank Approximation as a Streaming KV-Cache Compressor}
-\author{Hari Krishnan \\ \texttt{github.com/hkrishna42/kvdlra}}
+\hypersetup{colorlinks=true, linkcolor=blue!45!black, citecolor=blue!45!black,
+  urlcolor=blue!45!black}
+
+% \todo{...} renders inline in red; grep '\\todo' to enumerate open items.
+\newcommand{\todo}[1]{\textcolor{red}{[\textbf{TODO:} #1]}}
+
+\title{Dynamical Low-Rank Approximation as an Online\\ KV-Cache Compressor}
+\author{Hari Krishnan Girikumar\\ \texttt{github.com/kvdlra}}
 \date{\today}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-We test whether the \emph{basis-update \& Galerkin} (BUG) integrator for
-dynamical low-rank approximation (DLRA) --- a tool from numerical analysis for
-evolving low-rank factorizations of matrix ODEs --- is a good \emph{streaming}
-compressor for the key/value (KV) cache of autoregressive transformers. We show
-that a rank-adaptive BUG subspace tracker applied to the (pre-RoPE) KV stream is
-a \emph{near-oracle} low-rank approximator: on real Llama-3.2-1B KV it matches
-the truncated-SVD (Eckart--Young) optimum to within $1.01$--$1.03\times$ and beats
-incremental SVD and Oja's rule at matched rank. Wired into NVIDIA's
-\texttt{kvpress} as \texttt{BUGPress}, it preserves greedy generation and
-degrades perplexity gracefully with rank (near-baseline at $4\times$ per-token
-compression). Because low-rank compresses the \emph{feature} axis and
-quantization the \emph{bit} axis, the two compose: we combine BUG with TurboQuant
-residual quantization and sweep the memory--perplexity frontier against SnapKV
-and Expected~Attention. We report honestly where BUG wins and where the
-heavy-tailed KV spectrum limits pure low-rank compression.
+The key/value (KV) cache dominates memory in long-context LLM inference, and the
+compression literature is organized around three axes: \emph{evict} tokens,
+\emph{quantize} elements, or project onto a \emph{low-rank} subspace. Existing
+low-rank methods fix the subspace at calibration time. We instead track it
+\emph{online, per sequence}, with a numerical-analysis tool built for exactly
+this problem: the basis-update \& Galerkin (BUG) integrator for dynamical
+low-rank approximation (DLRA), whose error bound is independent of the smallest
+tracked singular value. A rank-adaptive BUG tracker on the (pre-RoPE) KV stream
+is a \emph{near-oracle} streaming approximator---within $1.01$--$1.03\times$ of
+the truncated-SVD optimum on real KV. We pair the low-rank ``gist'' (which
+carries fluency) with a small \emph{surprise-selected} exact tier (which carries
+retrieval), and a warm-up seed that repairs early-context recall. On
+Llama-3.1-8B, Qwen2.5-7B and Mistral-7B-v0.3, a single configuration reaches
+perfect single- and multi-value 16K retrieval with \emph{no detected loss}
+($12/12$ trials, Wilson 95\% acc.\ $\ge 0.76$) at \textbf{0.085--0.149$\times$}
+the full KV as float-equivalent \emph{stored state}---$3.4$--$10\times$ less than
+the channel-pruning baseline \texttt{think-c0.5} ($0.75\times$) and the low-rank
+baseline \texttt{palu-r0.5} ($0.50\times$), and $6.7$--$13\times$ less than full
+KV. On the hardest task, variable tracking at 32K on Llama, our config
+\emph{beats} \texttt{think-c0.5} (Wilson-separated, $0.94$ vs $0.31$,
+$p\approx6\times10^{-4}$, $n{=}16$) and \emph{leads} \texttt{palu-r0.5} ($0.56$,
+intervals overlap) at $3$--$5\times$ less stored state. We give a mechanistic
+account of \emph{where} the method is limited: a rank/context retrieval wall at
+$r/n\approx0.25$; a rank-siphoning interaction between surprise selection and the
+low-rank tracker (which we diagnose and stabilize with a relative
+singular-value floor); and an unresolved weakness on variable-tracking chains for
+wide-KV ($n{=}1024$) models. Crucially, low-rank compresses a feature axis and
+quantization a bit axis: the two \emph{compose} rather than compete, and a
+2-bit-quantization baseline (KIVI/KVQuant) is deliberately deferred to v2, at
+which point the honestly exclusive band is the sub-$0.05\times$ regime our
+method reaches and scalar quantization cannot. We are explicit that today's
+storage ratio is not deployed VRAM: BUG reconstructs then attends, so its decode
+residency is $\approx1.06\times$ full KV until a fused factored-attention kernel
+(future work) realizes the storage win as memory; the immediate systems payoff is
+on the cache-persistence path.
 \end{abstract}
 
 \section{Introduction}
-The KV cache dominates memory in long-context LLM inference. Most compressors
-either \emph{evict} tokens (SnapKV, H2O, Expected~Attention) or \emph{quantize}
-per-element (KIVI, KVQuant, TurboQuant). We instead ask whether the cache's
-low-rank structure can be tracked \emph{online} with a principled integrator
-rather than a heuristic. DLRA's BUG integrator \cite{ceruti2022unconventional,
-ceruti2022rankadaptive} evolves an orthonormal basis and a small core under a
-matrix flow with robust error guarantees; we specialize it to the data-fitting
-flow of a column-streamed KV matrix.
+\label{sec:intro}
 
-\paragraph{Contributions.}
-(i) A streaming rank-adaptive BUG subspace tracker for KV, shown near-oracle on
-real KV streams; (ii) \texttt{BUGPress}, a \texttt{kvpress}-compatible press with
-a pre-RoPE operating point and a GPU-capable blocked-BUG kernel; (iii) a
-composition of BUG with TurboQuant quantization and a memory--perplexity study
-against eviction baselines; (iv) an honest account of the regime where pure
-low-rank compression is limited by the KV spectrum.
+The KV cache of an autoregressive transformer grows linearly with context and,
+past a few thousand tokens, exceeds the model weights themselves in memory. The
+compression literature falls into three families. \textbf{Eviction} keeps a
+budgeted subset of tokens and discards the rest, ranked by attention mass or a
+proxy for it (H2O~\citep{zhang2023h2o}, Scissorhands~\citep{liu2023scissorhands},
+SnapKV~\citep{li2024snapkv}, PyramidKV~\citep{cai2024pyramidkv},
+Quest~\citep{tang2024quest}, Expected Attention~\citep{devoto2025expected}).
+\textbf{Quantization} keeps every token but at fewer bits per element
+(KIVI~\citep{liu2024kivi}, KVQuant~\citep{hooper2024kvquant},
+CacheGen~\citep{liu2024cachegen}). \textbf{Low-rank} methods keep every token but
+project the KV features onto a shared subspace
+(Palu~\citep{chang2025palu}, Eigen~Attention~\citep{saxena2024eigen},
+xKV~\citep{chang2025xkv}, MatryoshkaKV~\citep{lin2025matryoshkakv},
+LoRC~\citep{zhang2024lorc}; ThinK~\citep{xu2024think} prunes the channel axis, a
+closely related structured-low-rank move).
+
+The low-rank family shares one design choice: \emph{the subspace is fixed}.
+Palu, Eigen~Attention, LoRC and MatryoshkaKV learn or calibrate a projection
+offline; xKV extracts shared singular vectors post-hoc. None adapts the subspace
+to the sequence being served. Yet the KV stream of a single long document is a
+\emph{non-stationary} low-rank matrix---its dominant directions drift as topic
+and structure change---which is precisely the object dynamical low-rank
+approximation (DLRA) was invented to track. DLRA evolves a low-rank
+factorization $U S V^\top$ under a matrix flow; the Ceruti--Lubich
+basis-update~\& Galerkin (BUG) integrator~\citep{ceruti2022unconventional} and
+its rank-adaptive extension~\citep{ceruti2022rankadaptive} do so with an error
+bound that is \emph{independent of the smallest tracked singular value}, the
+property that makes naive $(U,S,V)$ ODE schemes stiff. That robustness is what a
+streaming KV compressor needs when the spectrum is heavy-tailed and the tail
+directions are near-null.
+
+\paragraph{This paper.} We turn the BUG integrator into an \emph{online,
+training-free, per-sequence} KV compressor and characterize it honestly.
+
+\begin{itemize}[leftmargin=1.4em]
+\item A streaming rank-adaptive BUG subspace tracker for the column-streamed KV
+matrix, operating pre-RoPE, which is a \emph{near-oracle} low-rank approximator
+on real KV (\S\ref{sec:method}, \S\ref{sec:oracle}).
+\item A cache built on it: the low-rank ``gist'' plus a \emph{surprise-selected}
+exact tier for the sharp facts a summary reproduces worst, plus attention sinks,
+a recent ring, and a warm-up seed for early-context recall (\S\ref{sec:cache}).
+\item A cross-model result: one configuration reaches perfect single/multi-value
+16K retrieval with \emph{no detected loss} on three model families at
+$0.085$--$0.149\times$ stored state, and, at 32K on the hardest task, \emph{beats}
+the channel-pruning baseline \texttt{think-c0.5} (Wilson-separated) and
+\emph{leads} the low-rank baseline \texttt{palu-r0.5} (not separated) at
+$3$--$5\times$ less stored state (\S\ref{sec:xmodel}, \S\ref{sec:marquee}).
+\item A mechanistic map of the limits: the $r/n\approx0.25$ retrieval wall, the
+rank-siphoning tier--gist interaction (diagnosed, and stabilized by a relative
+singular-value floor that is a variant of the published CKL truncation
+tolerance), and the wide-KV variable-tracking weakness (\S\ref{sec:siphon},
+\S\ref{sec:limits}).
+\item An honest memory account that separates \emph{stored state} from
+\emph{resident memory} and reports both a fp16-equivalent and a fp32-at-rest
+ratio (\S\ref{sec:memory}).
+\end{itemize}
+
+\paragraph{Scope and concurrency.} This is an arXiv v1 timestamp of the
+mechanism. Two 2026 works---MomentKV~\citep{momentkv2026}, which corrects a
+directional gap left by eviction, and ResKV~\citep{reskv2026}, which reconstructs
+omitted attention from a residual cache---appeared while this program ran; both
+augment eviction with lightweight statistics rather than tracking an adaptive
+subspace, so the online-DLRA axis remains, to our knowledge, unoccupied. We
+state plainly what v1 does \emph{not} yet contain: a scalar-quantization
+baseline, an official-benchmark anchor for the retrieval numbers, and a fused
+low-rank attention kernel. \S\ref{sec:limits} enumerates these; each is scoped
+work, not a contradicted claim.
 
 \section{Method}
-\paragraph{Convention.} A per-layer key tensor of shape
-$(H, T, D)$ is factored as $M \in \mathbb{R}^{HD \times T}$ (rows $=$ features
-$HD{=}512$, columns $=$ tokens $T$); a new token is a new column.
+\label{sec:method}
 
-\paragraph{Streaming BUG tracker.} We maintain an orthonormal basis
-$U \in \mathbb{R}^{n \times r}$ and a square-root core $B$ with $BB^\top =
-U^\top M M^\top U$. Each new column (or block of columns) triggers an augmented
-BUG step: range-augment $U$ with the residual direction, Galerkin-project the
-grown data onto the augmented basis, and truncate by a Frobenius-tail criterion
-(rank cap $r$ or tolerance $\theta$). The reconstruction is the orthogonal
-projection $\hat M = U U^\top M$. A \emph{blocked} variant processes $b$ columns
-per step ($b{=}1$ recovers the per-token tracker; $b{=}T$ recovers the SVD
-oracle), enabling batched QR/SVD on GPU. All core linear algebra is fp32 even
-when storage is bf16.
+\paragraph{Convention.} A per-layer key tensor of shape $(H, T, D)$ is treated
+as a matrix $M \in \mathbb{R}^{n \times T}$ with rows $=$ features
+($n = H D$; e.g.\ $n{=}1024$ for Llama-3.1-8B and Mistral-7B, $n{=}512$ for
+Qwen2.5-7B under GQA) and columns $=$ tokens. A new token is a new column;
+values are handled identically.
 
-\paragraph{Pre-RoPE operating point.} HuggingFace caches \emph{post}-RoPE keys,
-which are markedly less low-rank. \texttt{BUGPress} factors the recomputed
-pre-RoPE keys and re-applies RoPE to the reconstruction, roughly halving the
-reconstruction error at matched rank.
+\subsection{Streaming BUG subspace tracker}
+\label{sec:tracker}
+We maintain an orthonormal basis $U \in \mathbb{R}^{n \times r}$ and a
+square-root core $B$ with $B B^\top = U^\top M M^\top U$. Each new block $C$ of
+$b$ columns triggers one augmented rank-adaptive BUG step
+\citep{ceruti2022rankadaptive}: (i) compute coordinates $A = U^\top C$ and the
+out-of-basis residual $R_\perp = C - U A$; (ii) \emph{range-augment} by a QR of
+$R_\perp$, $U_{\text{aug}} = [\,U \mid Q\,]$; (iii) form the grown square-root
+core $B_{\text{aug}} = \left[\begin{smallmatrix} B & A \\ 0 & R
+\end{smallmatrix}\right]$; (iv) \emph{truncate} via an SVD of $B_{\text{aug}}$,
+keeping the leading directions up to a rank cap $r$ and/or a Frobenius-tail
+tolerance $\theta$. The reconstruction is the orthogonal projection $\hat M = U
+U^\top M$. The block size interpolates between exact and cheap: $b{=}1$ is the
+per-token tracker, $b{=}T$ is a single step $=$ the truncated-SVD oracle; on real
+KV all block sizes agree to $1$--$3\%$, so we use large blocks for GPU
+throughput. To keep admitted directions orthogonal at machine precision when the
+residual is numerically tiny (an incoming block already inside the tracked
+subspace), we re-orthogonalize $R_\perp$ once against $U$ and rank-reveal it by
+SVD, admitting only directions above $100\,\varepsilon\,\|C\|_F$. All core linear
+algebra runs in fp32 even when storage is bf16 (bf16 \emph{core} math is
+unsafe).
 
-\paragraph{Composition with TurboQuant.} The low-rank model stores $U$
-($n\times r$) and per-token coordinates $C = U^\top M$ ($r \times T$). We
-quantize the coordinate columns with TurboQuant \cite{zandieh2025turboquant}: a
-fixed random rotation makes coordinates near-independent and Beta-distributed, an
-MSE-optimal per-coordinate Lloyd--Max quantizer then achieves distortion within
-$\approx 2.7\times$ the information-theoretic floor, and a 1-bit QJL residual
-gives unbiased inner-product estimates. Because BUG factors are \emph{pre}-RoPE,
-the fixed quantization rotation and RoPE never need to commute (RoPE is applied
-last, to the reconstruction). Our reconstruct-then-attend press uses the
-PolarQuant scalar stage; the 1-bit QJL residual de-biases an
-estimator-at-attention path we implement and test but leave to future work.
+\subsection{Pre-RoPE operating point}
+\label{sec:prerope}
+HuggingFace caches keys \emph{after} rotary position embedding (RoPE), which are
+markedly less low-rank than the pre-RoPE keys. We factor the recomputed pre-RoPE
+keys and re-apply RoPE to the reconstruction, roughly halving the reconstruction
+error at matched rank. (Pre-RoPE key handling is independently exploited by
+KVQuant~\citep{hooper2024kvquant}; here it improves rank efficiency rather than
+quantization outliers.)
+
+\subsection{The cache: gist $+$ surprise-selected exact tier $+$ seed}
+\label{sec:cache}
+The tracker alone reproduces bulk text but blurs the sharp, low-frequency facts a
+retrieval task probes---a planted needle stops being representable once the gist
+is a smooth summary of the whole history. We therefore store, per layer, four
+bounded parts, all charged in one float-equivalent unit:
+\begin{enumerate}[leftmargin=1.6em]
+\item the first $n_{\text{sink}}$ tokens verbatim (attention
+sinks~\citep{xiao2024streamingllm});
+\item a recent ring of the last $W$ tokens verbatim (local context is exact);
+\item the \emph{gist}: the tracked $(U, B)$ plus up to a budgeted set of
+per-token coordinate columns $C = U^\top M$ ($r$ floats/token instead of $n$);
+\item an \emph{exact tier} of up to $h$ tokens kept verbatim, selected by
+\emph{surprise}---the out-of-subspace residual $\|k - U U^\top k\|/\|k\|$, i.e.\
+exactly the tokens the low-rank gist reproduces worst.
+\end{enumerate}
+Perplexity rides mostly on the gist; needle retrieval rides mostly on the exact
+tier. The two fail independently, which is the lever the rest of the paper pulls.
+Because softmax attention needs per-token information for every attendable token,
+``bounded memory'' means bounding the attended set: when the coordinate buffer is
+full, columns are evicted (by attention mass, coordinate energy, or surprise);
+at matched memory the gist retains an $\approx n/r\times$ longer, approximately
+represented history than whole-token eviction.
+
+\paragraph{Warm-up seed.} The first ingest chunk originally bypassed the exact
+tier, so the earliest-planted facts were structurally lost---the ``warm-up
+window'' that made the family a $\ge$32K-only method. Routing the first chunk
+through the same surprise path (scored against the strictly-older, needle-free
+basis) repairs 16K recall (\S\ref{sec:xmodel}); it is default-off and evaluated
+as an ablation.
+
+\paragraph{Score-rank decoupling.} At high gist rank the surprise score itself
+degrades: a large $U$ ``fits'' a planted needle into invisibility so it never
+enters the exact tier. Capping the \emph{selection} scoring to a leading
+rank-$s$ subview of $U$ (default-off, zero extra memory, $+0.3\%$ perplexity)
+un-blinds selection without shrinking the gist. This knob (denoted \texttt{-s}$s$)
+recovers Llama's $r{=}128$ retrieval and underlies the marquee config
+(\S\ref{sec:marquee}); it does \emph{not} rescue Qwen (\S\ref{sec:siphon}).
+
+\subsection{Stability: a relative singular-value floor (a CKL-$\theta$ variant)}
+\label{sec:floor}
+With no truncation tolerance, the rank-adaptive step always pads the basis to the
+rank cap, and on an ill-conditioned KV stream those near-null tail directions can
+tip into a numerical explosion. The rank-adaptive integrator already provides the
+principled remedy---the Frobenius-tail tolerance $\theta$ of
+\citet{ceruti2022rankadaptive}, which drops directions whose discarded singular
+tail falls below an \emph{absolute} threshold. We use a \emph{relative},
+self-scaling variant, \texttt{min\_sv\_frac}: after truncation, additionally drop
+directions whose singular value is $\le$ a fraction of the leading one, capping
+the tracked rank at the block's numerical rank with no per-stream tuning. This is
+a small variant of published DLRA truncation, not a new mechanism; it is
+default-off and bit-for-bit identical when off. Its value is diagnostic and
+practical (\S\ref{sec:siphon}): it removes a whole class of high-rank divergence
+and thereby extends the numerically usable rank on non-Llama families.
+
+\subsection{Composition with quantization}
+\label{sec:quant}
+Low-rank compresses the \emph{feature} axis; quantization compresses the
+\emph{bit} axis. They are orthogonal and multiply: the gist stores $U$
+($n\times r$) and coordinates $C$ ($r \times T$), and $C$'s columns can be
+scalar/vector quantized (we test TurboQuant~\citep{zandieh2025turboquant}).
+Because BUG factors are pre-RoPE, the quantization rotation and RoPE never need
+to commute (RoPE is applied last). We report the composition on 1B in
+\S\ref{sec:frontier} and treat a head-to-head against dedicated 2-bit KV
+quantizers (KIVI, KVQuant) as the primary v2 experiment (\S\ref{sec:limits}); the
+present claim is only that the axes compose, not that low-rank dominates
+quantization.
+
+\section{Related work}
+\label{sec:related}
+
+\paragraph{Eviction.} H2O~\citep{zhang2023h2o},
+Scissorhands~\citep{liu2023scissorhands} and SnapKV~\citep{li2024snapkv} rank
+tokens by (proxies for) attention mass; PyramidKV~\citep{cai2024pyramidkv} varies
+the budget by layer; Quest~\citep{tang2024quest} selects KV pages per query;
+Expected~Attention~\citep{devoto2025expected} scores tokens by the attention
+future queries are expected to pay. Eviction is near-lossless at moderate budgets
+and, unlike us, genuinely shrinks resident memory. Its weakness is the extreme
+band: it degrades on tasks needing many linked tokens and, at $\le0.1\times$,
+loses the hardest retrieval (\S\ref{sec:xmodel}). \emph{Naming note:} ``EA''
+is overloaded---Expected~Attention~\citep{devoto2025expected} (an eviction score,
+and the eviction baseline in our tables) is distinct from Eigen~Attention
+\citep{saxena2024eigen} (a low-rank projection). We write the names in full.
+
+\paragraph{Quantization.} KIVI~\citep{liu2024kivi} (per-channel keys, per-token
+values, 2-bit) and KVQuant~\citep{hooper2024kvquant} (pre-RoPE, non-uniform,
+dense-and-sparse) reach $\approx0.125$--$0.19\times$ near-losslessly;
+CacheGen~\citep{liu2024cachegen} targets the network/serving path. These are the
+family that most directly contests our headline memory band, and their absence as
+a baseline is v1's main scoping decision (\S\ref{sec:limits}). We frame the
+relationship as composition (\S\ref{sec:quant}), not competition.
+
+\paragraph{Low-rank / factorization.} Palu~\citep{chang2025palu} decomposes the
+KV projections and caches low-rank latents; Eigen~Attention~\citep{saxena2024eigen}
+runs attention in a fixed low-rank space; xKV~\citep{chang2025xkv} shares
+singular vectors across layers; MatryoshkaKV~\citep{lin2025matryoshkakv} trains
+nested orthogonal projections; LoRC~\citep{zhang2024lorc} does progressive
+weight-matrix low-rank; ThinK~\citep{xu2024think} prunes key channels.
+Multi-head latent attention (MLA) in DeepSeek-V2~\citep{deepseekv2} bakes a
+low-rank latent KV into the architecture (train-time). \textbf{Every one of these
+fixes its subspace} at calibration/train time. We track it online per sequence,
+which is what a non-stationary KV stream calls for.
+
+\paragraph{Closest priors, and how we differ.} Two works combine low-rank with an
+exact/sparse component, as we do. LESS~\citep{dong2024less} adds a small
+constant-size \emph{learned} low-rank state (tiny per-layer MLPs) to an eviction
+policy so evicted tokens remain queryable. LoLA~\citep{mcdermott2025lola}
+augments \emph{linear} attention with a sparse global cache for hard-to-memorize
+pairs. Both are structurally similar in spirit---a low-rank summary plus an exact
+escape hatch---but both use a \emph{fixed or calibration-time} low-rank basis
+(LESS learns MLPs; LoLA inherits the linear-attention feature map). We instead
+track an \emph{adaptive, per-sequence} subspace online with a DLRA integrator,
+and select the exact tier by low-rank \emph{surprise} (the tracker's own
+residual) rather than by attention mass. The adaptivity is the novel axis; the
+surprise coupling is what makes the exact tier self-consistent with the gist---and,
+as \S\ref{sec:siphon} shows, is also the source of the one interaction we had to
+diagnose.
+
+\paragraph{DLRA lineage.} DLRA originates with Koch \&
+Lubich~\citep{koch2007dlra}; the robust integrators we use are
+Ceruti--Lubich~\citep{ceruti2022unconventional} and the rank-adaptive
+Ceruti--Kusch--Lubich~\citep{ceruti2022rankadaptive}. DLRA has been used to
+compress \emph{weights} during training (``low-rank lottery
+tickets''~\citep{schotthofer2022lottery};
+robust compression~\citep{schotthofer2025robust}); we appear to be the first to
+use it as an \emph{inference-time, streaming} compressor of the \emph{activation}
+KV cache. Our stability floor (\S\ref{sec:floor}) is a relative variant of the
+rank-adaptive tolerance in~\citep{ceruti2022rankadaptive}.
+
+\paragraph{Concurrent 2026 work.} MomentKV~\citep{momentkv2026} keeps compact
+moment statistics of the evicted set to correct the attention direction;
+ResKV~\citep{reskv2026} splits a fixed budget into an exact cache plus a residual
+that reconstructs omitted attention mass. Both are eviction-plus-correction; both
+keep the retained tokens exact and summarize only the discarded remainder. Our
+gist summarizes the \emph{bulk} in an adaptive subspace and keeps only the
+\emph{surprising} tokens exact---the complementary decomposition. We cite them to
+mark the timeline, not as evaluated baselines.
 
 \section{Experiments}
-\paragraph{Setup.} Llama-3.2-1B (ungated \texttt{unsloth} mirror, config-identical),
-fp32, WikiText-2. Perplexity uses a \emph{prefill-then-score} protocol: the
-context cache is compressed, then continuation tokens are scored against the
-compressed cache (necessary because \texttt{kvpress} compresses in a
-post-attention hook).
+\label{sec:exp}
 
-\paragraph{Near-oracle reconstruction (Week 2).} Streaming BUG is within
-$1.01$--$1.03\times$ of the truncated-SVD oracle at every rank and beats
-incremental SVD everywhere; pre-RoPE roughly halves the error at matched budget;
-BUG beats Oja's rule by $1.3$--$3.0\times$.
+\paragraph{Setup.} Models: Llama-3.1-8B-Instruct~\citep{grattafiori2024llama3}
+(ungated \texttt{unsloth} mirror, config-identical), Qwen2.5-7B-Instruct
+\citep{qwen2025qwen25}, Mistral-7B-Instruct-v0.3~\citep{jiang2023mistral7b}, and
+Llama-3.2-1B-Instruct for the composition study. Retrieval is measured on a
+RULER-style~\citep{hsieh2024ruler} generator (single-needle, multi-key,
+multi-value, variable-tracking) at 16K/32K; perplexity on held-out windows.
+Reported \emph{memory} is a float-equivalent \emph{stored-state} ratio unless
+stated otherwise (\S\ref{sec:memory} separates this from resident memory). The
+baselines \texttt{think-c0.5}~\citep{xu2024think}, \texttt{palu-r0.5}
+\citep{chang2025palu} and Expected~Attention~\citep{devoto2025expected} are run
+through NVIDIA's kvpress~\citep{nvidia2024kvpress}. We
+give Wilson 95\% intervals on retrieval cells and per-window NLL on perplexity;
+$12/12$ trials corresponds to a Wilson lower bound of $0.758$. Unless noted,
+retrieval cells use $n{=}12$ and the marquee uses $n{=}16$; some 32K cells and
+the 1B composition study are lower-$n$ and flagged as such.
+\todo{Fill exact per-family window counts, seeds, and the RULER filler-length /
+depth grid into an appendix table; the generator uses a small fixed filler pool
+(external-validity caveat, \S\ref{sec:limits}).}
 
-\paragraph{Generation \& perplexity (Week 3).} \texttt{BUGPress} preserves greedy
-generation (byte-identical at moderate rank; coherent, on-topic drift at
-aggressive rank; no divergence). WikiText-2 perplexity (ctx 1024, 16 windows,
-baseline $12.65$): rank~128 $+0.83$ ($4\times$), rank~64 $+1.17$ ($8\times$),
-rank~32 $+3.57$, rank~16 $+5.47$. Pre-RoPE beats post-RoPE across the useful
-compression range (rank~$\le 64$).
+\subsection{Near-oracle streaming reconstruction}
+\label{sec:oracle}
+On real Llama-3.2-1B KV, the streaming BUG tracker matches the truncated-SVD
+(Eckart--Young~\citep{eckart1936approximation}) optimum to within
+$1.01$--$1.03\times$ at every rank, beats incremental SVD everywhere, and beats
+Oja's rule by $1.3$--$3.0\times$; the pre-RoPE operating point roughly halves the
+error at matched budget. The tracker is thus a faithful online stand-in for the
+offline optimum---the property the fixed-subspace baselines obtain only by
+calibration.
+% source: docs (Week-2), README "near-oracle (within ~1.01-1.03x of truncated SVD)".
 
-\paragraph{Memory--perplexity frontier (Week 4).}
-Quantizing the BUG coordinates at 4 bits roughly halves the stored cache for a
-negligible perplexity cost (rank~64: $0.191\times/{+}1.17 \to 0.099\times/{+}1.20$;
-rank~128: $0.378\times/{+}0.83 \to 0.193\times/{+}0.94$); 2 bits is the cliff.
-Crucially, at a fixed memory budget the composition beats pure low-rank:
-rank-64/4-bit ($0.099\times$, ppl $13.86$) versus rank-32/fp16 ($0.097\times$, ppl
-$16.22$) --- quantization and low-rank multiply rather than substitute.
-Under a \emph{fair} comparison --- every mechanism quantized equally, since
-quantization is orthogonal to eviction (Fig.~\ref{fig:hero}) --- BUG+TurboQuant is
-\textbf{competitive but not dominant} on WikiText-2 perplexity at ctx~1024:
-Expected~Attention$\times$TurboQuant and SnapKV$\times$TurboQuant sit on or ahead
-of BUG's Pareto frontier through the mid-aggressive band ($0.08$--$0.18\times$),
-and pure 4-bit TurboQuant is near-lossless at $0.25\times$. BUG is best only at the
-\emph{extreme} edge ($<0.07\times$), where token eviction becomes catastrophic and
-low-rank degrades gracefully. (An earlier draft's "beats SOTA at $10\times$"
-compared quantized BUG against fp16 eviction and is retracted.) BUG's case rests on
-the extreme-compression edge, retrieval parity (\S\ref{fig:hero}), the streaming/
-online deployment niche, and the expectation that its fixed-basis overhead
-amortizes at longer context --- not on winning short-context perplexity.
+\subsection{Cross-model 16K retrieval: no detected loss at $0.085$--$0.149\times$}
+\label{sec:xmodel}
+Table~\ref{tab:xmodel} reports the single configuration
+\texttt{bugSseed-r64-h256} (rank-64 gist, 256-token surprise tier, warm-up seed)
+at 16K on three families. On single-needle and multi-value retrieval it scores
+$12/12$ on all three---a \textbf{non-inferiority} result: with no observed
+failure, the Wilson 95\% interval is $[0.758, 1.0]$, so we can claim
+\emph{no detected loss at accuracy $\ge0.76$}, not a match or a win. There are
+\emph{zero} Wilson-separated flagship-vs-baseline cells in either direction at
+16K. What is notable is \emph{where} this holds: at $0.085$--$0.149\times$ stored
+state, i.e.\ $3.4$--$10\times$ less than \texttt{think-c0.5} ($0.75\times$) and
+\texttt{palu-r0.5} ($0.50\times$), and $6.7$--$13\times$ less than full KV. BUG
+does \emph{not} win on perplexity here---its fluency is above the baselines'
+(r64 perplexity is $1.08$--$1.32\times$ full)---the edge is stored state at
+matched retrieval. On multi-value it \emph{leads} the baselines on point
+estimate (Qwen 16K: $1.00$ vs \texttt{think-c0.5} $0.83$ / \texttt{palu-r0.5}
+$0.92$), but this is not Wilson-separated and we do not call it a win.
+% source: docs/week17-explained.md sec.1 table (n=12), docs/week16-handover.md sec.2 baselines.
 
-\begin{figure}[t]
+\begin{table}[t]
 \centering
-\includegraphics[width=0.7\linewidth]{../figures/week4/hero.pdf}
-\caption{Perplexity vs.\ stored KV-cache memory (fraction of full fp16 cache) for
-BUG, BUG+TurboQuant (with the BUG-family Pareto frontier), and the SnapKV /
-Expected~Attention eviction baselines. Llama-3.2-1B, WikiText-2, ctx~1024.}
-\label{fig:hero}
-\end{figure}
+\caption{Cross-model 16K retrieval, config \texttt{bugSseed-r64-h256}, $n{=}12$
+(Wilson 95\%). Single/multi-value are $12/12$ on all three families (no detected
+loss). Variable-tracking is an open limitation on the two wide-KV ($n{=}1024$)
+models (\S\ref{sec:limits}). Memory is float-equivalent stored state.}
+\label{tab:xmodel}
+\begin{tabular}{lccccc}
+\toprule
+model & feat.\ $n$ & single & multi-value & var-track & stored state \\
+\midrule
+Qwen2.5-7B        & 512  & $1.00\,[0.76,1.0]$ & $1.00\,[0.76,1.0]$ & $\mathbf{1.00}\,[0.76,1.0]$ & $0.149\times$ \\
+Mistral-7B-v0.3   & 1024 & $1.00\,[0.76,1.0]$ & $1.00\,[0.76,1.0]$ & $0.50\,[0.25,0.75]$          & $0.085\times$ \\
+Llama-3.1-8B      & 1024 & $1.00\,[0.76,1.0]$ & $1.00\,[0.76,1.0]$ & $0.58\,[0.32,0.80]$          & $0.085\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-\section{Limitations (honest)}
-Absolute low-rank compression is moderate: even pre-RoPE, the heavy-tailed KV
-spectrum limits pure low-rank to a few dozen--hundred useful rank; aggressive
-ranks cost real perplexity. Reported memory for the in-place press is
-\emph{nominal} unless factors are stored explicitly; the fixed basis $U$
-amortizes only for long context. Perplexity on WikiText-2 is not a long-context
-benchmark (LongBench/RULER) and results are at 1B scale.
+\subsection{Marquee: variable tracking at 32K on Llama}
+\label{sec:marquee}
+The one genuinely Wilson-separated retrieval result is the hardest task on the
+largest model. At 32K on Llama-3.1-8B, \texttt{bugSseed-r128-h1024-s32} (the
+score-rank config, $0.16\times$ stored state, $n{=}16$) scores variable-tracking
+$0.94\,[0.72,0.99]$ and multi-value $1.00\,[0.81,1.0]$. Against the $n{=}16$
+baselines (Table~\ref{tab:marquee}): it \textbf{beats} \texttt{think-c0.5}
+($0.31\,[0.14,0.56]$; the intervals are disjoint, $0.72 > 0.56$; Fisher/Barnard
+$p\approx6\times10^{-4}$) and \emph{leads} \texttt{palu-r0.5}
+($0.56\,[0.33,0.77]$; the intervals overlap, so this is not a separated win), at
+$3$--$4.7\times$ less stored state. Multi-value is a three-way tie at $1.00$. The
+honest headline is therefore ``\emph{beats the channel-pruning baseline
+\texttt{think-c0.5} on the hardest task, leads the low-rank baseline
+\texttt{palu-r0.5}, at several-fold less stored state}''---not a clean sweep of
+both.
+% source: docs/week17-explained.md sec.4 (n=16), p-value from Week-18 review-meta-verdict.
 
-\bibliographystyle{plain}
-\begin{thebibliography}{9}
-\bibitem{ceruti2022unconventional} G.\ Ceruti, C.\ Lubich. An unconventional
-robust integrator for dynamical low-rank approximation. \emph{BIT} 62 (2022).
-arXiv:2010.02022.
-\bibitem{ceruti2022rankadaptive} G.\ Ceruti, J.\ Kusch, C.\ Lubich. A
-rank-adaptive robust integrator for dynamical low-rank approximation.
-\emph{BIT} 62 (2022). arXiv:2104.05247.
-\bibitem{zandieh2025turboquant} A.\ Zandieh, M.\ Daliri, M.\ Hadian, V.\
-Mirrokni. TurboQuant: Online Vector Quantization with Near-optimal Distortion
-Rate. arXiv:2504.19874.
-\end{thebibliography}
+\begin{table}[t]
+\centering
+\caption{Marquee (Llama-3.1-8B, 32K variable-tracking, $n{=}16$, Wilson 95\%).
+Only the \texttt{think-c0.5} comparison is interval-separated; \texttt{palu-r0.5}
+firmed up from an $n{=}4$ estimate and is not separated. Memory is stored state.}
+\label{tab:marquee}
+\begin{tabular}{lccc}
+\toprule
+config & var-track (Wilson 95\%) & stored state & vs.\ flagship \\
+\midrule
+\texttt{bugSseed-r128-h1024-s32} & $\mathbf{0.94}\,[0.72,0.99]$ & $0.16\times$ & --- \\
+\texttt{think-c0.5}              & $0.31\,[0.14,0.56]$          & $0.75\times$ & separated (beats) \\
+\texttt{palu-r0.5}               & $0.56\,[0.33,0.77]$          & $0.50\times$ & overlaps (leads) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Perplexity is a tie with the compression field, not with full KV. At 32K on
+Llama over identical windows ($n{=}8$): full $6.975$, \texttt{think-c0.5}
+$7.196$, \texttt{palu-r0.5} $7.232$, \texttt{bugSseed-r128-s32} $7.353$---within
+the pre-registered $0.05$-bits/token band of both compressors ($+0.024$/$+0.031$
+bits/token) but $+0.076$ over uncompressed full KV. At 16K the gap to the
+baselines is $\le0.006$ bits/token. Two baseline numbers here were originally our
+own port defects, found and fixed in the baselines' favor before this comparison
+(a ShadowKV decode-scope bug; a Palu attention-sink low-ranking that had inflated
+its perplexity from $7.232$ to $9.236$); we report the corrected values.
+% source: README.md Week-15 (n=8 ppl), docs baseline-bug fixes.
+
+\subsection{The rank-siphoning diagnosis and the $r/n\approx0.25$ wall}
+\label{sec:siphon}
+Pushing the gist rank up does \emph{not} monotonically help, and the reason is a
+mechanism worth naming. \textbf{The $r/n\approx0.25$ retrieval wall.} Retrieval
+collapses to zero once the gist rank reaches about a quarter of the feature
+dimension: Llama ($n{=}1024$) collapses at $r{=}256$, Qwen ($n{=}512$) at
+$r{=}128$---both $r/n = 0.25$. A larger gist is a \emph{smoother} summary, so a
+planted needle stops looking surprising, never enters the exact tier, and is lost.
+This is a dimensionless onset, supported by a matched control (a seeded $r{=}256$
+Llama column scores $0$ on all hard tasks, like Qwen at $r{=}128$).
+% source: docs/week11-decision-table.md (r256 = 0), docs/week16-explained.md (r/n wall), review-meta-verdict.
+
+\textbf{Rank siphoning.} Separately, coupling surprise selection to the low-rank
+tracker can \emph{starve} the tracker: the exact tier pulls the rank-carrying,
+high-surprise tokens \emph{out} of the gist, dropping its effective rank below
+the cap, whereupon the rank-adaptive step pads with near-null tail directions
+that tip into numerical divergence at high rank. This showed up as several
+unexplained blow-ups (Qwen \texttt{bug-r256} perplexity $27{,}531$; the ``puzzle''
+where a \emph{larger} exact tier destroyed fluency, Qwen
+\texttt{bugSseed-r128-h1024} $=714$; Mistral \texttt{bug-r128} $=138$). The
+relative singular-value floor of \S\ref{sec:floor} (\texttt{-{}-min-sv-frac 1e-2})
+removes the entire class (Table~\ref{tab:floor}); on Mistral fluency then improves
+monotonically with rank ($6.22\to5.57\to5.23$ at $r{=}64/128/256$), so the floor
+does not merely rescue divergence---it extends the numerically usable rank. This
+is a within-method stability property (a floored high-rank cell is still
+Palu-dominated at matched memory), reported as a diagnosis, not a frontier claim.
+% source: docs/week17-explained.md sec.3 (floor table), streaming_torch.py min_sv_frac.
+
+\begin{table}[t]
+\centering
+\caption{The relative singular-value floor (\texttt{-{}-min-sv-frac 1e-2},
+default-off) converts high-rank divergence into healthy fluency (16K perplexity).
+Default-off and bit-identical when off; retrieval- and footprint-neutral at the
+operating point.}
+\label{tab:floor}
+\begin{tabular}{lcc}
+\toprule
+16K perplexity & floor off & floor on \\
+\midrule
+Qwen \texttt{bug-r256}                    & $27{,}531.7$ & $\mathbf{6.995}$ \\
+Qwen \texttt{bugSseed-r128-h1024} (puzzle)& $714.4$      & $\mathbf{6.941}$ \\
+Mistral \texttt{bug-r128}                 & $138.3$      & $\mathbf{5.574}$ \\
+Mistral \texttt{bug-r256}                 & $37.2$       & $\mathbf{5.226}$ \\
+Mistral \texttt{bugSseed-r128-h1024}      & $60.4$       & $\mathbf{5.045}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{The sub-cliff cell: full retrieval below scalar quantization's floor}
+\label{sec:subcliff}
+Below the wall, the method reaches a regime the other families structurally
+cannot. At 32K on Llama, \texttt{bugS-r32-h256} scores single/multi-key/multi-value/
+variable-tracking $= 100/67/100/100$ at \textbf{$0.043\times$} stored state
+($n{=}6$--$14$). Channel-pruning (ThinK) and low-rank factorization (Palu) are
+floored at $0.50$--$0.75\times$ by construction; eviction reaches $0.1\times$
+(Expected~Attention at $0.100\times$) but loses variable-tracking there
+(vt $=17$ in our Week-11 table) and its multi-key decays with length
+($92\to67\to50$ across $16$K$\to32$K$\to64$K). Scalar 2-bit quantization floors
+around $0.125$--$0.19\times$. This $0.043\times$ cell is thus the seed of an
+honestly \emph{exclusive} sub-$0.05\times$ band---but establishing exclusivity
+against quantization requires the KIVI/KVQuant baseline we defer to v2
+(\S\ref{sec:limits}); today we claim only that low-rank reaches a compression
+depth the pruning and factorization families do not, and that eviction reaches
+depth but not the hard tasks.
+% source: results/w11-final-tables.md (bugS-r32-h256 @32K 100/67/100/100 @0.043x); ea-k0.1 profile same file.
+
+\subsection{Moderate compression on realistic text}
+\label{sec:realistic}
+On a LongBench~\citep{bai2024longbench} document-QA probe (single Qasper document,
+$\sim$5.6K tokens), a moderate-compression \texttt{bug-r128} scores F1 $0.221$ at
+$0.160\times$, ahead of the sub-$0.25\times$ eviction arms
+(Expected~Attention-k0.25 $0.216$ at $0.250\times$; -k0.1 $0.149$ at
+$0.100\times$; SnapKV-k0.1 $0.136$ at $0.100\times$) and of \texttt{palu-r0.25}
+($0.073$, which collapses on real text); full KV is $0.259$. We present this as an
+\emph{illustrative} ordering, not a headline: it is one document (very low power),
+uses the pre-seed config, and a full flagship LongBench sweep is future work
+(\S\ref{sec:limits}). It does establish that the extreme-compression story is not
+purely a synthetic-retrieval artifact.
+% source: results/w11-goalA-lb-lines.txt (qasper: bug-r128 0.221@0.160, ea-k0.25 0.216@0.250, ea-k0.1 0.149@0.100, snapkv-k0.1 0.136@0.100, palu-r0.25 0.073, full 0.259).
+
+\subsection{Composition with quantization (1B)}
+\label{sec:frontier}
+On Llama-3.2-1B (WikiText-2, ctx 1024), quantizing the gist coordinates to 4 bits
+roughly halves stored state at negligible perplexity cost, and at a fixed budget
+the composition beats pure low-rank (rank-64/4-bit $0.099\times$ vs rank-32/fp16
+$0.097\times$ at lower perplexity): quantization and low-rank \emph{multiply}. But
+under a \emph{fair} comparison---every mechanism quantized equally---BUG$\times$
+TurboQuant is \textbf{competitive, not dominant}: Expected~Attention$\times$
+TurboQuant and SnapKV$\times$TurboQuant sit on or ahead of BUG's Pareto frontier
+through the mid-aggressive band ($0.08$--$0.18\times$), and pure 4-bit TurboQuant
+is near-lossless at $0.25\times$. BUG is best only at the extreme edge
+($<0.07\times$), where eviction becomes catastrophic and low-rank degrades
+gracefully. (An earlier draft's ``beats SOTA at $10\times$'' compared quantized
+BUG against fp16 eviction and is retracted.) This 1B study is why v1's honest
+case rests on the extreme edge and the retrieval-per-byte niche, not on winning
+mid-band perplexity.
+% source: docs/week4.md, main.tex(old) Week-4 fair-frontier paragraph, README Week-4.
+
+\subsection{Memory: stored state vs.\ resident memory}
+\label{sec:memory}
+We bill memory two ways and report both.
+\textbf{(1) Stored state} (float-equivalent, the numbers above): at $r{=}64$,
+$0.085\times$ on Llama-8B and $0.149\times$ on Qwen-7B. Because the DLRA core
+numerics are delicate (\S\ref{sec:siphon}), the gist is stored at fp32 at rest
+while full KV is billed at fp16; the honest \emph{fp32-at-rest} ratios are
+$\approx0.150\times$ (Llama-8B) and $\approx0.275\times$ (Qwen-7B). A
+fp16-storable gist variant is not yet validated (\S\ref{sec:limits}).
+\textbf{(2) Resident memory} is \emph{not} the stored ratio. BUG is
+reconstruct-then-attend: attention sees a full-length reconstruction, so the
+decode-time reconstruction workspace is $\approx0.98\times$ full KV at ctx 2048
+and actual decode residency is $\approx1.06\times$ full KV---slightly worse than
+no compression. Our only end-to-end latency datum (1B, CPU) has \texttt{bug-r128}
+at $224.9$\,ms/token vs full KV $204.5$\,ms/token ($\approx10\%$ slower).
+Realizing the stored-state ratio as resident memory requires a fused factored
+attention kernel; we state clearly that we have not built one, so on the resident
+axis eviction and ThinK ($0.75\times$ resident) currently beat BUG.
+
+Where the stored-state ratio \emph{does} pay off today is persistence and
+transfer: a serialized full KV at 32K (Llama-8B, fp16) is $4.29$\,GB, versus
+$\approx0.69$\,GB for \texttt{r128-s32} and $\approx0.37$\,GB for
+\texttt{r64-h256}---a $\approx6\times$ smaller artifact to store, ship, or reload
+for prefix-cache reuse and conversation resumption.
+\todo{The $\approx6\times$ is a stored-bytes ratio; the corresponding
+\emph{cold-load speedup} is projected, not yet measured. Run w16\_storage on CUDA
+and add a measured serialize/reload/H2D number before v2.}
+% source: docs/reviews/2026-09-01/review-systems.md (0.98x workspace, 1.06x resident, 224.9 vs 204.5 ms, 4.29GB/0.69GB/0.37GB); task-given fp32-at-rest ratios.
+
+\section{Limitations}
+\label{sec:limits}
+We lead with the two limitations that most constrain the claims.
+
+\paragraph{Storage is not resident memory; no kernel yet.} As \S\ref{sec:memory}
+states, the headline ratio is \emph{stored/persisted state}. Decode residency is
+$\approx1.06\times$ full KV under reconstruct-then-attend, and the one latency
+datum is $\approx10\%$ unfavorable. A fused low-rank attention kernel is the
+missing piece that would turn stored state into resident savings; it is the
+single most important systems item and is not built.
+
+\paragraph{Variable tracking on wide-KV models is unsolved.} On the two
+$n{=}1024$ models, variable-tracking tops out at $0.58$ (Llama) / $0.50$
+(Mistral) at 16K, while Qwen ($n{=}512$) reaches $1.00$ (Table~\ref{tab:xmodel}).
+Following a \texttt{V0=\ldots; V1=V0; \ldots} chain needs several \emph{linked,
+low-surprise} tokens retained together, but surprise selection provably keeps
+\emph{sharp, isolated} needles---it protects the wrong tokens for chains. We
+tested and \emph{refuted} the obvious fix (raising the exact-tier budget gives no
+lift on real 7B/8B: Mistral $0.50\to0.25$, Llama $0.58\to0.58$), and two
+memory-free alternatives failed a CPU probe. This is a real open problem---a
+non-surprise retention mechanism for chains---not a solved axis.
+% source: docs/week17-explained.md sec.2 (vt fix refuted), sec.1 (0.58/0.50/1.00).
+
+\paragraph{Scale of the perplexity/composition study.} The fair-comparison
+frontier (\S\ref{sec:frontier}) and the near-oracle study are at 1B; the 7B/8B
+evidence is retrieval and single-config perplexity. A 7B/8B fair frontier is
+future work.
+
+\paragraph{No scalar-quantization baseline yet.} The family that most directly
+contests the headline band---2-bit KV quantization (KIVI~\citep{liu2024kivi},
+KVQuant~\citep{hooper2024kvquant})---is not run in v1. We frame low-rank and
+quantization as composing (\S\ref{sec:quant}), and the exclusive-band claim
+(\S\ref{sec:subcliff}) is explicitly conditional on that baseline. Running it
+(same perplexity$+$RULER harness, three families, plus a BUG$\times$2-bit
+composition at $\approx0.04\times$) is the primary v2 experiment.
+
+\paragraph{Benchmark external validity.} Retrieval uses an in-repo RULER-style
+generator whose filler is a small fixed sentence pool; selection and confirmation
+share the generator. The single-document LongBench probe (\S\ref{sec:realistic})
+is a first external anchor but is low-power. A v2 anchor---official RULER subset
+and a flagship LongBench sweep, with wikitext/PG19 filler---is planned.
+
+\paragraph{Statistical firmness and provenance.} Several 32K cells and the 1B
+study are lower-$n$; the marquee ($n{=}16$) and the 16K non-inferiority table
+($n{=}12$) are the firm results. Per-trial records and the exact GPU/CUDA/commit
+environment for some headline pods were not fully archived (pods destroyed,
+cloned by branch); recovery via $\mathrm{round}(\mathrm{acc}\cdot n)$ is exact but
+a complete compute-disclosure appendix is v2 hygiene.
+
+\section{Conclusion}
+\label{sec:conc}
+We recast a numerical-analysis integrator---the rank-adaptive BUG scheme for
+dynamical low-rank approximation---as an online, training-free, per-sequence KV
+compressor: a near-oracle low-rank gist for fluency, a surprise-selected exact
+tier for retrieval, and a warm-up seed for early context. Across three model
+families it reaches perfect single/multi-value 16K retrieval with no detected
+loss at $0.085$--$0.149\times$ float-equivalent stored state
+($3.4$--$10\times$ under the channel-pruning/low-rank baselines
+\texttt{think-c0.5}/\texttt{palu-r0.5}), and at 32K on the hardest task it beats
+\texttt{think-c0.5} (Wilson-separated) and leads \texttt{palu-r0.5}
+(not separated) at several-fold less stored state. As much as the frontier,
+the contribution is the honest mechanistic map: the $r/n\approx0.25$ retrieval
+wall, the rank-siphoning tier--gist interaction and its CKL-$\theta$-relative fix,
+the wide-KV variable-tracking limitation, and the storage-vs-resident memory
+distinction that scopes the systems claim. Low-rank tracking is an axis
+orthogonal to eviction and quantization; the compose-with-quantization frontier
+and a fused factored-attention kernel are the v2 program that would turn today's
+stored-state advantage into a deployed one.
+
+\small
+\bibliographystyle{plainnat}
+\bibliography{refs}
 
 \end{document}

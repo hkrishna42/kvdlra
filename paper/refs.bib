@@ -1,0 +1,292 @@
+% kvdlra --- references for the arXiv v1 manuscript.
+% Every entry below was checked against arXiv/venue this session (W8 citation pass).
+% Status per entry is recorded in the agent's report; entries with residual
+% uncertainty carry a "% VERIFY:" comment naming what could not be pinned.
+
+% ===================== DLRA lineage =====================
+
+@article{koch2007dlra,
+  author  = {Koch, Othmar and Lubich, Christian},
+  title   = {Dynamical Low-Rank Approximation},
+  journal = {SIAM Journal on Matrix Analysis and Applications},
+  volume  = {29},
+  number  = {2},
+  pages   = {434--454},
+  year    = {2007},
+  doi     = {10.1137/050639703}
+}
+
+@article{ceruti2022unconventional,
+  author  = {Ceruti, Gianluca and Lubich, Christian},
+  title   = {An unconventional robust integrator for dynamical low-rank approximation},
+  journal = {BIT Numerical Mathematics},
+  volume  = {62},
+  number  = {1},
+  pages   = {23--44},
+  year    = {2022},
+  note    = {arXiv:2010.02022}
+}
+
+@article{ceruti2022rankadaptive,
+  author  = {Ceruti, Gianluca and Kusch, Jonas and Lubich, Christian},
+  title   = {A rank-adaptive robust integrator for dynamical low-rank approximation},
+  journal = {BIT Numerical Mathematics},
+  volume  = {62},
+  number  = {4},
+  pages   = {1149--1174},
+  year    = {2022},
+  note    = {arXiv:2104.05247}
+}
+
+@inproceedings{schotthofer2022lottery,
+  author    = {Schotth\"ofer, Steffen and Zangrando, Emanuele and Kusch, Jonas and Ceruti, Gianluca and Tudisco, Francesco},
+  title     = {Low-rank lottery tickets: finding efficient low-rank neural networks via matrix differential equations},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2022},
+  note      = {arXiv:2205.13571}
+}
+
+@article{schotthofer2025robust,
+  author  = {Schotth\"ofer, Steffen and Yang, H. Lexie and Schnake, Stefan},
+  title   = {Dynamical Low-Rank Compression of Neural Networks with Robustness under Adversarial Attacks},
+  journal = {arXiv preprint arXiv:2505.08022},
+  year    = {2025}
+  % VERIFY: arXiv id + authors confirmed; NeurIPS 2025 acceptance NOT confirmed by search -> cited as preprint.
+}
+
+% ===================== Classical low-rank =====================
+
+@article{eckart1936approximation,
+  author  = {Eckart, Carl and Young, Gale},
+  title   = {The approximation of one matrix by another of lower rank},
+  journal = {Psychometrika},
+  volume  = {1},
+  number  = {3},
+  pages   = {211--218},
+  year    = {1936}
+}
+
+% ===================== Eviction =====================
+
+@inproceedings{zhang2023h2o,
+  author    = {Zhang, Zhenyu and Sheng, Ying and Zhou, Tianyi and Chen, Tianlong and Zheng, Lianmin and Cai, Ruisi and Song, Zhao and Tian, Yuandong and R\'e, Christopher and Barrett, Clark and Wang, Zhangyang and Chen, Beidi},
+  title     = {H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2023},
+  note      = {arXiv:2306.14048}
+}
+
+@inproceedings{li2024snapkv,
+  author    = {Li, Yuhong and Huang, Yingbing and Yang, Bowen and Venkitesh, Bharat and Locatelli, Acyr and Ye, Hanchen and Cai, Tianle and Lewis, Patrick and Chen, Deming},
+  title     = {SnapKV: LLM Knows What You are Looking for Before Generation},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2024},
+  note      = {arXiv:2404.14469}
+}
+
+@inproceedings{liu2023scissorhands,
+  author    = {Liu, Zichang and Desai, Aditya and Liao, Fangshuo and Wang, Weitao and Xie, Victor and Xu, Zhaozhuo and Kyrillidis, Anastasios and Shrivastava, Anshumali},
+  title     = {Scissorhands: Exploiting the Persistence of Importance Hypothesis for LLM KV Cache Compression at Test Time},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2023},
+  note      = {arXiv:2305.17118}
+}
+
+@article{cai2024pyramidkv,
+  author  = {Cai, Zefan and Zhang, Yichi and Gao, Bofei and Liu, Yuliang and Liu, Tianyu and Lu, Keming and Xiong, Wayne and Dong, Yue and Chang, Baobao and Hu, Junjie and Xiao, Wen},
+  title   = {PyramidKV: Dynamic KV Cache Compression based on Pyramidal Information Funneling},
+  journal = {arXiv preprint arXiv:2406.02069},
+  year    = {2024}
+}
+
+@inproceedings{tang2024quest,
+  author    = {Tang, Jiaming and Zhao, Yilong and Zhu, Kan and Xiao, Guangxuan and Kasikci, Baris and Han, Song},
+  title     = {Quest: Query-Aware Sparsity for Efficient Long-Context LLM Inference},
+  booktitle = {International Conference on Machine Learning (ICML)},
+  year      = {2024},
+  note      = {arXiv:2406.10774}
+}
+
+@article{devoto2025expected,
+  author  = {Devoto, Alessio and Jeblick, Maximilian and others},
+  title   = {Expected Attention: KV Cache Compression by Estimating Attention from Future Queries Distribution},
+  journal = {arXiv preprint arXiv:2510.00636},
+  year    = {2025}
+  % VERIFY: arXiv id + title confirmed; full author list not fully expanded here (et al.). This is the paper behind kvpress's ExpectedAttentionPress; NOT to be confused with Eigen Attention (Saxena et al.) -- both abbreviate "EA".
+}
+
+@misc{nvidia2024kvpress,
+  author       = {{NVIDIA}},
+  title        = {kvpress: LLM KV cache compression made easy},
+  howpublished = {\url{https://github.com/NVIDIA/kvpress}},
+  year         = {2024}
+}
+
+@inproceedings{xiao2024streamingllm,
+  author    = {Xiao, Guangxuan and Tian, Yuandong and Chen, Beidi and Han, Song and Lewis, Mike},
+  title     = {Efficient Streaming Language Models with Attention Sinks},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2024},
+  note      = {arXiv:2309.17453}
+}
+
+% ===================== Quantization =====================
+
+@inproceedings{liu2024kivi,
+  author    = {Liu, Zirui and Yuan, Jiayi and Jin, Hongye and Zhong, Shaochen and Xu, Zhaozhuo and Braverman, Vladimir and Chen, Beidi and Hu, Xia},
+  title     = {KIVI: A Tuning-Free Asymmetric 2bit Quantization for KV Cache},
+  booktitle = {International Conference on Machine Learning (ICML)},
+  year      = {2024},
+  note      = {arXiv:2402.02750}
+}
+
+@inproceedings{hooper2024kvquant,
+  author    = {Hooper, Coleman and Kim, Sehoon and Mohammadzadeh, Hiva and Mahoney, Michael W. and Shao, Yakun Sophia and Keutzer, Kurt and Gholami, Amir},
+  title     = {KVQuant: Towards 10 Million Context Length LLM Inference with KV Cache Quantization},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2024},
+  note      = {arXiv:2401.18079}
+}
+
+@inproceedings{liu2024cachegen,
+  author    = {Liu, Yuhan and Li, Hanchen and Cheng, Yihua and Ray, Siddhant and Huang, Yuyang and Zhang, Qizheng and Du, Kuntai and Yao, Jiayi and Lu, Shan and Ananthanarayanan, Ganesh and Maire, Michael and Hoffmann, Henry and Holtzman, Ari and Jiang, Junchen},
+  title     = {CacheGen: KV Cache Compression and Streaming for Fast Large Language Model Serving},
+  booktitle = {Proceedings of the ACM SIGCOMM 2024 Conference},
+  year      = {2024},
+  note      = {arXiv:2310.07240}
+}
+
+@article{zandieh2025turboquant,
+  author  = {Zandieh, Amir and Daliri, Majid and Hadian, Majid and Mirrokni, Vahab},
+  title   = {TurboQuant: Online Vector Quantization with Near-optimal Distortion Rate},
+  journal = {arXiv preprint arXiv:2504.19874},
+  year    = {2025}
+}
+
+% ===================== Low-rank / factorization =====================
+
+@inproceedings{chang2025palu,
+  author    = {Chang, Chi-Chih and Lin, Wei-Cheng and Lin, Chien-Yu and Chen, Chong-Yan and Hu, Yu-Fang and Wang, Pei-Shuo and Huang, Ning-Chi and Ceze, Luis and Abdelfattah, Mohamed S. and Wu, Kai-Chiang},
+  title     = {Palu: Compressing KV-Cache with Low-Rank Projection},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2025},
+  note      = {arXiv:2407.21118}
+}
+
+@article{xu2024think,
+  author  = {Xu, Yuhui and Jie, Zhanming and Dong, Hanze and Wang, Lei and Lu, Xudong and Zhou, Aojun and Saha, Amrita and Xiong, Caiming and Sahoo, Doyen},
+  title   = {ThinK: Thinner Key Cache by Query-Driven Pruning},
+  journal = {arXiv preprint arXiv:2407.21018},
+  year    = {2024}
+  % VERIFY: arXiv id + authors confirmed; conference venue (ICLR 2025?) not confirmed by search -> cited as preprint.
+}
+
+@article{saxena2024eigen,
+  author  = {Saxena, Utkarsh and Saha, Gobinda and Choudhary, Sakshi and Roy, Kaushik},
+  title   = {Eigen Attention: Attention in Low-Rank Space for KV Cache Compression},
+  journal = {arXiv preprint arXiv:2408.05646},
+  year    = {2024}
+  % Note: "Eigen Attention" also abbreviates to "EA" -- distinct from Expected Attention (Devoto et al.).
+}
+
+@article{chang2025xkv,
+  author  = {Chang, Chi-Chih and Lin, Chien-Yu and Akhauri, Yash and Lin, Wei-Cheng and Wu, Kai-Chiang and Ceze, Luis and Abdelfattah, Mohamed S.},
+  title   = {xKV: Cross-Layer SVD for KV-Cache Compression},
+  journal = {arXiv preprint arXiv:2503.18893},
+  year    = {2025}
+}
+
+@inproceedings{lin2025matryoshkakv,
+  author    = {Lin, Bokai and Zeng, Zihao and Xiao, Zipeng and Kou, Siqi and Hou, Tianqi and Gao, Xiaofeng and Zhang, Hao and Deng, Zhijie},
+  title     = {MatryoshkaKV: Adaptive KV Compression via Trainable Orthogonal Projection},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2025},
+  note      = {arXiv:2410.14731}
+}
+
+@article{zhang2024lorc,
+  author  = {Zhang, Rongzhi and Wang, Kuang and Liu, Liyuan and Wang, Shuohang and Cheng, Hao and Zhang, Chao and Shen, Yelong},
+  title   = {LoRC: Low-Rank Compression for LLMs KV Cache with a Progressive Compression Strategy},
+  journal = {arXiv preprint arXiv:2410.03111},
+  year    = {2024}
+}
+
+@article{deepseekv2,
+  author  = {{DeepSeek-AI}},
+  title   = {DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model},
+  journal = {arXiv preprint arXiv:2405.04434},
+  year    = {2024}
+}
+
+% ===================== Closest priors (adaptive/online low-rank) =====================
+
+@inproceedings{dong2024less,
+  author    = {Dong, Harry and Yang, Xinyu and Zhang, Zhenyu and Wang, Zhangyang and Chi, Yuejie and Chen, Beidi},
+  title     = {Get More with LESS: Synthesizing Recurrence with KV Cache Compression for Efficient LLM Inference},
+  booktitle = {International Conference on Machine Learning (ICML)},
+  year      = {2024},
+  note      = {arXiv:2402.09398, PMLR 235:11437--11452}
+}
+
+@article{mcdermott2025lola,
+  author  = {McDermott, Luke and Heath Jr., Robert W. and Parhi, Rahul},
+  title   = {LoLA: Low-Rank Linear Attention With Sparse Caching},
+  journal = {arXiv preprint arXiv:2505.23666},
+  year    = {2025}
+}
+
+% ===================== Concurrent 2026 work (the timestamp targets) =====================
+
+@article{momentkv2026,
+  author  = {Anonymous},
+  title   = {MomentKV: Closing the Directional Gap in KV Cache Eviction for Long-Context Inference},
+  journal = {arXiv preprint arXiv:2606.01563},
+  year    = {2026}
+  % VERIFY: title + arXiv id confirmed by search; author list not retrieved -> placeholder "Anonymous", fix before camera-ready.
+}
+
+@article{reskv2026,
+  author  = {Zhan, Yuhang and Chen, Lisi and Shang, Shuo},
+  title   = {ResKV: Reconstructing Omitted Attention Contributions for Fixed-Budget KV Cache Compression},
+  journal = {arXiv preprint arXiv:2607.29591},
+  year    = {2026}
+}
+
+% ===================== Benchmarks & models =====================
+
+@inproceedings{hsieh2024ruler,
+  author    = {Hsieh, Cheng-Ping and Sun, Simeng and Kriman, Samuel and Acharya, Shantanu and Rekesh, Dima and Jia, Fei and Zhang, Yang and Ginsburg, Boris},
+  title     = {RULER: What's the Real Context Size of Your Long-Context Language Models?},
+  booktitle = {Conference on Language Modeling (COLM)},
+  year      = {2024},
+  note      = {arXiv:2404.06654}
+}
+
+@inproceedings{bai2024longbench,
+  author    = {Bai, Yushi and Lv, Xin and Zhang, Jiajie and Lyu, Hongchang and Tang, Jiankai and Huang, Zhidian and Du, Zhengxiao and Liu, Xiao and Zeng, Aohan and Hou, Lei and Dong, Yuxiao and Tang, Jie and Li, Juanzi},
+  title     = {LongBench: A Bilingual, Multitask Benchmark for Long Context Understanding},
+  booktitle = {Annual Meeting of the Association for Computational Linguistics (ACL)},
+  year      = {2024},
+  note      = {arXiv:2308.14508}
+}
+
+@article{grattafiori2024llama3,
+  author  = {Grattafiori, Aaron and Dubey, Abhimanyu and others},
+  title   = {The Llama 3 Herd of Models},
+  journal = {arXiv preprint arXiv:2407.21783},
+  year    = {2024}
+}
+
+@article{qwen2025qwen25,
+  author  = {{Qwen Team}},
+  title   = {Qwen2.5 Technical Report},
+  journal = {arXiv preprint arXiv:2412.15115},
+  year    = {2024}
+}
+
+@article{jiang2023mistral7b,
+  author  = {Jiang, Albert Q. and Sablayrolles, Alexandre and Mensch, Arthur and Bamford, Chris and Chaplot, Devendra Singh and de las Casas, Diego and Bressand, Florian and Lengyel, Gianna and Lample, Guillaume and Saulnier, Lucile and others},
+  title   = {Mistral 7B},
+  journal = {arXiv preprint arXiv:2310.06825},
+  year    = {2023}
+}

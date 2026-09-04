@@ -1,0 +1,166 @@
+{
+  "meta": {
+    "interval": "wilson",
+    "note": "n read from the line's n= field; hits=round(acc*n)",
+    "mcnemar": "exact two-sided binomial on discordant paired trials"
+  },
+  "cells": {
+    "16384": {
+      "bugS-r64-h256-q4": {
+        "niah_multikey": {
+          "acc": 0.67,
+          "n": 12,
+          "hits": 8,
+          "lo": 0.391,
+          "hi": 0.862,
+          "ratio": 0.149,
+          "sbits": 0.275
+        },
+        "niah_multivalue": {
+          "acc": 0.0,
+          "n": 12,
+          "hits": 0,
+          "lo": 0.0,
+          "hi": 0.242,
+          "ratio": 0.149,
+          "sbits": 0.275
+        },
+        "niah_single": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.149,
+          "sbits": 0.276
+        },
+        "vt": {
+          "acc": 0.0,
+          "n": 12,
+          "hits": 0,
+          "lo": 0.0,
+          "hi": 0.242,
+          "ratio": 0.149,
+          "sbits": 0.275
+        }
+      },
+      "bugSseed-r64-h256": {
+        "niah_multikey": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.149,
+          "sbits": 0.275
+        },
+        "niah_multivalue": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.149,
+          "sbits": 0.275
+        },
+        "niah_single": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.149,
+          "sbits": 0.276
+        },
+        "vt": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.149,
+          "sbits": 0.275
+        }
+      }
+    },
+    "32768": {
+      "bugS-r64-h256-q4": {
+        "niah_multikey": {
+          "acc": 0.83,
+          "n": 12,
+          "hits": 10,
+          "lo": 0.552,
+          "hi": 0.953,
+          "ratio": 0.139,
+          "sbits": 0.265
+        },
+        "niah_multivalue": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.139,
+          "sbits": 0.265
+        },
+        "niah_single": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.139,
+          "sbits": 0.265
+        },
+        "vt": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.139,
+          "sbits": 0.265
+        }
+      },
+      "bugSseed-r64-h256": {
+        "niah_multikey": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.139,
+          "sbits": 0.265
+        },
+        "niah_multivalue": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.139,
+          "sbits": 0.265
+        },
+        "niah_single": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.139,
+          "sbits": 0.265
+        },
+        "vt": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.139,
+          "sbits": 0.265
+        }
+      }
+    }
+  },
+  "contrasts": []
+}

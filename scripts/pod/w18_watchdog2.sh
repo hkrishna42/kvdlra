@@ -5,7 +5,7 @@
 cd /Users/hari/Desktop/kv-dlra || exit 1
 export PATH="/Users/hari/.local/bin:$PATH"
 # label:id:mode:tag
-PODS="g3-qwen:49877168:g3:qwen g3-mistral:49877891:g3:mistral g3-llama:49877893:g3:llama g4-llama:49877894:g4:llama g2-qwen:49877896:g2:qwen"
+PODS="g3-qwen:49877168:g3:qwen g3-mistral:49877891:g3:mistral g3-llama:49877893:g3:llama g4-llama:49877894:g4:llama g2-qwen:49877896:g2:qwen g5-llama:49877989:g5:llama"
 FLOOR=6.0; H=results/w18_harvest; mkdir -p "$H"; done_l=""
 extract(){ for p in $PODS; do lab="${p%%:*}"; sort -u "$H/${lab}.raw" 2>/dev/null | grep -aE '^\[(niah|vt).* acc=' > "results/w18-${lab}-lines.txt"; done; }
 for iter in $(seq 1 400); do

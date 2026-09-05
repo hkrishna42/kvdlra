@@ -35,9 +35,11 @@ Example (CPU smoke, 1B)
 from __future__ import annotations
 
 import argparse
+import functools
 import gc
 import json
 import random
+from collections.abc import Sequence
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, cast
@@ -81,8 +83,21 @@ def _filler_to(
     bit-identical archived path: the fixed 10-sentence ``_FILLER`` cycled. Any other
     value draws from a realistic-corpus ``pool`` (loaded once by the caller and passed
     in, so tests need no network), seed-shuffled per (seed, trial) so every trial sees
-    a different natural-text haystack -- the Week-18 external-validity fix."""
-    base = _FILLER if filler == "cycle" else pool
+    a different natural-text haystack -- the Week-18 external-validity fix.
+
+    Week-19: memoized per (tokenizer, ctx, filler, pool, seed, trial). The builder grows
+    the haystack one sentence at a time and re-tokenizes the whole text each step
+    (O(n^2) tokenizer calls: minutes per call at 64K), and the SAME haystack is rebuilt
+    for every arm and trial of a cell, so the cached tuple is returned as a fresh list."""
+    key_pool = None if pool is None else tuple(pool)
+    return list(_filler_cached(tok, ctx, filler, key_pool, seed, trial))
+
+
+@functools.lru_cache(maxsize=32)
+def _filler_cached(
+    tok: Any, ctx: int, filler: str, pool: tuple[str, ...] | None, seed: int, trial: int
+) -> tuple[str, ...]:
+    base: Sequence[str] = _FILLER if filler == "cycle" else (pool or ())
     if not base:
         raise ValueError(f"filler={filler!r} requires a non-empty pool")
     order = list(range(len(base)))
@@ -93,7 +108,7 @@ def _filler_to(
     while len(tok(" ".join(sentences)).input_ids) < ctx:
         sentences.append(base[order[i % len(order)]])
         i += 1
-    return sentences
+    return tuple(sentences)
 
 
 def _first_divergence(a: torch.Tensor, b: torch.Tensor) -> int:

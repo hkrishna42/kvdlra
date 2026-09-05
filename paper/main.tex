@@ -399,6 +399,36 @@ Llama-3.1-8B      & 1024 & $1.00\,[0.76,1.0]$ & $1.00\,[0.76,1.0]$ & $0.58\,[0.3
 \end{tabular}
 \end{table}
 
+\paragraph{32K firming ($n{=}12$).} The same configuration was re-run at 32K on
+all three families at full sample size (Table~\ref{tab:xmodel32}), firming what
+were previously $n{=}4$ point estimates. Single- and multi-key retrieval hold at
+$12/12$ on all three; multi-value holds ($12/12$) on Qwen and Llama and is
+$0.83\,[0.55,0.95]$ on Mistral; variable-tracking is $1.00$ on Qwen,
+$0.92\,[0.65,0.98]$ on Llama, and $0.42\,[0.19,0.68]$ on Mistral. Two honest
+notes travel with the 32K point: Qwen's \emph{fluency} at $r{=}64$ degrades at
+32K (perplexity $8.2\to35.1$ from 16K, while retrieval stays $1.00$), so the
+natural 32K operating point for Qwen is a higher rank with the stability floor of
+\S\ref{sec:floor}; Mistral and Llama perplexity stay healthy ($3.76$, $8.33$).
+The var-track ordering is the same wide-KV story as 16K (Qwen $n{=}512$ perfect;
+the $n{=}1024$ models weaker), discussed in \S\ref{sec:limits}.
+% source: results/w18-g1-report.md (32K n=12: Qwen 1/1/1/1 @0.139x ppl35.08; Llama 1/1/1/0.92 @0.075x ppl8.33; Mistral 1/1/0.83/0.42 @0.075x ppl3.76).
+
+\begin{table}[t]
+\centering
+\caption{32K retrieval, config \texttt{bugSseed-r64-h256}, $n{=}12$ (Wilson 95\%),
+firming the previously $n{=}4$ cells. Memory is float-equivalent stored state.}
+\label{tab:xmodel32}
+\begin{tabular}{lccccc}
+\toprule
+model & single & multi-key & multi-value & var-track & stored state \\
+\midrule
+Qwen2.5-7B      & $1.00\,[0.76,1.0]$ & $1.00\,[0.76,1.0]$ & $1.00\,[0.76,1.0]$ & $\mathbf{1.00}\,[0.76,1.0]$ & $0.139\times$ \\
+Mistral-7B-v0.3 & $1.00\,[0.76,1.0]$ & $1.00\,[0.76,1.0]$ & $0.83\,[0.55,0.95]$ & $0.42\,[0.19,0.68]$          & $0.075\times$ \\
+Llama-3.1-8B    & $1.00\,[0.76,1.0]$ & $1.00\,[0.76,1.0]$ & $1.00\,[0.76,1.0]$ & $0.92\,[0.65,0.98]$          & $0.075\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \subsection{Marquee: variable tracking at 32K on Llama}
 \label{sec:marquee}
 The one genuinely Wilson-separated retrieval result is the hardest task on the
@@ -499,30 +529,84 @@ cannot. At 32K on Llama, \texttt{bugS-r32-h256} scores single/multi-key/multi-va
 variable-tracking $= 100/67/100/100$ at \textbf{$0.043\times$} stored state
 ($n{=}6$--$14$). Channel-pruning (ThinK) and low-rank factorization (Palu) are
 floored at $0.50$--$0.75\times$ by construction; eviction reaches $0.1\times$
-(Expected~Attention at $0.100\times$) but loses variable-tracking there
-(vt $=17$ in our Week-11 table) and its multi-key decays with length
-($92\to67\to50$ across $16$K$\to32$K$\to64$K). Scalar 2-bit quantization floors
-around $0.125$--$0.19\times$. This $0.043\times$ cell is thus the seed of an
-honestly \emph{exclusive} sub-$0.05\times$ band---but establishing exclusivity
-against quantization requires the KIVI/KVQuant baseline we defer to v2
-(\S\ref{sec:limits}); today we claim only that low-rank reaches a compression
-depth the pruning and factorization families do not, and that eviction reaches
-depth but not the hard tasks.
-% source: results/w11-final-tables.md (bugS-r32-h256 @32K 100/67/100/100 @0.043x); ea-k0.1 profile same file.
+(Expected~Attention at $0.100\times$) but its retrieval there is
+\emph{family-dependent and unreliable}. In our $n{=}12$ three-family grid at
+$0.100\times$ (Table~\ref{tab:evict}), Expected~Attention holds
+single/multi-key/multi-value only on Llama---and loses variable-tracking there
+($0.08$ at 16K, $0.58$ at 32K)---while on Qwen and Mistral it collapses on most
+tasks (single $\le0.50$, multi-key and multi-value $\to0$); \emph{no family
+retains all four tasks} at $0.1\times$. SnapKV at $0.100\times$ is weaker still
+(multi-key $0.17$--$0.42$, variable-tracking $0$). Scalar 2-bit quantization
+floors around $0.125$--$0.19\times$. This $0.043\times$ cell is thus the seed of
+an honestly \emph{exclusive} sub-$0.05\times$ band---but establishing exclusivity
+against quantization requires a fair 2-bit KV baseline (\S\ref{sec:limits}, and
+the partial result of \S\ref{sec:quantbaseline}); today we claim only that
+low-rank reaches a compression depth the pruning and factorization families do
+not, and that eviction reaches depth but not the hard tasks reliably.
+% source: results/w18-g3-{qwen,mistral,llama}-lines.txt (n=12 eviction grid); results/w11-final-tables.md (bugS-r32-h256 @32K 100/67/100/100 @0.043x).
+
+\begin{table}[t]
+\centering
+\caption{Eviction at $0.100\times$ stored state, Expected~Attention
+(\texttt{ea-k0.1}), $n{=}12$ (accuracy). Family-dependent and never all-four:
+strong on Llama single/multi-key/multi-value, collapsing on Qwen/Mistral, and
+losing variable-tracking on every family. Cyclic-filler generator
+(\S\ref{sec:realistic} shows it collapses further on realistic text).}
+\label{tab:evict}
+\begin{tabular}{llcccc}
+\toprule
+model & ctx & single & multi-key & multi-value & var-track \\
+\midrule
+Llama-3.1-8B    & 16K & $1.00$ & $0.92$ & $1.00$ & $0.08$ \\
+Llama-3.1-8B    & 32K & $1.00$ & $0.92$ & $0.92$ & $0.58$ \\
+Qwen2.5-7B      & 16K & $0.17$ & $0.00$ & $0.00$ & $0.00$ \\
+Mistral-7B-v0.3 & 16K & $0.50$ & $0.08$ & $0.00$ & $0.00$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{A first quantization baseline (partial)}
+\label{sec:quantbaseline}
+We ran the most readily available 2-bit/4-bit KV baseline---HuggingFace's
+\texttt{QuantizedCache} (quanto backend)---through the identical harness on the
+flagship families at 16K. The accounting checks out (measured stored ratio
+$0.194\times$ at 2-bit, $0.318\times$ at 4-bit, matching the analytic
+prediction), but retrieval \emph{collapses to zero}: single-needle accuracy is
+$0.00$ ($n{=}12$) at both 2-bit and 4-bit on Qwen, while full KV and the flagship
+score $1.00$ on the same needles. We do \emph{not} yet present this as ``2-bit KV
+quantization fails retrieval,'' because this implementation is not KIVI-faithful:
+\texttt{QuantizedCache} quantizes values \emph{per channel} (its own
+documentation flags the deviation from KIVI's per-token values), the per-token
+axis will not run at the default group size, and the backend supports only
+2/4-bit (no 8-bit control). A fair KIVI/KVQuant comparison---per-token value
+quantization, an 8-bit control, and a memory-safe long-context perplexity
+path---is the primary v2 experiment (\S\ref{sec:limits}). The honest v1 status is
+that the off-the-shelf quantized-cache baseline does not retrieve exact needles
+at long context in the band it occupies, and that a properly tuned quantizer
+remains to be measured.
+% source: results/w18_harvest quant diag (Qwen 16K: quant-2bit acc 0.00 @0.194x, quant-4bit acc 0.00 @0.318x, full 1.00; per-token axis SKIP "group 64 must divide 65588"; quanto 2/4-bit only); quant-findings.md.
 
 \subsection{Moderate compression on realistic text}
 \label{sec:realistic}
-On a LongBench~\citep{bai2024longbench} document-QA probe (single Qasper document,
-$\sim$5.6K tokens), a moderate-compression \texttt{bug-r128} scores F1 $0.221$ at
-$0.160\times$, ahead of the sub-$0.25\times$ eviction arms
-(Expected~Attention-k0.25 $0.216$ at $0.250\times$; -k0.1 $0.149$ at
-$0.100\times$; SnapKV-k0.1 $0.136$ at $0.100\times$) and of \texttt{palu-r0.25}
-($0.073$, which collapses on real text); full KV is $0.259$. We present this as an
-\emph{illustrative} ordering, not a headline: it is one document (very low power),
-uses the pre-seed config, and a full flagship LongBench sweep is future work
-(\S\ref{sec:limits}). It does establish that the extreme-compression story is not
-purely a synthetic-retrieval artifact.
-% source: results/w11-goalA-lb-lines.txt (qasper: bug-r128 0.221@0.160, ea-k0.25 0.216@0.250, ea-k0.1 0.149@0.100, snapkv-k0.1 0.136@0.100, palu-r0.25 0.073, full 0.259).
+Two lines of evidence say the extreme-compression story is not a
+synthetic-generator artifact. \textbf{(1) Realistic filler.} Re-running the
+generator with WikiText filler instead of the fixed sentence pool, at 16K on Qwen
+($n{=}12$), the flagship holds single-needle retrieval ($1.00$) while the
+eviction baseline \texttt{ea-k0.1} ($0.100\times$) \emph{collapses to $0.00$ on
+all four tasks}, and the low-rank baseline \texttt{palu-r0.5} loses
+variable-tracking ($0.08$) and multi-value degrades ($0.83$); \texttt{think-c0.5}
+holds single/multi-key but drops on multi-value/variable-tracking ($0.67$/$0.33$).
+That the sub-$0.25\times$ eviction arm collapses on realistic text while the
+flagship does not is the same ordering the synthetic generator shows, on
+independent filler. \textbf{(2) LongBench.} On a LongBench~\citep{bai2024longbench}
+document-QA probe (single Qasper document, $\sim$5.6K tokens), a
+moderate-compression \texttt{bug-r128} scores F1 $0.221$ at $0.160\times$, ahead
+of the sub-$0.25\times$ eviction arms (Expected~Attention-k0.25 $0.216$ at
+$0.250\times$; -k0.1 $0.149$; SnapKV-k0.1 $0.136$) and of \texttt{palu-r0.25}
+($0.073$); full KV is $0.259$. The LongBench point is one document (low power);
+an official-benchmark anchor and a full flagship sweep are v2 work
+(\S\ref{sec:limits}).
+% source: results/w18-g2-qwen-lines.txt (wikitext filler 16K Qwen: flagship single 1.00, ea-k0.1 0/0/0/0, palu-r0.5 1/1/0.83/0.08, think-c0.5 1/1/0.67/0.33); results/w11-goalA-lb-lines.txt (qasper).
 
 \subsection{Composition with quantization (1B)}
 \label{sec:frontier}
@@ -553,23 +637,31 @@ $\approx0.150\times$ (Llama-8B) and $\approx0.275\times$ (Qwen-7B). A
 fp16-storable gist variant is not yet validated (\S\ref{sec:limits}).
 \textbf{(2) Resident memory} is \emph{not} the stored ratio. BUG is
 reconstruct-then-attend: attention sees a full-length reconstruction, so the
-decode-time reconstruction workspace is $\approx0.98\times$ full KV at ctx 2048
-and actual decode residency is $\approx1.06\times$ full KV---slightly worse than
-no compression. Our only end-to-end latency datum (1B, CPU) has \texttt{bug-r128}
-at $224.9$\,ms/token vs full KV $204.5$\,ms/token ($\approx10\%$ slower).
-Realizing the stored-state ratio as resident memory requires a fused factored
-attention kernel; we state clearly that we have not built one, so on the resident
-axis eviction and ThinK ($0.75\times$ resident) currently beat BUG.
+decode-time reconstruction workspace is $\approx$ full KV---now measured on CUDA
+(Llama-8B, \texttt{w16\_storage}): $0.982\times$ at 16K and $0.991\times$ at 32K
+for \texttt{bugSseed-r64-h256} ($0.998$/$0.999\times$ for the pure gist
+\texttt{bug-r64}), with the analytic--empirical footprint cross-check exact
+(integrity $0$). This measured $\approx0.98\times$ workspace is exactly why a
+naive peak-VRAM reading shows no win, and it corroborates a decode residency
+$\approx1.06\times$ full KV---slightly worse than no compression. Our only
+end-to-end latency datum (1B, CPU) has \texttt{bug-r128} at $224.9$\,ms/token vs
+full KV $204.5$\,ms/token ($\approx10\%$ slower). Realizing the stored-state
+ratio as resident memory requires a fused factored attention kernel; we state
+clearly that we have not built one, so on the resident axis eviction and ThinK
+($0.75\times$ resident) currently beat BUG.
 
 Where the stored-state ratio \emph{does} pay off today is persistence and
-transfer: a serialized full KV at 32K (Llama-8B, fp16) is $4.29$\,GB, versus
-$\approx0.69$\,GB for \texttt{r128-s32} and $\approx0.37$\,GB for
-\texttt{r64-h256}---a $\approx6\times$ smaller artifact to store, ship, or reload
-for prefix-cache reuse and conversation resumption.
-\todo{The $\approx6\times$ is a stored-bytes ratio; the corresponding
-\emph{cold-load speedup} is projected, not yet measured. Run w16\_storage on CUDA
-and add a measured serialize/reload/H2D number before v2.}
-% source: docs/reviews/2026-09-01/review-systems.md (0.98x workspace, 1.06x resident, 224.9 vs 204.5 ms, 4.29GB/0.69GB/0.37GB); task-given fp32-at-rest ratios.
+transfer, and this is now a \emph{measured} number rather than a projection.
+On CUDA (Llama-8B, \texttt{w16\_storage}), the serialized cold-load size of
+\texttt{bugSseed-r64-h256} is $0.150\times$ full KV at 16K and $0.139\times$ at
+32K (pure gist \texttt{bug-r64}: $0.135\times$/$0.130\times$)---an $\approx
+6.7$--$7.7\times$ smaller artifact to store, ship, or reload for prefix-cache
+reuse and conversation resumption. Concretely, a serialized full KV at 32K
+(Llama-8B, fp16) is $4.29$\,GB versus $\approx0.60$\,GB for \texttt{r64-h256};
+the load-path win grows with context and with slower storage tiers. (A measured
+end-to-end serialize/reload/H2D wall-clock, as opposed to this measured byte
+ratio, remains v2 work.)
+% source: results/w18-g5 (CUDA w16_storage: bugSseed-r64-h256 16K stored 0.084 coldload 0.150 workspace 0.982 peak 9.09; 32K stored 0.074 coldload 0.139 workspace 0.991; bug-r64 16K workspace 0.998 coldload 0.135; integrity 0). Latency/residency 1.06x from review-systems.md.
 
 \section{Limitations}
 \label{sec:limits}
@@ -599,19 +691,25 @@ frontier (\S\ref{sec:frontier}) and the near-oracle study are at 1B; the 7B/8B
 evidence is retrieval and single-config perplexity. A 7B/8B fair frontier is
 future work.
 
-\paragraph{No scalar-quantization baseline yet.} The family that most directly
-contests the headline band---2-bit KV quantization (KIVI~\citep{liu2024kivi},
-KVQuant~\citep{hooper2024kvquant})---is not run in v1. We frame low-rank and
-quantization as composing (\S\ref{sec:quant}), and the exclusive-band claim
-(\S\ref{sec:subcliff}) is explicitly conditional on that baseline. Running it
-(same perplexity$+$RULER harness, three families, plus a BUG$\times$2-bit
-composition at $\approx0.04\times$) is the primary v2 experiment.
+\paragraph{No \emph{fair} scalar-quantization baseline yet.} We ran a first
+off-the-shelf 2-bit/4-bit KV baseline (\S\ref{sec:quantbaseline}) and found it
+does not retrieve exact needles at long context, but that implementation is not
+KIVI-faithful (per-channel values; no 8-bit control), so we do not lean on it.
+The family that most directly contests the headline band---2-bit KV quantization
+(KIVI~\citep{liu2024kivi}, KVQuant~\citep{hooper2024kvquant})---still lacks a fair
+run, and the exclusive-band claim (\S\ref{sec:subcliff}) remains explicitly
+conditional on it. A KIVI-faithful comparison (per-token value quantization, an
+8-bit control, memory-safe long-context perplexity, three families, plus a
+BUG$\times$2-bit composition at $\approx0.04\times$) is the primary v2 experiment.
 
 \paragraph{Benchmark external validity.} Retrieval uses an in-repo RULER-style
-generator whose filler is a small fixed sentence pool; selection and confirmation
-share the generator. The single-document LongBench probe (\S\ref{sec:realistic})
-is a first external anchor but is low-power. A v2 anchor---official RULER subset
-and a flagship LongBench sweep, with wikitext/PG19 filler---is planned.
+generator whose default filler is a small fixed sentence pool; selection and
+confirmation share the generator. We have partially de-risked this: the ordering
+survives a WikiText-filler rerun and a single-document LongBench probe
+(\S\ref{sec:realistic}), both independent of the fixed pool. What remains for v2
+is an \emph{official}-benchmark anchor---an official RULER subset and a full
+flagship LongBench sweep---to confirm the numbers against a generator we did not
+write.
 
 \paragraph{Statistical firmness and provenance.} Several 32K cells and the 1B
 study are lower-$n$; the marquee ($n{=}16$) and the 16K non-inferiority table

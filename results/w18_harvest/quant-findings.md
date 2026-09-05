@@ -62,3 +62,21 @@ not the fp32 the fp32 CPU probe suggested): 2-bit/g64 asymptote 0.156x (was 0.18
 
 GPU validation pending: `scripts/pod/w19.sh` MODE `a1diag` (Qwen 16K, n=4: full, token-4bit,
 kivi-2/4bit, hqq-8/2bit-kivi, kivi ppl@16K), then `a1` per family.
+
+## W19 a1diag — GPU result (Qwen2.5-7B, 16K niah_single, n=4, A100-40GB, SHA 24ac22a)
+
+| arm | acc | stored ratio | note |
+|---|---|---|---|
+| full | 1.00 | 1.000 | control |
+| quant-4bit (per-token, W18 default, chunked) | **0.00** | 0.287 | the W18 zero REPLICATES under chunked prefill → it is the scheme |
+| quant-2bit-kivi (quanto) | **1.00** | 0.163 | the fair KIVI baseline retrieves the single needle |
+| quant-4bit-kivi (quanto) | 1.00 | 0.287 | |
+| quant-8bit-kivi-hqq | 1.00 | 0.535 | decode-path control: sane |
+| quant-2bit-kivi-hqq | 1.00 | 0.163 | cross-implementation agrees with quanto |
+
+The quant **ppl** cells still OOM'd on this pod (38.4 GB *allocated* during a 4K chunk):
+root cause = `score_quant` (and my `_prefill_plain`) were not under `torch.no_grad()`, so the
+prefill's autograd graph was retained (the RULER path is decorated, hence rows there). Fixed
++ test-pinned in 6734afa; the a1 fan-out (qwen/mistral/llama, 40GB, SHA 6734afa) carries
+the ppl cells. Fund-bar note: single-needle retrieval is NOT where the exclusive band would be
+decided (KIVI-2bit = 1.00 there); mk/mv/vt at 16K/32K decide it.

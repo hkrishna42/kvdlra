@@ -32,7 +32,7 @@ from w15_intervals import TASK_LABEL, wilson
 # older w17/w11 regexes still match); here we REQUIRE n= so the trial count is read off
 # the line, never a hand table. sbits= is optional (older lines lack it).
 ROW = re.compile(
-    r"^\[(niah_single|niah_multikey|niah_multivalue|vt) ctx(\d+)\] (\S+)\s+"
+    r"^\[([A-Za-z0-9_]+) ctx(\d+)\] (\S+)\s+"  # Week-19: official-RULER task names too
     r"acc=([0-9.]+) recall=([0-9.]+) ratio=([0-9.]+)"
     r"(?: sbits=([0-9.]+))? n=(\d+)",
     re.M,

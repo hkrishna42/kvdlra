@@ -1,0 +1,6 @@
+[persist ctx16384] bugSseed-r64-h256      bytes=863012795 ratio=0.4019 save=0.373s load=0.111s h2d=0.029s ready=0.039s cold=0.179s
+[persist ctx16384] full                   bytes=2147500113 ratio=1.0000 save=2.039s load=1.093s h2d=0.115s ready=0.000s cold=1.208s
+[persist ctx16384] quant-2bit-kivi        bytes=335608111 ratio=0.1563 save=0.147s load=0.043s h2d=0.025s ready=0.020s cold=0.088s
+[persist ctx32768] bugSseed-r64-h256      bytes=1137739707 ratio=0.2649 save=0.485s load=0.155s h2d=0.044s ready=0.082s cold=0.280s
+[persist ctx32768] full                   bytes=4294983857 ratio=1.0000 save=1.697s load=1.932s h2d=0.235s ready=0.000s cold=2.168s
+[persist ctx32768] quant-2bit-kivi        bytes=671152431 ratio=0.1563 save=0.328s load=0.074s h2d=0.045s ready=0.041s cold=0.160s

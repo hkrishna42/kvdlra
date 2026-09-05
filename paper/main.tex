@@ -463,8 +463,10 @@ config & var-track (Wilson 95\%) & stored state & vs.\ flagship \\
 \end{tabular}
 \end{table}
 
-Perplexity is a tie with the compression field, not with full KV. At 32K on
-Llama over identical windows ($n{=}8$): full $6.975$, \texttt{think-c0.5}
+Perplexity is a tie with the compression field, not with full KV, and---unlike an
+earlier draft---the marquee perplexity and retrieval are now measured on the
+\emph{same pod in the same run}, removing the cross-run provenance caveat. At 32K
+on Llama over identical windows ($n{=}8$): full $6.975$, \texttt{think-c0.5}
 $7.196$, \texttt{palu-r0.5} $7.232$, \texttt{bugSseed-r128-s32} $7.353$---within
 the pre-registered $0.05$-bits/token band of both compressors ($+0.024$/$+0.031$
 bits/token) but $+0.076$ over uncompressed full KV. At 16K the gap to the
@@ -472,7 +474,7 @@ baselines is $\le0.006$ bits/token. Two baseline numbers here were originally ou
 own port defects, found and fixed in the baselines' favor before this comparison
 (a ShadowKV decode-scope bug; a Palu attention-sink low-ranking that had inflated
 its perplexity from $7.232$ to $9.236$); we report the corrected values.
-% source: README.md Week-15 (n=8 ppl), docs baseline-bug fixes.
+% source: results/w18-g4-llama (SAME-POD n=8 ppl this run: full 6.975, think-c0.5 7.196, palu-r0.5 7.232, bugSseed-r128-s32 7.353 -- confirms the Week-15 values, now same-run; retrieval n=16 same pod: vt 0.94 vs think 0.31 / palu 0.56).
 
 \subsection{The rank-siphoning diagnosis and the $r/n\approx0.25$ wall}
 \label{sec:siphon}
@@ -482,8 +484,11 @@ collapses to zero once the gist rank reaches about a quarter of the feature
 dimension: Llama ($n{=}1024$) collapses at $r{=}256$, Qwen ($n{=}512$) at
 $r{=}128$---both $r/n = 0.25$. A larger gist is a \emph{smoother} summary, so a
 planted needle stops looking surprising, never enters the exact tier, and is lost.
-This is a dimensionless onset, supported by a matched control (a seeded $r{=}256$
-Llama column scores $0$ on all hard tasks, like Qwen at $r{=}128$).
+This is a dimensionless onset, supported by a matched control: a seeded
+\texttt{bugSseed-r256-h1024} column on Llama ($r/n{=}0.25$) scores
+$0.00$ on \emph{all four} 32K tasks at $n{=}12$ (single/multi-key/multi-value/
+variable-tracking; this run), exactly like Qwen at $r{=}128$.
+% source: results/w18-g4-llama r256 control (32K n=12: all four tasks 0.00 @0.284x).
 % source: docs/week11-decision-table.md (r256 = 0), docs/week16-explained.md (r/n wall), review-meta-verdict.
 
 \textbf{Rank siphoning.} Separately, coupling surprise selection to the low-rank
@@ -711,12 +716,15 @@ is an \emph{official}-benchmark anchor---an official RULER subset and a full
 flagship LongBench sweep---to confirm the numbers against a generator we did not
 write.
 
-\paragraph{Statistical firmness and provenance.} Several 32K cells and the 1B
-study are lower-$n$; the marquee ($n{=}16$) and the 16K non-inferiority table
-($n{=}12$) are the firm results. Per-trial records and the exact GPU/CUDA/commit
-environment for some headline pods were not fully archived (pods destroyed,
-cloned by branch); recovery via $\mathrm{round}(\mathrm{acc}\cdot n)$ is exact but
-a complete compute-disclosure appendix is v2 hygiene.
+\paragraph{Statistical firmness and provenance.} The 1B composition study is
+lower-$n$, but the retrieval grids are now firm: the 16K and 32K cross-model
+tables are $n{=}12$ and the marquee is $n{=}16$, all from a single September run
+in which pods were cloned by \emph{commit SHA} (not branch), stamped their
+git-SHA and GPU/torch/CUDA environment into the harvested logs, and emitted
+per-trial hit records. The marquee retrieval and perplexity are same-pod
+(\S\ref{sec:marquee}). The residual provenance gap is only the earlier
+cross-week 1B/W-15 material and a formal compute-disclosure appendix, which is
+v2 hygiene.
 
 \section{Conclusion}
 \label{sec:conc}

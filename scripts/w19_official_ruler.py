@@ -49,21 +49,15 @@ JSON_END = "===W19_OFFICIAL_RULER_JSON_END==="
 TOKENS_TO_GENERATE = {"niah": 128, "vt": 30, "cwe": 120, "fwe": 50, "qa": 32}
 
 
-def split_input(text: str) -> tuple[str, str, str]:
-    """Split an official RULER ``input`` into (body, question, answer_prefix).
-
-    RULER templates end with ``{context}\\n<question><answer_prefix>``: the question is
-    the last line; the answer prefix follows its terminal ``?`` (niah/cwe/fwe/qa) or the
-    ``Answer:`` cue (vt, whose question ends in ``.``). Fails loud when neither cue is
-    present -- a silent mis-split would decode the wrong tail."""
-    body, _, last = text.rpartition("\n")
-    if "?" in last:
-        cut = last.rindex("?") + 1
-    elif " Answer:" in last:
-        cut = last.rindex(" Answer:")
-    else:
-        raise ValueError(f"cannot locate the answer prefix in the last line: {last[:120]!r}")
-    return body, last[:cut], last[cut:]
+def split_input(text: str) -> tuple[str, str]:
+    """Split an official RULER ``input`` into (body, question): every RULER template ends
+    with ``{context}\n<question>``, and the generator (c3f5e3b) strips the answer prefix
+    into the record's own ``answer_prefix`` field. Fails loud on a single-line input --
+    a silent mis-split would decode the wrong tail."""
+    body, sep, question = text.rpartition("\n")
+    if not sep or not question.strip():
+        raise ValueError(f"no question line at the end of the input: {text[-120:]!r}")
+    return body, question
 
 
 def templated_official(
@@ -127,7 +121,8 @@ def run(args: Any) -> dict[str, Any]:
             hits, ratios, fracs, sbits = 0, [], [], []
             for rec in records:
                 try:
-                    body, question, prefix = split_input(rec["input"])
+                    body, question = split_input(rec["input"])
+                    prefix = rec.get("answer_prefix", "")
                     hay, query = templated_official(tok, body, question, prefix)
                     hit, ratio, frac, sratio = retrieve(
                         model, tok, arm, hay, query, list(rec["outputs"]), args.device,

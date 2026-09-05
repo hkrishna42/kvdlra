@@ -3,6 +3,8 @@
 #   pods:  results/w19_harvest/pods.txt   one "label:id:mode:tag" per line -- APPEND to add a
 #          pod mid-run (re-read every iteration; no restart needed).
 #   done:  results/w19_harvest/done.txt   labels already harvested+destroyed (persisted, so a
+#          restart never hangs; the run-status marker is status.txt -- NOT DONE.txt, which is the
+#          same file as done.txt on macOS's case-insensitive APFS).
 #          restart never hangs on a destroyed pod -- the W18 in-memory done-list lesson).
 # Per pod per iteration: harvest the short rows to results/w19_harvest/<label>.raw (the vastai
 # log buffer scrolls under per-[trial] emission; base64 folds arrive truncated, so rows are the
@@ -43,11 +45,11 @@ for iter in $(seq 1 "$BUDGET_ITERS"); do
   if [ -n "$cr" ] && awk "BEGIN{exit !($cr < $FLOOR)}" 2>/dev/null; then
     echo "!!! CREDIT FLOOR <\$$FLOOR -- destroy all"
     while IFS=: read -r lab id mode tag; do [ -n "$id" ] && echo y | vastai destroy instance "$id" >/dev/null 2>&1; done < "$H/pods.txt"
-    extract; echo "FLOOR_STOP $(date)" > "$H/DONE.txt"; exit 0
+    extract; echo "FLOOR_STOP $(date)" > "$H/status.txt"; exit 0
   fi
   if [ "$tot" -gt 0 ] && [ "$nd" -ge "$tot" ] && [ -z "${KEEP_ALIVE:-}" ]; then
-    echo "ALL_DONE $(date)" > "$H/DONE.txt"; echo "=== ALL PODS DONE + EXTRACTED + PUSHED ==="; exit 0
+    echo "ALL_DONE $(date)" > "$H/status.txt"; echo "=== ALL PODS DONE + EXTRACTED + PUSHED ==="; exit 0
   fi
   sleep 150
 done
-echo "BUDGET_EXPIRED $(date)" > "$H/DONE.txt"
+echo "BUDGET_EXPIRED $(date)" > "$H/status.txt"

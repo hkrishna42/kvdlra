@@ -102,3 +102,22 @@ def test_state_tensors_cover_the_honest_state(tmp_path: Path) -> None:
     state = persist.state_tensors("bug", cache)
     numel = sum(t.numel() for t in state.values())
     assert numel == cache.stored_state_numel()
+
+
+def test_run_persist_forwards_under_no_grad(tmp_path: Path) -> None:
+    """The a3 pod OOM'd exactly like the quant-ppl path: a 16K full-KV prefill with 38 GB
+    allocated = autograd history retained. Every model forward in run_persist must run
+    with grad disabled (pinned by spying on the forward)."""
+    model = _model()
+    seen: list[bool] = []
+    orig = model.forward
+
+    def spy(*a: object, **k: object) -> object:
+        seen.append(torch.is_grad_enabled())
+        return orig(*a, **k)
+
+    model.forward = spy
+    persist.run_persist(
+        model, _args(["full", "bugslash"], chunk=40), ctx=120, device="cpu", tmp=tmp_path
+    )
+    assert seen and not any(seen)

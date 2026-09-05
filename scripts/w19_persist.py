@@ -122,6 +122,7 @@ def persist_roundtrip(
     }
 
 
+@torch.no_grad()
 def attend_ready_seconds(kind: str, cache: Any, device: str, repeats: int) -> float:
     """Median wall-clock to turn the resident persisted state into what attention reads:
     BUG rebuilds the middle (reconstruct-then-attend), quant dequantizes every layer,
@@ -146,6 +147,7 @@ def attend_ready_seconds(kind: str, cache: Any, device: str, repeats: int) -> fl
     return statistics.median(times)
 
 
+@torch.no_grad()
 def run_persist(
     model: Any, args: Any, ctx: int, device: str, tmp: Path, repeats: int = 3
 ) -> list[dict[str, Any]]:

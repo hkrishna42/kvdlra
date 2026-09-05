@@ -1,0 +1,1 @@
+[niah_single ctx16384] quant-2bit-kivi acc=0.92 recall=0.92 ratio=0.163 sbits=0.163 n=12

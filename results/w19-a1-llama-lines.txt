@@ -1,0 +1,3 @@
+[niah_multikey ctx16384] quant-2bit-kivi acc=0.67 recall=0.67 ratio=0.163 sbits=0.163 n=12
+[niah_single ctx16384] quant-2bit-kivi acc=1.00 recall=1.00 ratio=0.163 sbits=0.163 n=12
+[niah_single ctx16384] quant-4bit-kivi acc=1.00 recall=1.00 ratio=0.287 sbits=0.287 n=12

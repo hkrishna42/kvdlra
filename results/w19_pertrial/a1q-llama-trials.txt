@@ -1,0 +1,1 @@
+[trial] task=niah_single ctx=16384 arm=bugSseed-r64-h256-q4 seed=0 trial=0 hit=1 frac=1.000

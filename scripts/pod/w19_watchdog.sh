@@ -12,6 +12,7 @@
 cd /Users/hari/Desktop/kv-dlra || exit 1
 export PATH="/Users/hari/.local/bin:$PATH"
 H=results/w19_harvest; mkdir -p "$H"; touch "$H/pods.txt" "$H/done.txt"
+echo $$ > "$H/watchdog.pid"  # for caffeinate -w and for TaskStop-free teardown checks
 FLOOR="${FLOOR:-6.0}"; BUDGET_ITERS="${BUDGET_ITERS:-600}"
 ROWS='^\[(niah|vt)[^]]*\] +[^ ].* (acc=|SKIP)|^ +[^ ].* \[T=[0-9]+\] (ppl=|OOM|error|mem alloc)|^\[pplw|^\[trial\]|^===(W19_|ALL_DONE|RUN_SHA|ENV_|QUANTO|HQQ|MODEL_)|^run_sha=|^device=|^torch=|^transformers=|NVIDIA'
 extract(){

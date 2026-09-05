@@ -169,14 +169,18 @@ def run(args: Any) -> dict[str, Any]:
     return {"model": args.model, "benchmark": "ruler-official", "ctx": ctx, "results": results}
 
 
-def main() -> None:
+def parse_args(argv: list[str] | None = None) -> Any:
     parser = build_parser()  # every arm flag, identical to the ppl/RULER harnesses
     parser.add_argument("--data-dir", required=True, help="RULER prepare.py --save_dir")
     parser.add_argument("--tasks", nargs="+", default=["niah_single_2"])
     parser.add_argument("--context-len", type=int, default=16384, help="prepare max_seq_length")
     parser.add_argument("--n-examples", type=int, default=None, help="first N records per task")
-    parser.add_argument("--out-json", default="results/w19-official-ruler.json")
-    args = parser.parse_args()
+    parser.set_defaults(out_json="results/w19-official-ruler.json")  # build_parser owns --out-json
+    return parser.parse_args(argv)
+
+
+def main() -> None:
+    args = parse_args()
     blob = run(args)
     out = Path(args.out_json)
     out.parent.mkdir(parents=True, exist_ok=True)

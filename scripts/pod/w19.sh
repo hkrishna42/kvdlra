@@ -59,9 +59,34 @@ a1(){
     --out-json "results/w19-${TAG}-a1hqq8-r16384.json"; emit "A1HQQ8_R16384" "results/w19-${TAG}-a1hqq8-r16384.json"
 }
 
+# A4: the 1/T asymptotic with data -- a 64K point (Llama only: the one family with a native
+# 128K window; Qwen/Mistral are 32K-native). Gist is O(rn+hn), constant in T, so the stored
+# ratio falls as 1/T (0.149->0.139 / 0.085->0.075 from 16K->32K): the ONE frontier claim no
+# fixed-bit quantizer can match. Flagship n=8 (the long pole: ~2x a 32K trial), the eviction
+# and fair-quant comparators n=12 (fast), + same-pod ppl. Needs an 80GB card.
+RH="--ranks 64 --hh-budgets 256 --hh-neighbor 1 --warmup-seed"
+a4(){
+  T=65536
+  echo "===W19_A4_R${T}_BEGIN_${TAG}==="
+  RULER --context-lens "$T" $T4 --methods ea --evict-keeps 0.1 --n-trials 6 --seeds 0 1 \
+    --out-json "results/w19-${TAG}-a4ea-r${T}.json"; emit "A4EA_R${T}" "results/w19-${TAG}-a4ea-r${T}.json"
+  RULER --context-lens "$T" $T4 $KIVI --quant-nbits 2 4 --n-trials 6 --seeds 0 1 \
+    --out-json "results/w19-${TAG}-a4kivi-r${T}.json"; emit "A4KIVI_R${T}" "results/w19-${TAG}-a4kivi-r${T}.json"
+  RULER --context-lens "$T" $T4 --methods bugslash $RH --n-trials 4 --seeds 0 1 \
+    --out-json "results/w19-${TAG}-a4flag-r${T}.json"; emit "A4FLAG_R${T}" "results/w19-${TAG}-a4flag-r${T}.json"
+  echo "===W19_A4_PPL${T}_BEGIN_${TAG}==="
+  PPL4 --T "$T" --methods full ea --evict-keeps 0.1 \
+    --out-json "results/w19-${TAG}-a4ppl-base.json"; emit "A4PPL_BASE" "results/w19-${TAG}-a4ppl-base.json"
+  PPL4 --T "$T" $KIVI --quant-nbits 2 4 \
+    --out-json "results/w19-${TAG}-a4ppl-kivi.json"; emit "A4PPL_KIVI" "results/w19-${TAG}-a4ppl-kivi.json"
+  PPL4 --T "$T" --methods bugslash $RH \
+    --out-json "results/w19-${TAG}-a4ppl-flag.json"; emit "A4PPL_FLAG" "results/w19-${TAG}-a4ppl-flag.json"
+}
+
 case "$MODE" in
   a1diag) a1diag ;;
   a1) a1 ;;
+  a4) a4 ;;
   *) echo "===UNKNOWN_MODE_${MODE}==="; exit 1 ;;
 esac
 echo "===W19_DONE_${MODE}_${TAG}==="

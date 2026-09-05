@@ -83,9 +83,42 @@ a4(){
     --out-json "results/w19-${TAG}-a4ppl-flag.json"; emit "A4PPL_FLAG" "results/w19-${TAG}-a4ppl-flag.json"
 }
 
+# A2: the official-benchmark anchor. The NVIDIA RULER generator (pinned commit) builds the
+# prompts ON the pod (their essay/noise haystacks, needle types, templates; 12 samples per
+# task at 16K, seed 42) and scripts/w19_official_ruler.py runs the SAME arms through them
+# (their tokens_to_generate + string_match_all). Closes the "self-authored benchmark" gap.
+RULER_SHA=c3f5e3b4f87f97e048793bb510a3a6b19a46bf3a
+TASKS9="niah_single_1 niah_single_2 niah_single_3 niah_multikey_1 niah_multikey_2 niah_multikey_3 niah_multivalue niah_multiquery vt"
+OFF(){ PYTHONPATH=src python -u scripts/w19_official_ruler.py --model "$MODEL" --device cuda \
+         --dtype "$DTYPE" --chunk "$CHUNK" --data-dir /root/ruler_data --context-len 16384 "$@" 2>&1; }
+a2(){
+  echo "===W19_A2_PREP_BEGIN_${TAG}==="
+  pip install -q wonderwords tenacity nltk html2text beautifulsoup4 2>&1 | tail -1
+  python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('punkt_tab', quiet=True)"
+  rm -rf /root/RULER; git clone -q https://github.com/NVIDIA/RULER.git /root/RULER || { echo "===RULER_CLONE_FAILED==="; return 1; }
+  git -C /root/RULER checkout -q "$RULER_SHA" || { echo "===RULER_CHECKOUT_FAILED==="; return 1; }
+  echo "===RULER_SHA_$(git -C /root/RULER rev-parse HEAD)==="
+  ( cd /root/RULER/scripts/data/synthetic/json && python download_paulgraham_essay.py 2>&1 | tail -2 )
+  [ -s /root/RULER/scripts/data/synthetic/json/PaulGrahamEssays.json ] || echo "===ESSAYS_MISSING==="
+  for task in $TASKS9; do
+    ( cd /root/RULER/scripts/data && python prepare.py --save_dir /root/ruler_data --benchmark synthetic \
+        --task "$task" --tokenizer_path "$MODEL" --tokenizer_type hf --max_seq_length 16384 \
+        --num_samples 12 --random_seed 42 --model_template_type base 2>&1 | tail -1 )
+    echo "===A2_PREP_${task}_$(wc -l < /root/ruler_data/${task}/validation.jsonl 2>/dev/null || echo 0)==="
+  done
+  echo "===W19_A2_RUN_BEGIN_${TAG}==="
+  OFF --tasks $TASKS9 --methods full think palu ea --think-ratios 0.5 --palu-ranks 0.5 --evict-keeps 0.1 \
+    --out-json "results/w19-${TAG}-a2base.json"; emit "A2BASE" "results/w19-${TAG}-a2base.json"
+  OFF --tasks $TASKS9 $KIVI --quant-nbits 2 4 \
+    --out-json "results/w19-${TAG}-a2kivi.json"; emit "A2KIVI" "results/w19-${TAG}-a2kivi.json"
+  OFF --tasks $TASKS9 --methods bugslash $RH \
+    --out-json "results/w19-${TAG}-a2flag.json"; emit "A2FLAG" "results/w19-${TAG}-a2flag.json"
+}
+
 case "$MODE" in
   a1diag) a1diag ;;
   a1) a1 ;;
+  a2) a2 ;;
   a4) a4 ;;
   *) echo "===UNKNOWN_MODE_${MODE}==="; exit 1 ;;
 esac

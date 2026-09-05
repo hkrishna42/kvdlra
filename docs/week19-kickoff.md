@@ -47,6 +47,12 @@ costed program to close the remaining gap. Full facts/gotchas appendix below the
 > a sub-0.05× storage-tier method → honest poster on mechanism+rigor). **Run it first; write the
 > ICML version around its outcome. Do not write around it.**
 >
+> **⚠️ FIRST MOVE — one honest note for this session's first action: run A1 before touching the
+> ICML prose. Its outcome is the fork, and everything downstream (the exclusive-band claim,
+> §subcliff, the abstract's framing) is written differently depending on which way it lands.**
+> Do not spend the session polishing figures, prose, or the dashboard before A1's result row is
+> in hand — that work would be written around an unknown and redone.
+>
 > ## Phase A — the four gap-closing experiments (ranked by leverage; ≈$105 total)
 >
 > **A1 (DECISIVE, ~$30): a fair KIVI/KVQuant 2-bit baseline.** What exists: `quant-{2,4}bit`

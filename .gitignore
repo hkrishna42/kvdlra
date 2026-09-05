@@ -49,3 +49,5 @@ dashboards/
 # scratch plots from local smoke runs (never clobber tracked figures)
 figures/scratch/
 results/w18_harvest/*.raw
+results/w19_harvest/*.raw
+results/scratch/

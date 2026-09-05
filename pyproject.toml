@@ -26,6 +26,7 @@ dependencies = [
   "numpy>=1.26",
   "scipy>=1.13",
   "tqdm",
+  "hqq==0.2.8.post1",
 ]
 
 [project.optional-dependencies]

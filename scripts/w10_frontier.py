@@ -41,6 +41,7 @@ from transformers.cache_utils import Cache, DynamicCache
 from kvdlra import accounting as acc
 from kvdlra.cache import BugStreamingCache, MorphKVCache, ShadowKVCache
 from kvdlra.press.compat import install_kvpress_prefill_compat
+from kvdlra.quant.kivi_cache import aux_words, flush, make_quant_cache
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -134,14 +135,35 @@ def score_press(
     return nll, ntok, cache
 
 
+def _prefill_plain(model: Any, cache: Any, ctx: torch.Tensor, chunk: int) -> None:
+    """Chunked (or single-shot when ``chunk`` is 0 / >= T) prefill into a plain HF cache
+    that updates incrementally (the QuantizedCache baseline), then flush the fp16
+    residual so decode starts fully quantized exactly as after a single-shot prefill.
+    Week-19: the single-shot 16K/32K quant prefill OOM'd even on 80GB; ``logits_to_keep=1``
+    keeps every forward's activations bounded by the chunk, not by T."""
+    t = int(ctx.shape[1])
+    step = chunk if 0 < chunk < t else t
+    for start in range(0, t, step):
+        stop = min(t, start + step)
+        pos = torch.arange(start, stop, device=ctx.device).unsqueeze(0)
+        model(
+            ctx[:, start:stop],
+            past_key_values=cache,
+            use_cache=True,
+            position_ids=pos,
+            logits_to_keep=1,
+        )
+    flush(cache)
+
+
 def score_quant(
-    model: Any, cache: Any, ctx_ids: torch.Tensor, win_ids: torch.Tensor
+    model: Any, cache: Any, ctx_ids: torch.Tensor, win_ids: torch.Tensor, chunk: int = 0
 ) -> tuple[float, int]:
-    """Prefill into a caller-supplied QuantizedCache (KIVI baseline) then score the
-    window. Single-shot (HF QuantizedCache does not chunk); returns nll + token count."""
+    """Prefill into a caller-supplied QuantizedCache (KIVI baseline; chunked when
+    ``chunk`` > 0) then score the window; returns nll + token count."""
     ctx = ctx_ids.unsqueeze(0)
     ctx_len = int(ctx_ids.shape[0])
-    model(ctx, past_key_values=cache, use_cache=True, logits_to_keep=1)
+    _prefill_plain(model, cache, ctx, chunk)
     return _score_window(model, cache, ctx_len, win_ids)
 
 
@@ -416,34 +438,34 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                     ),
                 }
             )
-    if "quant" in want:  # Week-18: KIVI-style 2/4-bit KV baseline (transformers QuantizedCache)
-        from transformers.cache_utils import QuantizedCache
-
-        # axis_value=-1 quantizes VALUES per-token (KIVI-faithful); the transformers
-        # default 0 is per-channel, which the docstring flags as a deviation and which
-        # empirically wrecks exact-needle retrieval. Name the arm "-av{axis}" when != 0.
-        av = int(getattr(args, "quant_axis_value", 0))
-        ak = int(getattr(args, "quant_axis_key", 0))
-        asuf = f"-av{av}" if av != 0 else ""
+    if "quant" in want:  # Week-18/19: KIVI-style 2/4-bit (+8-bit control) KV baseline
+        # scheme "token" = transformers' default axes (per-token groups for K AND V; the
+        # W18 arms, bit-identical); "kivi" = per-channel keys + per-token values (the
+        # faithful KIVI config -- see kvdlra.quant.kivi_cache). Backend "quanto" (2/4-bit,
+        # needs its CUDA kernel) or "hqq" (1-8 bit; the 8-bit decode-path control).
+        scheme = str(getattr(args, "quant_scheme", "token"))
+        backend = str(getattr(args, "quant_backend", "quanto"))
+        suffix = ("-kivi" if scheme == "kivi" else "") + ("-hqq" if backend == "hqq" else "")
         for nbits in args.quant_nbits:
             arms.append(
                 {
-                    "name": f"quant-{nbits}bit{asuf}",
+                    "name": f"quant-{nbits}bit{suffix}",
                     "kind": "quant",
                     "rank": None,
                     "nbits": nbits,
                     "quant_group": args.quant_group,
                     "quant_residual": args.quant_residual,
-                    "chunkable": False,  # HF QuantizedCache: single-shot prefill
+                    "quant_scheme": scheme,
+                    "quant_backend": backend,
+                    "chunkable": True,  # Week-19: _prefill_plain chunks + flushes
                     "make": (
-                        lambda nbits=nbits: QuantizedCache(
-                            backend="quanto",
-                            config=model.config,
+                        lambda nbits=nbits: make_quant_cache(
+                            model.config,
                             nbits=nbits,
-                            axis_key=ak,
-                            axis_value=av,
-                            q_group_size=args.quant_group,
-                            residual_length=args.quant_residual,
+                            scheme=scheme,
+                            backend=backend,
+                            group=args.quant_group,
+                            residual=args.quant_residual,
                         )
                     ),
                 }
@@ -507,6 +529,7 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
             nbits=int(arm["nbits"]),
             group=int(arm["quant_group"]),
             residual_length=int(arm["quant_residual"]),
+            scale_words=aux_words(cache),  # billed at the backend's real aux precision
         )
     if arm.get("press_type") == "think":
         # ThinK zeros channels (no measured gain) -> analytic footprint (K pruned).
@@ -572,7 +595,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                             )
                         elif arm["kind"] == "quant":
                             cache = arm["make"]()
-                            nll, ntok = score_quant(model, cache, ctx_ids, win_ids)
+                            nll, ntok = score_quant(model, cache, ctx_ids, win_ids, arm_chunk)
                         else:
                             cache = arm["make"]()
                             nll, ntok = score_streaming(model, cache, ctx_ids, win_ids, arm_chunk)
@@ -637,7 +660,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     "error": f"{type(exc).__name__}: {exc}",
                 }
                 if args.device.startswith("cuda"):
+                    # Week-19: say WHERE the memory went (allocated vs peak) so an OOM
+                    # in the pod log is diagnosable without a re-run.
+                    row["mem_alloc_gb"] = torch.cuda.memory_allocated() / 2**30
+                    row["mem_peak_gb"] = torch.cuda.max_memory_allocated() / 2**30
                     torch.cuda.empty_cache()
+                    print(
+                        f"  {arm['name']:14s} [T={t}] mem alloc={row['mem_alloc_gb']:.1f}GB "
+                        f"peak={row['mem_peak_gb']:.1f}GB",
+                        flush=True,
+                    )
                 print(f"  {arm['name']:14s} [T={t}] {row['status']}: {row['error'][:110]}")
             rows.append(row)
             _log_row(row)
@@ -747,13 +779,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--quant-residual", type=int, default=128, help="quant fp16 residual window length"
     )
-    parser.add_argument("--quant-axis-key", type=int, default=0, choices=[0, -1])
     parser.add_argument(
-        "--quant-axis-value",
-        type=int,
-        default=0,
-        choices=[0, -1],
-        help="quanto value-quant axis: 0=per-channel (default), -1=per-token (KIVI-faithful)",
+        "--quant-scheme",
+        default="token",
+        choices=["token", "kivi"],
+        help="quant baseline grouping: 'token' = transformers default (per-token K and V; "
+        "the W18 arms) or 'kivi' = per-channel keys + per-token values (KIVI-faithful) "
+        "-> '-kivi' arm suffix",
+    )
+    parser.add_argument(
+        "--quant-backend",
+        default="quanto",
+        choices=["quanto", "hqq"],
+        help="quant baseline backend: quanto (2/4-bit) or hqq (1-8 bit; 8-bit control) "
+        "-> '-hqq' arm suffix",
     )
     parser.add_argument(
         "--bug-quant-bits",

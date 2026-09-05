@@ -49,7 +49,7 @@ from perplexity_sweep import load_corpus_sentences, load_model
 from transformers.cache_utils import Cache, DynamicCache
 from w4_needle import _FILLER
 from w5_ruler import _LABELS
-from w10_frontier import _footprint, _prefill_chunked, build_arms
+from w10_frontier import _footprint, _prefill_chunked, _prefill_plain, build_arms
 
 from kvdlra.press.compat import install_kvpress_prefill_compat
 
@@ -317,10 +317,12 @@ def retrieve(
                 model, tok, cache, query.to(device), ctx_len, device, block=False, max_new=max_new
             )
     elif arm["kind"] == "quant":
-        # KIVI-style QuantizedCache baseline (Week-18): the arm supplies its OWN cache
-        # object (not a press over a DynamicCache); prefill + decode run into it directly.
+        # KIVI-style QuantizedCache baseline (Week-18/19): the arm supplies its OWN cache
+        # object (not a press over a DynamicCache); prefill honors --chunk (Week-19: the
+        # single-shot 16K/32K quant prefill OOM'd even on 80GB) and flushes the residual
+        # so decode starts fully quantized, as after a single-shot prefill.
         cache = arm["make"]()
-        model(hay, past_key_values=cache, use_cache=True, logits_to_keep=1)
+        _prefill_plain(model, cache, hay, chunk)
         fp = _footprint(arm, cache, ctx_len, n, h_kv)
         text = _decode(
             model, tok, cache, query.to(device), ctx_len, device, block=True, max_new=max_new
@@ -539,14 +541,8 @@ def main() -> None:
     parser.add_argument("--quant-nbits", type=int, nargs="+", default=[2, 4])
     parser.add_argument("--quant-group", type=int, default=64)
     parser.add_argument("--quant-residual", type=int, default=128)
-    parser.add_argument("--quant-axis-key", type=int, default=0, choices=[0, -1])
-    parser.add_argument(
-        "--quant-axis-value",
-        type=int,
-        default=0,
-        choices=[0, -1],
-        help="quanto value-quant axis: 0=per-channel (default), -1=per-token (KIVI-faithful)",
-    )
+    parser.add_argument("--quant-scheme", default="token", choices=["token", "kivi"])
+    parser.add_argument("--quant-backend", default="quanto", choices=["quanto", "hqq"])
     parser.add_argument("--bug-quant-bits", type=int, default=None)
     parser.add_argument("--bug-quant-budget", type=int, default=0)
     parser.add_argument("--shadow-ranks", type=int, nargs="+", default=[64, 128])

@@ -75,7 +75,7 @@ def test_build_arms_creates_quant_arms() -> None:
     arms = build_arms(_args(), _model(), 200)
     names = [a["name"] for a in arms]
     assert names == ["quant-2bit", "quant-4bit"]
-    assert all(a["kind"] == "quant" and a["chunkable"] is False for a in arms)
+    assert all(a["kind"] == "quant" and a["chunkable"] is True for a in arms)  # Week-19: chunked
 
 
 def test_quant_arm_runs_through_retrieve_and_footprint() -> None:
@@ -108,9 +108,12 @@ def test_quant_footprint_dispatch_matches_accounting() -> None:
         "quant_residual": 128,
         "name": "quant-2bit",
     }
-    fp = _footprint(arm, cast(Any, object()), 16384, 1024, H)  # cache arg unused for quant
+    # Week-19: the aux (scale+zero) precision is read off the real cache after prefill.
+    cache = build_arms(_args(), _model(), 200)[0]["make"]()
+    cast(Any, cache.layers[0]).update(torch.randn(1, H, 200, D), torch.randn(1, H, 200, D))
+    fp = _footprint(arm, cast(Any, cache), 16384, 1024, H)
     assert fp.ratio_fp16(16384, 1024) == acc.quant_footprint(
-        16384, 1024, nbits=2, group=64, residual_length=128
+        16384, 1024, nbits=2, group=64, residual_length=128, scale_words=2
     ).ratio_fp16(16384, 1024)
 
 

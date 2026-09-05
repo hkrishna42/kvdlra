@@ -424,7 +424,7 @@ def quant_footprint(
     nbits: int,
     group: int = 64,
     residual_length: int = 128,
-    scale_words: int = 2,
+    scale_words: float = 2,
 ) -> Footprint:
     """KIVI-style 2/4-bit KV baseline (transformers ``QuantizedCache`` / quanto backend,
     arm ``quant-{nbits}bit``). The ``residual_length`` most-recent tokens stay verbatim

@@ -115,10 +115,24 @@ a2(){
     --out-json "results/w19-${TAG}-a2flag.json"; emit "A2FLAG" "results/w19-${TAG}-a2flag.json"
 }
 
+# A3: the realized systems win -- persisted-cache cold start (serialize -> reload -> H2D ->
+# attend-ready wall-clock) for full KV vs the flagship vs the fair 2-bit baseline, CUDA,
+# Llama 16K/32K. Turns the measured byte ratio (g5: 0.150x/0.139x) into a deployment
+# existence proof. Rows: ^\[persist  (harvested like acc= rows).
+a3(){
+  echo "===W19_A3_PERSIST_BEGIN_${TAG}==="
+  PYTHONPATH=src python -u scripts/w19_persist.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+    --chunk "$CHUNK" --context-lens 16384 32768 --repeats 5 --tmp /root/persist \
+    --methods full bugslash quant $RH --quant-nbits 2 --quant-scheme kivi \
+    --out-json "results/w19-${TAG}-a3persist.json" 2>&1
+  emit "A3PERSIST" "results/w19-${TAG}-a3persist.json"
+}
+
 case "$MODE" in
   a1diag) a1diag ;;
   a1) a1 ;;
   a2) a2 ;;
+  a3) a3 ;;
   a4) a4 ;;
   *) echo "===UNKNOWN_MODE_${MODE}==="; exit 1 ;;
 esac

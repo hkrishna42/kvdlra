@@ -373,9 +373,10 @@ def test_seed_preserves_disjointness_and_caps(tiny_model: LlamaForCausalLM) -> N
 
 def test_seed_warmup_rejects_coded_and_merge(tiny_model: LlamaForCausalLM) -> None:
     """Finding-3 guard: the warm-up seed reasons over the fp32 tail only, so it is
-    rejected with a coded/quant tier or merge (build_arms never emits these combos;
-    the guard blocks a silent future miswire that could double-count a token)."""
-    for kw in ({"merge": True}, {"quant_bits": 4, "quant_budget": 16}):
+    rejected with a coded tier or merge (the guard blocks a silent future miswire that
+    could double-count a token). Week-19 wires the PolarQuant tier (bugSseed-...-q)."""
+    fenced: list[dict[str, object]] = [{"merge": True}]  # Week-19: quant tier now allowed
+    for kw in fenced:
         with pytest.raises(ValueError, match="fp32 low-rank tail only"):
             BugStreamingCache(
                 tiny_model,
@@ -387,7 +388,7 @@ def test_seed_warmup_rejects_coded_and_merge(tiny_model: LlamaForCausalLM) -> No
                 hh_budget=2,
                 hh_select="surprise",
                 seed_hh_warmup=True,
-                **kw,
+                **kw,  # type: ignore[arg-type]
             )
 
 

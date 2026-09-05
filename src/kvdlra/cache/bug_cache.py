@@ -474,10 +474,14 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         # (non-unique-position) columns would let a promoted token be double-counted
         # or evict the wrong column, so the combination is rejected (never emitted by
         # build_arms; guarded so a future caller cannot wire it silently).
-        if self.seed_hh_warmup and (coord_codebook is not None or quant_budget > 0 or merge):
+        # Week-19: the PolarQuant tier (quant_budget) is allowed -- the seed only routes the
+        # first chunk's sub-blocks through _absorb_block_slash, whose demotions reach the
+        # quant tier through the same _absorb_columns/_enforce_budgets path as every
+        # steady-state graduation (the unseeded q arm). CodeBUG / merge stay fenced.
+        if self.seed_hh_warmup and (coord_codebook is not None or merge):
             raise ValueError(
                 "seed_hh_warmup operates on the fp32 low-rank tail only; it is not "
-                "combined with a coded/quant tier (coord_codebook/quant_budget) or merge"
+                "combined with a coded tier (coord_codebook) or merge"
             )
         if merge and not self.lowrank_enabled:
             raise ValueError("merge requires an enabled low-rank middle")

@@ -15,7 +15,12 @@
 | Mistral-7B | 1.00 [0.76,1.00] | 1.00 [0.76,1.00] | 0.83 [0.55,0.95] | 0.42 [0.19,0.68] | 0.075x | 3.76 |
 | Llama-3.1-8B | 1.00 [0.76,1.00] | 1.00 [0.76,1.00] | 1.00 [0.76,1.00] | 0.92 [0.65,0.98] | 0.075x | 8.33 |
 
-## q4 sub-cliff `bugS-r64-h256-q4` (BUG coord-quant 4-bit)
+## q4 sub-cliff `bugS-r64-h256-q4` (BUG coord-quant 4-bit) -- **INVALID AS A COMPOSE MEASUREMENT (Week-19)**
+> The arm's quant tier never filled: build_arms passed the fp32 coordinate budget as the whole context and
+> the quant tier as 512 (the flag's documented semantics inverted), so every row below bills byte-identically
+> to the unseeded flagship (`results/w18-*-lines.txt`: ratio 0.085/0.149, sbits 0.151/0.275). These rows ARE
+> the unseeded `bugS-r64-h256` (hence the W14 pattern 100/67/0/0 at 16K and the apparent 16K->32K
+> 'inversion'). The real compose arm (`bugSseed-r64-h256-q4`, ~0.04x) is measured in Week-19 MODE a1q.
 | family | ctx | single | mk | mv | vt |
 |---|---|---|---|---|---|
 | Qwen2.5-7B | 16K | 1.00 [0.76,1.00] | 0.67 [0.39,0.86] | 0.00 [0.00,0.24] | 0.00 [0.00,0.24] |

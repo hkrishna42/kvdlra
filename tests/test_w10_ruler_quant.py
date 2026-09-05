@@ -155,14 +155,27 @@ def test_bug_quant_compose_arm_builds_with_q_suffix() -> None:
     assert arms[0]["kind"] == "bug"
 
 
-def test_seed_plus_quant_fails_loud() -> None:
-    """The seed+quant combo is fenced until GPU-validated: build_arms raises a clear
-    error rather than silently dropping the seed or hitting the deep cache guard."""
-    import pytest
+def test_seed_plus_quant_builds_and_seeds_the_exact_tier() -> None:
+    """Week-19: the seeded compose arm (bugSseed-...-q4, the sub-cliff candidate). The
+    warm-up seed only routes the first chunk's sub-blocks through _absorb_block_slash --
+    the same graduation path the unseeded q4 arm runs with its quant tier every step --
+    so the combination is wired: it builds, its first-chunk ingest populates the exact
+    tier (the seed effect), and the demoted columns reach the quant tier (billed)."""
+    from w10_frontier import _prefill_chunked
 
+    model = _model()
     args = _bug_args(bug_quant_bits=4, bug_quant_budget=32, warmup_seed=True)
-    with pytest.raises(ValueError, match="not yet combined with --warmup-seed"):
-        build_arms(args, _model(), 160)
+    arm = build_arms(args, model, 160)[0]
+    assert arm["name"] == "bugSseed-r16-h16-q4"
+    cache = arm["make"]()
+    hay = torch.randint(0, 256, (1, 160))
+    with cache.attach(model):
+        _prefill_chunked(model, cache, hay, 40)
+    layer = cache._bug_layers()[0]
+    assert layer._hh_len() > 0  # seeded during the first chunk, not only at graduation
+    assert layer._q_len() > 0  # demoted coordinates landed in the 4-bit tier
+    fp = _footprint(arm, cache, 160, H * D, H)
+    assert 0.0 < fp.ratio_stored_bits(160, H * D) < 1.0
 
 
 def test_plot_survives_empty_results() -> None:

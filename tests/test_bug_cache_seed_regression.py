@@ -195,17 +195,17 @@ def test_seed_off_is_bit_identical_to_baseline(tiny_model: LlamaForCausalLM) -> 
             "anchor_rank": 4,
             "code_budget": 8,
         },
-        {"quant_bits": 4, "quant_budget": 16},
         {"merge": True},
     ],
-    ids=["coord_codebook", "quant_budget", "merge"],
+    ids=["coord_codebook", "merge"],
 )
 def test_seed_rejects_coded_quant_merge(
     tiny_model: LlamaForCausalLM, extra: dict[str, object]
 ) -> None:
     """The seed reasons over the fp32 low-rank tail only, so it is rejected (documented
-    message) with a coded/quant second tier or a merged (non-unique-position) tail --
-    the combinations that could double-count or mis-evict a promoted column."""
+    message) with a coded second tier or a merged (non-unique-position) tail -- the
+    combinations that could double-count or mis-evict a promoted column. Week-19: the
+    PolarQuant tier is allowed (same graduation path as the unseeded q arm)."""
     with pytest.raises(ValueError, match="fp32 low-rank tail only"):
         BugStreamingCache(
             tiny_model,

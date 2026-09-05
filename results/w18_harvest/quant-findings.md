@@ -80,3 +80,15 @@ prefill's autograd graph was retained (the RULER path is decorated, hence rows t
 + test-pinned in 6734afa; the a1 fan-out (qwen/mistral/llama, 40GB, SHA 6734afa) carries
 the ppl cells. Fund-bar note: single-needle retrieval is NOT where the exclusive band would be
 decided (KIVI-2bit = 1.00 there); mk/mv/vt at 16K/32K decide it.
+
+## W19 discovery: the W18 "q4 compose" arm never quantized
+
+`bugS-r64-h256-q4` rows bill byte-identically to the unseeded flagship at both contexts and
+both billings (ratio 0.085/0.149, sbits 0.151/0.275) -> its quant tier was empty. Cause: build_arms
+passed `coord_budget = t + rw + ab` (the whole context stays fp32) and `quant_budget = 512`,
+the inverse of `--bug-quant-budget`'s documented meaning ("fp32 coordinate columns kept before
+demotion"). Fixed in Week-19 (`q_coord_budget = 512`, `q_quant_budget = whole middle`, never
+dropped), and the seed is now allowed with the quant tier (same graduation path). The
+"16K->32K inversion" was the unseeded arm's warm-up-window failure, not a quantization effect.
+The paper never cited q4 numbers (it cites the W11 `bugS-r32-h256` 0.043x cell); the g1 report
+table is annotated INVALID. Real compose = `bugSseed-r64-h256-q4` (MODE a1q).

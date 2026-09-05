@@ -268,12 +268,16 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
         # fp32 tail) whose relaxation needs GPU retrieval validation -> fail loud here.
         qbits = getattr(args, "bug_quant_bits", None)
         qbudget = int(getattr(args, "bug_quant_budget", 0) or 0)
-        if qbits is not None and warmup:
-            raise ValueError(
-                "--bug-quant-bits is not yet combined with --warmup-seed: the seed+quant "
-                "guard (bug_cache.py) needs GPU validation that the warmup seed initializes "
-                "correctly alongside the quant tier. Run the bugS-...-q arm (no seed) for now."
-            )
+        # Week-19: seed + quant tier is wired (bugSseed-...-q{bits}, the sub-cliff
+        # candidate): the seed only routes the first chunk through _absorb_block_slash,
+        # the graduation path the unseeded q arm already runs with its quant tier.
+        # Budget semantics (Week-19 fix): --bug-quant-budget is the number of fp32
+        # coordinate columns KEPT; everything demoted from it is quantized, never
+        # dropped (quant tier = the whole middle). The Week-18 arm had these swapped
+        # (coord_budget = whole context, quant tier 512) so its tier never filled: its
+        # rows bill byte-identically to the unseeded flagship (results/w18-*-lines.txt).
+        q_coord_budget = qbudget if qbits is not None else cb
+        q_quant_budget = cb if qbits is not None else 0
         qsuf = f"-q{qbits}" if qbits is not None else ""
         for r in args.ranks:
             for hh in args.hh_budgets:
@@ -289,7 +293,7 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                             lambda r=r, cb=cb, hh=hh: BugStreamingCache(
                                 model,
                                 rank=r,
-                                coord_budget=cb,
+                                coord_budget=q_coord_budget,
                                 recent_window=rw,
                                 absorb_block=ab,
                                 n_sink=N_SINK,
@@ -303,7 +307,7 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                                 score_rank=score_rank,
                                 min_sv_frac=msf,
                                 quant_bits=qbits,
-                                quant_budget=qbudget,
+                                quant_budget=q_quant_budget,
                             )
                         ),
                     }

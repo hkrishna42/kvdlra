@@ -128,9 +128,27 @@ a3(){
   emit "A3PERSIST" "results/w19-${TAG}-a3persist.json"
 }
 
+# a1q: the REAL sub-cliff compose -- bugSseed-r64-h256-q4: the seeded flagship with 512 fp32
+# coordinate columns kept and every demoted column quantized to 4 bits (never dropped),
+# ~0.04x stored -- below any 2-bit quantizer's floor. Week-18's "q4" rows never filled the
+# tier (budget semantics were inverted), so this is the first real measurement. 4 tasks x
+# 16K/32K, n=12, + same-pod ppl. Streaming r64: ~25 min per 16K cell, ~1.4h per 32K cell.
+QC="$RH --bug-quant-bits 4 --bug-quant-budget 512"
+a1q(){
+  for T in 16384 32768; do
+    echo "===W19_A1Q_R${T}_BEGIN_${TAG}==="
+    RULER --context-lens "$T" $T4 --methods bugslash $QC --n-trials 6 --seeds 0 1 \
+      --out-json "results/w19-${TAG}-a1q-r${T}.json"; emit "A1Q_R${T}" "results/w19-${TAG}-a1q-r${T}.json"
+    echo "===W19_A1Q_PPL${T}_BEGIN_${TAG}==="
+    PPL4 --T "$T" --methods bugslash $QC \
+      --out-json "results/w19-${TAG}-a1q-ppl${T}.json"; emit "A1Q_PPL${T}" "results/w19-${TAG}-a1q-ppl${T}.json"
+  done
+}
+
 case "$MODE" in
   a1diag) a1diag ;;
   a1) a1 ;;
+  a1q) a1q ;;
   a2) a2 ;;
   a3) a3 ;;
   a4) a4 ;;

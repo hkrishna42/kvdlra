@@ -1,0 +1,6 @@
+[ctx 16384] bug-r64                stored_ratio=0.0685 ratio_fp16=0.0685 coldload_ratio=0.1347 workspace_ratio=0.998 peak_ratio=9.096 integrity=0.0e+00
+[ctx 16384] bugSseed-r64-h256      stored_ratio=0.0841 ratio_fp16=0.0851 coldload_ratio=0.1503 workspace_ratio=0.982 peak_ratio=9.093 integrity=0.0e+00
+[ctx 16384] full                   stored_ratio=1.0000 ratio_fp16=1.0000 coldload_ratio=1.0000 workspace_ratio=0.000 peak_ratio=cpu integrity=0.0e+00
+[ctx 32768] bug-r64                stored_ratio=0.0655 ratio_fp16=0.0655 coldload_ratio=0.1299 workspace_ratio=0.999 peak_ratio=5.349 integrity=0.0e+00
+[ctx 32768] bugSseed-r64-h256      stored_ratio=0.0738 ratio_fp16=0.0748 coldload_ratio=0.1387 workspace_ratio=0.991 peak_ratio=5.344 integrity=0.0e+00
+[ctx 32768] full                   stored_ratio=1.0000 ratio_fp16=1.0000 coldload_ratio=1.0000 workspace_ratio=0.000 peak_ratio=cpu integrity=0.0e+00

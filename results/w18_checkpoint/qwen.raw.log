@@ -1,0 +1,371 @@
+Thu Sep  3 17:43:57 UTC 2026
+Hit:1 http://security.ubuntu.com/ubuntu noble-security InRelease
+Hit:2 http://archive.ubuntu.com/ubuntu noble InRelease
+Hit:3 http://archive.ubuntu.com/ubuntu noble-updates InRelease
+Hit:4 http://archive.ubuntu.com/ubuntu noble-backports InRelease
+Reading package lists...
+Reading package lists...
+Building dependency tree...
+Reading state information...
+openssh-server is already the newest version (1:9.6p1-3ubuntu13.19).
+tmux is already the newest version (3.4-1ubuntu0.1).
+wget is already the newest version (1.21.4-1ubuntu4.5).
+curl is already the newest version (8.5.0-2ubuntu10.13).
+less is already the newest version (590-2ubuntu2.1).
+locales is already the newest version (2.39-0ubuntu8.8).
+sudo is already the newest version (1.9.15p5-3ubuntu5.24.04.2).
+software-properties-common is already the newest version (0.99.49.4).
+0 upgraded, 0 newly installed, 0 to remove and 39 not upgraded.
+Reading package lists...
+Building dependency tree...
+Reading state information...
+git is already the newest version (1:2.43.0-1ubuntu7.3).
+rsync is already the newest version (3.2.7-1ubuntu1.5).
+0 upgraded, 0 newly installed, 0 to remove and 39 not upgraded.
+rm: cannot remove '/etc/forward_port2': No such file or directory
++ export HF_HUB_ENABLE_HF_TRANSFER=1
++ HF_HUB_ENABLE_HF_TRANSFER=1
++ export HF_HUB_DOWNLOAD_TIMEOUT=120
++ HF_HUB_DOWNLOAD_TIMEOUT=120
++ export HF_HUB_DISABLE_XET=1
++ HF_HUB_DISABLE_XET=1
++ export DEBIAN_FRONTEND=noninteractive
++ DEBIAN_FRONTEND=noninteractive
++ export TOKENIZERS_PARALLELISM=false
++ TOKENIZERS_PARALLELISM=false
++ export PIP_BREAK_SYSTEM_PACKAGES=1
++ PIP_BREAK_SYSTEM_PACKAGES=1
++ export MODE=g1
++ MODE=g1
++ export MODEL=Qwen/Qwen2.5-7B-Instruct
++ MODEL=Qwen/Qwen2.5-7B-Instruct
++ export TAG=qwen
++ TAG=qwen
++ export CHUNK=4096
++ CHUNK=4096
++ export DTYPE=bfloat16
++ DTYPE=bfloat16
++ export SHA=15678a75edb408d3482a933149f044c5ba2f41c5
++ SHA=15678a75edb408d3482a933149f044c5ba2f41c5
++ export DRIVER=scripts/pod/w18.sh
++ DRIVER=scripts/pod/w18.sh
++ echo ===MODE_g1_qwen===
+===MODE_g1_qwen===
++ cd /root
++ for attempt in 1 2 3 4 5
++ rm -rf kvdlra
++ git clone https://github.com/hkrishna42/kvdlra.git
++ tail -3
+Server listening on 0.0.0.0 port 22.
+Server listening on :: port 22.
+Thu Sep  3 17:44:01 UTC 2026
+Warning: Permanently added 'ssh1.vast.ai' (ED25519) to the list of known hosts.
+Cloning into 'kvdlra'...
++ '[' -d kvdlra/scripts ']'
++ break
++ cd kvdlra
++ git checkout -q 15678a75edb408d3482a933149f044c5ba2f41c5
++ tail -2
+++ git rev-parse HEAD
++ RUN_SHA=15678a75edb408d3482a933149f044c5ba2f41c5
++ echo ===RUN_SHA_15678a75edb408d3482a933149f044c5ba2f41c5===
+===RUN_SHA_15678a75edb408d3482a933149f044c5ba2f41c5===
++ pip install -q hf_transfer hf_xet numpy scipy matplotlib kvpress==0.5.1
++ tail -5
+ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
+spin 0.17 requires click!=8.3.0,<8.4,>=8, but you have click 8.5.0 which is incompatible.
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
++ pip install -q transformers==5.8.0 datasets==2.21.0 'optimum-quanto>=0.2.7'
++ tail -5
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
++ echo ===DEPS_DONE===
+===DEPS_DONE===
++ python -c 'import optimum.quanto'
++ echo ===QUANTO_OK===
+===QUANTO_OK===
++ echo ===ENV_BEGIN===
+===ENV_BEGIN===
++ echo run_sha=15678a75edb408d3482a933149f044c5ba2f41c5
+run_sha=15678a75edb408d3482a933149f044c5ba2f41c5
++ nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
+NVIDIA A100-PCIE-40GB, 40960 MiB, 580.173.02
++ python -
+/usr/local/lib/python3.12/dist-packages/huggingface_hub/constants.py:299: FutureWarning: The `HF_HUB_ENABLE_HF_TRANSFER` environment variable is deprecated as 'hf_transfer' is not used anymore. Please use `HF_XET_HIGH_PERFORMANCE` instead to enable high performance transfer with Xet. Visit https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables#hfxethighperformance for more details.
+  warnings.warn(
+python=3.12.3
+torch=2.11.0+cu128 cuda_build=12.8 cuda_avail=True
+transformers=5.8.0 kvpress=0.5.1
+device=NVIDIA A100-PCIE-40GB
++ python -c 'from transformers import AutoTokenizer as T; T.from_pretrained('\''Qwen/Qwen2.5-7B-Instruct'\''); print('\''===MODEL_OK==='\'')'
+/usr/local/lib/python3.12/dist-packages/huggingface_hub/constants.py:299: FutureWarning: The `HF_HUB_ENABLE_HF_TRANSFER` environment variable is deprecated as 'hf_transfer' is not used anymore. Please use `HF_XET_HIGH_PERFORMANCE` instead to enable high performance transfer with Xet. Visit https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables#hfxethighperformance for more details.
+  warnings.warn(
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+===MODEL_OK===
++ echo ===ENV_END===
+===ENV_END===
++ export -f emit
++ source scripts/pod/w18.sh
+++ set -x
+++ cd /root/kvdlra
+++ RH='--ranks 64 --hh-budgets 256 --hh-neighbor 1 --warmup-seed'
+++ BASE='think palu ea'
+++ case "$MODE" in
+++ g1
+++ for T in 16384 32768
+++ echo ===W18_G1_R16384_BEGIN_qwen===
+===W18_G1_R16384_BEGIN_qwen===
+++ RULER --context-lens 16384 --tasks niah_single niah_multikey niah_multivalue vt --methods quant --quant-nbits 2 4 --n-trials 6 --seeds 0 1 --out-json results/w18-qwen-g1quant-r16384.json
+++ PYTHONPATH=src
+++ python -u scripts/w10_ruler.py --model Qwen/Qwen2.5-7B-Instruct --device cuda --dtype bfloat16 --chunk 4096 --context-lens 16384 --tasks niah_single niah_multikey niah_multivalue vt --methods quant --quant-nbits 2 4 --n-trials 6 --seeds 0 1 --out-json results/w18-qwen-g1quant-r16384.json
+/usr/local/lib/python3.12/dist-packages/huggingface_hub/constants.py:299: FutureWarning: The `HF_HUB_ENABLE_HF_TRANSFER` environment variable is deprecated as 'hf_transfer' is not used anymore. Please use `HF_XET_HIGH_PERFORMANCE` instead to enable high performance transfer with Xet. Visit https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables#hfxethighperformance for more details.
+  warnings.warn(
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Fetching 4 files:   0%|          | 0/4 [00:00<?, ?it/s]Fetching 4 files:  25%|██▌       | 1/4 [00:53<02:39, 53.23s/it]Fetching 4 files:  50%|█████     | 2/4 [01:07<01:00, 30.03s/it]Fetching 4 files:  75%|███████▌  | 3/4 [01:27<00:25, 25.51s/it]Fetching 4 files: 100%|██████████| 4/4 [03:47<00:00, 70.97s/it]Fetching 4 files: 100%|██████████| 4/4 [03:47<00:00, 56.95s/it]
+Loading weights:   0%|          | 0/339 [00:00<?, ?it/s]Loading weights: 100%|██████████| 339/339 [00:00<00:00, 4941.54it/s]
+model=Qwen/Qwen2.5-7B-Instruct n=512 tasks=['niah_single', 'niah_multikey', 'niah_multivalue', 'vt'] ctxs=[16384] filler=cycle depths=None
+W0903 17:49:44.610000 470 torch/utils/cpp_extension.py:489]                                !! WARNING !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!Your compiler (c++) is not compatible with the compiler Pytorch wasbuilt with for this platform, which is g++ on linux. Pleaseuse g++ to compile your extension. Alternatively, you maycompile PyTorch from source using c++, and then you can also usec++ to compile your extension.See https://github.com/pytorch/pytorch/b
+[niah_single ctx16384] quant-2bit     SKIP OSError: CUDA_HOME environment variable is not set. Please set it to your CUDA install root.
+[niah_single ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_single ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multikey ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[niah_multivalue ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-2bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+[vt ctx16384] quant-4bit     SKIP ImportError: /usr/local/lib/python3.12/dist-packages/optimum/quanto/library/extensions/cuda/build/quanto_cuda.so: cannot open shared object file: No such file or directory
+Traceback (most recent call last):
+  File "/root/kvdlra/scripts/w10_ruler.py", line 644, in <module>
+    main()
+  File "/root/kvdlra/scripts/w10_ruler.py", line 636, in main
+    _plot(blob, Path(args.out_fig))
+  File "/root/kvdlra/scripts/w10_ruler.py", line 472, in _plot
+    fig, axes = plt.subplots(
+                ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/matplotlib/pyplot.py", line 1887, in subplots
+    axs = fig.subplots(nrows=nrows, ncols=ncols, sharex=sharex, sharey=sharey,
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/matplotlib/figure.py", line 925, in subplots
+    gs = self.add_gridspec(nrows, ncols, figure=self, **gridspec_kw)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/matplotlib/figure.py", line 1608, in add_gridspec
+    gs = GridSpec(nrows=nrows, ncols=ncols, figure=self, **kwargs)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/matplotlib/gridspec.py", line 364, in __init__
+    super().__init__(nrows, ncols,
+  File "/usr/local/lib/python3.12/dist-packages/matplotlib/gridspec.py", line 49, in __init__
+    raise ValueError(
+ValueError: Number of rows must be a positive integer, not 0
+++ emit G1QUANT_R16384 results/w18-qwen-g1quant-r16384.json
+++ echo ===G1QUANT_R16384_RESULT_BEGIN===
+===G1QUANT_R16384_RESULT_BEGIN===
+++ base64 -w0 results/w18-qwen-g1quant-r16384.json
+++ fold -w 400
+ewogICJtb2RlbCI6ICJRd2VuL1F3ZW4yLjUtN0ItSW5zdHJ1Y3QiLAogICJuX2ZlYXR1cmVzIjogNTEyLAogICJjb250ZXh0X2xlbnMiOiBbCiAgICAxNjM4NAogIF0sCiAgInRhc2tzIjogWwogICAgIm5pYWhfc2luZ2xlIiwKICAgICJuaWFoX211bHRpa2V5IiwKICAgICJuaWFoX211bHRpdmFsdWUiLAogICAgInZ0IgogIF0sCiAgIm5fdHJpYWxzIjogNiwKICAic2VlZHMiOiBbCiAgICAwLAogICAgMQogIF0sCiAgInJlc3VsdHMiOiBbXQp9Cg==++ echo ''
+++ echo ===G1QUANT_R16384_RESULT_END===
+===G1QUANT_R16384_RESULT_END===
+++ RULER --context-lens 16384 --tasks niah_single niah_multikey niah_multivalue vt --methods bugslash --ranks 64 --hh-budgets 256 --hh-neighbor 1 --warmup-seed --n-trials 6 --seeds 0 1 --out-json results/w18-qwen-g1flag-r16384.json
+++ PYTHONPATH=src
+++ python -u scripts/w10_ruler.py --model Qwen/Qwen2.5-7B-Instruct --device cuda --dtype bfloat16 --chunk 4096 --context-lens 16384 --tasks niah_single niah_multikey niah_multivalue vt --methods bugslash --ranks 64 --hh-budgets 256 --hh-neighbor 1 --warmup-seed --n-trials 6 --seeds 0 1 --out-json results/w18-qwen-g1flag-r16384.json
+/usr/local/lib/python3.12/dist-packages/huggingface_hub/constants.py:299: FutureWarning: The `HF_HUB_ENABLE_HF_TRANSFER` environment variable is deprecated as 'hf_transfer' is not used anymore. Please use `HF_XET_HIGH_PERFORMANCE` instead to enable high performance transfer with Xet. Visit https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables#hfxethighperformance for more details.
+  warnings.warn(
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/339 [00:00<?, ?it/s]Loading weights: 100%|██████████| 339/339 [00:00<00:00, 4564.78it/s]
+model=Qwen/Qwen2.5-7B-Instruct n=512 tasks=['niah_single', 'niah_multikey', 'niah_multivalue', 'vt'] ctxs=[16384] filler=cycle depths=None
+[trial] task=niah_single ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=0 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=1 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=2 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=3 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=4 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=5 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=0 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=1 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=2 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=3 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=4 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=5 hit=1 frac=1.000
+[niah_single ctx16384] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.149 sbits=0.276 n=12
+[trial] task=niah_multikey ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=0 hit=1 frac=1.000
+[trial] task=niah_multikey ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=1 hit=1 frac=1.000
+[trial] task=niah_multikey ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=2 hit=1 frac=1.000
+[trial] task=niah_multikey ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=3 hit=1 frac=1.000
+[trial] task=niah_multikey ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=4 hit=1 frac=1.000
+[trial] task=niah_multikey ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=5 hit=1 frac=1.000
+[trial] task=niah_multikey ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=0 hit=1 frac=1.000
+[trial] task=niah_multikey ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=1 hit=1 frac=1.000
+[trial] task=niah_multikey ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=2 hit=1 frac=1.000
+[trial] task=niah_multikey ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=3 hit=1 frac=1.000
+[trial] task=niah_multikey ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=4 hit=1 frac=1.000
+[trial] task=niah_multikey ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=5 hit=1 frac=1.000
+[niah_multikey ctx16384] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.149 sbits=0.275 n=12
+[trial] task=niah_multivalue ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=0 hit=1 frac=1.000
+[trial] task=niah_multivalue ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=1 hit=1 frac=1.000
+[trial] task=niah_multivalue ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=2 hit=1 frac=1.000
+[trial] task=niah_multivalue ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=3 hit=1 frac=1.000
+[trial] task=niah_multivalue ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=4 hit=1 frac=1.000
+[trial] task=niah_multivalue ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=5 hit=1 frac=1.000
+[trial] task=niah_multivalue ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=0 hit=1 frac=1.000
+[trial] task=niah_multivalue ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=1 hit=1 frac=1.000
+[trial] task=niah_multivalue ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=2 hit=1 frac=1.000
+[trial] task=niah_multivalue ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=3 hit=1 frac=1.000
+[trial] task=niah_multivalue ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=4 hit=1 frac=1.000
+[trial] task=niah_multivalue ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=5 hit=1 frac=1.000
+[niah_multivalue ctx16384] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.149 sbits=0.275 n=12
+[trial] task=vt ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=0 hit=1 frac=1.000
+[trial] task=vt ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=1 hit=1 frac=1.000
+[trial] task=vt ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=2 hit=1 frac=1.000
+[trial] task=vt ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=3 hit=1 frac=1.000
+[trial] task=vt ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=4 hit=1 frac=1.000
+[trial] task=vt ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=5 hit=1 frac=1.000
+[trial] task=vt ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=0 hit=1 frac=1.000
+[trial] task=vt ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=1 hit=1 frac=1.000
+[trial] task=vt ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=2 hit=1 frac=1.000
+[trial] task=vt ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=3 hit=1 frac=1.000
+[trial] task=vt ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=4 hit=1 frac=1.000
+[trial] task=vt ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=5 hit=1 frac=1.000
+[vt ctx16384] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.149 sbits=0.275 n=12
+[wrote figures/scratch/ruler_accuracy.png]
+===W10_RULER_JSON_BEGIN===
+{"model": "Qwen/Qwen2.5-7B-Instruct", "n_features": 512, "context_lens": [16384], "tasks": ["niah_single", "niah_multikey", "niah_multivalue", "vt"], "n_trials": 6, "seeds": [0, 1], "results": [{"task": "niah_single", "ctx": 16384, "method": "bugSseed-r64-h256", "kind": "bug", "rank": 64, "accuracy": 1.0, "recall_frac": 1.0, "ratio_fp16": 0.14905832621821063, "ratio_stored_bits": 0.27563635878514364, "hits": 12, "total": 12}, {"task": "niah_multikey", "ctx": 16384, "method": "bugSseed-r64-h256",
+===W10_RULER_JSON_END===
+[wrote results/w18-qwen-g1flag-r16384.json]
+++ emit G1FLAG_R16384 results/w18-qwen-g1flag-r16384.json
+++ echo ===G1FLAG_R16384_RESULT_BEGIN===
+===G1FLAG_R16384_RESULT_BEGIN===
+++ base64 -w0 results/w18-qwen-g1flag-r16384.json
+++ fold -w 400
+ewogICJtb2RlbCI6ICJRd2VuL1F3ZW4yLjUtN0ItSW5zdHJ1Y3QiLAogICJuX2ZlYXR1cmVzIjogNTEyLAogICJjb250ZXh0X2xlbnMiOiBbCiAgICAxNjM4NAogIF0sCiAgInRhc2tzIjogWwogICAgIm5pYWhfc2luZ2xlIiwKICAgICJuaWFoX211bHRpa2V5IiwKICAgICJuaWFoX211bHRpdmFsdWUiLAogICAgInZ0IgogIF0sCiAgIm5fdHJpYWxzIjogNiwKICAic2VlZHMiOiBbCiAgICAwLAogICAgMQogIF0sCiAgInJlc3VsdHMiOiBbCiAgICB7CiAgICAgICJ0YXNrIjogIm5pYWhfc2luZ2xlIiwKICAgICAgImN0eCI6IDE2
+Mzg0LAogICAgICAibWV0aG9kIjogImJ1Z1NzZWVkLXI2NC1oMjU2IiwKICAgICAgImtpbmQiOiAiYnVnIiwKICAgICAgInJhbmsiOiA2NCwKICAgICAgImFjY3VyYWN5IjogMS4wLAogICAgICAicmVjYWxsX2ZyYWMiOiAxLjAsCiAgICAgICJyYXRpb19mcDE2IjogMC4xNDkwNTgzMjYyMTgyMTA2MywKICAgICAgInJhdGlvX3N0b3JlZF9iaXRzIjogMC4yNzU2MzYzNTg3ODUxNDM2NCwKICAgICAgImhpdHMiOiAxMiwKICAgICAgInRvdGFsIjogMTIKICAgIH0sCiAgICB7CiAgICAgICJ0YXNrIjogIm5pYWhfbXVsdGlrZXkiLAog
+ICAgICAiY3R4IjogMTYzODQsCiAgICAgICJtZXRob2QiOiAiYnVnU3NlZWQtcjY0LWgyNTYiLAogICAgICAia2luZCI6ICJidWciLAogICAgICAicmFuayI6IDY0LAogICAgICAiYWNjdXJhY3kiOiAxLjAsCiAgICAgICJyZWNhbGxfZnJhYyI6IDEuMCwKICAgICAgInJhdGlvX2ZwMTYiOiAwLjE0ODg2NTc3OTg4MDMyODY3LAogICAgICAicmF0aW9fc3RvcmVkX2JpdHMiOiAwLjI3NTQ1MDIzNTMzNzU1NzYsCiAgICAgICJoaXRzIjogMTIsCiAgICAgICJ0b3RhbCI6IDEyCiAgICB9LAogICAgewogICAgICAidGFzayI6ICJuaWFo
+X211bHRpdmFsdWUiLAogICAgICAiY3R4IjogMTYzODQsCiAgICAgICJtZXRob2QiOiAiYnVnU3NlZWQtcjY0LWgyNTYiLAogICAgICAia2luZCI6ICJidWciLAogICAgICAicmFuayI6IDY0LAogICAgICAiYWNjdXJhY3kiOiAxLjAsCiAgICAgICJyZWNhbGxfZnJhYyI6IDEuMCwKICAgICAgInJhdGlvX2ZwMTYiOiAwLjE0ODg2OTA3MzczMjE5MDc0LAogICAgICAicmF0aW9fc3RvcmVkX2JpdHMiOiAwLjI3NTQ2NTYwMjczNDc0Mjc0LAogICAgICAiaGl0cyI6IDEyLAogICAgICAidG90YWwiOiAxMgogICAgfSwKICAgIHsKICAg
+ICAgInRhc2siOiAidnQiLAogICAgICAiY3R4IjogMTYzODQsCiAgICAgICJtZXRob2QiOiAiYnVnU3NlZWQtcjY0LWgyNTYiLAogICAgICAia2luZCI6ICJidWciLAogICAgICAicmFuayI6IDY0LAogICAgICAiYWNjdXJhY3kiOiAxLjAsCiAgICAgICJyZWNhbGxfZnJhYyI6IDEuMCwKICAgICAgInJhdGlvX2ZwMTYiOiAwLjE0ODg2MzY1MzY1ODgzMzU2LAogICAgICAicmF0aW9fc3RvcmVkX2JpdHMiOiAwLjI3NTQ2MTcyOTg3OTQ1OTQsCiAgICAgICJoaXRzIjogMTIsCiAgICAgICJ0b3RhbCI6IDEyCiAgICB9CiAgXQp9Cg==++ echo ''
+++ echo ===G1FLAG_R16384_RESULT_END===
+===G1FLAG_R16384_RESULT_END===
+++ RULER --context-lens 16384 --tasks niah_single niah_multikey niah_multivalue vt --methods bugslash --ranks 64 --hh-budgets 256 --hh-neighbor 1 --bug-quant-bits 4 --bug-quant-budget 512 --n-trials 6 --seeds 0 1 --out-json results/w18-qwen-g1q4-r16384.json
+++ PYTHONPATH=src
+++ python -u scripts/w10_ruler.py --model Qwen/Qwen2.5-7B-Instruct --device cuda --dtype bfloat16 --chunk 4096 --context-lens 16384 --tasks niah_single niah_multikey niah_multivalue vt --methods bugslash --ranks 64 --hh-budgets 256 --hh-neighbor 1 --bug-quant-bits 4 --bug-quant-budget 512 --n-trials 6 --seeds 0 1 --out-json results/w18-qwen-g1q4-r16384.json
+/usr/local/lib/python3.12/dist-packages/huggingface_hub/constants.py:299: FutureWarning: The `HF_HUB_ENABLE_HF_TRANSFER` environment variable is deprecated as 'hf_transfer' is not used anymore. Please use `HF_XET_HIGH_PERFORMANCE` instead to enable high performance transfer with Xet. Visit https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables#hfxethighperformance for more details.
+  warnings.warn(
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/339 [00:00<?, ?it/s]Loading weights: 100%|██████████| 339/339 [00:00<00:00, 4685.94it/s]
+model=Qwen/Qwen2.5-7B-Instruct n=512 tasks=['niah_single', 'niah_multikey', 'niah_multivalue', 'vt'] ctxs=[16384] filler=cycle depths=None
+[trial] task=niah_single ctx=16384 arm=bugS-r64-h256-q4 seed=0 trial=0 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugS-r64-h256-q4 seed=0 trial=1 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugS-r64-h256-q4 seed=0 trial=2 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugS-r64-h256-q4 seed=0 trial=3 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugS-r64-h256-q4 seed=0 trial=4 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugS-r64-h256-q4 seed=0 trial=5 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugS-r64-h256-q4 seed=1 trial=0 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugS-r64-h256-q4 seed=1 trial=1 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugS-r64-h256-q4 seed=1 trial=2 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugS-r64-h256-q4 seed=1 trial=3 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugS-r64-h256-q4 seed=1 trial=4 hit=1 frac=1.000
+[trial] task=niah_single ctx=16384 arm=bugS-r64-h256-q4 seed=1 trial=5 hit=1 frac=1.000
+[niah_single ctx16384] bugS-r64-h256-q4 acc=1.00 recall=1.00 ratio=0.149 sbits=0.276 n=12
+[trial] task=niah_multikey ctx=16384 arm=bugS-r64-h256-q4 seed=0 trial=0 hit=0 frac=0.000
+[trial] task=niah_multikey ctx=16384 arm=bugS-r64-h256-q4 seed=0 trial=1 hit=0 frac=0.000
+[trial] task=niah_multikey ctx=16384 arm=bugS-r64-h256-q4 seed=0 trial=2 hit=1 frac=1.000
+[trial] task=niah_multikey ctx=16384 arm=bugS-r64-h256-q4 seed=0 trial=3 hit=1 frac=1.000
+[trial] task=niah_multikey ctx=16384 arm=bugS-r64-h256-q4 seed=0 trial=4 hit=1 frac=1.000
+[trial] task=niah_multikey ctx=16384 arm=bugS-r64-h256-q4 seed=0 trial=5 hit=1 frac=1.000
+[trial] task=niah_multikey ctx=16384 arm=bugS-r64-h256-q4 seed=1 trial=0 hit=0 frac=0.000
+[trial] task=niah_multikey ctx=16384 arm=bugS-r64-h256-q4 seed=1 trial=1 hit=0 frac=0.000
+[trial] task=niah_multikey ctx=16384 arm=bugS-r64-h256-q4 seed=1 trial=2 hit=1 frac=1.000
+[trial] task=niah_multikey ctx=16384 arm=bugS-r64-h256-q4 seed=1 trial=3 hit=1 frac=1.000
+[trial] task=niah_multikey ctx=16384 arm=bugS-r64-h256-q4 seed=1 trial=4 hit=1 frac=1.000
+[trial] task=niah_multikey ctx=16384 arm=bugS-r64-h256-q4 seed=1 trial=5 hit=1 frac=1.000
+[niah_multikey ctx16384] bugS-r64-h256-q4 acc=0.67 recall=0.67 ratio=0.149 sbits=0.275 n=12
+[trial] task=niah_multivalue ctx=16384 arm=bugS-r64-h256-q4 seed=0 trial=0 hit=0 frac=0.750
+[trial] task=niah_multivalue ctx=16384 arm=bugS-r64-h256-q4 seed=0 trial=1 hit=0 frac=0.750
+[trial] task=niah_multivalue ctx=16384 arm=bugS-r64-h256-q4 seed=0 trial=2 hit=0 frac=0.750
+[trial] task=niah_multivalue ctx=16384 arm=bugS-r64-h256-q4 seed=0 trial=3 hit=0 frac=0.750
+

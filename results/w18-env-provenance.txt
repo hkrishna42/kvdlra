@@ -1,0 +1,60 @@
+# W18 GPU program — environment & SHA provenance (extracted from pod logs)
+# One block per pod; the RUN_SHA is the commit each pod cloned + checked out.
+
+## results/w18_checkpoint/llama.raw.log
++ echo ===MODE_g1_llama===
++ echo ===RUN_SHA_15678a75edb408d3482a933149f044c5ba2f41c5===
++ echo run_sha=15678a75edb408d3482a933149f044c5ba2f41c5
++ pip install -q transformers==5.8.0 datasets==2.21.0 'optimum-quanto>=0.2.7'
+===MODE_g1_llama===
+===RUN_SHA_15678a75edb408d3482a933149f044c5ba2f41c5===
+NVIDIA A100 80GB PCIe, 81920 MiB, 595.71.05
+device=NVIDIA A100 80GB PCIe
+
+## results/w18_checkpoint/mistral.raw.log
++ echo ===MODE_g1_mistral===
++ echo ===RUN_SHA_15678a75edb408d3482a933149f044c5ba2f41c5===
++ echo run_sha=15678a75edb408d3482a933149f044c5ba2f41c5
++ pip install -q transformers==5.8.0 datasets==2.21.0 'optimum-quanto>=0.2.7'
+===MODE_g1_mistral===
+===RUN_SHA_15678a75edb408d3482a933149f044c5ba2f41c5===
+NVIDIA A100-PCIE-40GB, 40960 MiB, 595.71.05
+device=NVIDIA A100-PCIE-40GB
+
+## results/w18_checkpoint/qwen.raw.log
++ echo ===MODE_g1_qwen===
++ echo ===RUN_SHA_15678a75edb408d3482a933149f044c5ba2f41c5===
++ echo run_sha=15678a75edb408d3482a933149f044c5ba2f41c5
++ pip install -q transformers==5.8.0 datasets==2.21.0 'optimum-quanto>=0.2.7'
+===MODE_g1_qwen===
+===RUN_SHA_15678a75edb408d3482a933149f044c5ba2f41c5===
+NVIDIA A100-PCIE-40GB, 40960 MiB, 580.173.02
+device=NVIDIA A100-PCIE-40GB
+
+## results/w18_harvest/g2-qwen.raw
+===ALL_DONE_g2_qwen_b157acdd93fdf29695b3a1ea181f25aa391cbfb4===
+
+## results/w18_harvest/g3-llama.raw
+===ALL_DONE_g3_llama_b157acdd93fdf29695b3a1ea181f25aa391cbfb4===
+
+## results/w18_harvest/g3-mistral.raw
+===ALL_DONE_g3_mistral_b157acdd93fdf29695b3a1ea181f25aa391cbfb4===
+
+## results/w18_harvest/g3-qwen.raw
+===ALL_DONE_g3_qwen_b157acdd93fdf29695b3a1ea181f25aa391cbfb4===
+
+## results/w18_harvest/g4-llama.raw
+===ALL_DONE_g4_llama_b157acdd93fdf29695b3a1ea181f25aa391cbfb4===
+
+## results/w18_harvest/g5-llama.raw
+===ALL_DONE_g5_llama_b157acdd93fdf29695b3a1ea181f25aa391cbfb4===
+
+## results/w18_harvest/llama.raw
+===ALL_DONE_g1_llama_15678a75edb408d3482a933149f044c5ba2f41c5===
+
+## results/w18_harvest/mistral.raw
+===ALL_DONE_g1_mistral_15678a75edb408d3482a933149f044c5ba2f41c5===
+
+## results/w18_harvest/qwen.raw
+===ALL_DONE_g1_qwen_15678a75edb408d3482a933149f044c5ba2f41c5===
+

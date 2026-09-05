@@ -1,0 +1,10 @@
+{
+  "meta": {"source": "results/w18_pertrial/g4-llama-trials.txt", "model": "Llama-3.1-8B",
+           "ctx": 32768, "task": "vt", "n": 16, "test": "McNemar exact two-sided (paired)"},
+  "flagship": "bugSseed-r128-h1024-s32",
+  "contrasts": [
+    {"vs": "think-c0.5", "flag_hits": 15, "base_hits": 5, "discordant_flag": 10, "discordant_base": 0, "mcnemar_p": 0.0020},
+    {"vs": "palu-r0.5",  "flag_hits": 15, "base_hits": 9, "discordant_flag": 6,  "discordant_base": 0, "mcnemar_p": 0.0312}
+  ],
+  "note": "Paired (same seed*131+trial needle across arms). think separation survives a family-wise correction over the marquee family; palu separation (p=0.031) does not and Wilson intervals overlap -> reported as suggestive."
+}

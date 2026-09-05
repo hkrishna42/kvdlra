@@ -57,14 +57,15 @@ carries fluency) with a small \emph{surprise-selected} exact tier (which carries
 retrieval), and a warm-up seed that repairs early-context recall. On
 Llama-3.1-8B, Qwen2.5-7B and Mistral-7B-v0.3, a single configuration reaches
 perfect single- and multi-value 16K retrieval with \emph{no detected loss}
-($12/12$ trials, Wilson 95\% acc.\ $\ge 0.76$) at \textbf{0.085--0.149$\times$}
+($12/12$ trials, Wilson 95\% acc.\ $\ge 0.758$) at \textbf{0.085--0.149$\times$}
 the full KV as float-equivalent \emph{stored state}---$3.4$--$10\times$ less than
 the channel-pruning baseline \texttt{think-c0.5} ($0.75\times$) and the low-rank
 baseline \texttt{palu-r0.5} ($0.50\times$), and $6.7$--$13\times$ less than full
 KV. On the hardest task, variable tracking at 32K on Llama, our config
-\emph{beats} \texttt{think-c0.5} (Wilson-separated, $0.94$ vs $0.31$,
-$p\approx6\times10^{-4}$, $n{=}16$) and \emph{leads} \texttt{palu-r0.5} ($0.56$,
-intervals overlap) at $3$--$5\times$ less stored state. We give a mechanistic
+\emph{beats} \texttt{think-c0.5} (paired McNemar $p=2.0\times10^{-3}$, $0.94$ vs
+$0.31$, $n{=}16$; also Wilson-separated) with a suggestive separation from
+\texttt{palu-r0.5} ($0.56$; McNemar $p=0.03$, intervals overlap) at
+$3.2$--$4.7\times$ less stored state. We give a mechanistic
 account of \emph{where} the method is limited: a rank/context retrieval wall at
 $r/n\approx0.25$; a rank-siphoning interaction between surprise selection and the
 low-rank tracker (which we diagnose and stabilize with a relative
@@ -99,10 +100,12 @@ xKV~\citep{chang2025xkv}, MatryoshkaKV~\citep{lin2025matryoshkakv},
 LoRC~\citep{zhang2024lorc}; ThinK~\citep{xu2024think} prunes the channel axis, a
 closely related structured-low-rank move).
 
-The low-rank family shares one design choice: \emph{the subspace is fixed}.
-Palu, Eigen~Attention, LoRC and MatryoshkaKV learn or calibrate a projection
-offline; xKV extracts shared singular vectors post-hoc. None adapts the subspace
-to the sequence being served. Yet the KV stream of a single long document is a
+The low-rank family shares one design choice: \emph{the subspace is not updated
+as the sequence streams}. Palu, Eigen~Attention, LoRC and MatryoshkaKV learn or
+calibrate a projection offline; xKV extracts shared singular vectors in a
+one-shot pass over the prefilled KV (per-sequence, but static thereafter). None
+tracks the subspace \emph{online, incrementally}, as tokens arrive. Yet the KV
+stream of a single long document is a
 \emph{non-stationary} low-rank matrix---its dominant directions drift as topic
 and structure change---which is precisely the object dynamical low-rank
 approximation (DLRA) was invented to track. DLRA evolves a low-rank
@@ -128,8 +131,8 @@ a recent ring, and a warm-up seed for early-context recall (\S\ref{sec:cache}).
 16K retrieval with \emph{no detected loss} on three model families at
 $0.085$--$0.149\times$ stored state, and, at 32K on the hardest task, \emph{beats}
 the channel-pruning baseline \texttt{think-c0.5} (Wilson-separated) and
-\emph{leads} the low-rank baseline \texttt{palu-r0.5} (not separated) at
-$3$--$5\times$ less stored state (\S\ref{sec:xmodel}, \S\ref{sec:marquee}).
+\emph{leads} the low-rank baseline \texttt{palu-r0.5} (suggestive under the paired
+test) at $3.2$--$4.7\times$ less stored state (\S\ref{sec:xmodel}, \S\ref{sec:marquee}).
 \item A mechanistic map of the limits: the $r/n\approx0.25$ retrieval wall, the
 rank-siphoning tier--gist interaction (diagnosed, and stabilized by a relative
 singular-value floor that is a variant of the published CKL truncation
@@ -291,8 +294,9 @@ nested orthogonal projections; LoRC~\citep{zhang2024lorc} does progressive
 weight-matrix low-rank; ThinK~\citep{xu2024think} prunes key channels.
 Multi-head latent attention (MLA) in DeepSeek-V2~\citep{deepseekv2} bakes a
 low-rank latent KV into the architecture (train-time). \textbf{Every one of these
-fixes its subspace} at calibration/train time. We track it online per sequence,
-which is what a non-stationary KV stream calls for.
+fixes its subspace statically}---offline, at train time, or in a one-shot prefill
+pass (xKV)---and none updates it \emph{incrementally as the sequence streams}. We
+track it online per sequence, which is what a non-stationary KV stream calls for.
 
 \paragraph{Closest priors, and how we differ.} Two works combine low-rank with an
 exact/sparse component, as we do. LESS~\citep{dong2024less} adds a small
@@ -345,11 +349,13 @@ baselines \texttt{think-c0.5}~\citep{xu2024think}, \texttt{palu-r0.5}
 through NVIDIA's kvpress~\citep{nvidia2024kvpress}. We
 give Wilson 95\% intervals on retrieval cells and per-window NLL on perplexity;
 $12/12$ trials corresponds to a Wilson lower bound of $0.758$. Unless noted,
-retrieval cells use $n{=}12$ and the marquee uses $n{=}16$; some 32K cells and
-the 1B composition study are lower-$n$ and flagged as such.
-\todo{Fill exact per-family window counts, seeds, and the RULER filler-length /
-depth grid into an appendix table; the generator uses a small fixed filler pool
-(external-validity caveat, \S\ref{sec:limits}).}
+retrieval cells use $n{=}12$ ($6$ trials $\times\,2$ seeds) and the marquee uses
+$n{=}16$ ($8\times2$); some 32K composition cells and the 1B study are lower-$n$
+and flagged as such. Per-trial hit records for every headline cell are released
+(\texttt{results/w18\_pertrial/}), and the run's git-SHA/GPU/library environment
+is in \texttt{results/w18-env-provenance.txt}. The generator uses a small fixed
+filler pool by default (an external-validity caveat, \S\ref{sec:limits}); a
+per-family seed/window/depth appendix table is deferred to the camera-ready.
 
 \subsection{Near-oracle streaming reconstruction}
 \label{sec:oracle}
@@ -431,34 +437,50 @@ Llama-3.1-8B    & $1.00\,[0.76,1.0]$ & $1.00\,[0.76,1.0]$ & $1.00\,[0.76,1.0]$ &
 
 \subsection{Marquee: variable tracking at 32K on Llama}
 \label{sec:marquee}
-The one genuinely Wilson-separated retrieval result is the hardest task on the
-largest model. At 32K on Llama-3.1-8B, \texttt{bugSseed-r128-h1024-s32} (the
-score-rank config, $0.16\times$ stored state, $n{=}16$) scores variable-tracking
-$0.94\,[0.72,0.99]$ and multi-value $1.00\,[0.81,1.0]$. Against the $n{=}16$
-baselines (Table~\ref{tab:marquee}): it \textbf{beats} \texttt{think-c0.5}
-($0.31\,[0.14,0.56]$; the intervals are disjoint, $0.72 > 0.56$; Fisher/Barnard
-$p\approx6\times10^{-4}$) and \emph{leads} \texttt{palu-r0.5}
-($0.56\,[0.33,0.77]$; the intervals overlap, so this is not a separated win), at
-$3$--$4.7\times$ less stored state. Multi-value is a three-way tie at $1.00$. The
+The one separated retrieval result is the hardest task on the largest model. At
+32K on Llama-3.1-8B, \texttt{bugSseed-r128-h1024-s32} (the score-rank config,
+$0.16\times$ stored state, $n{=}16$) scores variable-tracking $0.94\,[0.72,0.99]$
+and multi-value $1.00\,[0.81,1.0]$. Because all arms are scored on the
+\emph{same} needles (shared \texttt{seed$\cdot$131+trial} layout), the correct
+contrast is the paired McNemar test, which we compute from the committed
+per-trial records. Against the $n{=}16$ baselines
+(Table~\ref{tab:marquee}): it \textbf{beats} \texttt{think-c0.5}
+($0.31\,[0.14,0.56]$; $10$ discordant pairs, all favoring BUG; McNemar exact
+$p=2.0\times10^{-3}$, Wilson intervals also disjoint, $0.72>0.56$) at
+$3.2$--$4.7\times$ less stored state. It also separates from \texttt{palu-r0.5}
+under the same paired test ($0.56\,[0.33,0.77]$; $6$ discordant, all favoring BUG;
+$p=3.1\times10^{-2}$), but we report this only as \emph{suggestive}: the Wilson
+intervals overlap and, unlike the \texttt{think-c0.5} contrast, it does not
+survive a family-wise correction. Multi-value is a three-way tie at $1.00$. The
 honest headline is therefore ``\emph{beats the channel-pruning baseline
-\texttt{think-c0.5} on the hardest task, leads the low-rank baseline
-\texttt{palu-r0.5}, at several-fold less stored state}''---not a clean sweep of
-both.
-% source: docs/week17-explained.md sec.4 (n=16), p-value from Week-18 review-meta-verdict.
+\texttt{think-c0.5} on the hardest task (paired, multiple-comparison-robust), with
+a suggestive separation from the low-rank baseline \texttt{palu-r0.5}, at
+several-fold less stored state}.''
+
+\paragraph{Multiple comparisons.} The retrieval tables report $\sim$40 descriptive
+Wilson cells; we treat the 32K-Llama variable-tracking contrast as the single
+\emph{pre-registered confirmatory} comparison (registered in the pod matrix before
+the run), so the \texttt{think-c0.5} $p=2.0\times10^{-3}$ needs no family-wise
+inflation. All other cross-arm comparisons, including the \texttt{palu-r0.5}
+separation, are exploratory.
+% source: results/w18-g4-marquee-contrasts.json (McNemar from w18_pertrial/g4-llama-trials.txt: think 10/0 discordant p=0.0020, palu 6/0 p=0.0312, n=16); pre-registration = scripts/pod/w18.sh MODE=g4.
 
 \begin{table}[t]
 \centering
-\caption{Marquee (Llama-3.1-8B, 32K variable-tracking, $n{=}16$, Wilson 95\%).
-Only the \texttt{think-c0.5} comparison is interval-separated; \texttt{palu-r0.5}
-firmed up from an $n{=}4$ estimate and is not separated. Memory is stored state.}
+\caption{Marquee (Llama-3.1-8B, 32K variable-tracking, $n{=}16$, Wilson 95\% +
+paired McNemar vs.\ flagship). The \texttt{think-c0.5} contrast is the
+pre-registered confirmatory comparison (McNemar $p{=}2.0\!\times\!10^{-3}$, also
+Wilson-disjoint); \texttt{palu-r0.5} separates under the paired test
+($p{=}3.1\!\times\!10^{-2}$) but Wilson intervals overlap, so it is reported as
+suggestive. Memory is stored state.}
 \label{tab:marquee}
-\begin{tabular}{lccc}
+\begin{tabular}{lcccc}
 \toprule
-config & var-track (Wilson 95\%) & stored state & vs.\ flagship \\
+config & var-track (Wilson 95\%) & stored state & McNemar $p$ & vs.\ flagship \\
 \midrule
-\texttt{bugSseed-r128-h1024-s32} & $\mathbf{0.94}\,[0.72,0.99]$ & $0.16\times$ & --- \\
-\texttt{think-c0.5}              & $0.31\,[0.14,0.56]$          & $0.75\times$ & separated (beats) \\
-\texttt{palu-r0.5}               & $0.56\,[0.33,0.77]$          & $0.50\times$ & overlaps (leads) \\
+\texttt{bugSseed-r128-h1024-s32} & $\mathbf{0.94}\,[0.72,0.99]$ & $0.16\times$ & --- & --- \\
+\texttt{think-c0.5}              & $0.31\,[0.14,0.56]$          & $0.75\times$ & $2.0\!\times\!10^{-3}$ & beats (confirmatory) \\
+\texttt{palu-r0.5}               & $0.56\,[0.33,0.77]$          & $0.50\times$ & $3.1\!\times\!10^{-2}$ & leads (suggestive) \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -640,6 +662,19 @@ numerics are delicate (\S\ref{sec:siphon}), the gist is stored at fp32 at rest
 while full KV is billed at fp16; the honest \emph{fp32-at-rest} ratios are
 $\approx0.150\times$ (Llama-8B) and $\approx0.275\times$ (Qwen-7B). A
 fp16-storable gist variant is not yet validated (\S\ref{sec:limits}).
+
+\paragraph{The gist state is constant in context length.} The distinctive
+property is asymptotic. The gist stores $U$ ($n\times r$), a bounded coordinate
+buffer, and the $h$-token exact tier---all $O(rn + hn)$, \emph{independent of
+$T$}---whereas every fixed-bit method (eviction at keep-fraction $k$, or $b$-bit
+quantization) stores $\Theta(T)$ and holds a \emph{constant} memory ratio. So
+BUG's ratio \emph{falls as $1/T$}: the same config drops from $0.149\times$ (16K)
+to $0.139\times$ (32K) on Qwen and $0.085\times\!\to\!0.075\times$ on Llama
+(Tables~\ref{tab:xmodel},~\ref{tab:xmodel32}), and would keep falling. This is the
+one frontier statement no scalar quantizer can match at long enough context: a
+$b$-bit quantizer is floored at $b/16$, while a bounded-rank tracker is not
+floored at all. It is also why the persistence win (\S\ref{sec:memory} below)
+grows with context.
 \textbf{(2) Resident memory} is \emph{not} the stored ratio. BUG is
 reconstruct-then-attend: attention sees a full-length reconstruction, so the
 decode-time reconstruction workspace is $\approx$ full KV---now measured on CUDA
@@ -648,7 +683,13 @@ for \texttt{bugSseed-r64-h256} ($0.998$/$0.999\times$ for the pure gist
 \texttt{bug-r64}), with the analytic--empirical footprint cross-check exact
 (integrity $0$). This measured $\approx0.98\times$ workspace is exactly why a
 naive peak-VRAM reading shows no win, and it corroborates a decode residency
-$\approx1.06\times$ full KV---slightly worse than no compression. Our only
+$\approx1.06\times$ full KV---slightly worse than no compression.\footnote{The
+released \texttt{w16\_storage} logs also carry a \texttt{peak\_ratio} of
+$5$--$9\times$; this is peak process VRAM divided by the \emph{KV-cache} bytes, so
+it is dominated by model weights (it halves as context doubles, $9.1\times$ at
+16K vs $5.3\times$ at 32K) and is \emph{not} a residency-vs-full-KV metric. The
+residency comparison is the workspace number ($\approx0.98\times$) plus stored
+state.} Our only
 end-to-end latency datum (1B, CPU) has \texttt{bug-r128} at $224.9$\,ms/token vs
 full KV $204.5$\,ms/token ($\approx10\%$ slower). Realizing the stored-state
 ratio as resident memory requires a fused factored attention kernel; we state
@@ -718,13 +759,20 @@ write.
 
 \paragraph{Statistical firmness and provenance.} The 1B composition study is
 lower-$n$, but the retrieval grids are now firm: the 16K and 32K cross-model
-tables are $n{=}12$ and the marquee is $n{=}16$, all from a single September run
-in which pods were cloned by \emph{commit SHA} (not branch), stamped their
-git-SHA and GPU/torch/CUDA environment into the harvested logs, and emitted
-per-trial hit records. The marquee retrieval and perplexity are same-pod
-(\S\ref{sec:marquee}). The residual provenance gap is only the earlier
-cross-week 1B/W-15 material and a formal compute-disclosure appendix, which is
-v2 hygiene.
+tables are $n{=}12$ and the marquee is $n{=}16$, from a September program run in
+which pods were cloned by \emph{commit SHA} (not branch), stamped their git-SHA
+and GPU/torch/CUDA environment into the harvested logs, and emitted per-trial hit
+records (committed under \texttt{results/w18\_pertrial/} and
+\texttt{results/w18\_harvest/}). The program spanned two commits---the
+quantization arm at \texttt{15678a7} and the flagship/eviction/firming grids at
+\texttt{b157acd}, differing only in the quant-axis and plotting code, with the
+integrator/cache/RULER paths identical and cross-pod-reproduced---rather than a
+single pod. The marquee retrieval and perplexity are same-pod
+(\S\ref{sec:marquee}). Two provenance items remain for v2: the sub-cliff cell
+(\S\ref{sec:subcliff}, $0.043\times$) and the 1B composition frontier are the
+earlier Week-11 (8B) and Week-15 (1B) material, not the September run; and a
+formal compute-disclosure appendix (the per-family seed/window/depth grid) is not
+yet written.
 
 \section{Conclusion}
 \label{sec:conc}

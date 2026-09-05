@@ -102,7 +102,8 @@ def persist_roundtrip(
     """torch.save -> bytes on disk; then median over ``repeats`` of reload (CPU) and H2D."""
     _sync(device)
     t0 = time.perf_counter()
-    torch.save({k: v.detach() for k, v in tensors.items()}, path)
+    # clone(): a view's storage would otherwise be written whole (ring buffers, diagonals)
+    torch.save({k: v.detach().clone() for k, v in tensors.items()}, path)
     t_save = time.perf_counter() - t0
     loads, h2ds = [], []
     for _ in range(repeats):

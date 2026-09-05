@@ -121,3 +121,20 @@ def test_run_persist_forwards_under_no_grad(tmp_path: Path) -> None:
         model, _args(["full", "bugslash"], chunk=40), ctx=120, device="cpu", tmp=tmp_path
     )
     assert seen and not any(seen)
+
+
+def test_persisted_bytes_equal_the_tensor_content(tmp_path: Path) -> None:
+    """torch.save writes a view's WHOLE underlying storage (the recent-window ring, the
+    core diagonals), which inflated the flagship's on-disk size 2.6x on the a3 pod. The
+    file must hold the tensors' content (numel x itemsize) plus only format overhead."""
+    from w10_frontier import _prefill_chunked, build_arms
+
+    model = _model()
+    arm = next(a for a in build_arms(_args(["bugslash"], 40), model, 400) if a["kind"] == "bug")
+    cache = arm["make"]()
+    with torch.no_grad(), cache.attach(model):
+        _prefill_chunked(model, cache, torch.randint(0, 256, (1, 400)), 40)
+    state = persist.state_tensors("bug", cache)
+    content = sum(t.numel() * t.element_size() for t in state.values())
+    m = persist.persist_roundtrip(state, tmp_path / "s.pt", "cpu", repeats=1)
+    assert content < m["bytes"] < content * 1.05 + 16_384, (content, m["bytes"])

@@ -202,3 +202,20 @@ def test_quant_arm_retrieves_with_chunked_prefill() -> None:
             )
             assert isinstance(hit, bool)
             assert 0.0 < ratio <= 1.0 and ratio == sratio
+
+
+def test_score_quant_runs_without_autograd() -> None:
+    """The ppl path must not retain the prefill graph: the W18/W19 quant-ppl OOMs (38 GB
+    allocated during a 4K chunk on Qwen-7B) were an undecorated score_quant building
+    autograd history across the whole prefill. Dequantized state must carry no grad."""
+    from w10_frontier import build_arms, score_quant
+
+    m = _model()
+    arm = build_arms(_args(quant_scheme="kivi", quant_nbits=[4]), m, 256)[0]
+    cache = arm["make"]()
+    ctx = torch.randint(0, 256, (256,))
+    win = torch.randint(0, 256, (16,))
+    nll, ntok = score_quant(m, cache, ctx, win, chunk=64)
+    assert ntok == 15 and nll > 0.0
+    layer: Any = cache.layers[0]
+    assert not layer._dequantize(layer._quantized_keys).requires_grad

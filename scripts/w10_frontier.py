@@ -135,6 +135,7 @@ def score_press(
     return nll, ntok, cache
 
 
+@torch.no_grad()
 def _prefill_plain(model: Any, cache: Any, ctx: torch.Tensor, chunk: int) -> None:
     """Chunked (or single-shot when ``chunk`` is 0 / >= T) prefill into a plain HF cache
     that updates incrementally (the QuantizedCache baseline), then flush the fp16
@@ -156,6 +157,7 @@ def _prefill_plain(model: Any, cache: Any, ctx: torch.Tensor, chunk: int) -> Non
     flush(cache)
 
 
+@torch.no_grad()
 def score_quant(
     model: Any, cache: Any, ctx_ids: torch.Tensor, win_ids: torch.Tensor, chunk: int = 0
 ) -> tuple[float, int]:

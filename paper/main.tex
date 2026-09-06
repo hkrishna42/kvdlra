@@ -77,7 +77,9 @@ wide-KV ($n{=}1024$) models. Against a KIVI-faithful 2-bit baseline at matched s
 families (paired McNemar $p\le0.03$) and multi-key/variable-tracking at 32K on
 two, ties single-needle everywhere, and is matched or beaten on fluency; 4-bit
 quantization at twice the bytes concedes nothing, and on Qwen---whose fp32-at-rest
-gist costs $0.27\times$---it dominates. Low-rank compresses a feature axis and
+gist costs $0.27\times$---it dominates; on the official NVIDIA RULER suite (Llama,
+16K) the flagship and the 2-bit arm are indistinguishable while eviction at
+$0.1\times$ collapses. Low-rank compresses a feature axis and
 quantization a bit axis, so the two compose: the seeded gist with 4-bit
 coordinates reaches $0.048\times$, below any 2-bit floor, with full
 single/multi-key/multi-value retrieval on Llama and Mistral (at a fluency cost;
@@ -162,11 +164,11 @@ mechanism. Two 2026 works---MomentKV~\citep{momentkv2026}, which corrects a
 directional gap left by eviction, and ResKV~\citep{reskv2026}, which reconstructs
 omitted attention from a residual cache---appeared while this program ran; both
 augment eviction with lightweight statistics rather than tracking an adaptive
-subspace, so the online-DLRA axis remains, to our knowledge, unoccupied. We
-state plainly what v1 does \emph{not} yet contain: a scalar-quantization
-baseline, an official-benchmark anchor for the retrieval numbers, and a fused
-low-rank attention kernel. \S\ref{sec:limits} enumerates these; each is scoped
-work, not a contradicted claim.
+subspace, so the online-DLRA axis remains, to our knowledge, unoccupied. This version adds the two baselines the first draft lacked---a
+KIVI-faithful 2-bit quantizer at matched bytes (\S\ref{sec:quantbaseline}) and an
+official NVIDIA RULER anchor (\S\ref{sec:realistic})---and reports what they
+took away as plainly as what they left. What it still does \emph{not} contain
+is a fused low-rank attention kernel; \S\ref{sec:limits} scopes that.
 
 \section{Method}
 \label{sec:method}
@@ -662,9 +664,11 @@ vs 4-bit $4.90$ (32K: $8.33$/$8.28$/$7.54$); Mistral $5.50$/$4.99$/$4.83$ (32K:
 $3.76$/$3.46$/$3.31$); Qwen $8.18$/$6.70$/$6.20$ (32K: $35.1$/$8.23$/$7.71$,
 the known Qwen $r{=}64$ instability). The honest summary of the crux experiment
 is therefore \emph{narrower} than an exclusive band at $0.15\times$: at matched
-stored bytes, BUG buys multi-value (and, at 32K on Mistral/Qwen, multi-key and
-variable-tracking) retrieval that 2-bit quantization loses, and pays for it in
-fluency; 4-bit quantization at about twice the bytes concedes nothing. What
+stored bytes, on our generator, BUG buys multi-value (and, at 32K on
+Mistral/Qwen, multi-key and variable-tracking) retrieval that 2-bit quantization
+loses, and pays for it in fluency; 4-bit quantization at about twice the bytes
+concedes nothing; and on the official RULER prompts (\S\ref{sec:realistic}) the
+multi-value edge does not reproduce and the two arms are indistinguishable. What
 quantization cannot do is reach below its own floor, which is where
 \S\ref{sec:subcliff} goes.
 % source: results/w19-a1-report.md (scripts/w19_a1_report.py over results/w19_intervals/*.json, W19 a1 pods qwen/mistral/llama @6734afa, paired with W18 g1 per-trial records); mechanism: results/w18_harvest/quant-findings.md.
@@ -736,9 +740,54 @@ document-QA probe (single Qasper document, $\sim$5.6K tokens), a
 moderate-compression \texttt{bug-r128} scores F1 $0.221$ at $0.160\times$, ahead
 of the sub-$0.25\times$ eviction arms (Expected~Attention-k0.25 $0.216$ at
 $0.250\times$; -k0.1 $0.149$; SnapKV-k0.1 $0.136$) and of \texttt{palu-r0.25}
-($0.073$); full KV is $0.259$. The LongBench point is one document (low power);
-an official-benchmark anchor and a full flagship sweep are v2 work
-(\S\ref{sec:limits}).
+($0.073$); full KV is $0.259$. The LongBench point is one document (low power).
+\textbf{(3) The official RULER anchor.} To confirm the numbers against a
+generator we did not write, we ran the same arms on prompts produced by the
+official NVIDIA RULER generator (commit \texttt{c3f5e3b}: its essay and noise
+haystacks, needle types, templates, generation budgets and
+\texttt{string\_match\_all} scoring; 12 records per task, Llama-3.1-8B, 16K;
+Table~\ref{tab:official}). Three things transfer from our generator and one does
+not. Eviction at $0.1\times$ collapses on every essay-haystack cell (mean $0.20$;
+the flagship is paired-separated from it on 6 of 9 tasks, $p\le0.008$).
+Single-needle retrieval is a tie between the flagship and the 2-bit quantizer.
+The $0.29$--$0.75\times$ arms (4-bit KIVI, ThinK, Palu) are near-perfect. What
+does \emph{not} transfer is the flagship's multi-value edge over 2-bit
+quantization: on the official multi-value and multi-query prompts the paired
+contrast is $1$ vs $1$ and $0$ vs $4$ discordant records, and over the nine tasks
+the flagship averages $0.79$ against $0.87$ for the 2-bit arm at matched bytes
+(no cell significant in either direction). The flagship's variable-tracking
+weakness is confirmed and is where the larger arms separate from it ($0.33$ vs
+$1.00$ for 4-bit KIVI and Palu, $p{=}0.008$). Its 14 misses sit at needle depths
+$0.15$--$0.95$, so this is not a warm-up-window or recency effect but scattered
+misses the quantizers do not make. We therefore state the matched-bytes
+retrieval advantage of \S\ref{sec:quantbaseline} as a property of our generator
+that the official suite does not reproduce at 16K, while the eviction collapse
+and the single-needle parity do transfer.
+% source: results/w19-a2-llama-lines.txt, results/w19_intervals/a2-llama-ruler-intervals.md, results/w19-a2-flagship-misses.md, docs/week19-official-ruler.md (a2-llama pod @c331ebd).
+
+\begin{table}[htbp]
+\centering
+\caption{Official NVIDIA RULER (commit \texttt{c3f5e3b}) at 16K on Llama-3.1-8B,
+12 records per task, accuracy under the official \texttt{string\_match\_all}
+rule. s1--s3 = \texttt{niah\_single\_1/2/3} (noise, essay/numbers, essay/uuids);
+mk1--3 = \texttt{niah\_multikey\_1/2/3}; mv/mq = multi-value/multi-query; vt =
+variable tracking. Honest stored-bits ratios.}
+\label{tab:official}
+\small
+\begin{tabular}{lcccccccccc|c}
+\toprule
+arm & stored & s1 & s2 & s3 & mk1 & mk2 & mk3 & mv & mq & vt & mean \\
+\midrule
+full KV & $1.00\times$ & 1.00 & 1.00 & 1.00 & 1.00 & 1.00 & 0.92 & 1.00 & 1.00 & 1.00 & 0.99 \\
+\texttt{think-c0.5} & $0.75\times$ & 1.00 & 1.00 & 1.00 & 1.00 & 1.00 & 0.92 & 1.00 & 1.00 & 0.92 & 0.98 \\
+\texttt{palu-r0.5} & $0.50\times$ & 1.00 & 1.00 & 1.00 & 1.00 & 1.00 & 0.92 & 0.42 & 0.92 & 1.00 & 0.92 \\
+KIVI 4-bit & $0.29\times$ & 1.00 & 1.00 & 1.00 & 1.00 & 1.00 & 0.92 & 1.00 & 1.00 & 1.00 & 0.99 \\
+KIVI 2-bit & $0.16\times$ & 1.00 & 1.00 & 0.83 & 1.00 & 0.92 & 0.58 & 0.83 & 1.00 & 0.67 & 0.87 \\
+\texttt{bugSseed-r64-h256} & $0.15\times$ & 0.83 & 1.00 & 0.83 & 0.83 & 1.00 & 0.83 & 0.83 & 0.67 & 0.33 & 0.79 \\
+\texttt{ea-k0.1} & $0.10\times$ & 1.00 & 0.17 & 0.00 & 0.33 & 0.00 & 0.00 & 0.00 & 0.00 & 0.33 & 0.20 \\
+\bottomrule
+\end{tabular}
+\end{table}
 % source: results/w18-g2-qwen-lines.txt (wikitext filler 16K Qwen: flagship single 1.00, ea-k0.1 0/0/0/0, palu-r0.5 1/1/0.83/0.08, think-c0.5 1/1/0.67/0.33); results/w11-goalA-lb-lines.txt (qasper).
 
 \subsection{Composition with quantization (1B)}
@@ -891,14 +940,16 @@ $r{=}64$ flagship is dominated outright. The band quantization cannot enter
 on Qwen. A fp16-storable gist (halving BUG's honest bytes) would change this
 comparison materially and is the most valuable single follow-up.
 
-\paragraph{Benchmark external validity.} Retrieval uses an in-repo RULER-style
-generator whose default filler is a small fixed sentence pool; selection and
-confirmation share the generator. We have partially de-risked this: the ordering
-survives a WikiText-filler rerun and a single-document LongBench probe
-(\S\ref{sec:realistic}), both independent of the fixed pool. What remains for v2
-is an \emph{official}-benchmark anchor---an official RULER subset and a full
-flagship LongBench sweep---to confirm the numbers against a generator we did not
-write.
+\paragraph{Benchmark external validity: the official anchor cuts both ways.}
+Most retrieval evidence uses an in-repo RULER-style generator. The official
+RULER anchor (\S\ref{sec:realistic}, Llama 16K, 12 records per task) confirms
+the eviction collapse and single-needle parity with 2-bit quantization, but it
+does \emph{not} reproduce the multi-value edge over 2-bit quantization that our
+generator shows, and on average the flagship trails the 2-bit arm there ($0.79$
+vs $0.87$; no task separated). We therefore scope the matched-bytes retrieval
+advantage to our generator's tasks and treat the official numbers as the
+external-validity ceiling. The anchor covers one model and one context; a
+three-family, 32K official grid and a flagship LongBench sweep remain open.
 
 \paragraph{Statistical firmness and provenance.} The 1B composition study is
 lower-$n$, but the retrieval grids are now firm: the 16K and 32K cross-model

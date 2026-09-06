@@ -24,6 +24,7 @@
 \usepackage{booktabs}
 \usepackage{graphicx}
 \setlength{\emergencystretch}{2em}
+\usepackage{placeins}
 \usepackage{enumitem}
 \usepackage{xcolor}
 \usepackage[numbers,sort&compress]{natbib}
@@ -704,7 +705,7 @@ Qwen2.5-7B   & 16K & flagship & $0.275\times$ & $1.00$ & $1.00$ & $\mathbf{1.00}
 \end{tabular}
 \end{table}
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\linewidth]{../figures/week19/fairquant.pdf}
 \caption{Retrieval accuracy against honest stored bytes (log $x$), $n{=}12$ per
@@ -782,7 +783,7 @@ $b$-bit quantizer is floored at $b/16$, while a bounded-rank tracker is not
 floored at all. It is also why the persistence win (\S\ref{sec:memory} below)
 grows with context (Figure~\ref{fig:one_over_t}).
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=0.6\linewidth]{../figures/week19/one_over_t.pdf}
 \caption{Stored state as a fraction of full KV against context length on
@@ -835,7 +836,7 @@ the $1/T$ term: BUG's persisted bytes fall from $0.151\times$ to $0.140\times$
 between 16K and 32K while the quantizer holds $0.156\times$
 (Figure~\ref{fig:coldstart}).
 
-\begin{figure}[t]
+\begin{figure}[htbp]
 \centering
 \includegraphics[width=\linewidth]{../figures/week19/coldstart.pdf}
 \caption{Persisted-cache cold start to attend-ready on Llama-3.1-8B (A100-40GB,
@@ -847,6 +848,7 @@ quantized cache both take $0.1$--$0.2$\,s.}
 % source: results/w19-a3-llama2-lines.txt (w19_persist.py, SHA 5e8b275: 16K full 2147MB cold 1.226s | flagship 325MB 0.134s (load .067 h2d .028 ready .039) | kivi-2bit 336MB 0.137s; 32K full 4295MB 2.351s | flagship 600MB 0.227s | kivi-2bit 671MB 0.212s).
 % source: results/w18-g5 (CUDA w16_storage: bugSseed-r64-h256 16K stored 0.084 coldload 0.150 workspace 0.982 peak 9.09; 32K stored 0.074 coldload 0.139 workspace 0.991; bug-r64 16K workspace 0.998 coldload 0.135; integrity 0). Latency/residency 1.06x from review-systems.md.
 
+\FloatBarrier
 \section{Limitations}
 \label{sec:limits}
 We lead with the two limitations that most constrain the claims.

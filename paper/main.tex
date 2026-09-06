@@ -23,6 +23,7 @@
 \usepackage{amsmath,amssymb}
 \usepackage{booktabs}
 \usepackage{graphicx}
+\setlength{\emergencystretch}{2em}
 \usepackage{enumitem}
 \usepackage{xcolor}
 \usepackage[numbers,sort&compress]{natbib}
@@ -436,6 +437,7 @@ the $n{=}1024$ models weaker), discussed in \S\ref{sec:limits}.
 \caption{32K retrieval, config \texttt{bugSseed-r64-h256}, $n{=}12$ (Wilson 95\%),
 firming the previously $n{=}4$ cells. Memory is float-equivalent stored state.}
 \label{tab:xmodel32}
+\small
 \begin{tabular}{lccccc}
 \toprule
 model & single & multi-key & multi-value & var-track & stored state \\
@@ -486,6 +488,7 @@ Wilson-disjoint); \texttt{palu-r0.5} separates under the paired test
 ($p{=}3.1\!\times\!10^{-2}$) but Wilson intervals overlap, so it is reported as
 suggestive. Memory is stored state.}
 \label{tab:marquee}
+\small
 \begin{tabular}{lcccc}
 \toprule
 config & var-track (Wilson 95\%) & stored state & McNemar $p$ & vs.\ flagship \\
@@ -672,6 +675,7 @@ stored-bits ratios). Flagship = \texttt{bugSseed-r64-h256}; KIVI-2/4 = per-chann
 per-token-value quantized KV. Bold = paired McNemar $p<0.05$ in the flagship's favor;
 no cell is significant in the quantizer's favor.}
 \label{tab:fairquant}
+\small
 \begin{tabular}{llcccccc}
 \toprule
 model & ctx & arm & stored & single & multi-key & multi-value & var-track \\

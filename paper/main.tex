@@ -107,8 +107,8 @@ storage win as memory; the measured systems payoff is an $\approx7\times$ smalle
 ($9$--$10\times$ faster warm reload on our pod, $0.13$\,s vs $1.2$\,s at 16K), a
 win it shares with quantization; what it does not share is the $1/T$ term---the
 $O(rn{+}hn)$ overhead amortizes, so the stored ratio falls from $0.151\times$
-(16K) toward its $2r/n=0.125\times$ asymptote ($0.133\times$ at 64K, $19\%$ under
-the 2-bit arm's $0.156\times$), where the flagship still retrieves all four tasks
+(16K) toward its $2r/n=0.125\times$ asymptote ($19\%$ under the 2-bit arm's
+$0.156\times$; $0.133\times$ already at 64K), where the flagship still retrieves all four tasks
 ($n{=}8$; no contrast separates) while the quantizer's ratio is nearly flat.
 \end{abstract}
 
@@ -853,8 +853,8 @@ the flagship averages $0.79$ against $0.87$ for the 2-bit arm at matched bytes
 weakness is confirmed and is where the larger arms separate from it ($0.33$ vs
 $1.00$ for 4-bit KIVI, Palu and ThinK, $p=0.008$/$0.008$/$0.016$). Its $22$ misses (14 on the needle tasks at depths $0.15$--$0.95$, six of them at
 depth $\le0.20$; and 8 variable-tracking chains) are front-loaded---six of
-fourteen fall in the first ingest chunk---with a mid/late tail, scattered misses
-the quantizers do not make. We therefore state the matched-bytes
+fourteen fall in the first ingest chunk---with a mid/late tail, misses the
+near-lossless arms (4-bit KIVI, ThinK, Palu) do not make. We therefore state the matched-bytes
 retrieval advantage of \S\ref{sec:quantbaseline} as a property of our generator
 that the official suite does not reproduce at 16K, while the eviction collapse
 and the single-needle parity do transfer.

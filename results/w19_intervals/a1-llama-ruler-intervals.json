@@ -1,0 +1,533 @@
+{
+  "meta": {
+    "interval": "wilson",
+    "note": "n read from the line's n= field; hits=round(acc*n)",
+    "mcnemar": "exact two-sided binomial on discordant paired trials"
+  },
+  "cells": {
+    "16384": {
+      "quant-2bit-kivi": {
+        "niah_multikey": {
+          "acc": 0.67,
+          "n": 12,
+          "hits": 8,
+          "lo": 0.391,
+          "hi": 0.862,
+          "ratio": 0.163,
+          "sbits": 0.163
+        },
+        "niah_multivalue": {
+          "acc": 0.42,
+          "n": 12,
+          "hits": 5,
+          "lo": 0.193,
+          "hi": 0.68,
+          "ratio": 0.163,
+          "sbits": 0.163
+        },
+        "niah_single": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.163,
+          "sbits": 0.163
+        },
+        "vt": {
+          "acc": 0.67,
+          "n": 12,
+          "hits": 8,
+          "lo": 0.391,
+          "hi": 0.862,
+          "ratio": 0.163,
+          "sbits": 0.163
+        }
+      },
+      "quant-4bit-kivi": {
+        "niah_multikey": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.287,
+          "sbits": 0.287
+        },
+        "niah_multivalue": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.287,
+          "sbits": 0.287
+        },
+        "niah_single": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.287,
+          "sbits": 0.287
+        },
+        "vt": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.287,
+          "sbits": 0.287
+        }
+      },
+      "quant-8bit-kivi-hqq": {
+        "niah_multikey": {
+          "acc": 1.0,
+          "n": 4,
+          "hits": 4,
+          "lo": 0.51,
+          "hi": 1.0,
+          "ratio": 0.535,
+          "sbits": 0.535
+        },
+        "niah_multivalue": {
+          "acc": 1.0,
+          "n": 4,
+          "hits": 4,
+          "lo": 0.51,
+          "hi": 1.0,
+          "ratio": 0.535,
+          "sbits": 0.535
+        },
+        "niah_single": {
+          "acc": 1.0,
+          "n": 4,
+          "hits": 4,
+          "lo": 0.51,
+          "hi": 1.0,
+          "ratio": 0.535,
+          "sbits": 0.535
+        },
+        "vt": {
+          "acc": 1.0,
+          "n": 4,
+          "hits": 4,
+          "lo": 0.51,
+          "hi": 1.0,
+          "ratio": 0.535,
+          "sbits": 0.535
+        }
+      },
+      "bugS-r64-h256-q4": {
+        "niah_multikey": {
+          "acc": 0.67,
+          "n": 12,
+          "hits": 8,
+          "lo": 0.391,
+          "hi": 0.862,
+          "ratio": 0.085,
+          "sbits": 0.151
+        },
+        "niah_multivalue": {
+          "acc": 0.0,
+          "n": 12,
+          "hits": 0,
+          "lo": 0.0,
+          "hi": 0.242,
+          "ratio": 0.085,
+          "sbits": 0.151
+        },
+        "niah_single": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.085,
+          "sbits": 0.15
+        },
+        "vt": {
+          "acc": 0.0,
+          "n": 12,
+          "hits": 0,
+          "lo": 0.0,
+          "hi": 0.242,
+          "ratio": 0.085,
+          "sbits": 0.151
+        }
+      },
+      "bugSseed-r64-h256": {
+        "niah_multikey": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.085,
+          "sbits": 0.151
+        },
+        "niah_multivalue": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.085,
+          "sbits": 0.151
+        },
+        "niah_single": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.085,
+          "sbits": 0.15
+        },
+        "vt": {
+          "acc": 0.58,
+          "n": 12,
+          "hits": 7,
+          "lo": 0.32,
+          "hi": 0.807,
+          "ratio": 0.085,
+          "sbits": 0.151
+        }
+      }
+    },
+    "32768": {
+      "quant-2bit-kivi": {
+        "niah_multikey": {
+          "acc": 0.83,
+          "n": 12,
+          "hits": 10,
+          "lo": 0.552,
+          "hi": 0.953,
+          "ratio": 0.16,
+          "sbits": 0.16
+        },
+        "niah_multivalue": {
+          "acc": 0.92,
+          "n": 12,
+          "hits": 11,
+          "lo": 0.646,
+          "hi": 0.985,
+          "ratio": 0.16,
+          "sbits": 0.16
+        },
+        "niah_single": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.16,
+          "sbits": 0.16
+        },
+        "vt": {
+          "acc": 0.92,
+          "n": 12,
+          "hits": 11,
+          "lo": 0.646,
+          "hi": 0.985,
+          "ratio": 0.16,
+          "sbits": 0.16
+        }
+      },
+      "quant-4bit-kivi": {
+        "niah_multikey": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.284,
+          "sbits": 0.284
+        },
+        "niah_multivalue": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.284,
+          "sbits": 0.284
+        },
+        "niah_single": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.284,
+          "sbits": 0.284
+        },
+        "vt": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.284,
+          "sbits": 0.284
+        }
+      },
+      "bugS-r64-h256-q4": {
+        "niah_multikey": {
+          "acc": 0.83,
+          "n": 12,
+          "hits": 10,
+          "lo": 0.552,
+          "hi": 0.953,
+          "ratio": 0.075,
+          "sbits": 0.139
+        },
+        "niah_multivalue": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.075,
+          "sbits": 0.139
+        },
+        "niah_single": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.075,
+          "sbits": 0.139
+        },
+        "vt": {
+          "acc": 0.83,
+          "n": 12,
+          "hits": 10,
+          "lo": 0.552,
+          "hi": 0.953,
+          "ratio": 0.075,
+          "sbits": 0.139
+        }
+      },
+      "bugSseed-r64-h256": {
+        "niah_multikey": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.075,
+          "sbits": 0.139
+        },
+        "niah_multivalue": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.075,
+          "sbits": 0.139
+        },
+        "niah_single": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.075,
+          "sbits": 0.139
+        },
+        "vt": {
+          "acc": 0.92,
+          "n": 12,
+          "hits": 11,
+          "lo": 0.646,
+          "hi": 0.985,
+          "ratio": 0.075,
+          "sbits": 0.139
+        }
+      }
+    }
+  },
+  "contrasts": [
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-2bit-kivi",
+      "ctx": "16384",
+      "task": "niah_single",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 0,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-2bit-kivi",
+      "ctx": "16384",
+      "task": "niah_multikey",
+      "n_paired": 12,
+      "a_favored": 4,
+      "b_favored": 0,
+      "p_value": 0.125,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-2bit-kivi",
+      "ctx": "16384",
+      "task": "niah_multivalue",
+      "n_paired": 12,
+      "a_favored": 7,
+      "b_favored": 0,
+      "p_value": 0.015625,
+      "significant": true
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-2bit-kivi",
+      "ctx": "16384",
+      "task": "vt",
+      "n_paired": 12,
+      "a_favored": 3,
+      "b_favored": 4,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-2bit-kivi",
+      "ctx": "32768",
+      "task": "niah_single",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 0,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-2bit-kivi",
+      "ctx": "32768",
+      "task": "niah_multikey",
+      "n_paired": 12,
+      "a_favored": 2,
+      "b_favored": 0,
+      "p_value": 0.5,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-2bit-kivi",
+      "ctx": "32768",
+      "task": "niah_multivalue",
+      "n_paired": 12,
+      "a_favored": 1,
+      "b_favored": 0,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-2bit-kivi",
+      "ctx": "32768",
+      "task": "vt",
+      "n_paired": 12,
+      "a_favored": 1,
+      "b_favored": 1,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-4bit-kivi",
+      "ctx": "16384",
+      "task": "niah_single",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 0,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-4bit-kivi",
+      "ctx": "16384",
+      "task": "niah_multikey",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 0,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-4bit-kivi",
+      "ctx": "16384",
+      "task": "niah_multivalue",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 0,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-4bit-kivi",
+      "ctx": "16384",
+      "task": "vt",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 5,
+      "p_value": 0.0625,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-4bit-kivi",
+      "ctx": "32768",
+      "task": "niah_single",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 0,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-4bit-kivi",
+      "ctx": "32768",
+      "task": "niah_multikey",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 0,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-4bit-kivi",
+      "ctx": "32768",
+      "task": "niah_multivalue",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 0,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-4bit-kivi",
+      "ctx": "32768",
+      "task": "vt",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 1,
+      "p_value": 1.0,
+      "significant": false
+    }
+  ]
+}

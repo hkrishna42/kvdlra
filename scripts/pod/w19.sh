@@ -91,7 +91,9 @@ RULER_SHA=c3f5e3b4f87f97e048793bb510a3a6b19a46bf3a
 TASKS9="niah_single_1 niah_single_2 niah_single_3 niah_multikey_1 niah_multikey_2 niah_multikey_3 niah_multivalue niah_multiquery vt"
 OFF(){ PYTHONPATH=src python -u scripts/w19_official_ruler.py --model "$MODEL" --device cuda \
          --dtype "$DTYPE" --chunk "$CHUNK" --data-dir /root/ruler_data --context-len 16384 "$@" 2>&1; }
-a2(){
+# Build the official RULER prompts ON the pod (pinned commit, seed 42): shared by a2 and
+# the Week-20 fork so both land on the SAME official needles.
+a2_prep(){
   echo "===W19_A2_PREP_BEGIN_${TAG}==="
   pip install -q wonderwords tenacity nltk html2text beautifulsoup4 2>&1 | tail -1
   python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('punkt_tab', quiet=True)"
@@ -106,6 +108,9 @@ a2(){
         --num_samples 12 --random_seed 42 --model_template_type base 2>&1 | tail -1 )
     echo "===A2_PREP_${task}_$(wc -l < /root/ruler_data/${task}/validation.jsonl 2>/dev/null || echo 0)==="
   done
+}
+a2(){
+  a2_prep
   echo "===W19_A2_RUN_BEGIN_${TAG}==="
   OFF --tasks $TASKS9 --methods full think palu ea --think-ratios 0.5 --palu-ranks 0.5 --evict-keeps 0.1 \
     --out-json "results/w19-${TAG}-a2base.json"; emit "A2BASE" "results/w19-${TAG}-a2base.json"
@@ -145,6 +150,46 @@ a1q(){
   done
 }
 
+# fork: the Week-20 DECISIVE FORK (exit-gate significance review's #1 experiment). The
+# sub-cliff cell bugSseed-r64-h256-q4 (0.048x/0.034x) is "exclusive" only vs SCALAR
+# quantization; whether an eviction x quantization COMPOSITE reaches the same band with
+# retrieval is unmeasured. This runs the composite competitor (ea-k{0.25,0.1}-q{2,4}-kivi:
+# eviction prunes to keep-fraction, survivors stored 2/4-bit; ea-k0.25-q2=0.047x ~ the
+# 16K q4 cell, ea-k0.1-q4=0.031x ~ the 32K cell) on the SAME needles as a1q (in-repo,
+# --n-trials 6 --seeds 0 1) and a2 (official RULER, seed 42) so every contrast is paired
+# post-hoc against the committed q4 / plain-ea / plain-quant per-trial records. Composite
+# arms are eviction presses (single-shot, no reconstruct-then-attend) -> fast, ~a1 speed.
+# PRE-REGISTERED DECISION RULE (report WHATEVER it shows): on the official anchor (where
+# plain ea-k0.1 collapses to mean 0.20 on essays), compare the byte-matched composite
+# (<=0.05x) to the q4 cell. If the composite RETRIEVES single/mk/mv where q4 does (mean
+# within noise), the "exclusive band" claim is REFUTED -> drop "exclusive", reword
+# §subcliff/§limits/conclusion to the mechanism story (significance stays 6). If the
+# composite COLLAPSES on essays like plain eviction while q4 holds, the band is exclusive
+# of composites too -> claim it, significance 6->7, and the claims/prior-work "band is
+# asserted not measured" objection is retired. Composite needs the *-devel* image (quanto).
+FORK="--methods composite --evict-keeps 0.25 0.1 --quant-nbits 2 4 --quant-scheme kivi"
+# forkdiag: validate the composite QUANTO path on GPU before fan-out (the CPU probe used
+# hqq; quanto JIT-builds its CUDA kernel). Decisive signal = an `ea-k0.25-q2-kivi acc=` ROW.
+forkdiag(){
+  echo "===W19_FORKDIAG_BEGIN_${TAG}==="
+  RULER --context-lens 16384 --tasks niah_single --methods composite --evict-keeps 0.25 \
+    --quant-nbits 2 4 --quant-scheme kivi --n-trials 2 --seeds 0 1 \
+    --out-json "results/w19-${TAG}-forkdiag.json"; emit "FORKDIAG" "results/w19-${TAG}-forkdiag.json"
+}
+fork(){
+  for T in 16384 32768; do
+    echo "===W19_FORK_R${T}_BEGIN_${TAG}==="
+    RULER --context-lens "$T" $T4 $FORK --n-trials 6 --seeds 0 1 \
+      --out-json "results/w19-${TAG}-fork-r${T}.json"; emit "FORK_R${T}" "results/w19-${TAG}-fork-r${T}.json"
+  done
+  if [ "$TAG" = "llama" ]; then  # the official anchor is Llama-16K only (as in a2)
+    a2_prep
+    echo "===W19_FORKOFF_BEGIN_${TAG}==="
+    OFF --tasks $TASKS9 $FORK \
+      --out-json "results/w19-${TAG}-forkoff.json"; emit "FORKOFF" "results/w19-${TAG}-forkoff.json"
+  fi
+}
+
 case "$MODE" in
   a1diag) a1diag ;;
   a1) a1 ;;
@@ -152,6 +197,8 @@ case "$MODE" in
   a2) a2 ;;
   a3) a3 ;;
   a4) a4 ;;
+  forkdiag) forkdiag ;;
+  fork) fork ;;
   *) echo "===UNKNOWN_MODE_${MODE}==="; exit 1 ;;
 esac
 echo "===W19_DONE_${MODE}_${TAG}==="

@@ -103,3 +103,49 @@ with W19 SHAs), conclusion; three figures (`fig:fairquant`, `fig:one_over_t`, `f
 - Not done: a fp16-storable gist (would halve BUG's honest bytes — the single most valuable
   follow-up given the Qwen matched-bytes result); official RULER at 32K / other families;
   flagship LongBench sweep; a fused kernel; the seeded compose on Qwen (negative as measured).
+
+## Exit-gate re-review verdict (2026-09-06)
+
+Six-dimension re-review + AC synthesis (`docs/reviews/2026-09-06/`: six reviews,
+the shared briefing, and `review-meta-verdict.md`). **Zero fatal flaws; both
+FATAL-as-worded items are closed in the actual manuscript text** (verified by
+grep, not by commit message). The consolidated $0 wording/citation pass
+(`fb804bd` paper, `b57c560` provenance, `2cf54ae` figure, `216481d` board,
+`6c0c96a`/`12ae119`/`cb1bcfd` polish) moved every dimension it could.
+
+| dimension | as-worded | post-$0 (AC-verified) | what still blocks a 7 | cost |
+|---|---|---|---|---|
+| claims | 6 | **7** | — (GPU items now scoped "not measured here") | — |
+| prior-work | 5 | 6 | tracker-swap ablation: is DLRA necessary end-to-end? | ~$15–20 |
+| rigor | 6 | **7** | (softest 7) single-shot 2-bit prefill control | ~$10 |
+| significance | 5 | 6 | sub-cliff cell vs eviction×quant composite on official RULER | ~$40–50 |
+| systems | 6 | 6 | decode latency/peak at the real operating point | ~$10 |
+| repro | 7 | **7** | — | — |
+
+**Gate NOT met by $0 work alone** (bar = ≥7 every dimension, zero fatal): three
+dimensions sit at an honest 6, each needing a GPU experiment a wording pass cannot
+substitute. Three are at 7 (claims, rigor, repro).
+
+**FATAL closures (verified in text):** OjaKV cited + "unoccupied axis" reframed
+(abstract, intro, related, `sec:oracle`); the augmented-BUG step stated as Brand
+incremental SVD / FD (Brand, Liberty, Oja cited) in a new Method paragraph. The
+1/T claim reframed to "toward the $2r/n=0.125\times$ asymptote, a 19% margin, not
+unbounded" (abstract + `sec:memory` + `one_over_t` caption/figure); marquee
+re-billed $0.284\times$ with the KIVI-4bit tie row in `tab:marquee`.
+
+**AC recommendation:** submittable to **arXiv v1 now** (its stated purpose:
+internally consistent, honest, all 42 `\citep` resolve, PDF builds green). Against
+**ICML 2027 it is poster / borderline-accept, not accept** — significance is 6
+because the one exclusive quantitative claim (the sub-2-bit band) is uncontested.
+**Single highest-leverage next step:** run the sub-cliff cell against
+eviction×quantization composites (KIVI-2bit×ea, KIVI-4bit×ea) on the official
+RULER anchor, pre-registered as a decisive fork (~$40–50, ~$30 Llama-only) — it
+unblocks significance and simultaneously retires the claims/prior-work "the band
+is asserted, not measured" objection. Add the ~$15 tracker-swap (prior-work) and
+~$10 decode-latency (systems) pods and the gate is met (~$65–80 total, three
+pods, not one run). Credit is **$55.66**, so this needs a top-up or a Llama-only
+subset before launch.
+
+Two 5-minute imprecisions the AC caught were fixed in `cb1bcfd` (abstract 64K
+margin vs asymptote; official "misses the quantizers do not make" scoped to the
+near-lossless arms, since the 2-bit arm also misses).

@@ -135,7 +135,8 @@ def fig_fairquant() -> None:
     def _h(marker: str, colour: str, label: str, hollow: bool) -> Line2D:
         fc = "white" if hollow else colour
         return Line2D(
-            [], [], marker=marker, color=colour, mfc=fc, mec=colour, mew=1.6, ls="none", ms=6.5, label=label
+            [], [], marker=marker, color=colour, mfc=fc, mec=colour, mew=1.6, ls="none",
+            ms=6.5, label=label,
         )  # fmt: skip
 
     handles = [_h(m, c, lab, a.endswith("-q4")) for a, (lab, c, m) in ARMS.items()]

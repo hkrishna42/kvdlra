@@ -9,3 +9,7 @@ a2-llama
 a1q-llama
 a1q-mistral
 a4-llama
+forkdiag-qwen
+fork-mistral
+fork-qwen
+fork-llama

@@ -9,3 +9,7 @@ a1q-qwen:50003064:a1q:qwen
 a1q-mistral:50003069:a1q:mistral
 a2-llama:50003417:a2:llama
 a4-llama:50016757:a4:llama
+forkdiag-qwen:50095729:forkdiag:qwen
+fork-llama:50096576:fork:llama
+fork-mistral:50096648:fork:mistral
+fork-qwen:50096579:fork:qwen

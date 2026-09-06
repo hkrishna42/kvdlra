@@ -219,3 +219,36 @@ def test_score_quant_runs_without_autograd() -> None:
     assert ntok == 15 and nll > 0.0
     layer: Any = cache.layers[0]
     assert not layer._dequantize(layer._quantized_keys).requires_grad
+
+
+def test_composite_arm_composes_eviction_and_quant() -> None:
+    """Week-20 decisive fork: the press_quant composite builds ea-k{keep}-q{nbits} arms
+    carrying both a press factory and a quant-cache factory (the eviction press prunes;
+    the survivors are stored quantized -- billed kept-fraction x nbits by _footprint's
+    press_quant branch). End-to-end composition is validated by the Llama-3.2-1B CPU
+    probe and the GPU run; this guards the arm wiring."""
+    from w10_frontier import build_arms
+
+    m = _model()
+    arms = build_arms(
+        _args(
+            methods=["composite"],
+            quant_scheme="kivi",
+            quant_backend="quanto",
+            evict_keeps=[0.25, 0.1],
+            quant_nbits=[2, 4],
+        ),
+        m,
+        200,
+    )
+    assert [a["name"] for a in arms] == [
+        "ea-k0.25-q2-kivi",
+        "ea-k0.25-q4-kivi",
+        "ea-k0.1-q2-kivi",
+        "ea-k0.1-q4-kivi",
+    ]
+    for a in arms:
+        assert a["kind"] == "press_quant"
+        assert callable(a["make_press"]) and callable(a["make_cache"])
+        assert a["chunkable"] is False
+        assert a["quant_scheme"] == "kivi"

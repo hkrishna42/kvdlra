@@ -395,6 +395,46 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                     }
                 )
 
+    if "composite" in want:  # Week-20: eviction x quantization composite (MiniKV-style).
+        # The eviction press prunes to keep-fraction k; the survivors are stored
+        # QUANTIZED -- the kvpress forward_hook's QuantizedCache branch (compat.py)
+        # re-quantizes the pruned K/V. Stored bytes = k*(nbits/16) + aux, so the two
+        # compression axes multiply: this is the composite competitor the sub-cliff
+        # cell (bugSseed-r64-h256-q4, ~0.03-0.05x) is measured against on RULER.
+        from kvpress import ExpectedAttentionPress
+
+        cscheme = str(getattr(args, "quant_scheme", "kivi"))
+        cbackend = str(getattr(args, "quant_backend", "quanto"))
+        csuf = ("-kivi" if cscheme == "kivi" else "") + ("-hqq" if cbackend == "hqq" else "")
+        for keep in args.evict_keeps:
+            cr = 1.0 - keep
+            for nbits in args.quant_nbits:
+                arms.append(
+                    {
+                        "name": f"ea-k{keep}-q{nbits}{csuf}",
+                        "kind": "press_quant",
+                        "rank": None,
+                        "keep": keep,
+                        "nbits": nbits,
+                        "quant_group": args.quant_group,
+                        "quant_residual": args.quant_residual,
+                        "quant_scheme": cscheme,
+                        "quant_backend": cbackend,
+                        "chunkable": False,  # the press runs single-shot, like other presses
+                        "make_press": lambda cr=cr: ExpectedAttentionPress(compression_ratio=cr),
+                        "make_cache": (
+                            lambda nbits=nbits: make_quant_cache(
+                                model.config,
+                                nbits=nbits,
+                                scheme=cscheme,
+                                backend=cbackend,
+                                group=args.quant_group,
+                                residual=args.quant_residual,
+                            )
+                        ),
+                    }
+                )
+
     if "think" in want:  # ThinK: channel-wise KEY low-rank (kvpress drop-in)
         from kvpress import ThinKPress
 
@@ -543,6 +583,21 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
             group=int(arm["quant_group"]),
             residual_length=int(arm["quant_residual"]),
             scale_words=aux_words(cache),  # billed at the backend's real aux precision
+        )
+    if kind == "press_quant":  # Week-20 composite: kept fraction, survivors quantized.
+        # The forward_hook prunes then re-quantizes and empties the fp16 residual
+        # (compat.py: cl.keys = zeros(0), cl.cumulative_length = kept), so bill the
+        # measured kept-token count at nbits with NO residual -- the honest composite
+        # footprint (k*nbits/16 + aux).
+        kept = int(getattr(cache.layers[0], "cumulative_length", 0))
+        assert kept > 0, "press_quant: empty cache -- forward_hook did not fire?"
+        return acc.quant_footprint(
+            kept,
+            n,
+            nbits=int(arm["nbits"]),
+            group=int(arm["quant_group"]),
+            residual_length=0,
+            scale_words=aux_words(cache),
         )
     if arm.get("press_type") == "think":
         # ThinK zeros channels (no measured gain) -> analytic footprint (K pruned).

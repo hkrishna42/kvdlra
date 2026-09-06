@@ -342,6 +342,19 @@ def retrieve(
         text = _decode(
             model, tok, cache, query.to(device), ctx_len, device, block=True, max_new=max_new
         )
+    elif arm["kind"] == "press_quant":
+        # Week-20 composite (eviction x quantization): the eviction press prunes to the
+        # keep-fraction during single-shot prefill, and the compat forward_hook's
+        # QuantizedCache branch re-quantizes the pruned survivors -- so the cache holds
+        # k*T tokens at nbits. Single-shot prefill (no ChunkPress), like the presses.
+        cache = arm["make_cache"]()
+        press = arm["make_press"]()
+        with press(model):
+            model(hay, past_key_values=cache, use_cache=True, logits_to_keep=1)
+        fp = _footprint(arm, cache, ctx_len, n, h_kv)
+        text = _decode(
+            model, tok, cache, query.to(device), ctx_len, device, block=True, max_new=max_new
+        )
     else:
         # Scorer presses run SINGLE-SHOT (no ChunkPress): kvpress compresses in
         # prefill and SnapKVPress asserts q_len > window_size (64), which the small

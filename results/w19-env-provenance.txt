@@ -1,0 +1,125 @@
+# W19 GPU program -- environment & SHA provenance (extracted from the harvested pod stdout raws)
+# One block per pod label; RUN_SHA = the commit each pod cloned and checked out; card/driver/torch lines as printed by w18_boot.sh's ENV block.
+
+## a1-llama (a1-llama.raw)
+===HQQ_OK===
+===MODEL_OK===
+===QUANTO_OK===
+===RUN_SHA_6734afa7cac1620af33bdbfb17bff027ad764daa===
+NVIDIA A100-PCIE-40GB, 40960 MiB, 595.71.05
+device=NVIDIA A100-PCIE-40GB
+run_sha=6734afa7cac1620af33bdbfb17bff027ad764daa
+torch=2.11.0+cu128 cuda_build=12.8 cuda_avail=True
+transformers=5.8.0 kvpress=0.5.1
+
+## a1-mistral (a1-mistral.raw)
+===HQQ_OK===
+===MODEL_OK===
+===QUANTO_OK===
+===RUN_SHA_6734afa7cac1620af33bdbfb17bff027ad764daa===
+NVIDIA A100-PCIE-40GB, 40960 MiB, 570.211.01
+device=NVIDIA A100-PCIE-40GB
+run_sha=6734afa7cac1620af33bdbfb17bff027ad764daa
+torch=2.11.0+cu128 cuda_build=12.8 cuda_avail=True
+transformers=5.8.0 kvpress=0.5.1
+
+## a1-qwen (a1-qwen.raw)
+===HQQ_OK===
+===MODEL_OK===
+===QUANTO_OK===
+===RUN_SHA_6734afa7cac1620af33bdbfb17bff027ad764daa===
+NVIDIA A100-PCIE-40GB, 40960 MiB, 595.71.05
+device=NVIDIA A100-PCIE-40GB
+run_sha=6734afa7cac1620af33bdbfb17bff027ad764daa
+torch=2.11.0+cu128 cuda_build=12.8 cuda_avail=True
+transformers=5.8.0 kvpress=0.5.1
+
+## a1diag-qwen (a1diag-qwen.raw)
+===HQQ_OK===
+===MODEL_OK===
+===QUANTO_OK===
+===RUN_SHA_24ac22ae24e50fc7cf1d5a441e16d2d49c73bcac===
+NVIDIA A100-PCIE-40GB, 40960 MiB, 595.71.05
+device=NVIDIA A100-PCIE-40GB
+run_sha=24ac22ae24e50fc7cf1d5a441e16d2d49c73bcac
+torch=2.11.0+cu128 cuda_build=12.8 cuda_avail=True
+transformers=5.8.0 kvpress=0.5.1
+
+## a1q-llama (a1q-llama.raw)
+===HQQ_OK===
+===MODEL_OK===
+===QUANTO_OK===
+===RUN_SHA_1cbc31fa0e469ddbd4b7dcfd5bdde2a95b4ab6a3===
+NVIDIA A100-PCIE-40GB, 40960 MiB, 570.211.01
+device=NVIDIA A100-PCIE-40GB
+run_sha=1cbc31fa0e469ddbd4b7dcfd5bdde2a95b4ab6a3
+torch=2.11.0+cu128 cuda_build=12.8 cuda_avail=True
+transformers=5.8.0 kvpress=0.5.1
+
+## a1q-mistral (a1q-mistral.raw)
+===HQQ_OK===
+===MODEL_OK===
+===QUANTO_OK===
+===RUN_SHA_1cbc31fa0e469ddbd4b7dcfd5bdde2a95b4ab6a3===
+NVIDIA A100-PCIE-40GB, 40960 MiB, 570.86.10
+device=NVIDIA A100-PCIE-40GB
+run_sha=1cbc31fa0e469ddbd4b7dcfd5bdde2a95b4ab6a3
+torch=2.11.0+cu128 cuda_build=12.8 cuda_avail=True
+transformers=5.8.0 kvpress=0.5.1
+
+## a1q-qwen (a1q-qwen.raw)
+===HQQ_OK===
+===MODEL_OK===
+===QUANTO_OK===
+===RUN_SHA_1cbc31fa0e469ddbd4b7dcfd5bdde2a95b4ab6a3===
+NVIDIA A100-PCIE-40GB, 40960 MiB, 570.86.10
+device=NVIDIA A100-PCIE-40GB
+run_sha=1cbc31fa0e469ddbd4b7dcfd5bdde2a95b4ab6a3
+torch=2.11.0+cu128 cuda_build=12.8 cuda_avail=True
+transformers=5.8.0 kvpress=0.5.1
+
+## a2-llama (a2-llama.raw)
+===HQQ_OK===
+===MODEL_OK===
+===QUANTO_OK===
+===RUN_SHA_c331ebd3f8dcf711927cd7a5424ded342ed0036d===
+NVIDIA A100-PCIE-40GB, 40960 MiB, 535.247.01
+device=NVIDIA A100-PCIE-40GB
+run_sha=c331ebd3f8dcf711927cd7a5424ded342ed0036d
+torch=2.11.0+cu128 cuda_build=12.8 cuda_avail=True
+transformers=5.8.0 kvpress=0.5.1
+
+## a3-llama2 (a3-llama2.raw)
+===HQQ_OK===
+===MODEL_OK===
+===QUANTO_OK===
+===RUN_SHA_5e8b2753d33423b9efb667c26a7f0d949b734b34===
+NVIDIA A100-PCIE-40GB, 40960 MiB, 570.86.10
+device=NVIDIA A100-PCIE-40GB
+run_sha=5e8b2753d33423b9efb667c26a7f0d949b734b34
+torch=2.11.0+cu128 cuda_build=12.8 cuda_avail=True
+transformers=5.8.0 kvpress=0.5.1
+
+## a4-llama (a4-llama.raw)
+===HQQ_OK===
+===MODEL_OK===
+===QUANTO_OK===
+===RUN_SHA_d15769dcc56aa79cd35c73ba2ea72975cf4ecc7b===
+NVIDIA A100-PCIE-40GB, 40960 MiB, 580.173.02
+device=NVIDIA A100-PCIE-40GB
+run_sha=d15769dcc56aa79cd35c73ba2ea72975cf4ecc7b
+torch=2.11.0+cu128 cuda_build=12.8 cuda_avail=True
+transformers=5.8.0 kvpress=0.5.1
+
+## a3-llama.raw (a3-llama.raw.superseded)
+===HQQ_OK===
+===MODEL_OK===
+===QUANTO_OK===
+===RUN_SHA_1cbc31fa0e469ddbd4b7dcfd5bdde2a95b4ab6a3===
+===RUN_SHA_bafa02681a308a3b8c50399f408e397aedd3e67e===
+NVIDIA A100-PCIE-40GB, 40960 MiB, 570.86.10
+device=NVIDIA A100-PCIE-40GB
+run_sha=1cbc31fa0e469ddbd4b7dcfd5bdde2a95b4ab6a3
+run_sha=bafa02681a308a3b8c50399f408e397aedd3e67e
+torch=2.11.0+cu128 cuda_build=12.8 cuda_avail=True
+transformers=5.8.0 kvpress=0.5.1

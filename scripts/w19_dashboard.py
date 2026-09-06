@@ -49,11 +49,23 @@ PERSIST_RE = re.compile(
     r"h2d=([0-9.]+)s ready=([0-9.]+)s cold=([0-9.]+)s",
     re.M,
 )
-FLAG_PPL = {  # Week-18 same-family PPL4 (results/w18-g1-report.md)
-    "llama": {16384: 5.31, 32768: 8.33},
-    "mistral": {16384: 5.50, 32768: 3.76},
-    "qwen": {16384: 8.18, 32768: 35.08},
-}
+
+
+def _flag_ppl() -> dict[str, dict[int, float]]:
+    """Flagship PPL4 from the committed Week-18 primaries (never retyped)."""
+    out: dict[str, dict[int, float]] = {}
+    for tag, _ in FAMILIES:
+        p = RES / f"w18-{tag}-ppl-lines.txt"
+        d: dict[int, float] = {}
+        if p.exists():
+            for m in PPL_RE.finditer(p.read_text()):
+                if m.group(1) == FLAG:
+                    d[int(m.group(2))] = float(m.group(3))
+        out[tag] = d
+    return out
+
+
+FLAG_PPL = _flag_ppl()  # Week-18 same-family PPL4 (results/w18-*-ppl-lines.txt)
 
 
 # ------------------------------------------------------------------ loaders

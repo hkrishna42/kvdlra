@@ -1,0 +1,2 @@
+  bugSseed-r64-h256 [T=16384] ppl=8.181 tok_eq/layer=2399.3 ratio=0.148 sbits=0.275
+  bugSseed-r64-h256 [T=32768] ppl=35.083 tok_eq/layer=4479.3 ratio=0.139 sbits=0.264

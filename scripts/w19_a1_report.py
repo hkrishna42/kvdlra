@@ -25,12 +25,6 @@ FLAG = "bugSseed-r64-h256"
 COMPOSE = "bugSseed-r64-h256-q4"
 ARMS = [FLAG, "quant-2bit-kivi", "quant-4bit-kivi", "quant-8bit-kivi-hqq"]
 CTXS = (16384, 32768)
-# Flagship ppl is the Week-18 same-family PPL4 number (results/w18-g1-report.md).
-FLAG_PPL = {
-    "llama": {16384: 5.31, 32768: 8.33},
-    "mistral": {16384: 5.50, 32768: 3.76},
-    "qwen": {16384: 8.18, 32768: 35.08},
-}
 PPL_RE = re.compile(r"^\s+(\S+)\s+\[T=(\d+)\] ppl=([0-9.]+) ", re.M)
 PERSIST_RE = re.compile(
     r"^\[persist ctx(\d+)\] (\S+)\s+bytes=(\d+) ratio=([0-9.]+) save=([0-9.]+)s load=([0-9.]+)s "
@@ -59,6 +53,19 @@ def _ppl_rows(path: Path) -> dict[tuple[str, int], float]:
         for m in PPL_RE.finditer(path.read_text()):
             out[(m.group(1), int(m.group(2)))] = float(m.group(3))
     return out
+
+
+def _flag_ppl() -> dict[str, dict[int, float]]:
+    """Flagship PPL4 from the committed Week-18 primaries (never retyped)."""
+    res = Path("results")
+    out: dict[str, dict[int, float]] = {}
+    for tag, _ in FAMILIES:
+        rows = _ppl_rows(res / f"w18-{tag}-ppl-lines.txt")
+        out[tag] = {ctx: rows[(FLAG, ctx)] for ctx in CTXS if (FLAG, ctx) in rows}
+    return out
+
+
+FLAG_PPL = _flag_ppl()
 
 
 def _family(res: Path, tag: str, name: str) -> list[str]:

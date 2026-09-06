@@ -51,3 +51,6 @@ figures/scratch/
 results/w18_harvest/*.raw
 results/w19_harvest/*.raw
 results/scratch/
+results/w19_harvest/watchdog.log
+results/w19_harvest/watchdog.pid
+results/w19_harvest/status.txt

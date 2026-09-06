@@ -45,7 +45,7 @@ for attempt in 1 2 3 4 5; do
 done
 cd kvdlra || { echo "===CLONE_FAILED==="; exit 1; }
 # SHA pin: check out the exact commit and FAIL LOUD if it isn't what was asked for.
-git checkout -q "$SHA" 2>&1 | tail -2 || { echo "===CHECKOUT_FAILED_${SHA}==="; exit 1; }
+git checkout -q "$SHA" >/dev/null 2>&1 || { echo "===CHECKOUT_FAILED_${SHA}==="; exit 1; }  # no pipe: the exit code is the guard
 RUN_SHA="$(git rev-parse HEAD)"
 echo "===RUN_SHA_${RUN_SHA}==="
 
@@ -68,7 +68,7 @@ def _ver(pkg):
     except Exception: return "?"
 print(f"python={sys.version.split()[0]}")
 print(f"torch={torch.__version__} cuda_build={torch.version.cuda} cuda_avail={torch.cuda.is_available()}")
-print(f"transformers={transformers.__version__} kvpress={_ver('kvpress')}")
+print(f"transformers={transformers.__version__} kvpress={_ver('kvpress')} optimum-quanto={_ver('optimum-quanto')} hqq={_ver('hqq')}")
 if torch.cuda.is_available():
     print(f"device={torch.cuda.get_device_name(0)}")
 PY

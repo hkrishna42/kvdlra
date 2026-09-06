@@ -149,3 +149,31 @@ subset before launch.
 Two 5-minute imprecisions the AC caught were fixed in `cb1bcfd` (abstract 64K
 margin vs asymptote; official "misses the quantizers do not make" scoped to the
 near-lossless arms, since the 2-bit arm also misses).
+
+## Week-20: arXiv package + the decisive fork (2026-09-06, user-approved)
+
+**arXiv v1 package delivered.** `scripts/make_arxiv.sh` assembles `paper/arxiv-v1.tar.gz`
+(flat main.tex, refs.bib, bundled main.bbl from the `paper` CI artifact, 3 figure PDFs);
+authors set to Harikrishnan Girikumar, Purva Bangad, and Sameet Sonawane. Submittable;
+the user uploads it.
+
+**The decisive fork (significance 6->7) -- FAVORABLE.** Built the eviction x quantization
+composite competitor (`--methods composite` -> `ea-k{keep}-q{nbits}` press_quant arm:
+Expected~Attention prunes to keep-fraction, survivors stored 2/4-bit; the two axes
+multiply). Three pods @5d3239f (~$3.40). Per the pre-registered rule
+(`results/w20-fork-report.md`):
+- **Our generator (Llama):** the q4 cell (0.048x/0.034x) holds single/mk/mv 1.00/1.00/1.00
+  at both contexts; NO composite matches at <= its bytes (byte-match ea-k0.25-q2 @0.039x ->
+  mk/mv 0.08/0.08; ea-k0.1-q4 @0.028x -> 0.75/0.92). The only composite that matches is
+  ea-k0.25-q4, needing 0.070x (1.5-2x the cell's bytes).
+- **Official RULER anchor (Llama):** every byte-matched composite collapses to mean
+  0.11-0.19, at or below plain eviction's 0.20; even ea-k0.25-q4 (0.070x) reaches only 0.33.
+  The essay haystack defeats eviction whether or not the survivors are quantized.
+
+**Verdict:** the sub-0.05x band with full single/multi-key/multi-value retrieval is
+exclusive of eviction x quant composites too, not only scalar quantizers -- MEASURED, so
+the AC's #1 residual ("band asserted, not measured") is retired and significance moves
+6->7. Honest caveat carried in the paper: the q4 cell itself has no official-anchor number.
+Folded into paper §subcliff (Table tab:composite), §quantbaseline, §limits, conclusion,
+abstract (bfa0943). The exit gate now needs only the tracker-swap (prior-work 6->7, ~$15)
+and decode-latency (systems 6->7, ~$10) pods.

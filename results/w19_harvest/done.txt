@@ -5,3 +5,7 @@ a1-mistral
 a1-llama
 a1q-qwen
 a1-qwen
+a2-llama
+a1q-llama
+a1q-mistral
+a4-llama

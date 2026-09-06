@@ -1,6 +1,13 @@
+  bugSseed-r64-h256 [T=65536] ppl=8.591 tok_eq/layer=4497.7 ratio=0.070 sbits=0.133
+  ea-k0.1        [T=65536] ppl=8.149 tok_eq/layer=7056.0 ratio=0.108 sbits=0.108
+  full           [T=65536] ppl=7.260 tok_eq/layer=65536.0 ratio=1.000 sbits=1.000
+  quant-2bit-kivi [T=65536] ppl=8.149 tok_eq/layer=5238.0 ratio=0.158 sbits=0.158
+  quant-4bit-kivi [T=65536] ppl=7.274 tok_eq/layer=9326.0 ratio=0.283 sbits=0.283
+[niah_multikey ctx65536] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.070 sbits=0.133 n=8
 [niah_multikey ctx65536] ea-k0.1        acc=0.67 recall=0.67 ratio=0.100 sbits=0.100 n=12
 [niah_multikey ctx65536] quant-2bit-kivi acc=0.58 recall=0.58 ratio=0.158 sbits=0.158 n=12
 [niah_multikey ctx65536] quant-4bit-kivi acc=0.83 recall=0.83 ratio=0.283 sbits=0.283 n=12
+[niah_multivalue ctx65536] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.070 sbits=0.133 n=8
 [niah_multivalue ctx65536] ea-k0.1        acc=0.83 recall=0.90 ratio=0.100 sbits=0.100 n=12
 [niah_multivalue ctx65536] quant-2bit-kivi acc=0.50 recall=0.83 ratio=0.158 sbits=0.158 n=12
 [niah_multivalue ctx65536] quant-4bit-kivi acc=1.00 recall=1.00 ratio=0.283 sbits=0.283 n=12
@@ -8,6 +15,7 @@
 [niah_single ctx65536] ea-k0.1        acc=1.00 recall=1.00 ratio=0.100 sbits=0.100 n=12
 [niah_single ctx65536] quant-2bit-kivi acc=1.00 recall=1.00 ratio=0.158 sbits=0.158 n=12
 [niah_single ctx65536] quant-4bit-kivi acc=1.00 recall=1.00 ratio=0.283 sbits=0.283 n=12
+[vt ctx65536] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.070 sbits=0.133 n=8
 [vt ctx65536] ea-k0.1        acc=1.00 recall=1.00 ratio=0.100 sbits=0.100 n=12
 [vt ctx65536] quant-2bit-kivi acc=1.00 recall=1.00 ratio=0.158 sbits=0.158 n=12
 [vt ctx65536] quant-4bit-kivi acc=0.58 recall=0.58 ratio=0.283 sbits=0.283 n=12

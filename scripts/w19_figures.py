@@ -3,7 +3,8 @@
 * ``fairquant`` -- retrieval vs stored bytes, small multiples (rows = family, cols = task):
   flagship, the sub-cliff compose cell, KIVI 2-bit and 4-bit; 16K filled, 32K hollow,
   the two joined by a thin segment (the flagship's drifts left = its 1/T term).
-* ``one_over_t`` -- stored ratio vs context (Llama): the flagship falls, the quantizer is flat.
+* ``one_over_t`` -- stored ratio vs context (Llama): the flagship amortizes toward
+  its 2r/n=0.125x asymptote, the 2-bit arm toward 0.156x.
   Picks up the 64K point automatically when ``results/w19-a4-llama-lines.txt`` exists.
 * ``coldstart`` -- persisted-cache cold start (seconds) at 16K/32K: full vs flagship vs 2-bit.
 
@@ -196,6 +197,15 @@ def fig_one_over_t() -> None:
             fontsize=7,
             color=INK,
         )
+    ax.axhline(0.125, ls=":", lw=1, color=MUTED)
+    ax.annotate(
+        "2r/n = 0.125x (fp32-coord asymptote)",
+        (16384, 0.125),
+        textcoords="offset points",
+        xytext=(2, 3),
+        fontsize=6.5,
+        color=MUTED,
+    )
     ax.set_xscale("log", base=2)
     ax.set_xticks([16384, 32768, 65536])
     ax.set_xticklabels(["16K", "32K", "64K"])
@@ -203,7 +213,7 @@ def fig_one_over_t() -> None:
     ax.set_xlabel("context length T")
     ax.set_ylabel("stored state / full KV")
     ax.set_title(
-        "Llama-3.1-8B: BUG's stored ratio falls with T; a b-bit quantizer is flat",
+        "Llama-3.1-8B: BUG amortizes toward 2r/n=0.125x; 2-bit toward 0.156x",
         fontsize=8,
         color=INK,
     )

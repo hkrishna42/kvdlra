@@ -1,0 +1,1089 @@
+{
+  "meta": {
+    "interval": "wilson",
+    "note": "n read from the line's n= field; hits=round(acc*n)",
+    "mcnemar": "exact two-sided binomial on discordant paired trials"
+  },
+  "cells": {
+    "16384": {
+      "bugSseed-r64-h256": {
+        "niah_multikey_1": {
+          "acc": 0.83,
+          "n": 12,
+          "hits": 10,
+          "lo": 0.552,
+          "hi": 0.953,
+          "ratio": 0.086,
+          "sbits": 0.151
+        },
+        "niah_multikey_2": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.086,
+          "sbits": 0.151
+        },
+        "niah_multikey_3": {
+          "acc": 0.83,
+          "n": 12,
+          "hits": 10,
+          "lo": 0.552,
+          "hi": 0.953,
+          "ratio": 0.086,
+          "sbits": 0.152
+        },
+        "niah_multiquery": {
+          "acc": 0.67,
+          "n": 12,
+          "hits": 8,
+          "lo": 0.391,
+          "hi": 0.862,
+          "ratio": 0.086,
+          "sbits": 0.151
+        },
+        "niah_multivalue": {
+          "acc": 0.83,
+          "n": 12,
+          "hits": 10,
+          "lo": 0.552,
+          "hi": 0.953,
+          "ratio": 0.086,
+          "sbits": 0.151
+        },
+        "niah_single_1": {
+          "acc": 0.83,
+          "n": 12,
+          "hits": 10,
+          "lo": 0.552,
+          "hi": 0.953,
+          "ratio": 0.086,
+          "sbits": 0.151
+        },
+        "niah_single_2": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.086,
+          "sbits": 0.151
+        },
+        "niah_single_3": {
+          "acc": 0.83,
+          "n": 12,
+          "hits": 10,
+          "lo": 0.552,
+          "hi": 0.953,
+          "ratio": 0.086,
+          "sbits": 0.151
+        },
+        "vt": {
+          "acc": 0.33,
+          "n": 12,
+          "hits": 4,
+          "lo": 0.138,
+          "hi": 0.609,
+          "ratio": 0.085,
+          "sbits": 0.151
+        }
+      },
+      "ea-k0.1": {
+        "niah_multikey_1": {
+          "acc": 0.33,
+          "n": 12,
+          "hits": 4,
+          "lo": 0.138,
+          "hi": 0.609,
+          "ratio": 0.1,
+          "sbits": 0.1
+        },
+        "niah_multikey_2": {
+          "acc": 0.0,
+          "n": 12,
+          "hits": 0,
+          "lo": 0.0,
+          "hi": 0.242,
+          "ratio": 0.1,
+          "sbits": 0.1
+        },
+        "niah_multikey_3": {
+          "acc": 0.0,
+          "n": 12,
+          "hits": 0,
+          "lo": 0.0,
+          "hi": 0.242,
+          "ratio": 0.1,
+          "sbits": 0.1
+        },
+        "niah_multiquery": {
+          "acc": 0.0,
+          "n": 12,
+          "hits": 0,
+          "lo": 0.0,
+          "hi": 0.242,
+          "ratio": 0.1,
+          "sbits": 0.1
+        },
+        "niah_multivalue": {
+          "acc": 0.0,
+          "n": 12,
+          "hits": 0,
+          "lo": 0.0,
+          "hi": 0.242,
+          "ratio": 0.1,
+          "sbits": 0.1
+        },
+        "niah_single_1": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.1,
+          "sbits": 0.1
+        },
+        "niah_single_2": {
+          "acc": 0.17,
+          "n": 12,
+          "hits": 2,
+          "lo": 0.047,
+          "hi": 0.448,
+          "ratio": 0.1,
+          "sbits": 0.1
+        },
+        "niah_single_3": {
+          "acc": 0.0,
+          "n": 12,
+          "hits": 0,
+          "lo": 0.0,
+          "hi": 0.242,
+          "ratio": 0.1,
+          "sbits": 0.1
+        },
+        "vt": {
+          "acc": 0.33,
+          "n": 12,
+          "hits": 4,
+          "lo": 0.138,
+          "hi": 0.609,
+          "ratio": 0.1,
+          "sbits": 0.1
+        }
+      },
+      "full": {
+        "niah_multikey_1": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 1.0,
+          "sbits": 1.0
+        },
+        "niah_multikey_2": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 1.0,
+          "sbits": 1.0
+        },
+        "niah_multikey_3": {
+          "acc": 0.92,
+          "n": 12,
+          "hits": 11,
+          "lo": 0.646,
+          "hi": 0.985,
+          "ratio": 1.0,
+          "sbits": 1.0
+        },
+        "niah_multiquery": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 1.0,
+          "sbits": 1.0
+        },
+        "niah_multivalue": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 1.0,
+          "sbits": 1.0
+        },
+        "niah_single_1": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 1.0,
+          "sbits": 1.0
+        },
+        "niah_single_2": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 1.0,
+          "sbits": 1.0
+        },
+        "niah_single_3": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 1.0,
+          "sbits": 1.0
+        },
+        "vt": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 1.0,
+          "sbits": 1.0
+        }
+      },
+      "palu-r0.5": {
+        "niah_multikey_1": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.504,
+          "sbits": 0.504
+        },
+        "niah_multikey_2": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.504,
+          "sbits": 0.504
+        },
+        "niah_multikey_3": {
+          "acc": 0.92,
+          "n": 12,
+          "hits": 11,
+          "lo": 0.646,
+          "hi": 0.985,
+          "ratio": 0.504,
+          "sbits": 0.504
+        },
+        "niah_multiquery": {
+          "acc": 0.92,
+          "n": 12,
+          "hits": 11,
+          "lo": 0.646,
+          "hi": 0.985,
+          "ratio": 0.504,
+          "sbits": 0.504
+        },
+        "niah_multivalue": {
+          "acc": 0.42,
+          "n": 12,
+          "hits": 5,
+          "lo": 0.193,
+          "hi": 0.68,
+          "ratio": 0.504,
+          "sbits": 0.504
+        },
+        "niah_single_1": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.504,
+          "sbits": 0.504
+        },
+        "niah_single_2": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.504,
+          "sbits": 0.504
+        },
+        "niah_single_3": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.504,
+          "sbits": 0.504
+        },
+        "vt": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.504,
+          "sbits": 0.504
+        }
+      },
+      "quant-2bit-kivi": {
+        "niah_multikey_1": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.163,
+          "sbits": 0.163
+        },
+        "niah_multikey_2": {
+          "acc": 0.92,
+          "n": 12,
+          "hits": 11,
+          "lo": 0.646,
+          "hi": 0.985,
+          "ratio": 0.163,
+          "sbits": 0.163
+        },
+        "niah_multikey_3": {
+          "acc": 0.58,
+          "n": 12,
+          "hits": 7,
+          "lo": 0.32,
+          "hi": 0.807,
+          "ratio": 0.163,
+          "sbits": 0.163
+        },
+        "niah_multiquery": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.163,
+          "sbits": 0.163
+        },
+        "niah_multivalue": {
+          "acc": 0.83,
+          "n": 12,
+          "hits": 10,
+          "lo": 0.552,
+          "hi": 0.953,
+          "ratio": 0.163,
+          "sbits": 0.163
+        },
+        "niah_single_1": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.163,
+          "sbits": 0.163
+        },
+        "niah_single_2": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.163,
+          "sbits": 0.163
+        },
+        "niah_single_3": {
+          "acc": 0.83,
+          "n": 12,
+          "hits": 10,
+          "lo": 0.552,
+          "hi": 0.953,
+          "ratio": 0.163,
+          "sbits": 0.163
+        },
+        "vt": {
+          "acc": 0.67,
+          "n": 12,
+          "hits": 8,
+          "lo": 0.391,
+          "hi": 0.862,
+          "ratio": 0.163,
+          "sbits": 0.163
+        }
+      },
+      "quant-4bit-kivi": {
+        "niah_multikey_1": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.287,
+          "sbits": 0.287
+        },
+        "niah_multikey_2": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.287,
+          "sbits": 0.287
+        },
+        "niah_multikey_3": {
+          "acc": 0.92,
+          "n": 12,
+          "hits": 11,
+          "lo": 0.646,
+          "hi": 0.985,
+          "ratio": 0.287,
+          "sbits": 0.287
+        },
+        "niah_multiquery": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.287,
+          "sbits": 0.287
+        },
+        "niah_multivalue": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.287,
+          "sbits": 0.287
+        },
+        "niah_single_1": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.287,
+          "sbits": 0.287
+        },
+        "niah_single_2": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.287,
+          "sbits": 0.287
+        },
+        "niah_single_3": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.287,
+          "sbits": 0.287
+        },
+        "vt": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.287,
+          "sbits": 0.287
+        }
+      },
+      "think-c0.5": {
+        "niah_multikey_1": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.75,
+          "sbits": 0.75
+        },
+        "niah_multikey_2": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.75,
+          "sbits": 0.75
+        },
+        "niah_multikey_3": {
+          "acc": 0.92,
+          "n": 12,
+          "hits": 11,
+          "lo": 0.646,
+          "hi": 0.985,
+          "ratio": 0.75,
+          "sbits": 0.75
+        },
+        "niah_multiquery": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.75,
+          "sbits": 0.75
+        },
+        "niah_multivalue": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.75,
+          "sbits": 0.75
+        },
+        "niah_single_1": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.75,
+          "sbits": 0.75
+        },
+        "niah_single_2": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.75,
+          "sbits": 0.75
+        },
+        "niah_single_3": {
+          "acc": 1.0,
+          "n": 12,
+          "hits": 12,
+          "lo": 0.758,
+          "hi": 1.0,
+          "ratio": 0.75,
+          "sbits": 0.75
+        },
+        "vt": {
+          "acc": 0.92,
+          "n": 12,
+          "hits": 11,
+          "lo": 0.646,
+          "hi": 0.985,
+          "ratio": 0.75,
+          "sbits": 0.75
+        }
+      }
+    }
+  },
+  "contrasts": [
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-2bit-kivi",
+      "ctx": "16384",
+      "task": "niah_multivalue",
+      "n_paired": 12,
+      "a_favored": 1,
+      "b_favored": 1,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-2bit-kivi",
+      "ctx": "16384",
+      "task": "vt",
+      "n_paired": 12,
+      "a_favored": 1,
+      "b_favored": 5,
+      "p_value": 0.21875,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-2bit-kivi",
+      "ctx": "16384",
+      "task": "niah_multikey_1",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 2,
+      "p_value": 0.5,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-2bit-kivi",
+      "ctx": "16384",
+      "task": "niah_multikey_2",
+      "n_paired": 12,
+      "a_favored": 1,
+      "b_favored": 0,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-2bit-kivi",
+      "ctx": "16384",
+      "task": "niah_multikey_3",
+      "n_paired": 12,
+      "a_favored": 4,
+      "b_favored": 1,
+      "p_value": 0.375,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-2bit-kivi",
+      "ctx": "16384",
+      "task": "niah_multiquery",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 4,
+      "p_value": 0.125,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-2bit-kivi",
+      "ctx": "16384",
+      "task": "niah_single_1",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 2,
+      "p_value": 0.5,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-2bit-kivi",
+      "ctx": "16384",
+      "task": "niah_single_2",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 0,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-2bit-kivi",
+      "ctx": "16384",
+      "task": "niah_single_3",
+      "n_paired": 12,
+      "a_favored": 1,
+      "b_favored": 1,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-4bit-kivi",
+      "ctx": "16384",
+      "task": "niah_multivalue",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 2,
+      "p_value": 0.5,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-4bit-kivi",
+      "ctx": "16384",
+      "task": "vt",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 8,
+      "p_value": 0.0078125,
+      "significant": true
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-4bit-kivi",
+      "ctx": "16384",
+      "task": "niah_multikey_1",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 2,
+      "p_value": 0.5,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-4bit-kivi",
+      "ctx": "16384",
+      "task": "niah_multikey_2",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 0,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-4bit-kivi",
+      "ctx": "16384",
+      "task": "niah_multikey_3",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 1,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-4bit-kivi",
+      "ctx": "16384",
+      "task": "niah_multiquery",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 4,
+      "p_value": 0.125,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-4bit-kivi",
+      "ctx": "16384",
+      "task": "niah_single_1",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 2,
+      "p_value": 0.5,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-4bit-kivi",
+      "ctx": "16384",
+      "task": "niah_single_2",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 0,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "quant-4bit-kivi",
+      "ctx": "16384",
+      "task": "niah_single_3",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 2,
+      "p_value": 0.5,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "ea-k0.1",
+      "ctx": "16384",
+      "task": "niah_multivalue",
+      "n_paired": 12,
+      "a_favored": 10,
+      "b_favored": 0,
+      "p_value": 0.001953125,
+      "significant": true
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "ea-k0.1",
+      "ctx": "16384",
+      "task": "vt",
+      "n_paired": 12,
+      "a_favored": 2,
+      "b_favored": 2,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "ea-k0.1",
+      "ctx": "16384",
+      "task": "niah_multikey_1",
+      "n_paired": 12,
+      "a_favored": 7,
+      "b_favored": 1,
+      "p_value": 0.0703125,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "ea-k0.1",
+      "ctx": "16384",
+      "task": "niah_multikey_2",
+      "n_paired": 12,
+      "a_favored": 12,
+      "b_favored": 0,
+      "p_value": 0.00048828125,
+      "significant": true
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "ea-k0.1",
+      "ctx": "16384",
+      "task": "niah_multikey_3",
+      "n_paired": 12,
+      "a_favored": 10,
+      "b_favored": 0,
+      "p_value": 0.001953125,
+      "significant": true
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "ea-k0.1",
+      "ctx": "16384",
+      "task": "niah_multiquery",
+      "n_paired": 12,
+      "a_favored": 8,
+      "b_favored": 0,
+      "p_value": 0.0078125,
+      "significant": true
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "ea-k0.1",
+      "ctx": "16384",
+      "task": "niah_single_1",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 2,
+      "p_value": 0.5,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "ea-k0.1",
+      "ctx": "16384",
+      "task": "niah_single_2",
+      "n_paired": 12,
+      "a_favored": 10,
+      "b_favored": 0,
+      "p_value": 0.001953125,
+      "significant": true
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "ea-k0.1",
+      "ctx": "16384",
+      "task": "niah_single_3",
+      "n_paired": 12,
+      "a_favored": 10,
+      "b_favored": 0,
+      "p_value": 0.001953125,
+      "significant": true
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "palu-r0.5",
+      "ctx": "16384",
+      "task": "niah_multivalue",
+      "n_paired": 12,
+      "a_favored": 6,
+      "b_favored": 1,
+      "p_value": 0.125,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "palu-r0.5",
+      "ctx": "16384",
+      "task": "vt",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 8,
+      "p_value": 0.0078125,
+      "significant": true
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "palu-r0.5",
+      "ctx": "16384",
+      "task": "niah_multikey_1",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 2,
+      "p_value": 0.5,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "palu-r0.5",
+      "ctx": "16384",
+      "task": "niah_multikey_2",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 0,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "palu-r0.5",
+      "ctx": "16384",
+      "task": "niah_multikey_3",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 1,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "palu-r0.5",
+      "ctx": "16384",
+      "task": "niah_multiquery",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 3,
+      "p_value": 0.25,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "palu-r0.5",
+      "ctx": "16384",
+      "task": "niah_single_1",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 2,
+      "p_value": 0.5,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "palu-r0.5",
+      "ctx": "16384",
+      "task": "niah_single_2",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 0,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "palu-r0.5",
+      "ctx": "16384",
+      "task": "niah_single_3",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 2,
+      "p_value": 0.5,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "think-c0.5",
+      "ctx": "16384",
+      "task": "niah_multivalue",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 2,
+      "p_value": 0.5,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "think-c0.5",
+      "ctx": "16384",
+      "task": "vt",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 7,
+      "p_value": 0.015625,
+      "significant": true
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "think-c0.5",
+      "ctx": "16384",
+      "task": "niah_multikey_1",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 2,
+      "p_value": 0.5,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "think-c0.5",
+      "ctx": "16384",
+      "task": "niah_multikey_2",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 0,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "think-c0.5",
+      "ctx": "16384",
+      "task": "niah_multikey_3",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 1,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "think-c0.5",
+      "ctx": "16384",
+      "task": "niah_multiquery",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 4,
+      "p_value": 0.125,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "think-c0.5",
+      "ctx": "16384",
+      "task": "niah_single_1",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 2,
+      "p_value": 0.5,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "think-c0.5",
+      "ctx": "16384",
+      "task": "niah_single_2",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 0,
+      "p_value": 1.0,
+      "significant": false
+    },
+    {
+      "arm_a": "bugSseed-r64-h256",
+      "arm_b": "think-c0.5",
+      "ctx": "16384",
+      "task": "niah_single_3",
+      "n_paired": 12,
+      "a_favored": 0,
+      "b_favored": 2,
+      "p_value": 0.5,
+      "significant": false
+    }
+  ]
+}

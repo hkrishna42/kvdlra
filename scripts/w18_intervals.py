@@ -114,7 +114,10 @@ def build(paths: list[str], contrasts: list[tuple[str, str]]) -> dict[str, Any]:
 
     contrast_out: list[dict[str, Any]] = []
     ctxs = sorted({ctx for ctx, _, _ in cells})
-    tasks = [t for t in TASK_LABEL if any(t == tk for _, _, tk in cells)]
+    seen = {tk for _, _, tk in cells}
+    # canonical in-repo tasks first, then any other task name (Week-19: the official
+    # RULER cells niah_single_1..3 / multikey_1..3 / multiquery contrast too)
+    tasks = [t for t in TASK_LABEL if t in seen] + sorted(seen - set(TASK_LABEL))
     for arm_a, arm_b in contrasts:
         for ctx in ctxs:
             for task in tasks:

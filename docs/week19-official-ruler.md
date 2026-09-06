@@ -43,6 +43,67 @@ memory accounting, and the `[trial]` / `acc=` row formats (`w18_intervals.py` re
 4. `w19_official_ruler.py` for: `full`, `think-c0.5`, `palu-r0.5`, `ea-k0.1`,
    `quant-{2,4}bit-kivi`, and the flagship `bugSseed-r64-h256`.
 
-## Results
+## Results (a2-llama, SHA c331ebd, A100-40GB, 2026-09-06; n=12 per cell, 16K)
 
-Pending (pod `a2` not yet launched; A1 runs first per `docs/week19-kickoff.md`).
+Accuracy = RULER `string_match_all` (every reference output present in the 128/30-token generation). s1/s2/s3 = niah_single_1/2/3 (noise / essay numbers / essay uuids); mk1..3 = niah_multikey_1..3; mv/mq = multivalue/multiquery.
+
+| arm | stored | s1 | s2 | s3 | mk1 | mk2 | mk3 | mv | mq | vt | mean |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `full` | 1.000x | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.92 | 1.00 | 1.00 | 1.00 | 0.99 |
+| `think-c0.5` | 0.750x | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.92 | 1.00 | 1.00 | 0.92 | 0.98 |
+| `palu-r0.5` | 0.504x | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.92 | 0.42 | 0.92 | 1.00 | 0.92 |
+| `quant-4bit-kivi` | 0.287x | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.92 | 1.00 | 1.00 | 1.00 | 0.99 |
+| `quant-2bit-kivi` | 0.163x | 1.00 | 1.00 | 0.83 | 1.00 | 0.92 | 0.58 | 0.83 | 1.00 | 0.67 | 0.87 |
+| `bugSseed-r64-h256` | 0.151x | 0.83 | 1.00 | 0.83 | 0.83 | 1.00 | 0.83 | 0.83 | 0.67 | 0.33 | 0.79 |
+| `ea-k0.1` | 0.100x | 1.00 | 0.17 | 0.00 | 0.33 | 0.00 | 0.00 | 0.00 | 0.00 | 0.33 | 0.20 |
+
+### Paired McNemar on the official cells (A = flagship; A>B / B>A = discordant records)
+
+| vs | task | A>B | B>A | p | sig |
+|---|---|---|---|---|---|
+| `quant-2bit-kivi` | mv | 1 | 1 | 1.0000 | no |
+| `quant-2bit-kivi` | vt | 1 | 5 | 0.2188 | no |
+| `quant-2bit-kivi` | mk1 | 0 | 2 | 0.5000 | no |
+| `quant-2bit-kivi` | mk2 | 1 | 0 | 1.0000 | no |
+| `quant-2bit-kivi` | mk3 | 4 | 1 | 0.3750 | no |
+| `quant-2bit-kivi` | mq | 0 | 4 | 0.1250 | no |
+| `quant-2bit-kivi` | s1 | 0 | 2 | 0.5000 | no |
+| `quant-2bit-kivi` | s3 | 1 | 1 | 1.0000 | no |
+| `quant-4bit-kivi` | mv | 0 | 2 | 0.5000 | no |
+| `quant-4bit-kivi` | vt | 0 | 8 | 0.0078 | **YES** |
+| `quant-4bit-kivi` | mk1 | 0 | 2 | 0.5000 | no |
+| `quant-4bit-kivi` | mk3 | 0 | 1 | 1.0000 | no |
+| `quant-4bit-kivi` | mq | 0 | 4 | 0.1250 | no |
+| `quant-4bit-kivi` | s1 | 0 | 2 | 0.5000 | no |
+| `quant-4bit-kivi` | s3 | 0 | 2 | 0.5000 | no |
+| `ea-k0.1` | mv | 10 | 0 | 0.0020 | **YES** |
+| `ea-k0.1` | vt | 2 | 2 | 1.0000 | no |
+| `ea-k0.1` | mk1 | 7 | 1 | 0.0703 | no |
+| `ea-k0.1` | mk2 | 12 | 0 | 0.0005 | **YES** |
+| `ea-k0.1` | mk3 | 10 | 0 | 0.0020 | **YES** |
+| `ea-k0.1` | mq | 8 | 0 | 0.0078 | **YES** |
+| `ea-k0.1` | s1 | 0 | 2 | 0.5000 | no |
+| `ea-k0.1` | s2 | 10 | 0 | 0.0020 | **YES** |
+| `ea-k0.1` | s3 | 10 | 0 | 0.0020 | **YES** |
+| `palu-r0.5` | mv | 6 | 1 | 0.1250 | no |
+| `palu-r0.5` | vt | 0 | 8 | 0.0078 | **YES** |
+| `palu-r0.5` | mk1 | 0 | 2 | 0.5000 | no |
+| `palu-r0.5` | mk3 | 0 | 1 | 1.0000 | no |
+| `palu-r0.5` | mq | 0 | 3 | 0.2500 | no |
+| `palu-r0.5` | s1 | 0 | 2 | 0.5000 | no |
+| `palu-r0.5` | s3 | 0 | 2 | 0.5000 | no |
+| `think-c0.5` | mv | 0 | 2 | 0.5000 | no |
+| `think-c0.5` | vt | 0 | 7 | 0.0156 | **YES** |
+| `think-c0.5` | mk1 | 0 | 2 | 0.5000 | no |
+| `think-c0.5` | mk3 | 0 | 1 | 1.0000 | no |
+| `think-c0.5` | mq | 0 | 4 | 0.1250 | no |
+| `think-c0.5` | s1 | 0 | 2 | 0.5000 | no |
+| `think-c0.5` | s3 | 0 | 2 | 0.5000 | no |
+
+### Reading
+
+- At matched stored bytes the flagship (0.151x) and KIVI 2-bit (0.163x) are statistically indistinguishable on every official task; the flagship's in-repo multi-value edge does **not** reproduce here (1 vs 1 discordant), and on average it trails (0.80 vs 0.87).
+- The 4-bit arm, ThinK and Palu beat the flagship on variable tracking (p = 0.008 / 0.016 / 0.008) and tie it elsewhere; full KV's own ceiling on multikey_3 (uuid keys) is 0.92.
+- Eviction at 0.1x (ExpectedAttention) is separated from the flagship in its disfavor on 6 of 9 tasks (p <= 0.008) and collapses on every essay-haystack cell.
+- The flagship's 14 misses sit at needle depths 0.15–0.95 (`results/w19-a2-flagship-misses.md`): not a warm-up-window or recency effect; scattered misses the quantizers do not make.
+- Generator-vs-official: the in-repo generator overstated the flagship's advantage over 2-bit quantization on multi-value/multi-query-type tasks and understated its variable-tracking gap to the 0.29–0.75x baselines; the eviction collapse and the single-needle parity transfer.

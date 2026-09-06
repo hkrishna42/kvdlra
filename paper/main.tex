@@ -57,11 +57,11 @@ low-rank methods fix the subspace at calibration or in a one-shot prefill pass;
 the online, per-sequence axis was opened by OjaKV~\citep{zhu2025ojakv} with
 Oja's rule. We track it instead with a numerical-analysis tool built for this
 problem: the basis-update \& Galerkin (BUG) integrator for dynamical
-low-rank approximation (DLRA), a rank-adaptive online subspace tracker that is
-near-oracle where Oja's rule is $1.3$--$3\times$ worse and whose error bound is
-independent of the smallest tracked singular value. A rank-adaptive BUG tracker on the (pre-RoPE) KV stream
-is a \emph{near-oracle} streaming approximator---within $1.01$--$1.03\times$ of
-the truncated-SVD optimum on real KV. We pair the low-rank ``gist'' (which
+low-rank approximation (DLRA), a rank-adaptive online subspace tracker whose
+error bound is independent of the smallest tracked singular value. On the
+(pre-RoPE) KV stream it is a \emph{near-oracle} streaming approximator---within
+$1.01$--$1.03\times$ of the truncated-SVD optimum on real KV, where Oja's rule is
+$1.3$--$3\times$ worse. We pair the low-rank ``gist'' (which
 carries fluency) with a small \emph{surprise-selected} exact tier (which carries
 retrieval), and a warm-up seed that repairs early-context recall. On
 Llama-3.1-8B, Qwen2.5-7B and Mistral-7B-v0.3, a single configuration reaches

@@ -1,0 +1,70 @@
+  <p class="eyebrow">Archived · Week 17 · validated config + integrator floor</p>
+  <h2>One config, three families — with error bars</h2>
+  <p class="sub">RULER retrieval for <code>bugSseed-r64-h256</code> at 16K · n=12 · Wilson 95% intervals (Week-17 numbers, fp16-equivalent billing).</p>
+  <div class="twrap">
+    <table>
+      <caption>Rank-64 + warm-up seed across model families
+        <span class="cx">single + multi-value clear the 0.70 Wilson lower bound on every model</span></caption>
+      <thead><tr>
+        <th class="lbl">Model</th><th>Memory ×full</th><th>ppl / full</th>
+        <th>single</th><th>multi-value</th><th>var-track</th>
+      </tr></thead>
+      <tbody>
+        <tr class="grp spot"><td class="lbl">Qwen2.5-7B</td>
+          <td><span class="mem"><span class="bar" style="width:17px"></span><span class="num">0.149</span></span></td>
+          <td class="ppl ok">8.18 / 6.20</td>
+          <td><span class="acc a1">1.00</span><span class="ci">[.76,1] 12/12</span></td>
+          <td><span class="acc a1">1.00</span><span class="ci">[.76,1] 12/12</span></td>
+          <td><span class="acc a1">1.00</span><span class="ci">[.76,1] 12/12</span></td></tr>
+        <tr class="grp"><td class="lbl">Mistral-7B-v0.3</td>
+          <td><span class="mem"><span class="bar" style="width:10px"></span><span class="num">0.085</span></span></td>
+          <td class="ppl ok">5.50 / 4.82</td>
+          <td><span class="acc a1">1.00</span><span class="ci">[.76,1] 12/12</span></td>
+          <td><span class="acc a1">1.00</span><span class="ci">[.76,1] 12/12</span></td>
+          <td><span class="acc am">0.50</span><span class="ci">[.25,.75] 6/12</span></td></tr>
+        <tr class="grp"><td class="lbl">Llama-3.1-8B</td>
+          <td><span class="mem"><span class="bar" style="width:10px"></span><span class="num">0.085</span></span></td>
+          <td class="ppl ok">5.31 / 4.91</td>
+          <td><span class="acc a1">1.00</span><span class="ci">[.76,1] 12/12</span></td>
+          <td><span class="acc a1">1.00</span><span class="ci">[.76,1] 12/12</span></td>
+          <td><span class="acc am">0.58</span><span class="ci">[.32,.81] 7/12</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 style="margin-top:26px">The integrator floor — explosions become the best fluency</h2>
+  <p class="sub">Perplexity at 16K, floor off vs. <code>--min-sv-frac 1e-2</code> · default-off, bit-identical when off.</p>
+  <div class="twrap">
+    <table>
+      <caption>One three-line fix removes the whole high-rank failure class</caption>
+      <thead><tr>
+        <th class="lbl">Configuration</th><th>Memory ×full</th>
+        <th>ppl — floor off</th><th></th><th>ppl — floor on</th>
+      </tr></thead>
+      <tbody>
+        <tr class="grp spot"><td class="lbl">Qwen · pure-gist r256 <span class="tag fix">fixed</span></td>
+          <td><span class="mem"><span class="bar" style="width:58px"></span><span class="num">0.517</span></span></td>
+          <td class="ppl brk">27531.7</td><td class="arrow">→</td><td class="ppl fix">6.995</td></tr>
+        <tr class="grp"><td class="lbl">Qwen · bugSseed-r128-h1024 <span class="tag fix">the “puzzle”</span></td>
+          <td><span class="mem"><span class="bar" style="width:35px"></span><span class="num">0.310</span></span></td>
+          <td class="ppl brk">714.4</td><td class="arrow">→</td><td class="ppl fix">6.941</td></tr>
+        <tr class="grp"><td class="lbl">Mistral · pure-gist r128 <span class="tag fix">fixed</span></td>
+          <td><span class="mem"><span class="bar" style="width:15px"></span><span class="num">0.135</span></span></td>
+          <td class="ppl brk">138.3</td><td class="arrow">→</td><td class="ppl fix">5.574</td></tr>
+        <tr class="grp"><td class="lbl">Mistral · pure-gist r256</td>
+          <td><span class="mem"><span class="bar" style="width:30px"></span><span class="num">0.267</span></span></td>
+          <td class="ppl brk">37.2</td><td class="arrow">→</td><td class="ppl fix">5.226</td></tr>
+        <tr class="grp"><td class="lbl">Mistral · bugSseed-r128-h1024</td>
+          <td><span class="mem"><span class="bar" style="width:21px"></span><span class="num">0.191</span></span></td>
+          <td class="ppl brk">60.4</td><td class="arrow">→</td><td class="ppl fix">5.045</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note good">
+    <p><b>The floored high rank is the best fluency across all ranks.</b> On Mistral, ppl improves
+      monotonically 6.22 → 5.57 → 5.23 as rank goes 64 → 128 → 256 once the divergence is removed. The floor is
+      default-off, bit-for-bit identical when off, retrieval-neutral at the sweet spot, footprint-neutral.</p>
+  </div>
+  <p class="foot"><b>Week-17 method.</b> RULER-style retrieval (in-repo generator), n=12 at 16K; ppl over
+    512-token windows on wikitext-103. The 2026-09-01 panel scored this state 5/10 (claims · prior-work ·
+    rigor · significance 5, systems 3, reproducibility 7); the Weeks 18–19 board above is its answer.</p>

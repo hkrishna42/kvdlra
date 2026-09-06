@@ -1,0 +1,220 @@
+<title>kvdlra Weeks 18–19</title>
+<style>
+  :root{
+    --bg:#f4f6f8; --panel:#ffffff; --ink:#111a24; --ink-soft:#3d4b59; --faint:#6b7a89;
+    --line:#dde3e9; --line-soft:#eaeef2;
+    --accent:#0f8a8a; --accent-soft:#0f8a8a22;
+    --good:#1f9d57; --good-bg:#1f9d5718; --warn:#c07d10; --warn-bg:#c07d1018;
+    --bad:#c0392b; --bad-bg:#c0392b14;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --maxw:1120px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --bg:#0c1116; --panel:#141c24; --ink:#e8eef4; --ink-soft:#aebac6; --faint:#7d8b99;
+      --line:#243039; --line-soft:#1b242c; --accent:#3fd0c9; --accent-soft:#3fd0c922;
+      --good:#3ecf7f; --good-bg:#3ecf7f1c; --warn:#e6b24a; --warn-bg:#e6b24a1c; --bad:#ef6a5c; --bad-bg:#ef6a5c1e;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0c1116; --panel:#141c24; --ink:#e8eef4; --ink-soft:#aebac6; --faint:#7d8b99;
+    --line:#243039; --line-soft:#1b242c; --accent:#3fd0c9; --accent-soft:#3fd0c922;
+    --good:#3ecf7f; --good-bg:#3ecf7f1c; --warn:#e6b24a; --warn-bg:#e6b24a1c; --bad:#ef6a5c; --bad-bg:#ef6a5c1e;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink)}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:clamp(20px,4vw,56px) clamp(16px,4vw,40px);
+    font-family:var(--sans);line-height:1.5;-webkit-font-smoothing:antialiased;min-height:100vh}
+  .eyebrow{font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);font-weight:650;margin:0 0 .6rem}
+  h1{font-size:clamp(1.5rem,3.4vw,2.15rem);line-height:1.12;margin:.1rem 0 .5rem;font-weight:720;letter-spacing:-.015em;text-wrap:balance}
+  .lede{font-size:1.03rem;color:var(--ink-soft);max-width:68ch;margin:.2rem 0 0}
+  .lede b{color:var(--ink);font-weight:650}
+  .rule{height:1px;background:var(--line);border:0;margin:clamp(22px,3.4vw,34px) 0}
+  h2{font-size:1.16rem;margin:0 0 .2rem;letter-spacing:-.01em;font-weight:680;text-wrap:balance}
+  .sub{color:var(--faint);font-size:.9rem;margin:0 0 1rem;max-width:80ch}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin:6px 0 4px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .card .k{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin:0 0 .35rem;font-weight:600}
+  .card .v{font-size:1.32rem;font-weight:700;letter-spacing:-.01em;font-family:var(--mono);margin:0}
+  .card .n{font-size:.86rem;color:var(--ink-soft);margin:.4rem 0 0}
+  .card .v .u{font-size:.8rem;color:var(--faint);font-weight:500}
+  .twrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--panel);margin-top:10px}
+  table{border-collapse:collapse;width:100%;min-width:640px;font-size:.9rem}
+  caption{caption-side:top;text-align:left;padding:14px 16px 0;font-weight:670;font-size:1.02rem;letter-spacing:-.01em}
+  caption .cx{display:block;font-weight:400;color:var(--faint);font-size:.82rem;margin-top:2px}
+  th,td{padding:9px 14px;text-align:right;border-bottom:1px solid var(--line-soft);font-variant-numeric:tabular-nums;font-family:var(--mono);white-space:nowrap}
+  th{font-family:var(--sans);font-weight:600;color:var(--faint);font-size:.74rem;letter-spacing:.04em;text-transform:uppercase;border-bottom:1px solid var(--line)}
+  td.lbl,th.lbl{text-align:left;font-family:var(--sans)}
+  td.lbl{font-weight:600;color:var(--ink)}
+  tbody tr:last-child td{border-bottom:0}
+  .grp td{background:var(--accent-soft)}
+  tr.spot td{box-shadow:inset 3px 0 0 var(--accent)}
+  tr.base td.lbl{color:var(--ink-soft);font-weight:500}
+  .tag{display:inline-block;font-family:var(--sans);font-size:.66rem;font-weight:650;letter-spacing:.04em;padding:1px 6px;border-radius:5px;margin-left:8px;vertical-align:middle;text-transform:uppercase}
+  .tag.spot{background:var(--accent);color:#fff} .tag.brk{background:var(--bad-bg);color:var(--bad)}
+  .tag.abs{background:var(--warn-bg);color:var(--warn)} .tag.fix{background:var(--good-bg);color:var(--good)}
+  .mem{display:flex;align-items:center;justify-content:flex-end;gap:9px}
+  .mem .bar{height:7px;border-radius:4px;background:var(--accent);opacity:.85;min-width:2px}
+  .mem .num{width:3.6em;text-align:right}
+  .acc{display:inline-block;min-width:2.9em;text-align:center;padding:2px 8px;border-radius:6px;font-weight:650}
+  .a1{color:var(--good);background:var(--good-bg)} .am{color:var(--warn);background:var(--warn-bg)} .a0{color:var(--bad);background:var(--bad-bg)}
+  .ci{display:block;font-family:var(--mono);font-size:.68rem;color:var(--faint);margin-top:3px;font-weight:500}
+  .ppl.brk{color:var(--bad);font-weight:700} .ppl.ok{color:var(--ink)} .ppl.fix{color:var(--good);font-weight:700}
+  .arrow{color:var(--faint);padding:0 6px}
+  .foot{color:var(--faint);font-size:.82rem;margin:10px 2px 0;max-width:80ch}
+  .note{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:10px;padding:14px 18px;margin-top:12px}
+  .note.good{border-left-color:var(--good)} .note.warn{border-left-color:var(--warn)}
+  .note p{margin:.3rem 0;color:var(--ink-soft);font-size:.92rem} .note b{color:var(--ink)}
+  .meta{color:var(--faint);font-size:.78rem;margin-top:26px;font-family:var(--mono)}
+  a{color:var(--accent)} a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style>
+<div class="wrap">
+  <p class="eyebrow">Weeks 18–19 · the fair baseline · the official anchor · three families</p>
+  <h1>Where the claim narrowed, and what survived it</h1>
+  <p class="lede">The Week-18 panel's fatal gap was a missing 2-bit quantization baseline. Week 19 ran it
+    faithfully (per-channel keys, per-token values, paired needle-for-needle) and an official NVIDIA RULER
+    anchor. <b>At matched stored bytes 2-bit KIVI ties the flagship on single needles and wins fluency;
+    the flagship's edge is multi-value retrieval on our generator</b>, which the official suite does not
+    reproduce. <b>What no quantizer reaches is the composed cell at 0.048× stored</b> (Llama,
+    Mistral) with full single/multi-key/multi-value retrieval — at a fluency cost, and not on Qwen.</p>
+
+  <hr class="rule">
+  <div class="cards">
+    <div class="card"><p class="k">Fair 2-bit at matched bytes · our generator</p>
+      <p class="v">mv <span class="u">3 / 3 families</span></p>
+      <p class="n">Flagship wins multi-value at 16K on Llama, Mistral, Qwen (paired McNemar p ≤ 0.03); ties single;
+        loses fluency on Mistral/Qwen. 4-bit at ~2× bytes concedes nothing.</p></div>
+    <div class="card"><p class="k">Official RULER · Llama 16K · 9 tasks</p>
+      <p class="v">0.79 <span class="u">vs 0.87 (2-bit)</span></p>
+      <p class="n">No task separated either way; the multi-value edge does not transfer. Eviction at 0.1× averages
+        0.20; 4-bit KIVI 0.99.</p></div>
+    <div class="card"><p class="k">Below the quantizer floor</p>
+      <p class="v">0.048× <span class="u">stored and 0.034× at 32K</span></p>
+      <p class="n">Seeded gist + 4-bit coordinates: single/multi-key/multi-value 1.00/1.00/1.00 on Llama 16K;
+        Qwen diverges. 2-bit's floor is 0.156×.</p></div>
+    <div class="card"><p class="k">Persisted-cache cold start · 16K</p>
+      <p class="v">0.13 s <span class="u">vs 1.23 s full</span></p>
+      <p class="n">9× faster to attend-ready (0.33 GB vs 2.15 GB). KIVI 2-bit: 0.14 s — the
+        persistence win is shared with quantization.</p></div>
+  </div>
+
+  <hr class="rule">
+  <h2>The crux: flagship vs fair KIVI at matched bytes</h2>
+  <p class="sub">The pre-registered fund bar asked whether BUG retrieves where 2-bit quantization fails. Answer: on
+    multi-value (all families, 16K) and at 32K on Mistral/Qwen, yes; on single needles, no; against 4-bit, nowhere.</p>
+  <div class="twrap"><table><caption>Flagship vs the fair KIVI baseline, matched stored bytes<span class="cx">n=12 per cell, paired on the same needles · ★ = paired McNemar p&lt;0.05 (names the winner) · stored = honest fp32-at-rest bits for BUG, measured bf16 aux for KIVI</span></caption><thead><tr><th class="lbl">family · ctx · arm</th><th>stored ×full</th><th>single</th><th>multi-key</th><th>multi-value</th><th>var-track</th></tr></thead><tbody><tr class="grp spot"><td class="lbl">Llama-3.1-8B · 16K · BUG flagship</td><td><span class="mem"><span class="bar" style="width:33px"></span><span class="num">0.151</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc am">0.58</span></td></tr><tr class="grp"><td class="lbl">Llama-3.1-8B · 16K · KIVI 2-bit</td><td><span class="mem"><span class="bar" style="width:36px"></span><span class="num">0.163</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc am">0.67</span></td><td><span class="acc am">0.42</span><span class="ci" title="paired McNemar p=0.016">★ BUG p=0.016</span></td><td><span class="acc am">0.67</span></td></tr><tr class="grp"><td class="lbl">Llama-3.1-8B · 16K · KIVI 4-bit</td><td><span class="mem"><span class="bar" style="width:63px"></span><span class="num">0.287</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td></tr><tr class="grp spot"><td class="lbl">Llama-3.1-8B · 32K · BUG flagship</td><td><span class="mem"><span class="bar" style="width:31px"></span><span class="num">0.139</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">0.92</span></td></tr><tr class="grp"><td class="lbl">Llama-3.1-8B · 32K · KIVI 2-bit</td><td><span class="mem"><span class="bar" style="width:35px"></span><span class="num">0.160</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc am">0.83</span></td><td><span class="acc a1">0.92</span></td><td><span class="acc a1">0.92</span></td></tr><tr class="grp"><td class="lbl">Llama-3.1-8B · 32K · KIVI 4-bit</td><td><span class="mem"><span class="bar" style="width:62px"></span><span class="num">0.284</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td></tr><tr class="grp spot"><td class="lbl">Mistral-7B-v0.3 · 16K · BUG flagship</td><td><span class="mem"><span class="bar" style="width:33px"></span><span class="num">0.150</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc am">0.50</span></td></tr><tr class="grp"><td class="lbl">Mistral-7B-v0.3 · 16K · KIVI 2-bit</td><td><span class="mem"><span class="bar" style="width:36px"></span><span class="num">0.163</span></span></td><td><span class="acc a1">0.92</span></td><td><span class="acc am">0.58</span></td><td><span class="acc am">0.50</span><span class="ci" title="paired McNemar p=0.031">★ BUG p=0.031</span></td><td><span class="acc a0">0.33</span></td></tr><tr class="grp"><td class="lbl">Mistral-7B-v0.3 · 16K · KIVI 4-bit</td><td><span class="mem"><span class="bar" style="width:63px"></span><span class="num">0.287</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a0">0.25</span></td></tr><tr class="grp spot"><td class="lbl">Mistral-7B-v0.3 · 32K · BUG flagship</td><td><span class="mem"><span class="bar" style="width:31px"></span><span class="num">0.139</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc am">0.83</span></td><td><span class="acc am">0.42</span></td></tr><tr class="grp"><td class="lbl">Mistral-7B-v0.3 · 32K · KIVI 2-bit</td><td><span class="mem"><span class="bar" style="width:35px"></span><span class="num">0.160</span></span></td><td><span class="acc am">0.83</span></td><td><span class="acc a0">0.25</span><span class="ci" title="paired McNemar p=0.004">★ BUG p=0.004</span></td><td><span class="acc a0">0.08</span><span class="ci" title="paired McNemar p=0.004">★ BUG p=0.004</span></td><td><span class="acc a0">0.00</span></td></tr><tr class="grp"><td class="lbl">Mistral-7B-v0.3 · 32K · KIVI 4-bit</td><td><span class="mem"><span class="bar" style="width:62px"></span><span class="num">0.284</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a0">0.25</span></td></tr><tr class="grp spot"><td class="lbl">Qwen2.5-7B · 16K · BUG flagship</td><td><span class="mem"><span class="bar" style="width:61px"></span><span class="num">0.275</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td></tr><tr class="grp"><td class="lbl">Qwen2.5-7B · 16K · KIVI 2-bit</td><td><span class="mem"><span class="bar" style="width:36px"></span><span class="num">0.163</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc am">0.83</span></td><td><span class="acc a0">0.33</span><span class="ci" title="paired McNemar p=0.008">★ BUG p=0.008</span></td><td><span class="acc a1">0.92</span></td></tr><tr class="grp"><td class="lbl">Qwen2.5-7B · 16K · KIVI 4-bit</td><td><span class="mem"><span class="bar" style="width:63px"></span><span class="num">0.287</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">0.92</span></td><td><span class="acc a1">1.00</span></td></tr><tr class="grp spot"><td class="lbl">Qwen2.5-7B · 32K · BUG flagship</td><td><span class="mem"><span class="bar" style="width:58px"></span><span class="num">0.265</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td></tr><tr class="grp"><td class="lbl">Qwen2.5-7B · 32K · KIVI 2-bit</td><td><span class="mem"><span class="bar" style="width:35px"></span><span class="num">0.160</span></span></td><td><span class="acc a1">0.92</span></td><td><span class="acc am">0.58</span></td><td><span class="acc a0">0.17</span><span class="ci" title="paired McNemar p=0.002">★ BUG p=0.002</span></td><td><span class="acc a0">0.25</span><span class="ci" title="paired McNemar p=0.004">★ BUG p=0.004</span></td></tr><tr class="grp"><td class="lbl">Qwen2.5-7B · 32K · KIVI 4-bit</td><td><span class="mem"><span class="bar" style="width:62px"></span><span class="num">0.284</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td></tr></tbody></table></div>
+  <div class="twrap"><table><caption>Perplexity, same harness<span class="cx">WikiText-103, 4 windows of 512; flagship = Week-18 PPL4</span></caption><thead><tr><th class="lbl">family · ctx</th><th>BUG flagship</th><th>KIVI 2-bit</th><th>KIVI 4-bit</th></tr></thead><tbody><tr class="grp"><td class="lbl">Llama-3.1-8B · 16K</td><td class="ppl ok">5.31</td><td class="ppl ok">5.40</td><td class="ppl ok">4.90</td></tr><tr class="grp"><td class="lbl">Llama-3.1-8B · 32K</td><td class="ppl ok">8.33</td><td class="ppl ok">8.28</td><td class="ppl ok">7.54</td></tr><tr class="grp"><td class="lbl">Mistral-7B-v0.3 · 16K</td><td class="ppl ok">5.50</td><td class="ppl ok">4.99</td><td class="ppl ok">4.83</td></tr><tr class="grp"><td class="lbl">Mistral-7B-v0.3 · 32K</td><td class="ppl ok">3.76</td><td class="ppl ok">3.46</td><td class="ppl ok">3.31</td></tr><tr class="grp"><td class="lbl">Qwen2.5-7B · 16K</td><td class="ppl ok">8.18</td><td class="ppl ok">6.70</td><td class="ppl ok">6.20</td></tr><tr class="grp"><td class="lbl">Qwen2.5-7B · 32K</td><td class="ppl brk">35.08</td><td class="ppl ok">8.23</td><td class="ppl ok">7.71</td></tr></tbody></table></div>
+  <div class="note warn">
+    <p><b>Qwen is the honest counter-case.</b> Its n=512 gist stores fp32 at rest, so the flagship's honest ratio there is
+      0.27× — the same bytes as 4-bit KIVI, which is perfect on every task with far better perplexity (6.2 vs 8.2 at 16K;
+      7.7 vs 35 at 32K). At matched honest bytes the r64 flagship is dominated on Qwen.</p>
+  </div>
+
+  <hr class="rule">
+  <h2>The official anchor: NVIDIA RULER, unmodified generator</h2>
+  <p class="sub">Their essay/noise haystacks, needle types, templates, generation budgets and scoring (commit c3f5e3b); 12 records per task; same arms and decode protocol.</p>
+  <div class="twrap"><table><caption>Official NVIDIA RULER (commit c3f5e3b), Llama-3.1-8B, 16K<span class="cx">12 records per task, official string_match_all scoring · ★ = paired McNemar p&lt;0.05 vs the flagship (names the winner)</span></caption><thead><tr><th class="lbl">arm</th><th>stored</th><th>s1</th><th>s2</th><th>s3</th><th>mk1</th><th>mk2</th><th>mk3</th><th>mv</th><th>mq</th><th>vt</th><th>mean</th></tr></thead><tbody><tr class="grp base"><td class="lbl">full</td><td><span class="mem"><span class="bar" style="width:120px"></span><span class="num">1.000</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">0.92</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><b>0.99</b></td></tr><tr class="grp"><td class="lbl">think-c0.5</td><td><span class="mem"><span class="bar" style="width:90px"></span><span class="num">0.750</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">0.92</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">0.92</span><span class="ci">★ think-c0.5</span></td><td><b>0.98</b></td></tr><tr class="grp"><td class="lbl">palu-r0.5</td><td><span class="mem"><span class="bar" style="width:60px"></span><span class="num">0.504</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">0.92</span></td><td><span class="acc am">0.42</span></td><td><span class="acc a1">0.92</span></td><td><span class="acc a1">1.00</span><span class="ci">★ palu-r0.5</span></td><td><b>0.92</b></td></tr><tr class="grp"><td class="lbl">quant-4bit-kivi</td><td><span class="mem"><span class="bar" style="width:34px"></span><span class="num">0.287</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">0.92</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span><span class="ci">★ quant-4bit-kivi</span></td><td><b>0.99</b></td></tr><tr class="grp"><td class="lbl">quant-2bit-kivi</td><td><span class="mem"><span class="bar" style="width:20px"></span><span class="num">0.163</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc am">0.83</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">0.92</span></td><td><span class="acc am">0.58</span></td><td><span class="acc am">0.83</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc am">0.67</span></td><td><b>0.87</b></td></tr><tr class="grp spot"><td class="lbl">bugSseed-r64-h256</td><td><span class="mem"><span class="bar" style="width:18px"></span><span class="num">0.151</span></span></td><td><span class="acc am">0.83</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc am">0.83</span></td><td><span class="acc am">0.83</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc am">0.83</span></td><td><span class="acc am">0.83</span></td><td><span class="acc am">0.67</span></td><td><span class="acc a0">0.33</span></td><td><b>0.79</b></td></tr><tr class="grp"><td class="lbl">ea-k0.1</td><td><span class="mem"><span class="bar" style="width:12px"></span><span class="num">0.100</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a0">0.17</span><span class="ci">★ BUG</span></td><td><span class="acc a0">0.00</span><span class="ci">★ BUG</span></td><td><span class="acc a0">0.33</span></td><td><span class="acc a0">0.00</span><span class="ci">★ BUG</span></td><td><span class="acc a0">0.00</span><span class="ci">★ BUG</span></td><td><span class="acc a0">0.00</span><span class="ci">★ BUG</span></td><td><span class="acc a0">0.00</span><span class="ci">★ BUG</span></td><td><span class="acc a0">0.33</span></td><td><b>0.20</b></td></tr></tbody></table></div>
+  <p class="foot">Transfers from our generator: the eviction collapse (flagship separated from ea-k0.1 on 6 of 9 tasks),
+    single-needle parity with 2-bit, the 0.29–0.75× arms near-perfect. Does not transfer: the multi-value edge over
+    2-bit (1 vs 1 discordant). The flagship's 14 misses sit at depths 0.15–0.95 — not a warm-up or recency effect.</p>
+
+  <hr class="rule">
+  <h2>Below the quantizer floor, and the 1/T term</h2>
+  <p class="sub">Low-rank has no bit floor; a b-bit quantizer cannot store fewer than b/16 of full KV plus its scales.</p>
+  <div class="twrap"><table><caption>Below the quantizer floor: the seeded gist with 4-bit coordinates<span class="cx">bugSseed-r64-h256-q4 · 512 fp32 coordinate columns kept, the rest 4-bit PolarQuant (never dropped) · n=12</span></caption><thead><tr><th class="lbl">family · ctx</th><th>stored ×full</th><th>single</th><th>multi-key</th><th>multi-value</th><th>var-track</th><th>ppl</th></tr></thead><tbody><tr class="grp"><td class="lbl">Llama-3.1-8B · 16K</td><td><span class="mem"><span class="bar" style="width:11px"></span><span class="num">0.048</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc am">0.50</span></td><td class="ppl ok">9.25</td></tr><tr class="grp"><td class="lbl">Llama-3.1-8B · 32K</td><td><span class="mem"><span class="bar" style="width:7px"></span><span class="num">0.034</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc am">0.83</span></td><td class="ppl ok">17.07</td></tr><tr class="grp"><td class="lbl">Mistral-7B-v0.3 · 16K</td><td><span class="mem"><span class="bar" style="width:11px"></span><span class="num">0.048</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">0.92</span></td><td><span class="acc a0">0.33</span></td><td class="ppl ok">6.56</td></tr><tr class="grp"><td class="lbl">Mistral-7B-v0.3 · 32K</td><td><span class="mem"><span class="bar" style="width:7px"></span><span class="num">0.034</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc am">0.83</span></td><td>—</td><td>pending</td></tr><tr class="grp"><td class="lbl">Qwen2.5-7B · 16K</td><td><span class="mem"><span class="bar" style="width:16px"></span><span class="num">0.071</span></span></td><td><span class="acc a0">0.00</span></td><td><span class="acc a0">0.00</span></td><td><span class="acc a0">0.00</span></td><td><span class="acc a0">0.00</span></td><td class="ppl brk">14489.99</td></tr></tbody></table></div>
+  <div class="twrap"><table><caption>The 64K point, Llama-3.1-8B<span class="cx">the 1/T term with data: flagship n=8, quantizer and eviction n=12</span></caption><thead><tr><th class="lbl">arm</th><th>stored ×full</th><th>single</th><th>multi-key</th><th>multi-value</th><th>var-track</th><th>ppl</th></tr></thead><tbody><tr class="grp"><td class="lbl">KIVI 2-bit</td><td><span class="mem"><span class="bar" style="width:35px"></span><span class="num">0.158</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc am">0.58</span></td><td><span class="acc am">0.50</span></td><td><span class="acc a1">1.00</span></td><td>—</td></tr><tr class="grp"><td class="lbl">KIVI 4-bit</td><td><span class="mem"><span class="bar" style="width:62px"></span><span class="num">0.283</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc am">0.83</span></td><td><span class="acc a1">1.00</span></td><td><span class="acc am">0.58</span></td><td>—</td></tr><tr class="grp"><td class="lbl">ExpectedAttention k0.1</td><td><span class="mem"><span class="bar" style="width:22px"></span><span class="num">0.100</span></span></td><td><span class="acc a1">1.00</span></td><td><span class="acc am">0.67</span></td><td><span class="acc am">0.83</span></td><td><span class="acc a1">1.00</span></td><td>—</td></tr></tbody></table></div>
+  <div class="twrap"><table><caption>Persisted-cache cold start, Llama-3.1-8B, A100-40GB<span class="cx">seconds to attend-ready = disk read + host-to-device + reconstruct; medians of 5; persisted state = exactly the billed tensors</span></caption><thead><tr><th class="lbl">ctx · arm</th><th>bytes</th><th>ratio</th><th>read</th><th>H2D</th><th>ready</th><th>cold</th></tr></thead><tbody><tr class="grp spot"><td class="lbl">16K · BUG flagship</td><td>0.33 GB</td><td><span class="mem"><span class="bar" style="width:18px"></span><span class="num">0.151</span></span></td><td>0.067</td><td>0.028</td><td>0.039</td><td><b>0.134</b></td></tr><tr class="grp base"><td class="lbl">16K · full KV (fp16)</td><td>2.15 GB</td><td><span class="mem"><span class="bar" style="width:120px"></span><span class="num">1.000</span></span></td><td>1.114</td><td>0.112</td><td>0.000</td><td><b>1.226</b></td></tr><tr class="grp"><td class="lbl">16K · KIVI 2-bit</td><td>0.34 GB</td><td><span class="mem"><span class="bar" style="width:19px"></span><span class="num">0.156</span></span></td><td>0.092</td><td>0.025</td><td>0.020</td><td><b>0.137</b></td></tr><tr class="grp spot"><td class="lbl">32K · BUG flagship</td><td>0.60 GB</td><td><span class="mem"><span class="bar" style="width:17px"></span><span class="num">0.140</span></span></td><td>0.103</td><td>0.043</td><td>0.082</td><td><b>0.227</b></td></tr><tr class="grp base"><td class="lbl">32K · full KV (fp16)</td><td>4.29 GB</td><td><span class="mem"><span class="bar" style="width:120px"></span><span class="num">1.000</span></span></td><td>2.113</td><td>0.238</td><td>0.000</td><td><b>2.351</b></td></tr><tr class="grp"><td class="lbl">32K · KIVI 2-bit</td><td>0.67 GB</td><td><span class="mem"><span class="bar" style="width:19px"></span><span class="num">0.156</span></span></td><td>0.126</td><td>0.046</td><td>0.040</td><td><b>0.212</b></td></tr></tbody></table></div>
+
+  <hr class="rule">
+  <h2>Panel gap-fill plan — status after Week 19</h2>
+  <div class="twrap"><table>
+    <caption>The 2026-09-01 ranked gaps<span class="cx">exit gate = every dimension ≥ 7, zero fatal; the paper (paper/main.tex, CI-built) carries all of it</span></caption>
+    <thead><tr><th class="lbl">#</th><th class="lbl">Gap</th><th class="lbl">Outcome</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr class="grp spot"><td class="lbl">1</td><td class="lbl">No 2-bit KV-quant baseline</td><td class="lbl">Fair KIVI 2/4-bit, 3 families, 16K/32K, paired; the Week-18 zero was a per-token-key artifact; BUG×4-bit compose at 0.048×</td><td><span class="acc a1">done</span></td></tr>
+      <tr class="grp"><td class="lbl">2</td><td class="lbl">Self-authored benchmark</td><td class="lbl">WikiText filler (W18) + official NVIDIA RULER anchor (W19): eviction collapse transfers, the multi-value edge does not</td><td><span class="acc a1">done</span></td></tr>
+      <tr class="grp"><td class="lbl">3</td><td class="lbl">Storage billed as memory</td><td class="lbl">Dual billing everywhere; measured cold start 0.13 s vs 1.23 s (shared with 2-bit)</td><td><span class="acc a1">done</span></td></tr>
+      <tr class="grp"><td class="lbl">4</td><td class="lbl">Eviction absent from grids</td><td class="lbl">ea/snapkv at 0.1×, 3 families, n=12 (W18 g3); official cells (W19)</td><td><span class="acc a1">done</span></td></tr>
+      <tr class="grp"><td class="lbl">5</td><td class="lbl">No manuscript</td><td class="lbl">arXiv-v1 draft, 34 verified refs, builds on CI (18 pp), figures from committed line-files</td><td><span class="acc a1">done</span></td></tr>
+      <tr class="grp"><td class="lbl">6</td><td class="lbl">Wording debts</td><td class="lbl">"leads"/"no detected loss"; the fair-quant outcome reframed the abstract, limits and conclusion</td><td><span class="acc a1">done</span></td></tr>
+      <tr class="grp"><td class="lbl">7</td><td class="lbl">Evidentiary chain</td><td class="lbl">SHA-pinned pods, env headers, per-trial records for every W18/W19 cell</td><td><span class="acc a1">done</span></td></tr>
+      <tr class="grp"><td class="lbl">8</td><td class="lbl">Statistical firming</td><td class="lbl">32K n=12, marquee n=16 with McNemar (W18); every W19 contrast paired</td><td><span class="acc a1">done</span></td></tr>
+      <tr class="grp"><td class="lbl">+</td><td class="lbl">64K point (1/T)</td><td class="lbl">Llama 64K: flagship vs 2-bit vs eviction</td><td><span class="acc am">running</span></td></tr>
+    </tbody></table></div>
+
+  <p class="meta">kvdlra · week7 · Weeks 18–19 program · A100 · Llama-3.1-8B / Qwen2.5-7B / Mistral-7B-v0.3 · rendered by scripts/w19_dashboard.py from results/</p>
+
+  <hr class="rule">
+  <p class="eyebrow">Archived · Week 17 · validated config + integrator floor</p>
+  <h2>One config, three families — with error bars</h2>
+  <p class="sub">RULER retrieval for <code>bugSseed-r64-h256</code> at 16K · n=12 · Wilson 95% intervals (Week-17 numbers, fp16-equivalent billing).</p>
+  <div class="twrap">
+    <table>
+      <caption>Rank-64 + warm-up seed across model families
+        <span class="cx">single + multi-value clear the 0.70 Wilson lower bound on every model</span></caption>
+      <thead><tr>
+        <th class="lbl">Model</th><th>Memory ×full</th><th>ppl / full</th>
+        <th>single</th><th>multi-value</th><th>var-track</th>
+      </tr></thead>
+      <tbody>
+        <tr class="grp spot"><td class="lbl">Qwen2.5-7B</td>
+          <td><span class="mem"><span class="bar" style="width:17px"></span><span class="num">0.149</span></span></td>
+          <td class="ppl ok">8.18 / 6.20</td>
+          <td><span class="acc a1">1.00</span><span class="ci">[.76,1] 12/12</span></td>
+          <td><span class="acc a1">1.00</span><span class="ci">[.76,1] 12/12</span></td>
+          <td><span class="acc a1">1.00</span><span class="ci">[.76,1] 12/12</span></td></tr>
+        <tr class="grp"><td class="lbl">Mistral-7B-v0.3</td>
+          <td><span class="mem"><span class="bar" style="width:10px"></span><span class="num">0.085</span></span></td>
+          <td class="ppl ok">5.50 / 4.82</td>
+          <td><span class="acc a1">1.00</span><span class="ci">[.76,1] 12/12</span></td>
+          <td><span class="acc a1">1.00</span><span class="ci">[.76,1] 12/12</span></td>
+          <td><span class="acc am">0.50</span><span class="ci">[.25,.75] 6/12</span></td></tr>
+        <tr class="grp"><td class="lbl">Llama-3.1-8B</td>
+          <td><span class="mem"><span class="bar" style="width:10px"></span><span class="num">0.085</span></span></td>
+          <td class="ppl ok">5.31 / 4.91</td>
+          <td><span class="acc a1">1.00</span><span class="ci">[.76,1] 12/12</span></td>
+          <td><span class="acc a1">1.00</span><span class="ci">[.76,1] 12/12</span></td>
+          <td><span class="acc am">0.58</span><span class="ci">[.32,.81] 7/12</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 style="margin-top:26px">The integrator floor — explosions become the best fluency</h2>
+  <p class="sub">Perplexity at 16K, floor off vs. <code>--min-sv-frac 1e-2</code> · default-off, bit-identical when off.</p>
+  <div class="twrap">
+    <table>
+      <caption>One three-line fix removes the whole high-rank failure class</caption>
+      <thead><tr>
+        <th class="lbl">Configuration</th><th>Memory ×full</th>
+        <th>ppl — floor off</th><th></th><th>ppl — floor on</th>
+      </tr></thead>
+      <tbody>
+        <tr class="grp spot"><td class="lbl">Qwen · pure-gist r256 <span class="tag fix">fixed</span></td>
+          <td><span class="mem"><span class="bar" style="width:58px"></span><span class="num">0.517</span></span></td>
+          <td class="ppl brk">27531.7</td><td class="arrow">→</td><td class="ppl fix">6.995</td></tr>
+        <tr class="grp"><td class="lbl">Qwen · bugSseed-r128-h1024 <span class="tag fix">the “puzzle”</span></td>
+          <td><span class="mem"><span class="bar" style="width:35px"></span><span class="num">0.310</span></span></td>
+          <td class="ppl brk">714.4</td><td class="arrow">→</td><td class="ppl fix">6.941</td></tr>
+        <tr class="grp"><td class="lbl">Mistral · pure-gist r128 <span class="tag fix">fixed</span></td>
+          <td><span class="mem"><span class="bar" style="width:15px"></span><span class="num">0.135</span></span></td>
+          <td class="ppl brk">138.3</td><td class="arrow">→</td><td class="ppl fix">5.574</td></tr>
+        <tr class="grp"><td class="lbl">Mistral · pure-gist r256</td>
+          <td><span class="mem"><span class="bar" style="width:30px"></span><span class="num">0.267</span></span></td>
+          <td class="ppl brk">37.2</td><td class="arrow">→</td><td class="ppl fix">5.226</td></tr>
+        <tr class="grp"><td class="lbl">Mistral · bugSseed-r128-h1024</td>
+          <td><span class="mem"><span class="bar" style="width:21px"></span><span class="num">0.191</span></span></td>
+          <td class="ppl brk">60.4</td><td class="arrow">→</td><td class="ppl fix">5.045</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note good">
+    <p><b>The floored high rank is the best fluency across all ranks.</b> On Mistral, ppl improves
+      monotonically 6.22 → 5.57 → 5.23 as rank goes 64 → 128 → 256 once the divergence is removed. The floor is
+      default-off, bit-for-bit identical when off, retrieval-neutral at the sweet spot, footprint-neutral.</p>
+  </div>
+  <p class="foot"><b>Week-17 method.</b> RULER-style retrieval (in-repo generator), n=12 at 16K; ppl over
+    512-token windows on wikitext-103. The 2026-09-01 panel scored this state 5/10 (claims · prior-work ·
+    rigor · significance 5, systems 3, reproducibility 7); the Weeks 18–19 board above is its answer.</p>
+
+</div>

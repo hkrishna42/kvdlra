@@ -442,6 +442,12 @@
 [trial] task=niah_single_1 ctx=16384 arm=think-c0.5 seed=0 trial=36634 hit=1 frac=1.000
 [trial] task=niah_single_1 ctx=16384 arm=think-c0.5 seed=0 trial=49324 hit=1 frac=1.000
 [trial] task=niah_single_1 ctx=16384 arm=think-c0.5 seed=0 trial=6577 hit=1 frac=1.000
+[trial] task=niah_single_2 ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=15924 hit=1 frac=1.000
+[trial] task=niah_single_2 ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=19355 hit=1 frac=1.000
+[trial] task=niah_single_2 ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=44743 hit=1 frac=1.000
+[trial] task=niah_single_2 ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=45735 hit=1 frac=1.000
+[trial] task=niah_single_2 ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=5925 hit=1 frac=1.000
+[trial] task=niah_single_2 ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=67350 hit=1 frac=1.000
 [trial] task=niah_single_2 ctx=16384 arm=bugSseed-r64-h256 seed=0 trial=7301 hit=1 frac=1.000
 [trial] task=niah_single_2 ctx=16384 arm=ea-k0.1 seed=0 trial=15924 hit=0 frac=0.000
 [trial] task=niah_single_2 ctx=16384 arm=ea-k0.1 seed=0 trial=16849 hit=0 frac=0.000

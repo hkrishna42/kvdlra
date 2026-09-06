@@ -41,3 +41,8 @@
 [trial] task=vt ctx=16384 arm=bugSseed-r64-h256-q4 seed=0 trial=4 hit=0 frac=0.000
 [trial] task=vt ctx=16384 arm=bugSseed-r64-h256-q4 seed=0 trial=5 hit=0 frac=0.000
 [trial] task=vt ctx=16384 arm=bugSseed-r64-h256-q4 seed=1 trial=0 hit=0 frac=0.000
+[trial] task=vt ctx=16384 arm=bugSseed-r64-h256-q4 seed=1 trial=1 hit=1 frac=1.000
+[trial] task=vt ctx=16384 arm=bugSseed-r64-h256-q4 seed=1 trial=2 hit=0 frac=0.000
+[trial] task=vt ctx=16384 arm=bugSseed-r64-h256-q4 seed=1 trial=3 hit=0 frac=0.000
+[trial] task=vt ctx=16384 arm=bugSseed-r64-h256-q4 seed=1 trial=4 hit=0 frac=0.000
+[trial] task=vt ctx=16384 arm=bugSseed-r64-h256-q4 seed=1 trial=5 hit=1 frac=1.000

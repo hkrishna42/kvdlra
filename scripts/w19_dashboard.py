@@ -267,7 +267,7 @@ def section_coldstart() -> tuple[str, dict[tuple[int, str], tuple[float, float]]
         )
     table = (
         '<div class="twrap"><table><caption>Persisted-cache cold start, Llama-3.1-8B, A100-40GB'
-        '<span class="cx">seconds to attend-ready = disk read + host-to-device + reconstruct; medians of 5; persisted state = exactly the billed tensors</span></caption>'
+        '<span class="cx">seconds to attend-ready = warm page-cache read + host-to-device + reconstruct; medians of 5; persisted state = exactly the billed tensors</span></caption>'
         '<thead><tr><th class="lbl">ctx · arm</th><th>bytes</th><th>ratio</th><th>read</th><th>H2D</th><th>ready</th><th>cold</th></tr></thead>'
         "<tbody>" + "".join(rows) + "</tbody></table></div>"
     )
@@ -402,11 +402,11 @@ def main() -> None:
 <div class="wrap">
   <p class="eyebrow">Weeks 18–19 · the fair baseline · the official anchor · three families</p>
   <h1>Where the claim narrowed, and what survived it</h1>
-  <p class="lede">The Week-18 panel's fatal gap was a missing 2-bit quantization baseline. Week 19 ran it
-    faithfully (per-channel keys, per-token values, paired needle-for-needle) and an official NVIDIA RULER
+  <p class="lede">The Week-18 panel's fatal gap was a missing 2-bit quantization baseline. Week 19 ran a KIVI-scheme
+    baseline (per-channel keys, per-token values, G=64, paired needle-for-needle) and an official NVIDIA RULER
     anchor. <b>At matched stored bytes 2-bit KIVI ties the flagship on single needles and wins fluency;
     the flagship's edge is multi-value retrieval on our generator</b>, which the official suite does not
-    reproduce. <b>What no quantizer reaches is the composed cell at {ll16["sbits"]:.3f}× stored</b> (Llama,
+    reproduce. <b>What no fixed-bit scalar quantizer reaches is the composed cell at {ll16["sbits"]:.3f}× stored</b> (Llama,
     Mistral) with full single/multi-key/multi-value retrieval — at a fluency cost, and not on Qwen.</p>
 
   <hr class="rule">
@@ -414,7 +414,7 @@ def main() -> None:
     <div class="card"><p class="k">Fair 2-bit at matched bytes · our generator</p>
       <p class="v">mv <span class="u">3 / 3 families</span></p>
       <p class="n">Flagship wins multi-value at 16K on Llama, Mistral, Qwen (paired McNemar p ≤ 0.03); ties single;
-        loses fluency on Mistral/Qwen. 4-bit at ~2× bytes concedes nothing.</p></div>
+        loses fluency on Mistral/Qwen. 4-bit at ~2× bytes is not separated in any cell.</p></div>
     <div class="card"><p class="k">Official RULER · Llama 16K · 9 tasks</p>
       <p class="v">{means[FLAG]:.2f} <span class="u">vs {means[K2]:.2f} (2-bit)</span></p>
       <p class="n">No task separated either way; the multi-value edge does not transfer. Eviction at 0.1× averages
@@ -447,11 +447,11 @@ def main() -> None:
   {official}
   <p class="foot">Transfers from our generator: the eviction collapse (flagship separated from ea-k0.1 on 6 of 9 tasks),
     single-needle parity with 2-bit, the 0.29–0.75× arms near-perfect. Does not transfer: the multi-value edge over
-    2-bit (1 vs 1 discordant). The flagship's 14 misses sit at depths 0.15–0.95 — not a warm-up or recency effect.</p>
+    2-bit (1 vs 1 discordant). The flagship's 22 misses (14 needle at depths 0.15–0.95, six ≤ 0.20; 8 variable-tracking) are front-loaded — six of fourteen in the first ingest chunk.</p>
 
   <hr class="rule">
   <h2>Below the quantizer floor, and the 1/T term</h2>
-  <p class="sub">Low-rank has no bit floor; a b-bit quantizer cannot store fewer than b/16 of full KV plus its scales.</p>
+  <p class="sub">The flagship alone amortizes toward its 2r/n = 0.125× asymptote (19% under the 2-bit 0.156× floor); composed with 4-bit coordinates it reaches 0.048×, below any fixed-bit scalar-quantizer floor.</p>
   {compose}
   {k64}
   {cold}

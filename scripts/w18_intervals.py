@@ -186,9 +186,18 @@ def main() -> None:
         help="A,B arm pair for a McNemar test (repeatable)",
     )
     ap.add_argument("--out", default="results/w18", help="output prefix (.json + .md)")
+    ap.add_argument(
+        "--drop-arm",
+        action="append",
+        default=[],
+        help="arm name(s) to exclude from the tables (e.g. the invalidated W18 bugS-r64-h256-q4)",
+    )
     args = ap.parse_args()
     contrasts = [(a, b) for a, b in (c.split(",", 1) for c in args.contrast)]
     blob = build(args.paths, contrasts)
+    for ctx in blob["cells"]:
+        for arm in args.drop_arm:
+            blob["cells"][ctx].pop(arm, None)
     Path(f"{args.out}-ruler-intervals.json").write_text(json.dumps(blob, indent=2))
     Path(f"{args.out}-ruler-intervals.md").write_text(fmt_md(blob))
     n_cells = sum(len(t) for ctx in blob["cells"].values() for t in ctx.values())

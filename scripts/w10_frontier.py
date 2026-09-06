@@ -65,9 +65,16 @@ def _score_window(
     win_len = int(win_ids.shape[0])
     pos = torch.arange(ctx_len, ctx_len + win_len, device=win_ids.device).unsqueeze(0)
     out = model(win, past_key_values=cache, use_cache=True, position_ids=pos)
-    logits = out.logits[0]
-    nll = cross_entropy(logits[:-1], win_ids[1:], reduction="sum")
-    return float(nll), int(win_ids[1:].shape[0])
+    return _nll_sum(out.logits[0][:-1], win_ids[1:]), int(win_ids[1:].shape[0])
+
+
+def _nll_sum(logits: torch.Tensor, targets: torch.Tensor) -> float:
+    """Summed NLL in fp32. Week-19 exit-gate fix: on a bf16 model ``cross_entropy``
+    log-softmaxes and sums in bf16, quantizing a 511-token window to the bf16 ulp
+    (8 nats at ~1100, ~1.6%); every Week-15..19 window sum was a multiple of that ulp.
+    The archived numbers stand as recorded (their resolution is disclosed in the
+    paper); new runs accumulate exactly."""
+    return float(cross_entropy(logits.float(), targets, reduction="sum"))
 
 
 def _prefill_chunked(model: Any, cache: Cache, ctx: torch.Tensor, chunk: int) -> None:

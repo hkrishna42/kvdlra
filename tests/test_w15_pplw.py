@@ -163,3 +163,22 @@ def test_pplw_line_splits_when_long(
     # Equal-weight recompute from the PRINTED values (uniform windows) matches.
     printed_pooled = math.exp(sum(float(v) for v in joined) / len(joined))
     assert row["ppl"] == pytest.approx(printed_pooled, rel=1e-4)
+
+
+def test_window_nll_is_accumulated_in_fp32() -> None:
+    """Week-19 exit-gate finding: cross_entropy on bf16 logits log-softmaxes and SUMS in
+    bf16, so a 511-token window's NLL (~1100 nats) is quantized to the bf16 ulp (8 nats,
+    ~1.6%). Every harvested window sum was a multiple of 8. The scorer must accumulate in
+    fp32: on bf16 logits it must equal the fp32 computation, not the bf16 one."""
+    import torch
+    from torch.nn.functional import cross_entropy
+    from w10_frontier import _nll_sum
+
+    g = torch.Generator().manual_seed(0)
+    logits = (torch.randn(511, 4096, generator=g) * 3).to(torch.bfloat16)
+    targets = torch.randint(0, 4096, (511,), generator=g)
+    got = _nll_sum(logits, targets)
+    fp32 = float(cross_entropy(logits.float(), targets, reduction="sum"))
+    bf16 = float(cross_entropy(logits, targets, reduction="sum"))
+    assert abs(got - fp32) < 1e-2 * fp32 / 511, (got, fp32)
+    assert abs(got - fp32) < abs(got - bf16) or abs(bf16 - fp32) < 1e-6

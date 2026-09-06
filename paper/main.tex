@@ -97,7 +97,8 @@ flagship and the 2-bit arm are not separated on any task (the flagship trails
 $0.79$ vs $0.87$ on average) while eviction at $0.1\times$ collapses. Low-rank compresses a feature axis and
 quantization a bit axis, so the two compose: the seeded gist with 4-bit
 coordinates reaches $0.048\times$ at 16K and $0.034\times$ at 32K, below any
-fixed-bit scalar-quantizer floor, with full single/multi-key retrieval and
+fixed-bit scalar-quantizer floor and below the retrieval any eviction$\times$quantization
+composite reaches at matched bytes, with full single/multi-key retrieval and
 $0.83$--$1.00$ multi-value on Llama and Mistral, at a fluency cost (Llama
 perplexity roughly doubles, $9.25$/$17.1$ vs $5.31$/$8.33$; variable-tracking
 $\le0.83$) and with Qwen diverging. We are explicit that today's storage ratio is not deployed VRAM:
@@ -656,7 +657,7 @@ and $1.00/1.00/0.92/0.33$ on Mistral---multi-key and multi-value retrieval that
 the 2-bit arm at three times the bytes loses ($0.67/0.42$ and $0.58/0.50$).
 This is a compression depth no fixed-bit scalar quantizer can be configured to
 reach ($0.156\times$ at 2 bits), with retrieval intact on the sharp-needle tasks;
-whether an eviction$\times$quantization composite reaches it is not measured here.
+nor, as we measure below, does an eviction$\times$quantization composite reach it.
 At 32K the cell falls to
 $0.034\times$ (its $1/T$ term) and holds: Llama $1.00/1.00/1.00/0.83$, Mistral
 $1.00/1.00/0.83/0.58$---at a fifth of the 2-bit arm's bytes, where that arm
@@ -680,6 +681,46 @@ single/multi-key/multi-value only on Llama---and loses variable-tracking there
 tasks (single $\le0.50$, multi-key and multi-value $\to0$); \emph{no family
 retains all four tasks} at $0.1\times$. SnapKV at $0.100\times$ is weaker still
 (multi-key $0.17$--$0.42$, variable-tracking $0$).
+
+\paragraph{The composite competitor: eviction $\times$ quantization.} The band's
+exclusivity is not only against \emph{pure} quantization. We ran the composite that
+combines both axes---Expected~Attention pruning to a keep-fraction $k$, its survivors
+stored $b$-bit (\texttt{ea-k$k$-q$b$}, the axes multiplying to $\approx k\,b/16$; the
+MiniKV pattern)---at and below the cell's bytes, on the same needles
+(Table~\ref{tab:composite}). At matched bytes none reaches the cell's retrieval: on
+Llama the byte-matched \texttt{ea-k0.25-q2} ($0.039\times$) scores multi-key/multi-value
+$0.08/0.08$ against the cell's $1.00/1.00$, and the only composite that matches the
+cell's single/multi-key/multi-value (\texttt{ea-k0.25-q4}) needs $0.070\times$---$1.5$--$2\times$
+the cell's bytes. On the official RULER anchor (\S\ref{sec:realistic}) every composite
+at $\le0.07\times$ collapses to mean $0.11$--$0.33$, at or below plain eviction's $0.20$:
+the essay haystack defeats eviction whether or not its survivors are quantized. So the
+sub-$0.05\times$ band with full single/multi-key/multi-value retrieval is reached by
+\emph{neither} scalar quantization \emph{nor} eviction$\times$quantization---with the
+honest caveat that the cell itself has no official-anchor number (\S\ref{sec:limits}),
+on a suite where the flagship's own multi-value edge does not transfer either.
+% source: results/w20-fork-report.md (scripts/w19_fork_report.py over the fork pod raws @5d3239f; composite = build_arms press_quant, paired on a1q needles in-repo and a2 needles official).
+
+\begin{table}[t]
+\centering
+\caption{The eviction$\times$quantization composite vs the sub-cliff cell, Llama-3.1-8B,
+$n{=}12$ (accuracy single/multi-key/multi-value/var-track; honest stored bits).
+\texttt{ea-k$k$-q$b$} $=$ Expected~Attention keep-$k$ with $b$-bit survivors. No composite
+matches the cell's multi-key/multi-value at $\le$ its bytes; on the official anchor every
+composite $\le0.07\times$ collapses to the ``off.'' column, at or below plain eviction.}
+\label{tab:composite}
+\small
+\begin{tabular}{lccc}
+\toprule
+arm & stored & 16K \;/\; 32K (s/mk/mv/vt) & off.\ mean \\
+\midrule
+\texttt{bugSseed-r64-h256-q4} (cell) & $0.048$/$0.034\times$ & $1.00/1.00/1.00/0.50$ \;/\; $1.00/1.00/1.00/0.83$ & --- \\
+\texttt{ea-k0.25-q2} & $0.039\times$ & $0.92/0.08/0.08/0.00$ \;/\; $1.00/0.83/0.33/0.33$ & $0.17$ \\
+\texttt{ea-k0.1-q4}  & $0.028\times$ & $1.00/0.75/0.92/0.42$ \;/\; $1.00/0.83/0.83/0.58$ & $0.19$ \\
+\texttt{ea-k0.25-q4} & $0.070\times$ & $1.00/1.00/1.00/0.50$ \;/\; $1.00/1.00/1.00/0.33$ & $0.33$ \\
+\texttt{ea-k0.1} (plain) & $0.100\times$ & --- & $0.20$ \\
+\bottomrule
+\end{tabular}
+\end{table}
 % source: results/w19-a1q-{llama,mistral,qwen}-lines.txt (Week-19 a1q pods @1cbc31f: bugSseed-r64-h256-q4 16K+32K n=12; ppl Llama 9.254/17.074, Mistral 6.558/4.280); the Week-18 "q4" rows are NOT this arm (its quant tier never filled; results/w18-g1-report.md annotation). Eviction grid: results/w18-g3-{qwen,mistral,llama}-lines.txt.
 
 \begin{table}[t]
@@ -763,8 +804,9 @@ not separated from the flagship in any cell; and on the official RULER prompts
 (\S\ref{sec:realistic}) the multi-value edge does not reproduce and the two arms
 are not separated on any task (the flagship trails $0.79$ vs $0.87$ on average).
 What a fixed-bit scalar quantizer cannot do is reach below its own $b/16$ floor;
-whether an eviction$\times$quantization composite can is unmeasured here, and is
-where \S\ref{sec:subcliff} goes with pure low-rank$\times$quantization.
+an eviction$\times$quantization composite cannot reach the band with retrieval either
+(\S\ref{sec:subcliff}, Table~\ref{tab:composite}), which is where \S\ref{sec:subcliff}
+goes with pure low-rank$\times$quantization.
 % source: results/w19-a1-report.md (scripts/w19_a1_report.py over results/w19_intervals/*.json, W19 a1 pods qwen/mistral/llama @6734afa, paired with W18 g1 per-trial records); mechanism: results/w18_harvest/quant-findings.md.
 
 \begin{table}[t]
@@ -1066,8 +1108,10 @@ vs $0.87$; no task separated). We therefore scope the matched-bytes retrieval
 advantage to our generator's tasks and treat the official numbers as the
 external-validity ceiling. The anchor covers one model and one context; a
 three-family, 32K official grid and a flagship LongBench sweep remain open. The
-composed sub-cliff cell (\S\ref{sec:subcliff}) has no official-anchor number at
-all; its retrieval is our-generator-only.
+composed sub-cliff cell (\S\ref{sec:subcliff}) has no official-anchor number of its
+own; its retrieval is our-generator-only, though the eviction$\times$quantization
+composites it is measured against (Table~\ref{tab:composite}) were run on the official
+anchor and collapse there, as plain eviction does.
 
 \paragraph{Statistical firmness and provenance.} The 1B composition study is
 lower-$n$, but the retrieval grids are now firm: the 16K and 32K cross-model
@@ -1109,9 +1153,10 @@ the wide-KV variable-tracking limitation, and the storage-vs-resident memory
 distinction that scopes the systems claim. Against the fair 2-bit quantizer at matched bytes the method's edge narrows
 to multi-value (and, at 32K, multi-key on Mistral and variable-tracking on Qwen)
 retrieval, at a fluency cost, while 4-bit quantization at twice the bytes is not
-separated from it; the one band no fixed-bit scalar quantizer can be configured to
-enter is the composed gist-plus-4-bit-coordinates cell at $0.048\times$ on Llama
-and Mistral (family-dependent, at a fluency cost). Low-rank tracking is an axis orthogonal to eviction and
+separated from it; the one band that neither fixed-bit quantization nor an
+eviction$\times$quantization composite reaches with retrieval at matched bytes is the
+composed gist-plus-4-bit-coordinates cell at $0.048\times$ on Llama and Mistral
+(measured against both, \S\ref{sec:subcliff}; family-dependent, at a fluency cost). Low-rank tracking is an axis orthogonal to eviction and
 quantization; a fp16-storable gist and a fused factored-attention kernel are the
 program that would turn today's stored-state advantage into a deployed one.
 

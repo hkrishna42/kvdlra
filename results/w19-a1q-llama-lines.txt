@@ -1,0 +1,3 @@
+[niah_multikey ctx16384] bugSseed-r64-h256-q4 acc=1.00 recall=1.00 ratio=0.043 sbits=0.049 n=12
+[niah_multivalue ctx16384] bugSseed-r64-h256-q4 acc=1.00 recall=1.00 ratio=0.043 sbits=0.049 n=12
+[niah_single ctx16384] bugSseed-r64-h256-q4 acc=1.00 recall=1.00 ratio=0.042 sbits=0.048 n=12

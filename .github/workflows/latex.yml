@@ -36,3 +36,8 @@ jobs:
         with:
           name: main.log
           path: paper/main.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main.bbl  # bundled into the arXiv tarball (scripts/make_arxiv.sh)
+          path: paper/main.bbl

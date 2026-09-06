@@ -54,3 +54,6 @@ results/scratch/
 results/w19_harvest/watchdog.log
 results/w19_harvest/watchdog.pid
 results/w19_harvest/status.txt
+paper/arxiv/
+paper/arxiv-v1.tar.gz
+paper/main.bbl

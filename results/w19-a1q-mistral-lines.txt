@@ -1,4 +1,8 @@
+  bugSseed-r64-h256-q4 [T=16384] ppl=6.558 tok_eq/layer=540.8 ratio=0.042 sbits=0.048
 [niah_multikey ctx16384] bugSseed-r64-h256-q4 acc=1.00 recall=1.00 ratio=0.042 sbits=0.048 n=12
+[niah_multikey ctx32768] bugSseed-r64-h256-q4 acc=1.00 recall=1.00 ratio=0.031 sbits=0.034 n=12
 [niah_multivalue ctx16384] bugSseed-r64-h256-q4 acc=0.92 recall=0.98 ratio=0.043 sbits=0.049 n=12
+[niah_multivalue ctx32768] bugSseed-r64-h256-q4 acc=0.83 recall=0.92 ratio=0.031 sbits=0.034 n=12
 [niah_single ctx16384] bugSseed-r64-h256-q4 acc=1.00 recall=1.00 ratio=0.042 sbits=0.048 n=12
+[niah_single ctx32768] bugSseed-r64-h256-q4 acc=1.00 recall=1.00 ratio=0.031 sbits=0.034 n=12
 [vt ctx16384] bugSseed-r64-h256-q4 acc=0.33 recall=0.33 ratio=0.043 sbits=0.049 n=12

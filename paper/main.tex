@@ -646,7 +646,11 @@ demoting every older coordinate column to 4-bit rotated-scalar (TurboQuant~\S2)
 codes (never
 dropping it) gives \texttt{bugSseed-r64-h256-q4} at \textbf{$0.048\times$}
 stored state (fp32 at rest; $0.042\times$ fp16-equivalent), $3.4\times$ below
-the 2-bit arm. At 16K ($n{=}12$, same needles) this cell scores
+the 2-bit arm.\footnote{An earlier Week-18 arm also labeled \texttt{q4} never
+quantized---a budget inversion demoted no coordinates, so its rows billed
+identically to the unseeded flagship; those rows are annotated invalid
+(\texttt{results/w18-g1-report.md}) and are not the cell reported here, which is
+the corrected Week-19 \texttt{a1q} run.} At 16K ($n{=}12$, same needles) this cell scores
 single/multi-key/multi-value/variable-tracking $= 1.00/1.00/1.00/0.50$ on Llama
 and $1.00/1.00/0.92/0.33$ on Mistral---multi-key and multi-value retrieval that
 the 2-bit arm at three times the bytes loses ($0.67/0.42$ and $0.58/0.50$).
@@ -782,7 +786,7 @@ Llama-3.1-8B & 16K & flagship & $0.151\times$ & $1.00$ & $1.00$ & $\mathbf{1.00}
              &     & KIVI-2   & $0.160\times$ & $1.00$ & $0.83$ & $0.92$ & $0.92$ \\
              &     & KIVI-4   & $0.284\times$ & $1.00$ & $1.00$ & $1.00$ & $1.00$ \\
 \midrule
-Mistral-7B   & 16K & flagship & $0.151\times$ & $1.00$ & $1.00$ & $\mathbf{1.00}$ & $0.50$ \\
+Mistral-7B   & 16K & flagship & $0.150\times$ & $1.00$ & $1.00$ & $\mathbf{1.00}$ & $0.50$ \\
              &     & KIVI-2   & $0.163\times$ & $0.92$ & $0.58$ & $0.50$ & $0.33$ \\
              &     & KIVI-4   & $0.287\times$ & $1.00$ & $1.00$ & $1.00$ & $0.25$ \\
              & 32K & flagship & $0.139\times$ & $1.00$ & $\mathbf{1.00}$ & $\mathbf{0.83}$ & $0.42$ \\

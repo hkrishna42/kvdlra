@@ -7,9 +7,11 @@
 [niah_multivalue ctx16384] quant-2bit-kivi acc=0.33 recall=0.77 ratio=0.163 sbits=0.163 n=12
 [niah_multivalue ctx16384] quant-4bit-kivi acc=0.92 recall=0.98 ratio=0.287 sbits=0.287 n=12
 [niah_multivalue ctx32768] quant-2bit-kivi acc=0.17 recall=0.62 ratio=0.160 sbits=0.160 n=12
+[niah_multivalue ctx32768] quant-4bit-kivi acc=1.00 recall=1.00 ratio=0.284 sbits=0.284 n=12
 [niah_single ctx16384] quant-2bit-kivi acc=1.00 recall=1.00 ratio=0.163 sbits=0.163 n=12
 [niah_single ctx16384] quant-4bit-kivi acc=1.00 recall=1.00 ratio=0.287 sbits=0.287 n=12
 [niah_single ctx32768] quant-2bit-kivi acc=0.92 recall=0.92 ratio=0.160 sbits=0.160 n=12
 [niah_single ctx32768] quant-4bit-kivi acc=1.00 recall=1.00 ratio=0.284 sbits=0.284 n=12
 [vt ctx16384] quant-2bit-kivi acc=0.92 recall=0.92 ratio=0.163 sbits=0.163 n=12
 [vt ctx16384] quant-4bit-kivi acc=1.00 recall=1.00 ratio=0.287 sbits=0.287 n=12
+[vt ctx32768] quant-2bit-kivi acc=0.25 recall=0.25 ratio=0.160 sbits=0.160 n=12

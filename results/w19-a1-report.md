@@ -47,6 +47,7 @@ KIVI-faithful quantized KV (per-channel keys, per-token values; `--quant-scheme 
 | ctx | stored | single | mk | mv | vt | ppl |
 |---|---|---|---|---|---|---|
 | 16K | 0.048x | 1.00 (n=12) | 1.00 (n=12) | 1.00 (n=12) | 0.50 (n=12) | 9.25 |
+| 32K | 0.034x | 1.00 (n=12) | 1.00 (n=12) | 1.00 (n=12) | 0.83 (n=12) | 17.07 |
 
 ## Mistral-7B-v0.3
 
@@ -95,7 +96,8 @@ KIVI-faithful quantized KV (per-channel keys, per-token values; `--quant-scheme 
 
 | ctx | stored | single | mk | mv | vt | ppl |
 |---|---|---|---|---|---|---|
-| 16K | 0.048x | 1.00 (n=12) | 1.00 (n=12) | 0.92 (n=12) | 0.33 (n=12) | — |
+| 16K | 0.048x | 1.00 (n=12) | 1.00 (n=12) | 0.92 (n=12) | 0.33 (n=12) | 6.56 |
+| 32K | 0.034x | 1.00 (n=12) | 1.00 (n=12) | 0.83 (n=12) | 0.58 (n=12) | 4.28 |
 
 ## Qwen2.5-7B
 

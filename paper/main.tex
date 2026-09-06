@@ -81,9 +81,9 @@ gist costs $0.27\times$---it dominates; on the official NVIDIA RULER suite (Llam
 16K) the flagship and the 2-bit arm are indistinguishable while eviction at
 $0.1\times$ collapses. Low-rank compresses a feature axis and
 quantization a bit axis, so the two compose: the seeded gist with 4-bit
-coordinates reaches $0.048\times$, below any 2-bit floor, with full
-single/multi-key/multi-value retrieval on Llama and Mistral (at a fluency cost;
-Qwen diverges). We are explicit that today's storage ratio is not deployed VRAM:
+coordinates reaches $0.048\times$ at 16K and $0.034\times$ at 32K, below any
+2-bit floor, with full single/multi-key retrieval and $0.83$--$1.00$ multi-value
+on Llama and Mistral (at a fluency cost; Qwen diverges). We are explicit that today's storage ratio is not deployed VRAM:
 BUG reconstructs then attends, so its decode residency is $\approx1.06\times$
 full KV until a fused factored-attention kernel (future work) realizes the
 storage win as memory; the measured systems payoff is a $9$--$10\times$ faster
@@ -581,12 +581,17 @@ and $1.00/1.00/0.92/0.33$ on Mistral---multi-key and multi-value retrieval that
 the 2-bit arm at three times the bytes loses ($0.67/0.42$ and $0.58/0.50$).
 This is the honestly exclusive band: a compression depth scalar quantization
 cannot reach, with retrieval intact on the sharp-needle tasks. Three
+At 32K the cell falls to
+$0.034\times$ (its $1/T$ term) and holds: Llama $1.00/1.00/1.00/0.83$, Mistral
+$1.00/1.00/0.83/0.58$---at a fifth of the 2-bit arm's bytes, where that arm
+scores $1.00/0.83/0.92/0.92$ (Llama) and $0.83/0.25/0.08/0.00$ (Mistral). Three
 qualifications travel with it. It is \emph{family-dependent}: on Qwen the same
 arm retrieves nothing ($0/0/0/0$ at $0.071\times$) and its perplexity diverges,
 the heavy-tailed Qwen key coordinates defeating 4-bit polar codes exactly as
 Qwen's key-bias channel defeats per-token key quantization. It \emph{costs
-fluency}: Llama 16K perplexity is $9.25$ against $5.31$ for the unquantized
-flagship, so the cell is a retrieval-tier operating point, not a
+fluency}, more on Llama than on Mistral: Llama perplexity is $9.25$ (16K) and
+$17.1$ (32K) against $5.31$/$8.33$ unquantized, Mistral $6.56$/$4.28$ against
+$5.50$/$3.76$, so the cell is a retrieval-tier operating point, not a
 fluency-preserving one. And variable tracking is no better than at $r{=}64$
 unquantized. Channel-pruning (ThinK) and low-rank factorization (Palu) are
 floored at $0.50$--$0.75\times$ by construction; eviction reaches $0.1\times$
@@ -598,7 +603,7 @@ single/multi-key/multi-value only on Llama---and loses variable-tracking there
 tasks (single $\le0.50$, multi-key and multi-value $\to0$); \emph{no family
 retains all four tasks} at $0.1\times$. SnapKV at $0.100\times$ is weaker still
 (multi-key $0.17$--$0.42$, variable-tracking $0$).
-% source: results/w19-a1q-{llama,mistral,qwen}-lines.txt (Week-19 a1q pods @1cbc31f: bugSseed-r64-h256-q4 16K n=12; Llama ppl 9.254); the Week-18 "q4" rows are NOT this arm (its quant tier never filled; results/w18-g1-report.md annotation). Eviction grid: results/w18-g3-{qwen,mistral,llama}-lines.txt.
+% source: results/w19-a1q-{llama,mistral,qwen}-lines.txt (Week-19 a1q pods @1cbc31f: bugSseed-r64-h256-q4 16K+32K n=12; ppl Llama 9.254/17.074, Mistral 6.558/4.280); the Week-18 "q4" rows are NOT this arm (its quant tier never filled; results/w18-g1-report.md annotation). Eviction grid: results/w18-g3-{qwen,mistral,llama}-lines.txt.
 
 \begin{table}[t]
 \centering

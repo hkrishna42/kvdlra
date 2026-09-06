@@ -75,6 +75,8 @@
 [trial] task=niah_single ctx=65536 arm=bugSseed-r64-h256 seed=0 trial=2 hit=1 frac=1.000
 [trial] task=niah_single ctx=65536 arm=bugSseed-r64-h256 seed=0 trial=3 hit=1 frac=1.000
 [trial] task=niah_single ctx=65536 arm=bugSseed-r64-h256 seed=1 trial=0 hit=1 frac=1.000
+[trial] task=niah_single ctx=65536 arm=bugSseed-r64-h256 seed=1 trial=1 hit=1 frac=1.000
+[trial] task=niah_single ctx=65536 arm=bugSseed-r64-h256 seed=1 trial=2 hit=1 frac=1.000
 [trial] task=niah_single ctx=65536 arm=ea-k0.1 seed=0 trial=0 hit=1 frac=1.000
 [trial] task=niah_single ctx=65536 arm=ea-k0.1 seed=0 trial=1 hit=1 frac=1.000
 [trial] task=niah_single ctx=65536 arm=ea-k0.1 seed=0 trial=2 hit=1 frac=1.000

@@ -88,7 +88,9 @@ BUG reconstructs then attends, so its decode residency is $\approx1.06\times$
 full KV until a fused factored-attention kernel (future work) realizes the
 storage win as memory; the measured systems payoff is a $9$--$10\times$ faster
 persisted-cache cold start ($0.13$\,s vs $1.2$\,s at 16K), a win it shares with
-quantization.
+quantization; what it does not share is the $1/T$ term---its stored ratio falls
+from $0.151\times$ to $0.133\times$ between 16K and 64K on Llama, with full
+four-task retrieval at 64K, while any fixed-bit quantizer stays flat.
 \end{abstract}
 
 \section{Introduction}
@@ -831,11 +833,18 @@ $T$}---whereas every fixed-bit method (eviction at keep-fraction $k$, or $b$-bit
 quantization) stores $\Theta(T)$ and holds a \emph{constant} memory ratio. So
 BUG's ratio \emph{falls as $1/T$}: the same config drops from $0.149\times$ (16K)
 to $0.139\times$ (32K) on Qwen and $0.085\times\!\to\!0.075\times$ on Llama
-(Tables~\ref{tab:xmodel},~\ref{tab:xmodel32}), and would keep falling. This is the
-one frontier statement no scalar quantizer can match at long enough context: a
-$b$-bit quantizer is floored at $b/16$, while a bounded-rank tracker is not
-floored at all. It is also why the persistence win (\S\ref{sec:memory} below)
-grows with context (Figure~\ref{fig:one_over_t}).
+(Tables~\ref{tab:xmodel},~\ref{tab:xmodel32}), and keeps falling. We measured
+the next point (Figure~\ref{fig:one_over_t}): at 64K on Llama the flagship's
+honest stored ratio is $0.133\times$ ($0.151\to0.140\to0.133$ from 16K to 64K)
+while the 2-bit quantizer holds $0.156$--$0.158\times$; and at that point the
+flagship retrieves $1.00$ on all four tasks ($n{=}8$) where the 2-bit arm scores
+$1.00/0.58/0.50/1.00$ and eviction at $0.1\times$ scores $1.00/0.67/0.83/1.00$
+($n{=}12$), at perplexity $8.59$ against $8.15$ (2-bit and eviction), $7.27$
+(4-bit) and $7.26$ (full KV). This is the one frontier statement no scalar
+quantizer can match at long enough context: a $b$-bit quantizer is floored at
+$b/16$, while a bounded-rank tracker is not floored at all. It is also why the
+persistence win (\S\ref{sec:memory} below) grows with context.
+% source: results/w19-a4-llama-lines.txt (a4-llama pod @d15769d, A100-40GB: flagship n=8 1.00x4 @sbits 0.133 ppl 8.591; quant-2bit-kivi 1.00/0.58/0.50/1.00 @0.158 ppl 8.149; quant-4bit 1.00/0.83/1.00/0.58 @0.283 ppl 7.274; ea-k0.1 1.00/0.67/0.83/1.00 @0.100 ppl 8.149; full ppl 7.260).
 
 \begin{figure}[htbp]
 \centering
@@ -969,8 +978,10 @@ integrator/cache/RULER paths identical and cross-pod-reproduced---rather than a
 single pod. The marquee retrieval and perplexity are same-pod
 (\S\ref{sec:marquee}). The Week-19 additions (fair quantization
 baseline at \texttt{6734afa}, sub-cliff composition at \texttt{1cbc31f},
-persistence at \texttt{5e8b275}) follow the same SHA-pinned, per-trial protocol
-and are paired with the Week-18 flagship records needle-for-needle. Two
+persistence at \texttt{5e8b275}, official anchor at \texttt{c331ebd}, the 64K
+point at \texttt{d15769d}) follow the same SHA-pinned, per-trial protocol and are
+paired with the Week-18 flagship records needle-for-needle; the 64K flagship
+cells are $n{=}8$ (its comparators $n{=}12$). Two
 provenance items remain: the 1B composition frontier is earlier Week-15
 material, not the September program; and a formal compute-disclosure appendix
 (the per-family seed/window/depth grid) is not yet written.

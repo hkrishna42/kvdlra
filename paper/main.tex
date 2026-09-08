@@ -50,67 +50,40 @@
 \maketitle
 
 \begin{abstract}
-The key/value (KV) cache dominates memory in long-context LLM inference, and the
-compression literature is organized around three axes: \emph{evict} tokens,
-\emph{quantize} elements, or project onto a \emph{low-rank} subspace. Most
-low-rank methods fix the subspace at calibration or in a one-shot prefill pass;
-the online, per-sequence axis was opened by OjaKV~\citep{zhu2025ojakv} with
-Oja's rule. We track it instead with a numerical-analysis tool built for this
-problem: the basis-update \& Galerkin (BUG) integrator for dynamical
-low-rank approximation (DLRA), a rank-adaptive online subspace tracker whose
-error bound is independent of the smallest tracked singular value. On the
-(pre-RoPE) KV stream it is a \emph{near-oracle} streaming approximator---within
-$1.01$--$1.03\times$ of the truncated-SVD optimum on real KV, where Oja's rule is
-$1.3$--$3\times$ worse. We pair the low-rank ``gist'' (which
-carries fluency) with a small \emph{surprise-selected} exact tier (which carries
-retrieval), and a warm-up seed that repairs early-context recall. On
-Llama-3.1-8B, Qwen2.5-7B and Mistral-7B-v0.3, a single configuration reaches
-perfect single- and multi-value 16K retrieval with \emph{no detected loss}
-($12/12$ trials, Wilson 95\% acc.\ $\ge 0.758$) at \textbf{$0.15\times$} (Llama/Mistral) to \textbf{$0.28\times$} (Qwen) the
-full KV as honest fp32-at-rest \emph{stored state} ($0.085$--$0.149\times$
-float-equivalent)---$1.8$--$5\times$ less than the channel-pruning baseline
-\texttt{think-c0.5} ($0.75\times$) and the low-rank baseline \texttt{palu-r0.5}
-($0.50\times$) at honest bytes ($3.4$--$10\times$ float-equivalent), and
-$3.6$--$6.7\times$ less than full KV. On the hardest task, variable tracking at 32K on Llama, our config
-\emph{beats} \texttt{think-c0.5} (paired McNemar $p=2.0\times10^{-3}$, $0.94$ vs
-$0.31$, $n{=}16$; also Wilson-separated) with a suggestive separation from
-\texttt{palu-r0.5} ($0.56$; McNemar $p=0.03$, intervals overlap) at
-$1.8$--$2.6\times$ less honest stored state ($0.284\times$)---bytes at which
-4-bit KIVI also scores $1.00$ variable-tracking, so the separation is from
-ThinK/Palu, not from quantization. We give a mechanistic
-account of \emph{where} the method is limited: a rank/context retrieval wall at
-$r/n\approx0.25$; a rank-siphoning interaction between surprise selection and the
-low-rank tracker (which we diagnose and stabilize with a relative
-singular-value floor); and an unresolved weakness on variable-tracking chains for
-wide-KV ($n{=}1024$) models. Against a KIVI-scheme 2-bit baseline at matched stored bytes on Llama/Mistral
-($0.15$ vs $0.16\times$; on Qwen the flagship costs $0.275\times$, $1.7\times$ the
-2-bit arm's bytes), the same config wins multi-value retrieval (pooled over the
-three families the paired records favor the flagship $21$ vs $0$; per family
-McNemar $p=0.008$--$0.031$) and, at 32K, multi-key on Mistral and
-variable-tracking on Qwen, ties single-needle everywhere, and trails or ties on
-fluency (on Qwen at 32K its $r{=}64$ gist diverges, perplexity $35.1$ vs $8.2$);
-4-bit quantization at twice the bytes is not separated from the flagship in any
-cell (it trails only on Mistral variable-tracking on point estimate, $0.25$ vs
-$0.50$, at half the bytes) and on Qwen, where the flagship's bytes also reach
-4-bit, dominates outright; on the official NVIDIA RULER suite (Llama, 16K) the
-flagship and the 2-bit arm are not separated on any task (the flagship trails
-$0.79$ vs $0.87$ on average) while eviction at $0.1\times$ collapses. Low-rank compresses a feature axis and
-quantization a bit axis, so the two compose: the seeded gist with 4-bit
-coordinates reaches $0.048\times$ at 16K and $0.034\times$ at 32K, below any
-fixed-bit scalar-quantizer floor and below the retrieval any eviction$\times$quantization
-composite reaches at matched bytes, with full single/multi-key retrieval and
-$0.83$--$1.00$ multi-value on Llama and Mistral, at a fluency cost (Llama
-perplexity roughly doubles, $9.25$/$17.1$ vs $5.31$/$8.33$; variable-tracking
-$\le0.83$) and with Qwen diverging. We are explicit that today's storage ratio is not deployed VRAM:
-BUG reconstructs then attends, so its decode residency is $\approx1.06\times$
-full KV until a fused factored-attention kernel (future work) realizes the
-storage win as memory; the measured systems payoff is an $\approx7\times$ smaller persisted cache
-($9$--$10\times$ faster warm reload on our pod, $0.13$\,s vs $1.2$\,s at 16K), a
-win it shares with quantization; what it does not share is the $1/T$ term---the
-$O(rn{+}hn)$ overhead amortizes, so the stored ratio falls from $0.151\times$
-(16K) toward its $2r/n=0.125\times$ asymptote ($19\%$ under the 2-bit arm's
-$0.156\times$; $0.133\times$ already at 64K), where the flagship still retrieves all four tasks
-($n{=}8$; no contrast separates) while the quantizer's ratio is nearly flat.
+The key/value (KV) cache dominates memory in long-context LLM inference. Most
+low-rank KV compressors fix their subspace at calibration or in one prefill pass;
+OjaKV~\citep{zhu2025ojakv} opened the online, per-sequence axis with Oja's rule. We
+track it with the rank-adaptive basis-update \& Galerkin (BUG) integrator for
+dynamical low-rank approximation (DLRA), whose error bound is independent of the
+smallest tracked singular value: on real pre-RoPE KV it is within
+$1.01$--$1.03\times$ of the truncated-SVD optimum where Oja's rule is
+$1.3$--$3\times$ worse. We pair this low-rank ``gist'' (fluency) with a small
+surprise-selected exact tier (retrieval) and a warm-up seed. On Llama-3.1-8B,
+Qwen2.5-7B and Mistral-7B-v0.3 one configuration reaches perfect single- and
+multi-value 16K retrieval with no detected loss ($12/12$, Wilson lower bound
+$0.758$) at $0.15$--$0.28\times$ honest fp32-at-rest stored state
+($0.085$--$0.149\times$ float-equivalent), $1.8$--$5\times$ under
+\texttt{think-c0.5} and \texttt{palu-r0.5}; at 32K on Llama it beats
+\texttt{think-c0.5} on variable tracking (paired McNemar $p{=}0.002$) at
+$0.284\times$, bytes at which 4-bit KIVI also scores $1.00$. Against a KIVI-scheme
+2-bit baseline at matched bytes it wins multi-value retrieval (pooled paired
+records $21$ vs $0$) but trails or ties on fluency; 4-bit quantization at twice the
+bytes is not separated from it, and on Qwen, where the gist's bytes already equal
+4-bit's, it is dominated; on the official NVIDIA RULER suite the two arms are not
+separated (flagship $0.79$ vs $0.87$) while eviction at $0.1\times$ collapses. The
+two axes compose: the seeded gist with 4-bit coordinates reaches $0.048\times$
+(16K) and $0.034\times$ (32K) with full single/multi-key and $0.83$--$1.00$
+multi-value retrieval on Llama and Mistral---a depth no fixed-bit quantizer
+reaches, and at which every eviction$\times$quantization composite we ran
+collapses on the official anchor (mean $\le0.19$)---at a fluency cost, and not on
+Qwen. We map the limits (an $r/n\approx0.25$ retrieval wall; a rank-siphoning
+interaction stabilized by a relative singular-value floor; wide-KV variable
+tracking) and bill honestly: the ratio is stored state, not resident VRAM
+(reconstruct-then-attend; decode residency $\approx1.06\times$ until a fused
+kernel). Its measured payoff is a $\approx7\times$ smaller persisted cache
+reloading $9$--$10\times$ faster, shared with quantization, plus a
+$2r/n=0.125\times$ asymptote $19\%$ under the 2-bit floor, with all four tasks
+still retrieved at 64K ($n{=}8$).
 \end{abstract}
 
 \section{Introduction}
@@ -178,8 +151,9 @@ bytes, paired needle-for-needle, which bounds the contribution honestly---BUG
 buys multi-value (and at 32K multi-key on Mistral, variable-tracking on Qwen)
 retrieval that 2-bit quantization loses; 4-bit quantization at twice the bytes is
 not separated from it in any cell; and the composed
-gist-plus-4-bit-coordinates cell reaches $0.048\times$, below any fixed-bit
-scalar-quantizer floor, at a fluency cost
+gist-plus-4-bit-coordinates cell reaches $0.048\times$, a depth neither fixed-bit
+quantization nor the eviction$\times$quantization composites we measured reach with
+retrieval, at a fluency cost
 (\S\ref{sec:quantbaseline}, \S\ref{sec:subcliff}).
 \end{itemize}
 
@@ -423,8 +397,8 @@ through NVIDIA's kvpress~\citep{nvidia2024kvpress}. We
 give Wilson 95\% intervals on retrieval cells and per-window NLL on perplexity;
 $12/12$ trials corresponds to a Wilson lower bound of $0.758$. Unless noted,
 retrieval cells use $n{=}12$ ($6$ trials $\times\,2$ seeds) and the marquee uses
-$n{=}16$ ($8\times2$); some 32K composition cells and the 1B study are lower-$n$
-and flagged as such. Per-trial hit records for every headline cell are released
+$n{=}16$ ($8\times2$); the 64K flagship cells ($n{=}8$), the 8-bit control ($n{=}4$) and
+the 1B study are lower-$n$ and flagged as such. Per-trial hit records for every headline cell are released
 (\texttt{results/w18\_pertrial/} and \texttt{results/w19\_pertrial/}), and the
 runs' git-SHA/GPU/library environment is in
 \texttt{results/w18-env-provenance.txt} and
@@ -436,12 +410,21 @@ per-family seed/window/depth appendix table is deferred to the camera-ready.
 \label{sec:oracle}
 On real Llama-3.2-1B KV, the streaming BUG tracker matches the truncated-SVD
 (Eckart--Young~\citep{eckart1936approximation}) optimum to within
-$1.01$--$1.03\times$ at every rank, beats fixed-rank incremental
-SVD~\citep{brand2006fast} everywhere, and beats Oja's
+$1.01$--$1.03\times$ at every rank and beats Oja's
 rule~\citep{oja1982simplified,zhu2025ojakv} by $1.3$--$3.0\times$; the pre-RoPE
-operating point roughly halves the error at matched budget. The tracker is thus a faithful online stand-in for the
-offline optimum---the property the fixed-subspace baselines obtain only by
-calibration.
+operating point roughly halves the error at matched budget. Two honesty notes scope
+this. First, at the flagship's operating point (no truncation tolerance, floor off)
+the augmented BUG step \emph{is} blocked fixed-rank incremental
+SVD~\citep{brand2006fast}: the ``beats incremental SVD'' gap of our earlier study
+was a \emph{reconstruction-convention} difference (re-projecting the raw matrix onto
+the final basis vs.\ carrying tracked coordinates), and the deployed cache carries
+tracked coordinates. ``Near-oracle'' is therefore a property of the basis the update
+produces, and what the DLRA framing adds is the rank-adaptive truncation criterion
+and the stability floor (\S\ref{sec:floor}), not a different update. Second, a
+basis-quality gap need not be an end-to-end gap: the tracker-swap ablation---the
+same cache with Oja's rule or Frequent Directions~\citep{liberty2013simple} as the
+gist tracker---is the test of whether the tracker is load-bearing, and is reported
+in \S\ref{sec:limits}.
 % source: docs (Week-2), README "near-oracle (within ~1.01-1.03x of truncated SVD)".
 
 \subsection{Cross-model 16K retrieval: no detected loss at $0.085$--$0.149\times$}
@@ -455,8 +438,8 @@ failure, the Wilson 95\% interval is $[0.758, 1.0]$, so we can claim
 \emph{zero} Wilson-separated flagship-vs-\texttt{think}/\texttt{palu} cells in
 either direction at 16K (the flagship does separate from the 2-bit quantizer on
 multi-value, \S\ref{sec:quantbaseline}). What is notable is \emph{where} this holds: at $0.085$--$0.149\times$ stored
-state, i.e.\ $3.4$--$10\times$ less than \texttt{think-c0.5} ($0.75\times$) and
-\texttt{palu-r0.5} ($0.50\times$), and $6.7$--$13\times$ less than full KV. BUG
+state, i.e.\ $3.4$--$8.8\times$ less than \texttt{think-c0.5} ($0.75\times$) and
+\texttt{palu-r0.5} ($0.50\times$), and $6.7$--$12\times$ less than full KV. BUG
 does \emph{not} win on perplexity here---its fluency is above the baselines'
 (r64 perplexity is $1.08$--$1.32\times$ full)---the edge is stored state at
 matched retrieval. On multi-value it \emph{leads} the baselines on point
@@ -540,7 +523,7 @@ honest headline is therefore ``\emph{beats the channel-pruning baseline
 a suggestive separation from the low-rank baseline \texttt{palu-r0.5}, at
 several-fold less stored state}.''
 
-\paragraph{Multiple comparisons.} The retrieval tables report $\sim$40 descriptive
+\paragraph{Multiple comparisons.} The retrieval tables report dozens of descriptive
 Wilson cells; we treat the 32K-Llama variable-tracking contrast as the single
 \emph{pre-registered confirmatory} comparison (registered in the pod matrix before
 the run), so the \texttt{think-c0.5} $p=2.0\times10^{-3}$ needs no family-wise
@@ -687,13 +670,19 @@ exclusivity is not only against \emph{pure} quantization. We ran the composite t
 combines both axes---Expected~Attention pruning to a keep-fraction $k$, its survivors
 stored $b$-bit (\texttt{ea-k$k$-q$b$}, the axes multiplying to $\approx k\,b/16$; the
 MiniKV pattern)---at and below the cell's bytes, on the same needles
-(Table~\ref{tab:composite}). At matched bytes none reaches the cell's retrieval: on
-Llama the byte-matched \texttt{ea-k0.25-q2} ($0.039\times$) scores multi-key/multi-value
-$0.08/0.08$ against the cell's $1.00/1.00$, and the only composite that matches the
-cell's single/multi-key/multi-value (\texttt{ea-k0.25-q4}) needs $0.070\times$---$1.5$--$2\times$
-the cell's bytes. On the official RULER anchor (\S\ref{sec:realistic}) every composite
-at $\le0.07\times$ collapses to mean $0.11$--$0.33$, at or below plain eviction's $0.20$:
-the essay haystack defeats eviction whether or not its survivors are quantized. So the
+(Table~\ref{tab:composite}). At matched bytes no composite reaches the cell's
+multi-key/multi-value retrieval: on Llama at 16K the byte-matched
+\texttt{ea-k0.25-q2} ($0.039\times$) hits multi-key on $1$ of $12$ records and
+multi-value on $1$ of $12$ where the cell hits $12/12$ on both; on Mistral every
+composite up to $2\times$ the cell's bytes falls far short of it on
+multi-key/multi-value; at Llama 32K the cheaper \texttt{ea-k0.1-q4} ($0.028\times$)
+trails on point estimate only ($0.83/0.83$ vs $1.00/1.00$, not separated at
+$n{=}12$). The only composite that matches the cell's single/multi-key/multi-value
+(\texttt{ea-k0.25-q4}) needs $0.070\times$---$1.5$--$2\times$ the cell's bytes. On
+the official RULER anchor (\S\ref{sec:realistic}) the byte-matched composites
+collapse to mean $0.11$--$0.19$, at or below plain eviction's $0.20$, and even the
+$0.070\times$ composite reaches only $0.33$: the essay haystack defeats eviction
+whether or not its survivors are quantized. So the
 sub-$0.05\times$ band with full single/multi-key/multi-value retrieval is reached by
 \emph{neither} scalar quantization \emph{nor} eviction$\times$quantization---with the
 honest caveat that the cell itself has no official-anchor number (\S\ref{sec:limits}),
@@ -702,11 +691,13 @@ on a suite where the flagship's own multi-value edge does not transfer either.
 
 \begin{table}[t]
 \centering
-\caption{The eviction$\times$quantization composite vs the sub-cliff cell, Llama-3.1-8B,
-$n{=}12$ (accuracy single/multi-key/multi-value/var-track; honest stored bits).
-\texttt{ea-k$k$-q$b$} $=$ Expected~Attention keep-$k$ with $b$-bit survivors. No composite
-matches the cell's multi-key/multi-value at $\le$ its bytes; on the official anchor every
-composite $\le0.07\times$ collapses to the ``off.'' column, at or below plain eviction.}
+\caption{The eviction$\times$quantization composite vs the sub-cliff cell (Llama-3.1-8B;
+Mistral below the rule), $n{=}12$ (accuracy single/multi-key/multi-value/var-track;
+honest stored bits). \texttt{ea-k$k$-q$b$} $=$ Expected~Attention keep-$k$ with $b$-bit
+survivors. No composite matches the cell's multi-key/multi-value at $\le$ its bytes; on
+the official anchor the byte-matched composites ($\le0.04\times$) collapse to the
+``off.'' column at or below plain eviction, and the $0.070\times$ composite reaches
+$0.33$. Mistral rows are our generator only.}
 \label{tab:composite}
 \small
 \begin{tabular}{lccc}
@@ -718,6 +709,11 @@ arm & stored & 16K \;/\; 32K (s/mk/mv/vt) & off.\ mean \\
 \texttt{ea-k0.1-q4}  & $0.028\times$ & $1.00/0.75/0.92/0.42$ \;/\; $1.00/0.83/0.83/0.58$ & $0.19$ \\
 \texttt{ea-k0.25-q4} & $0.070\times$ & $1.00/1.00/1.00/0.50$ \;/\; $1.00/1.00/1.00/0.33$ & $0.33$ \\
 \texttt{ea-k0.1} (plain) & $0.100\times$ & --- & $0.20$ \\
+\midrule
+\texttt{bugSseed-r64-h256-q4} (cell, Mistral) & $0.048$/$0.034\times$ & $1.00/1.00/0.92/0.33$ \;/\; $1.00/1.00/0.83/0.58$ & --- \\
+\texttt{ea-k0.25-q2} (Mistral) & $0.039\times$ & $0.00/0.00/0.00/0.08$ \;/\; $0.00/0.00/0.00/0.00$ & --- \\
+\texttt{ea-k0.1-q4} (Mistral)  & $0.028\times$ & $0.33/0.08/0.00/0.00$ \;/\; $0.58/0.08/0.00/0.00$ & --- \\
+\texttt{ea-k0.25-q4} (Mistral) & $0.070\times$ & $0.83/0.33/0.42/0.08$ \;/\; $0.58/0.08/0.42/0.00$ & --- \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -861,7 +857,7 @@ Llama and Mistral below any 2-bit floor and collapses on Qwen. Source:
 
 \subsection{Moderate compression on realistic text}
 \label{sec:realistic}
-Two lines of evidence say the extreme-compression story is not a
+Three lines of evidence say the extreme-compression story is not a
 synthetic-generator artifact. \textbf{(1) Realistic filler.} Re-running the
 generator with WikiText filler instead of the fixed sentence pool, at 16K on Qwen
 ($n{=}12$), the flagship holds single-needle retrieval ($1.00$) while the
@@ -886,7 +882,7 @@ Table~\ref{tab:official}). Three things transfer from our generator and one does
 not. Eviction at $0.1\times$ collapses on every essay-haystack cell (mean $0.20$;
 the flagship is paired-separated from it on 6 of 9 tasks, $p\le0.008$).
 Single-needle retrieval is a tie between the flagship and the 2-bit quantizer.
-The $0.29$--$0.75\times$ arms (4-bit KIVI, ThinK, Palu) are near-perfect. What
+The $0.29$--$0.75\times$ arms are near-perfect, except Palu on multi-value ($0.42$). What
 does \emph{not} transfer is the flagship's multi-value edge over 2-bit
 quantization: on the official multi-value and multi-query prompts the paired
 contrast is $1$ vs $1$ and $0$ vs $4$ discordant records, and over the nine tasks
@@ -896,7 +892,7 @@ weakness is confirmed and is where the larger arms separate from it ($0.33$ vs
 $1.00$ for 4-bit KIVI, Palu and ThinK, $p=0.008$/$0.008$/$0.016$). Its $22$ misses (14 on the needle tasks at depths $0.15$--$0.95$, six of them at
 depth $\le0.20$; and 8 variable-tracking chains) are front-loaded---six of
 fourteen fall in the first ingest chunk---with a mid/late tail, misses the
-near-lossless arms (4-bit KIVI, ThinK, Palu) do not make. We therefore state the matched-bytes
+4-bit KIVI and ThinK arms do not make (Palu misses multi-value). We therefore state the matched-bytes
 retrieval advantage of \S\ref{sec:quantbaseline} as a property of our generator
 that the official suite does not reproduce at 16K, while the eviction collapse
 and the single-needle parity do transfer.
@@ -987,7 +983,7 @@ the persistence win (\S\ref{sec:memory} below) grows with context.
 \caption{Stored state as a fraction of full KV against context length on
 Llama-3.1-8B (honest fp32-at-rest billing for BUG). The flagship's ratio falls with
 $T$ as its $O(rn+hn)$ overhead amortizes, toward a $2r/n=0.125\times$ asymptote
-(fit $0.127+380/T$); a $b$-bit quantizer is nearly flat at $b/16$ plus a small
+(dotted line; the three points fit $0.127+380/T$); a $b$-bit quantizer is nearly flat at $b/16$ plus a small
 amortizing residual.}
 \label{fig:one_over_t}
 \end{figure}
@@ -1143,7 +1139,7 @@ compressor: a near-oracle low-rank gist for fluency, a surprise-selected exact
 tier for retrieval, and a warm-up seed for early context. Across three model
 families it reaches perfect single/multi-value 16K retrieval with no detected
 loss at $0.085$--$0.149\times$ float-equivalent stored state
-($3.4$--$10\times$ under the channel-pruning/low-rank baselines
+($3.4$--$8.8\times$ under the channel-pruning/low-rank baselines
 \texttt{think-c0.5}/\texttt{palu-r0.5}), and at 32K on the hardest task it beats
 \texttt{think-c0.5} (Wilson-separated) and leads \texttt{palu-r0.5}
 (not separated) at several-fold less stored state. As much as the frontier,

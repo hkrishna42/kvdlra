@@ -123,3 +123,10 @@ run_sha=1cbc31fa0e469ddbd4b7dcfd5bdde2a95b4ab6a3
 run_sha=bafa02681a308a3b8c50399f408e397aedd3e67e
 torch=2.11.0+cu128 cuda_build=12.8 cuda_avail=True
 transformers=5.8.0 kvpress=0.5.1
+
+## fork-{llama,mistral,qwen} @5d3239f (Week-20 decisive fork; composite ea-k{0.1,0.25}-q{2,4}-kivi)
+===RUN_SHA_5d3239fcd2eef171b56af13540cfd12c5c30fbac===
+fork-llama:   NVIDIA A100-SXM4-40GB, 40960 MiB, driver 580.159.03  (in-repo 16K/32K + official RULER c3f5e3b)
+fork-mistral: NVIDIA A100-PCIE-40GB, 40960 MiB, driver 580.173.02
+fork-qwen:    NVIDIA A100-PCIE-40GB, 40960 MiB, driver 595.71.05
+torch=2.11.0+cu128 cuda_build=12.8 transformers=5.8.0 kvpress=0.5.1 optimum-quanto=0.2.7 hqq=0.2.8.post1

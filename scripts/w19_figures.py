@@ -256,7 +256,7 @@ def fig_coldstart() -> None:
         ax.set_title(f"{int(ctx) // 1024}K context", fontsize=8.5, color=INK)
         ax.set_xlabel("seconds", fontsize=7.5)
     fig.suptitle(
-        "Persisted-cache cold start to attend-ready (disk read + H2D + reconstruct), "
+        "Persisted-cache cold start to attend-ready (warm page-cache read + H2D + reconstruct), "
         "Llama-3.1-8B, A100-40GB, medians of 5",
         fontsize=9,
         color=INK,

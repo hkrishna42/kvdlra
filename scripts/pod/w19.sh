@@ -227,6 +227,21 @@ sysfix(){
     --out-json "results/w19-${TAG}-ss2.json"; emit "SS2" "results/w19-${TAG}-ss2.json"
 }
 
+# q4off: the sub-cliff cell ON the official RULER anchor. The fork's pre-registered rule
+# compares the composite to the q4 cell "on the official anchor", but the fork ran only
+# the composites there (a2 ran the r64 flagship, never the q4 compose) -- so the band's
+# exclusivity on the external suite is half-measured. This runs bugSseed-r64-h256-q4 on
+# the same 9 official tasks x 12 records (a2 needles, seed 42). Llama 16K. READING (report
+# whatever it shows): if q4 holds single/mk/mv where every composite collapsed (means
+# 0.11-0.33), the band is anchored + exclusive -> significance 7; if q4 also collapses,
+# the band is a our-generator property and the paper says so (stays 6).
+q4off(){
+  a2_prep
+  echo "===W19_Q4OFF_BEGIN_${TAG}==="
+  OFF --tasks $TASKS9 --methods bugslash $QC \
+    --out-json "results/w19-${TAG}-q4off.json"; emit "Q4OFF" "results/w19-${TAG}-q4off.json"
+}
+
 case "$MODE" in
   a1diag) a1diag ;;
   a1) a1 ;;
@@ -238,6 +253,7 @@ case "$MODE" in
   fork) fork ;;
   swap) swap ;;
   sysfix) sysfix ;;
+  q4off) q4off ;;
   *) echo "===UNKNOWN_MODE_${MODE}==="; exit 1 ;;
 esac
 echo "===W19_DONE_${MODE}_${TAG}==="

@@ -197,6 +197,8 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
     rw, ab = args.recent_window, args.absorb_block
     msf = float(getattr(args, "min_sv_frac", 0.0))  # Week-17 integrator floor (0.0 = off)
     fsuf = f"-f{msf:g}" if msf > 0.0 else ""
+    trk = str(getattr(args, "tracker", "bug"))  # Week-20 tracker-swap ablation (bug = as-is)
+    tsuf = f"-{trk}" if trk != "bug" else ""
     arms: list[dict[str, Any]] = []
     want = set(args.methods)
 
@@ -290,7 +292,7 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
             for hh in args.hh_budgets:
                 arms.append(
                     {
-                        "name": f"{prefix}-r{r}-h{hh}{suffix}{qsuf}{fsuf}",
+                        "name": f"{prefix}-r{r}-h{hh}{suffix}{qsuf}{fsuf}{tsuf}",
                         "kind": "bug",
                         "rank": r,
                         "retention": "lowrank_surprise",
@@ -313,6 +315,7 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                                 w_key=w_key,
                                 score_rank=score_rank,
                                 min_sv_frac=msf,
+                                tracker=trk,
                                 quant_bits=qbits,
                                 quant_budget=q_quant_budget,
                             )
@@ -915,6 +918,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Week-15 T2: cap the SLASH surprise-scoring basis at this many leading "
         "columns (selection-rank decoupled from storage-rank) -> '-s{k}' arm suffix; "
         "storage/footprint unchanged; requires 1 <= k <= rank",
+    )
+    parser.add_argument(
+        "--tracker",
+        default="bug",
+        choices=["bug", "oja", "fd"],
+        help="Week-20 tracker-swap ablation: gist tracker for the bug arms (bug = the "
+        "rank-adaptive BUG step, = fixed-rank incremental SVD at the flagship defaults; "
+        "oja = Oja's rule; fd = Frequent Directions)",
     )
     parser.add_argument(
         "--min-sv-frac",

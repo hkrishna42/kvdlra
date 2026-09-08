@@ -280,3 +280,111 @@ def blocked_bug_project(
     mc = M.to(compute_dtype)
     recon = u @ (u.mT @ mc)
     return recon.to(M.dtype)
+
+
+# ----------------------------------------------------------------------------
+# Week-20 tracker-swap ablation: drop-in alternatives to ``augmented_bug_step``
+# with the SAME ``(u, b_core, block, rank_cap) -> (u_new, b_new, rot)`` contract,
+# so ``BugStreamingCache(tracker=...)`` can swap the gist tracker while every
+# other part of the cache (sinks, ring, surprise tier, seed, accounting) is held
+# fixed. ``rot = u_new^T u_old`` carries stored coordinates across the basis
+# change exactly as the BUG step does. Note that ``augmented_bug_step`` with
+# ``theta=None, min_sv_frac=0`` (the flagship's defaults) IS fixed-rank
+# incremental SVD (Brand 2006), so that arm needs no new code.
+# ----------------------------------------------------------------------------
+
+
+def _carry_core(u_old: Tensor, b_old: Tensor, u_new: Tensor, block: Tensor) -> Tensor:
+    """Square-root core of the projected data in the NEW basis, ``(r', r')``:
+    ``m = [rot @ b_old | u_new^T block]`` has ``m m^T = P (old data + block) P^T``;
+    the R-factor of ``m^T`` gives ``b_new`` with ``b_new b_new^T = m m^T``."""
+    rot = u_new.mT @ u_old
+    m = torch.cat([rot @ b_old, u_new.mT @ block], dim=1)
+    core: Tensor = torch.linalg.qr(m.mT, mode="reduced")[1].mT.contiguous()
+    return core
+
+
+def oja_step(
+    u: Tensor | None,
+    b_core: Tensor | None,
+    block: Tensor,
+    rank_cap: int,
+    *,
+    n_seen: int = 0,
+    eta0: float = 1.0,
+    decay: float = 1e-3,
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Oja's-rule subspace tracker (the OjaKV baseline), one block of columns.
+
+    A faithful torch port of :class:`kvdlra.integrators.oja.OjaTracker`: each
+    column is L2-normalized and applied sequentially,
+    ``U <- orth(U + eta_t * c (c^T U))`` with ``eta_t = eta0 / (1 + decay * t)``
+    (``t`` = tokens seen so far, the validated Week-2 schedule). Seeding is the
+    reduced QR of the first block (as BUG), so the two trackers start identical
+    and differ only in how they advance. Rank is fixed at ``rank_cap`` once seeded.
+    """
+    if (u is None) != (b_core is None):
+        raise ValueError("u and b_core must be provided together (or both None)")
+    if rank_cap < 1:
+        raise ValueError(f"rank_cap must be >= 1, got {rank_cap}")
+    if u is None:
+        q, r = torch.linalg.qr(block, mode="reduced")
+        k = min(rank_cap, q.shape[1])
+        u_new, b_new = q[:, :k].contiguous(), r[:k, :k].contiguous()
+        return u_new, b_new, u_new.new_zeros((k, 0))
+    assert b_core is not None
+    u_cur = u
+    t = n_seen
+    for j in range(block.shape[1]):
+        c = block[:, j : j + 1]
+        norm = torch.linalg.vector_norm(c)
+        if float(norm) > 1e-12:
+            c = c / norm
+            eta = eta0 / (1.0 + decay * t)
+            u_cur = torch.linalg.qr(u_cur + eta * (c @ (c.mT @ u_cur)), mode="reduced")[0]
+        t += 1
+    u_new = u_cur.contiguous()
+    return u_new, _carry_core(u, b_core, u_new, block), u_new.mT @ u
+
+
+def fd_step(
+    u: Tensor | None,
+    b_core: Tensor | None,
+    block: Tensor,
+    rank_cap: int,
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Frequent Directions (Liberty 2013) on the column stream, one block.
+
+    Identical augmentation to the BUG step (range-augment by the residual's QR,
+    SVD the grown core), but the truncation is FD's *shrinkage*: subtract the
+    ``(rank_cap+1)``-th squared singular value from every kept one before
+    dropping the tail. That shrinkage is the one algorithmic difference from
+    fixed-rank incremental SVD, so this arm isolates it. Seeding = reduced QR.
+    """
+    if (u is None) != (b_core is None):
+        raise ValueError("u and b_core must be provided together (or both None)")
+    if rank_cap < 1:
+        raise ValueError(f"rank_cap must be >= 1, got {rank_cap}")
+    if u is None:
+        q, r = torch.linalg.qr(block, mode="reduced")
+        k = min(rank_cap, q.shape[1])
+        u_new, b_new = q[:, :k].contiguous(), r[:k, :k].contiguous()
+        return u_new, b_new, u_new.new_zeros((k, 0))
+    assert b_core is not None
+    r_old = u.shape[1]
+    coords = u.mT @ block
+    resid = block - u @ coords
+    resid = resid - u @ (u.mT @ resid)  # re-orthogonalize once (Parlett/Kahan)
+    q, rr = torch.linalg.qr(resid, mode="reduced")
+    u_aug = torch.cat([u, q], dim=1)
+    top = torch.cat([b_core, coords], dim=1)
+    bot = torch.cat([rr.new_zeros((rr.shape[0], r_old)), rr], dim=1)
+    b_aug = torch.cat([top, bot], dim=0)
+    u_loc, s, _vh = torch.linalg.svd(b_aug, full_matrices=False)
+    k = min(rank_cap, s.shape[0])
+    # FD shrinkage: delta = sigma_{k+1}^2 (0 if the augmented core has no tail).
+    delta = s[k] ** 2 if s.shape[0] > k else s.new_zeros(())
+    s_new = torch.sqrt(torch.clamp(s[:k] ** 2 - delta, min=0.0))
+    u_new = (u_aug @ u_loc[:, :k]).contiguous()
+    b_new = torch.diag(s_new).contiguous()
+    return u_new, b_new, u_new.mT @ u

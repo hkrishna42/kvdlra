@@ -614,6 +614,14 @@ def main() -> None:
         "storage/footprint unchanged; requires 1 <= k <= rank",
     )
     parser.add_argument(
+        "--tracker",
+        default="bug",
+        choices=["bug", "oja", "fd"],
+        help="Week-20 tracker-swap ablation: gist tracker for the bug arms (bug = the "
+        "rank-adaptive BUG step, = fixed-rank incremental SVD at the flagship defaults; "
+        "oja = Oja's rule; fd = Frequent Directions)",
+    )
+    parser.add_argument(
         "--min-sv-frac",
         type=float,
         default=0.0,

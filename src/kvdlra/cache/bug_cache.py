@@ -156,7 +156,7 @@ from transformers.cache_utils import Cache, CacheLayerMixin, LinearAttentionCach
 from transformers.models.llama.modeling_llama import rotate_half
 
 from kvdlra.cache.morph_cache import _aggregated_attention_row, _window_attention_rows
-from kvdlra.integrators.streaming_torch import augmented_bug_step
+from kvdlra.integrators.streaming_torch import augmented_bug_step, fd_step, oja_step
 from kvdlra.quant import PolarQuant, ProductQuantizer
 
 logger = logging.getLogger(__name__)
@@ -320,6 +320,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         n_sink: int = 4,
         theta: float | None = None,
         min_sv_frac: float = 0.0,
+        tracker: str = "bug",
         prefill_block_size: int = 128,
         retention: str = "fifo",
         score_decay: float = 0.97,
@@ -419,6 +420,13 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
                 )
         if not 0.0 <= min_sv_frac < 1.0:
             raise ValueError(f"min_sv_frac must be in [0, 1), got {min_sv_frac}")
+        if tracker not in ("bug", "oja", "fd"):
+            raise ValueError(f"tracker must be 'bug' | 'oja' | 'fd', got {tracker!r}")
+        # Week-20 tracker-swap ablation: the gist tracker. "bug" = the rank-adaptive
+        # augmented BUG step (bit-identical to before this knob; at theta=None and
+        # min_sv_frac=0 it IS fixed-rank incremental SVD); "oja" = Oja's rule (the OjaKV
+        # baseline); "fd" = Frequent Directions. Everything else in the cache is fixed.
+        self.tracker = tracker
         self.rope = rope
         self.rank = rank
         self.coord_budget = coord_budget
@@ -879,12 +887,34 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         surprise: Tensor | None = None
         if self.track_surprise or self._probe_surprise:
             surprise = self._surprise_scores(block_k)
-        self.u_k, self.b_k, rot_k = augmented_bug_step(
-            self.u_k, self.b_k, block_k, self.rank, theta=self.theta, min_sv_frac=self.min_sv_frac
-        )
-        self.u_v, self.b_v, rot_v = augmented_bug_step(
-            self.u_v, self.b_v, block_v, self.rank, theta=self.theta, min_sv_frac=self.min_sv_frac
-        )
+        if self.tracker == "oja":  # Week-20 swap: Oja's rule, validated Week-2 schedule
+            n_seen = (self.c_k.shape[1] if self.c_k is not None else 0) + self._q_len()
+            self.u_k, self.b_k, rot_k = oja_step(
+                self.u_k, self.b_k, block_k, self.rank, n_seen=n_seen
+            )
+            self.u_v, self.b_v, rot_v = oja_step(
+                self.u_v, self.b_v, block_v, self.rank, n_seen=n_seen
+            )
+        elif self.tracker == "fd":  # Week-20 swap: Frequent Directions shrinkage
+            self.u_k, self.b_k, rot_k = fd_step(self.u_k, self.b_k, block_k, self.rank)
+            self.u_v, self.b_v, rot_v = fd_step(self.u_v, self.b_v, block_v, self.rank)
+        else:  # the BUG step -- unchanged, bit-identical
+            self.u_k, self.b_k, rot_k = augmented_bug_step(
+                self.u_k,
+                self.b_k,
+                block_k,
+                self.rank,
+                theta=self.theta,
+                min_sv_frac=self.min_sv_frac,
+            )
+            self.u_v, self.b_v, rot_v = augmented_bug_step(
+                self.u_v,
+                self.b_v,
+                block_v,
+                self.rank,
+                theta=self.theta,
+                min_sv_frac=self.min_sv_frac,
+            )
         # Carry held fp32 coordinates into the new basis.
         if self.c_k is not None:
             assert self.c_v is not None
@@ -1779,6 +1809,7 @@ class BugStreamingCache(Cache):
         n_sink: int = 4,
         theta: float | None = None,
         min_sv_frac: float = 0.0,
+        tracker: str = "bug",
         prefill_block_size: int = 128,
         retention: str = "fifo",
         score_decay: float = 0.97,
@@ -1832,6 +1863,7 @@ class BugStreamingCache(Cache):
                 n_sink=n_sink,
                 theta=theta,
                 min_sv_frac=min_sv_frac,
+                tracker=tracker,
                 prefill_block_size=prefill_block_size,
                 retention=retention,
                 score_decay=score_decay,

@@ -13,3 +13,5 @@ forkdiag-qwen:50095729:forkdiag:qwen
 fork-llama:50096576:fork:llama
 fork-mistral:50096648:fork:mistral
 fork-qwen:50096579:fork:qwen
+swap-llama:50320261:swap:llama
+sysfix-llama:50320262:sysfix:llama

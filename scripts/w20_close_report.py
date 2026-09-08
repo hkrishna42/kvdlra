@@ -17,6 +17,7 @@ committed reference. Writes results/w20-close-report.md.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 import _paths  # noqa: F401
@@ -130,6 +131,49 @@ def main() -> None:
     md.append(
         f"| flagship (reference) | `{f}` | {fmt4(ref, f)} | {refp.get(f, float('nan')):.2f} |"
     )
+    # ---- 4. the sub-cliff cell ON the official anchor (q4off) vs everything already there
+    from w19_fork_report import COMPO, OFF9, SB
+    from w19_fork_report import parse as fork_parse
+
+    q4o = acc_rows(RES / "w19-q4off-llama-lines.txt", 16384)
+    a2 = acc_rows(RES / "w19-a2-llama-lines.txt", 16384)
+    offc = fork_parse("llama")  # section-aware: (sect, task, arm) -> (acc, recall)
+    md.append("\n## 4. The sub-cliff cell on the official RULER anchor (Llama 16K, 9 tasks x 12)\n")
+    md.append(
+        "The fork's pre-registered rule compares the composite to the q4 cell *on the anchor*; "
+        "the fork ran only the composites there, this runs the cell itself (same records, "
+        "seed 42). Rule: q4 holds single/mk/mv where the composites collapsed -> the band is "
+        "anchored and exclusive (significance 7); q4 also collapses -> the band is a "
+        "our-generator property and the paper says so (stays 6).\n"
+    )
+    md.append(
+        "| arm | stored | "
+        + " | ".join(t.replace("niah_", "").replace("_", "") for t in OFF9)
+        + " | mean |"
+    )
+    md.append("|---|---|" + "---|" * (len(OFF9) + 1))
+
+    def offrow(label: str, stored: str, get: Callable[[str], float | None]) -> None:
+        vals = [get(t) for t in OFF9]
+        have = [v for v in vals if v is not None]
+        cells = " | ".join(f"{v:.2f}" if v is not None else "--" for v in vals)
+        if not have:
+            mean = "--"
+        elif len(have) == len(OFF9):
+            mean = f"**{sum(have) / len(have):.2f}**"
+        else:
+            mean = f"({sum(have) / len(have):.2f}, {len(have)}/9)"
+        md.append(f"| {label} | {stored} | {cells} | {mean} |")
+
+    def _off(arm: str) -> Callable[[str], float | None]:
+        return lambda t: (lambda v: v[0] if v else None)(offc.get(("off", t, arm)))
+
+    q4 = "bugSseed-r64-h256-q4"
+    offrow(f"**q4 cell** `{q4}`", "0.048x", lambda t: q4o.get((q4, t)))
+    offrow(f"flagship `{f}` (a2)", "0.151x", lambda t: a2.get((f, t)))
+    for arm in COMPO:
+        offrow(f"`{arm}` (fork)", f"{SB[arm]}x", _off(arm))
+    offrow("`ea-k0.1` plain (a2)", "0.100x", lambda t: a2.get(("ea-k0.1", t)))
     (RES / "w20-close-report.md").write_text("\n".join(md) + "\n")
     print("[wrote results/w20-close-report.md]")
     print("\n".join(md))

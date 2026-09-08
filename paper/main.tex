@@ -669,7 +669,7 @@ retains all four tasks} at $0.1\times$. SnapKV at $0.100\times$ is weaker still
 exclusivity is not only against \emph{pure} quantization. We ran the composite that
 combines both axes---Expected~Attention pruning to a keep-fraction $k$, its survivors
 stored $b$-bit (\texttt{ea-k$k$-q$b$}, the axes multiplying to $\approx k\,b/16$; the
-MiniKV pattern)---at and below the cell's bytes, on the same needles
+MiniKV pattern~\citep{sharma2024minikv})---at and below the cell's bytes, on the same needles
 (Table~\ref{tab:composite}). At matched bytes no composite reaches the cell's
 multi-key/multi-value retrieval: on Llama at 16K the byte-matched
 \texttt{ea-k0.25-q2} ($0.039\times$) hits multi-key on $1$ of $12$ records and

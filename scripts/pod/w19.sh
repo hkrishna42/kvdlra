@@ -190,6 +190,43 @@ fork(){
   fi
 }
 
+# swap: the Week-20 TRACKER-SWAP ablation (prior-work review's fix B: is the DLRA
+# integrator load-bearing end-to-end, or branding?). Same cache (sinks, ring, seed, h256
+# surprise tier, r64), gist tracker swapped: the flagship as-is IS fixed-rank incremental
+# SVD (augmented BUG step, theta/min_sv_frac off -- already measured, W18 g1, pair post-hoc),
+# vs Oja's rule (the OjaKV baseline, validated Week-2 schedule) vs Frequent Directions.
+# Llama 16K, T4, n=12 (a1q needles), + same-pod ppl. Streaming r64 ~25 min/16K cell.
+# PRE-REGISTERED READING (report whatever it shows): if Oja/FD match the flagship on
+# retrieval AND ppl, "DLRA" is branding and the paper says so (tracker is interchangeable;
+# the contribution is the cache design); if they lose, the tracker is load-bearing.
+swap(){
+  for TRK in oja fd; do
+    echo "===W19_SWAP_${TRK}_BEGIN_${TAG}==="
+    RULER --context-lens 16384 $T4 --methods bugslash $RH --tracker "$TRK" --n-trials 6 --seeds 0 1 \
+      --out-json "results/w19-${TAG}-swap-${TRK}.json"; emit "SWAP_${TRK}" "results/w19-${TAG}-swap-${TRK}.json"
+    echo "===W19_SWAP_PPL_${TRK}_BEGIN_${TAG}==="
+    PPL4 --T 16384 --methods bugslash $RH --tracker "$TRK" \
+      --out-json "results/w19-${TAG}-swap-ppl-${TRK}.json"; emit "SWAP_PPL_${TRK}" "results/w19-${TAG}-swap-ppl-${TRK}.json"
+  done
+}
+
+# sysfix: the two remaining systems/rigor items on one fast pod (Llama).
+#  (1) latency: measured decode ms/token + peak VRAM at the real operating point for
+#      full / flagship / KIVI-2bit at 16K/32K/64K, batch 1 (systems review F2: replaces the
+#      327-token 1B-CPU datum; makes the analytic 1.06x residency a measured contrast).
+#  (2) ss2: the single-shot 2-bit prefill control (rigor review 3.1): quant-2bit-kivi with
+#      --chunk 0 at 16K, T4, n=12 (a1 needles) -- is the chunked-prefill mv edge protocol-bound?
+sysfix(){
+  echo "===W19_LATENCY_BEGIN_${TAG}==="
+  PYTHONPATH=src python -u scripts/w20_latency.py --model "$MODEL" --device cuda --dtype "$DTYPE" \
+    --chunk "$CHUNK" --context-lens 16384 32768 65536 --methods full bugslash quant $RH \
+    --quant-nbits 2 --quant-scheme kivi --out-json "results/w19-${TAG}-latency.json" 2>&1
+  emit "LATENCY" "results/w19-${TAG}-latency.json"
+  echo "===W19_SS2_BEGIN_${TAG}==="
+  RULER --context-lens 16384 $T4 $KIVI --quant-nbits 2 --n-trials 6 --seeds 0 1 --chunk 0 \
+    --out-json "results/w19-${TAG}-ss2.json"; emit "SS2" "results/w19-${TAG}-ss2.json"
+}
+
 case "$MODE" in
   a1diag) a1diag ;;
   a1) a1 ;;
@@ -199,6 +236,8 @@ case "$MODE" in
   a4) a4 ;;
   forkdiag) forkdiag ;;
   fork) fork ;;
+  swap) swap ;;
+  sysfix) sysfix ;;
   *) echo "===UNKNOWN_MODE_${MODE}==="; exit 1 ;;
 esac
 echo "===W19_DONE_${MODE}_${TAG}==="

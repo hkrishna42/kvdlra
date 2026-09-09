@@ -13,3 +13,6 @@ forkdiag-qwen
 fork-mistral
 fork-qwen
 fork-llama
+swap-llama
+sysfix-llama
+q4off-llama

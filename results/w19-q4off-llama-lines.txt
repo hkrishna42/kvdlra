@@ -1,0 +1,9 @@
+[niah_multikey_1 ctx16384] bugSseed-r64-h256-q4 acc=0.00 recall=0.00 ratio=0.044 sbits=0.050 n=12
+[niah_multikey_2 ctx16384] bugSseed-r64-h256-q4 acc=0.00 recall=0.00 ratio=0.043 sbits=0.049 n=12
+[niah_multikey_3 ctx16384] bugSseed-r64-h256-q4 acc=0.00 recall=0.00 ratio=0.044 sbits=0.050 n=12
+[niah_multiquery ctx16384] bugSseed-r64-h256-q4 acc=0.00 recall=0.00 ratio=0.043 sbits=0.049 n=12
+[niah_multivalue ctx16384] bugSseed-r64-h256-q4 acc=0.00 recall=0.00 ratio=0.043 sbits=0.049 n=12
+[niah_single_1 ctx16384] bugSseed-r64-h256-q4 acc=0.00 recall=0.00 ratio=0.043 sbits=0.049 n=12
+[niah_single_2 ctx16384] bugSseed-r64-h256-q4 acc=0.00 recall=0.00 ratio=0.043 sbits=0.049 n=12
+[niah_single_3 ctx16384] bugSseed-r64-h256-q4 acc=0.00 recall=0.00 ratio=0.043 sbits=0.049 n=12
+[vt ctx16384] bugSseed-r64-h256-q4 acc=0.00 recall=0.22 ratio=0.043 sbits=0.049 n=12

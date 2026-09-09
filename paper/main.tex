@@ -66,21 +66,22 @@ $0.758$) at $0.15$--$0.28\times$ honest fp32-at-rest stored state
 \texttt{think-c0.5} and \texttt{palu-r0.5}; at 32K on Llama it beats
 \texttt{think-c0.5} on variable tracking (paired McNemar $p{=}0.002$) at
 $0.284\times$, bytes at which 4-bit KIVI also scores $1.00$. Against a KIVI-scheme
-2-bit baseline at matched bytes it wins multi-value retrieval (pooled paired
-records $21$ vs $0$) but trails or ties on fluency; 4-bit quantization at twice the
+2-bit baseline at matched bytes it wins multi-value retrieval under chunked
+prefill (pooled paired records $21$ vs $0$; at KIVI's single-shot prefill on Llama
+the edge is not separated) but trails or ties on fluency; 4-bit quantization at twice the
 bytes is not separated from it, and on Qwen, where the gist's bytes already equal
 4-bit's, it is dominated; on the official NVIDIA RULER suite the two arms are not
 separated (flagship $0.79$ vs $0.87$) while eviction at $0.1\times$ collapses. The
 two axes compose: the seeded gist with 4-bit coordinates reaches $0.048\times$
 (16K) and $0.034\times$ (32K) with full single/multi-key and $0.83$--$1.00$
-multi-value retrieval on Llama and Mistral---a depth no fixed-bit quantizer
-reaches, and at which every eviction$\times$quantization composite we ran
-collapses on the official anchor (mean $\le0.19$)---at a fluency cost, and not on
-Qwen. We map the limits (an $r/n\approx0.25$ retrieval wall; a rank-siphoning
+multi-value retrieval on Llama and Mistral on our generator---a depth no fixed-bit
+quantizer reaches and at which every eviction$\times$quantization composite we ran
+falls short---at a fluency cost, not on Qwen, and not yet on the official anchor,
+where the cell itself collapses ($0.00$) as the composites do. We map the limits (an $r/n\approx0.25$ retrieval wall; a rank-siphoning
 interaction stabilized by a relative singular-value floor; wide-KV variable
 tracking) and bill honestly: the ratio is stored state, not resident VRAM
-(reconstruct-then-attend; decode residency $\approx1.06\times$ until a fused
-kernel). Its measured payoff is a $\approx7\times$ smaller persisted cache
+(reconstruct-then-attend; measured decode residency $1.6\times$ and decode
+$4$--$14\times$ slower until a fused kernel). Its measured payoff is a $\approx7\times$ smaller persisted cache
 reloading $9$--$10\times$ faster, shared with quantization, plus a
 $2r/n=0.125\times$ asymptote $19\%$ under the 2-bit floor, with all four tasks
 still retrieved at 64K ($n{=}8$).
@@ -423,8 +424,34 @@ produces, and what the DLRA framing adds is the rank-adaptive truncation criteri
 and the stability floor (\S\ref{sec:floor}), not a different update. Second, a
 basis-quality gap need not be an end-to-end gap: the tracker-swap ablation---the
 same cache with Oja's rule or Frequent Directions~\citep{liberty2013simple} as the
-gist tracker---is the test of whether the tracker is load-bearing, and is reported
-in \S\ref{sec:limits}.
+gist tracker---is the test of whether the tracker is load-bearing. It is
+(Table~\ref{tab:swap}): with Oja's rule (its validated schedule, $\eta_0{=}1$ with
+$1/(1{+}10^{-3}t)$ decay) the same cache keeps single-needle retrieval ($11/12$) but
+loses multi-key ($1/12$), multi-value ($1/12$) and variable tracking ($0/12$), and
+its perplexity diverges ($733$ vs $5.31$); with Frequent Directions the shrinkage
+drives the core to a repeated-zero spectrum on which the augmented step's SVD fails
+to converge, so it produced no valid cell. A tuned Oja step size might narrow the
+gap; the plug-in comparison nevertheless shows the incremental-SVD update is not
+interchangeable with either classical alternative.
+% source: results/w19-swap-llama-lines.txt (swap pod @e79dd59: oja 0.92/0.08/0.08/0.00 ppl 732.9; fd SKIP on all four tasks + ppl, torch _LinAlgError).
+
+\begin{table}[t]
+\centering
+\caption{Tracker-swap ablation: the flagship cache with only its gist tracker
+swapped, Llama-3.1-8B, 16K, $n{=}12$, same needles (accuracy; perplexity on the
+same windows). At its defaults the flagship's BUG step is fixed-rank incremental SVD.}
+\label{tab:swap}
+\small
+\begin{tabular}{llccccc}
+\toprule
+gist tracker & arm & single & multi-key & multi-value & var-track & ppl \\
+\midrule
+incremental SVD (BUG step) & \texttt{bugSseed-r64-h256} & $1.00$ & $1.00$ & $1.00$ & $0.58$ & $5.31$ \\
+Oja's rule & \texttt{-oja} & $0.92$ & $0.08$ & $0.08$ & $0.00$ & $732.9$ \\
+Frequent Directions & \texttt{-fd} & \multicolumn{5}{c}{no valid cell (augmented SVD fails to converge)} \\
+\bottomrule
+\end{tabular}
+\end{table}
 % source: docs (Week-2), README "near-oracle (within ~1.01-1.03x of truncated SVD)".
 
 \subsection{Cross-model 16K retrieval: no detected loss at $0.085$--$0.149\times$}
@@ -684,9 +711,15 @@ collapse to mean $0.11$--$0.19$, at or below plain eviction's $0.20$, and even t
 $0.070\times$ composite reaches only $0.33$: the essay haystack defeats eviction
 whether or not its survivors are quantized. So the
 sub-$0.05\times$ band with full single/multi-key/multi-value retrieval is reached by
-\emph{neither} scalar quantization \emph{nor} eviction$\times$quantization---with the
-honest caveat that the cell itself has no official-anchor number (\S\ref{sec:limits}),
-on a suite where the flagship's own multi-value edge does not transfer either.
+\emph{neither} scalar quantization \emph{nor} eviction$\times$quantization
+\emph{on our generator}. On the official RULER anchor the cell itself collapses:
+run on the same nine tasks and records, \texttt{bugSseed-r64-h256-q4} scores $0.00$
+on every task ($8$ of $108$ records with a partial match; no harness error), where
+the unquantized flagship scores $0.79$ on the same records---the 4-bit coordinate
+codes that survive our fixed-pool filler do not survive the essay haystack. The
+band therefore has no external validity yet; it is a our-generator result
+(\S\ref{sec:limits}).
+% source: results/w19-q4off-llama-lines.txt + results/w19_pertrial/q4off-llama-trials.txt (q4off pod @45d036a: 9 official tasks x 12, all acc=0.00; 100/108 frac=0, 8 partial).
 % source: results/w20-fork-report.md (scripts/w19_fork_report.py over the fork pod raws @5d3239f; composite = build_arms press_quant, paired on a1q needles in-repo and a2 needles official).
 
 \begin{table}[t]
@@ -696,15 +729,15 @@ Mistral below the rule), $n{=}12$ (accuracy single/multi-key/multi-value/var-tra
 honest stored bits). \texttt{ea-k$k$-q$b$} $=$ Expected~Attention keep-$k$ with $b$-bit
 survivors. No composite matches the cell's multi-key/multi-value at $\le$ its bytes; on
 the official anchor the byte-matched composites ($\le0.04\times$) collapse to the
-``off.'' column at or below plain eviction, and the $0.070\times$ composite reaches
-$0.33$. Mistral rows are our generator only.}
+``off.'' column at or below plain eviction, the $0.070\times$ composite reaches
+$0.33$, and the cell itself scores $0.00$. Mistral rows are our generator only.}
 \label{tab:composite}
 \small
 \begin{tabular}{lccc}
 \toprule
 arm & stored & 16K \;/\; 32K (s/mk/mv/vt) & off.\ mean \\
 \midrule
-\texttt{bugSseed-r64-h256-q4} (cell) & $0.048$/$0.034\times$ & $1.00/1.00/1.00/0.50$ \;/\; $1.00/1.00/1.00/0.83$ & --- \\
+\texttt{bugSseed-r64-h256-q4} (cell) & $0.048$/$0.034\times$ & $1.00/1.00/1.00/0.50$ \;/\; $1.00/1.00/1.00/0.83$ & $0.00$ \\
 \texttt{ea-k0.25-q2} & $0.039\times$ & $0.92/0.08/0.08/0.00$ \;/\; $1.00/0.83/0.33/0.33$ & $0.17$ \\
 \texttt{ea-k0.1-q4}  & $0.028\times$ & $1.00/0.75/0.92/0.42$ \;/\; $1.00/0.83/0.83/0.58$ & $0.19$ \\
 \texttt{ea-k0.25-q4} & $0.070\times$ & $1.00/1.00/1.00/0.50$ \;/\; $1.00/1.00/1.00/0.33$ & $0.33$ \\
@@ -756,7 +789,13 @@ flagship) arms is chunked (4096-token blocks, residual flushed), so this is a KI
 operating point; the scorer presses and full-KV run use single-shot prefill. An
 8-bit control on a second backend (hqq) scores $1.00$ on all four tasks on Llama
 and Qwen ($n{=}4$; quanto and hqq agree at 2 bits on Qwen single-needle), so the
-decode path is sound. (An earlier draft
+decode path is sound. The chunked protocol matters: re-running the 2-bit arm on
+Llama at 16K with KIVI's own single-shot (full-precision) prefill lifts it to
+$1.00/1.00/0.83/0.67$ from $1.00/0.67/0.42/0.67$, so the multi-key edge vanishes and
+the multi-value edge narrows to $1.00$ vs $0.83$ (not separated at $n{=}12$); the
+matched-bytes multi-value advantage reported below is therefore a property of the
+chunked streaming protocol on Llama (Mistral and Qwen were not re-run
+single-shot). (An earlier draft
 reported an off-the-shelf quantized cache at $0.00$ retrieval; that
 implementation quantized \emph{keys} per token, which a single large key channel
 defeats---on Qwen2.5 one channel carries the key bias---and the zero reproduces
@@ -917,6 +956,7 @@ full KV & $1.00\times$ & 1.00 & 1.00 & 1.00 & 1.00 & 1.00 & 0.92 & 1.00 & 1.00 &
 KIVI 4-bit & $0.29\times$ & 1.00 & 1.00 & 1.00 & 1.00 & 1.00 & 0.92 & 1.00 & 1.00 & 1.00 & 0.99 \\
 KIVI 2-bit & $0.16\times$ & 1.00 & 1.00 & 0.83 & 1.00 & 0.92 & 0.58 & 0.83 & 1.00 & 0.67 & 0.87 \\
 \texttt{bugSseed-r64-h256} & $0.15\times$ & 0.83 & 1.00 & 0.83 & 0.83 & 1.00 & 0.83 & 0.83 & 0.67 & 0.33 & 0.79 \\
+\texttt{bugSseed-r64-h256-q4} & $0.05\times$ & 0.00 & 0.00 & 0.00 & 0.00 & 0.00 & 0.00 & 0.00 & 0.00 & 0.00 & 0.00 \\
 \texttt{ea-k0.1} & $0.10\times$ & 1.00 & 0.17 & 0.00 & 0.33 & 0.00 & 0.00 & 0.00 & 0.00 & 0.33 & 0.20 \\
 \bottomrule
 \end{tabular}
@@ -994,21 +1034,50 @@ decode-time reconstruction workspace is $\approx$ full KV---now measured on CUDA
 for \texttt{bugSseed-r64-h256} ($0.998$/$0.999\times$ for the pure gist
 \texttt{bug-r64}), with the analytic--empirical footprint cross-check exact
 (integrity $0$). This measured $\approx0.98\times$ workspace is exactly why a
-naive peak-VRAM reading shows no win, and it implies analytically
-(stored $+$ reconstruction workspace) a decode residency $\approx1.06\times$ full
-KV---slightly worse than no compression; the full-KV arm's own decode peak was not
-separately measured, so this is a sum, not a head-to-head.\footnote{The
+naive peak-VRAM reading shows no win. We now \emph{measure} decode residency
+head-to-head (Table~\ref{tab:latency}): with the weights subtracted, the flagship's
+decode-time KV peak is $3.25$/$6.45$/$12.8$\,GB at 16K/32K/64K against full KV's
+$2.05$/$4.08$/$8.14$\,GB---$1.6\times$ full KV, worse than the $\approx1.06\times$
+an analytic sum suggests---while 2-bit KIVI's is $0.45$/$0.89$/$1.78$\,GB.\footnote{The
 released \texttt{w16\_storage} logs also carry a \texttt{peak\_ratio} of
 $5$--$9\times$; this is peak process VRAM divided by the \emph{KV-cache} bytes, so
 it is dominated by model weights (it halves as context doubles, $9.1\times$ at
 16K vs $5.3\times$ at 32K) and is \emph{not} a residency-vs-full-KV metric. The
 residency comparison is the workspace number ($\approx0.98\times$) plus stored
-state.} Our only
-end-to-end latency datum (1B, CPU) has \texttt{bug-r128} at $224.9$\,ms/token vs
-full KV $204.5$\,ms/token ($\approx10\%$ slower). Realizing the stored-state
+state.} Decode latency,
+measured the same way (one token per forward, batch 1, A100-40GB), is where the
+absence of a kernel bites hardest: the flagship decodes at $103$/$188$/$508$\,ms per
+token at 16K/32K/64K against full KV's $26$/$28$/$37$\,ms ($4$--$14\times$ slower;
+absorb-event rebuilds show as spikes to $310$--$850$\,ms) and 2-bit KIVI's
+$44$/$68$/$119$\,ms. Realizing the stored-state
 ratio as resident memory requires a fused factored attention kernel; we state
 clearly that we have not built one, so on the resident axis eviction and ThinK
 ($0.75\times$ resident) currently beat BUG.
+% source: results/w19-sysfix-llama-lines.txt (sysfix pod @e79dd59, w20_latency.py: p50 over 56 timed steps; KV peak = decode max_memory_allocated - 16.06 GB weights).
+
+\begin{table}[t]
+\centering
+\caption{Measured decode cost, Llama-3.1-8B on A100-40GB, batch 1: one token per
+forward at true positions after prefill, median of $56$ timed steps; VRAM is the
+decode-time peak with the $16$\,GB of weights subtracted.}
+\label{tab:latency}
+\small
+\begin{tabular}{llccc}
+\toprule
+ctx & arm & ms/token (p50) & max & KV peak (GB) \\
+\midrule
+16K & full KV & $25.9$ & $33$ & $2.05$ \\
+16K & KIVI 2-bit & $43.7$ & $53$ & $0.45$ \\
+16K & \texttt{bugSseed-r64-h256} & $103.2$ & $310$ & $3.25$ \\
+32K & full KV & $27.5$ & $28$ & $4.08$ \\
+32K & KIVI 2-bit & $67.9$ & $68$ & $0.89$ \\
+32K & \texttt{bugSseed-r64-h256} & $188.3$ & $428$ & $6.45$ \\
+64K & full KV & $37.0$ & $37$ & $8.14$ \\
+64K & KIVI 2-bit & $118.9$ & $128$ & $1.78$ \\
+64K & \texttt{bugSseed-r64-h256} & $507.9$ & $850$ & $12.8$ \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 Where the stored-state ratio \emph{does} pay off today is persistence and
 transfer, and this is now a \emph{measured} number rather than a projection.
@@ -1054,9 +1123,9 @@ quantized cache both take $0.1$--$0.2$\,s.}
 We lead with the two limitations that most constrain the claims.
 
 \paragraph{Storage is not resident memory; no kernel yet.} As \S\ref{sec:memory}
-states, the headline ratio is \emph{stored/persisted state}. Decode residency is
-$\approx1.06\times$ full KV under reconstruct-then-attend, and the one latency
-datum is $\approx10\%$ unfavorable. A fused low-rank attention kernel is the
+states, the headline ratio is \emph{stored/persisted state}. Measured decode residency is
+$1.6\times$ full KV under reconstruct-then-attend, and decode is $4$--$14\times$
+slower than full KV at 16K--64K (Table~\ref{tab:latency}). A fused low-rank attention kernel is the
 missing piece that would turn stored state into resident savings; it is the
 single most important systems item and is not built. The cache layout is also
 single-sequence (batch size 1; \texttt{bug\_cache} assumes a $(1,H,T,D)$ shape),
@@ -1104,10 +1173,11 @@ vs $0.87$; no task separated). We therefore scope the matched-bytes retrieval
 advantage to our generator's tasks and treat the official numbers as the
 external-validity ceiling. The anchor covers one model and one context; a
 three-family, 32K official grid and a flagship LongBench sweep remain open. The
-composed sub-cliff cell (\S\ref{sec:subcliff}) has no official-anchor number of its
-own; its retrieval is our-generator-only, though the eviction$\times$quantization
-composites it is measured against (Table~\ref{tab:composite}) were run on the official
-anchor and collapse there, as plain eviction does.
+composed sub-cliff cell (\S\ref{sec:subcliff}) scores $0.00$ on all nine official
+tasks where the unquantized flagship scores $0.79$ on the same records, so its band
+is a property of our generator with no external validity yet; the
+eviction$\times$quantization composites collapse there as well
+(Table~\ref{tab:composite}).
 
 \paragraph{Statistical firmness and provenance.} The 1B composition study is
 lower-$n$, but the retrieval grids are now firm: the 16K and 32K cross-model
@@ -1150,9 +1220,10 @@ distinction that scopes the systems claim. Against the fair 2-bit quantizer at m
 to multi-value (and, at 32K, multi-key on Mistral and variable-tracking on Qwen)
 retrieval, at a fluency cost, while 4-bit quantization at twice the bytes is not
 separated from it; the one band that neither fixed-bit quantization nor an
-eviction$\times$quantization composite reaches with retrieval at matched bytes is the
-composed gist-plus-4-bit-coordinates cell at $0.048\times$ on Llama and Mistral
-(measured against both, \S\ref{sec:subcliff}; family-dependent, at a fluency cost). Low-rank tracking is an axis orthogonal to eviction and
+eviction$\times$quantization composite reaches with retrieval at matched bytes on our
+generator is the composed gist-plus-4-bit-coordinates cell at $0.048\times$ on Llama
+and Mistral (measured against both, \S\ref{sec:subcliff}; family-dependent, at a
+fluency cost, and not yet on the official anchor, where the cell collapses). Low-rank tracking is an axis orthogonal to eviction and
 quantization; a fp16-storable gist and a fused factored-attention kernel are the
 program that would turn today's stored-state advantage into a deployed one.
 

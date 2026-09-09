@@ -30,7 +30,10 @@ for iter in $(seq 1 "$BUDGET_ITERS"); do
   while IFS=: read -r lab id mode tag; do
     [ -z "$lab" ] && continue
     grep -qx "$lab" "$H/done.txt" && continue
-    L="$(vastai logs "$id" --tail 30000 2>/dev/null)"; [ -z "$L" ] && continue
+    L="$(vastai logs "$id" --tail 30000 2>/dev/null)"
+    # Week-20: the 30000-line fetch returned EMPTY for three finished pods (never harvested,
+    # never destroyed, ~$27 idle overnight); a smaller tail worked. Fall back before skipping.
+    [ -z "$L" ] && L="$(vastai logs "$id" --tail 5000 2>/dev/null)"; [ -z "$L" ] && continue
     echo "$L" | grep -aE "$ROWS" >> "$H/${lab}.raw"
     if echo "$L" | grep -qaE "===ALL_DONE_${mode}_${tag}"; then
       echo "$(date +%H:%M) $lab ALL_DONE -> destroy"; echo y | vastai destroy instance "$id" >/dev/null 2>&1

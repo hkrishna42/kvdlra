@@ -411,3 +411,33 @@ paper is today.
    `coldstart` ("disk read") and `one_over_t` (fit line, label overlap).
 
 *Read-only. No paper edits, no pods launched, no pushes. Verdict written to this file only.*
+
+---
+
+## Finalization (2026-09-09): the three in-flight experiments landed
+
+All three pods completed (harvested from the logs after a watchdog fetch bug; results
+committed at `cdf0395`, folded into the paper at `4d37043`, paper CI green). Applying the
+finalization rule above to what they showed:
+
+| dimension | as-worded | post-$0 | **final** | what landed |
+|---|---|---|---|---|
+| claims | 6 | 7 | **7** | C1 re-scoped: the matched-bytes multi-value edge is a chunked-prefill property (single-shot 2-bit on Llama 16K: 1.00/1.00/0.83/0.67, edge n.s.) |
+| prior-work | 5 | 6 | **7** | tracker is load-bearing: Oja's rule 0.92/0.08/0.08/0.00 ppl 733; Frequent Directions no valid cell (SVD fails after shrinkage); iSVD identity stated in §oracle |
+| rigor | 6 | 7 | **7** | the single-shot control was run and disclosed |
+| significance | 5 | 6 | **6** | **the sub-cliff cell scores 0.00 on all nine official tasks** (flagship 0.79 on the same records): the band is a our-generator property with no external validity; "exclusive" scoped to our generator |
+| systems | 6 | 6 | **7** | measured: KV-attributable decode peak 1.6x full KV; decode 4/7/14x slower at 16K/32K/64K; folded honestly (tab:latency) |
+| repro | 7 | 7 | **7** | all four runs committed with per-trial records + provenance |
+
+**Final: borderline-accept (6), zero fatal — five dimensions at 7, significance at 6.** The
+rule ("7 iff prior-work favourable AND latency folded AND the cell holds on the anchor")
+fails on its third clause. This is no longer a wording gap: the 4-bit coordinate codes that
+retrieve on the fixed-pool filler do not survive real essay text. The paper now says so in
+the abstract, §subcliff, tab:composite, tab:official, §limits and the conclusion.
+
+**What would move significance to 7 (research, not wording):** make the composed cell
+survive real text — diagnose the collapse (heavy-tailed coordinates on essays vs the
+fixed pool; try 8-bit coordinates, or the singular-value floor on the compose arm, or a
+per-family codebook) and re-run q4off (~$10–20 per attempt). Until then the honest venue
+statement is "poster: a new online axis with a measured, bounded advantage, whose one
+exclusive band is generator-specific."

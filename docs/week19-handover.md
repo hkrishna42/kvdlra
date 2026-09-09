@@ -177,3 +177,28 @@ the AC's #1 residual ("band asserted, not measured") is retired and significance
 Folded into paper §subcliff (Table tab:composite), §quantbaseline, §limits, conclusion,
 abstract (bfa0943). The exit gate now needs only the tracker-swap (prior-work 6->7, ~$15)
 and decode-latency (systems 6->7, ~$10) pods.
+
+## Week-20 close (2026-09-09): gate-closing experiments -- final verdict
+
+Three pods (swap / sysfix / q4off, Llama, ~$27 incl. ~14h idle: the watchdog's 30000-line
+`vastai logs` fetch returned EMPTY for finished pods so it never harvested/destroyed them;
+fixed with a 5000-line fallback, `scripts/pod/w19_watchdog.sh`). Results (`results/w20-close-report.md`):
+- **Tracker swap (prior-work 6->7):** Oja's rule (validated schedule) 0.92/0.08/0.08/0.00,
+  ppl 733 (diverges); Frequent Directions produced no valid cell (shrinkage -> repeated-zero
+  spectrum, the augmented SVD fails to converge). The BUG/incremental-SVD update is
+  load-bearing. `BugStreamingCache(tracker=bug|oja|fd)`, `--tracker` flag, tab:swap.
+- **Latency/peak (systems 6->7, unfavorable numbers, now stated):** flagship decode
+  103/188/508 ms/tok at 16K/32K/64K vs full 26/28/37, KIVI-2bit 44/68/119; KV-attributable
+  decode peak 1.6x full KV (3.25/6.45/12.8 vs 2.05/4.08/8.14 GB); KIVI-2bit 0.45/0.89/1.78.
+  `scripts/w20_latency.py`, tab:latency. Replaces the analytic 1.06x and the 1B-CPU +10%.
+- **Single-shot 2-bit control (rigor):** KIVI-2 at single-shot prefill = 1.00/1.00/0.83/0.67
+  vs chunked 1.00/0.67/0.42/0.67 -> the in-repo mv edge is a chunked-protocol property (n.s.
+  single-shot on Llama; Mistral/Qwen not re-run). Abstract + §quantbaseline re-scoped.
+- **Cell on the official anchor (significance stays 6):** `bugSseed-r64-h256-q4` scores 0.00
+  on all nine official tasks (8/108 partial, no harness error) where the flagship scores 0.79
+  on the same records. The sub-cliff band is our-generator-only; "exclusive" scoped.
+**Final review score: borderline-accept 6, zero fatal, five dimensions at 7** (docs/reviews/
+2026-09-08/final-review.md + addendum). arXiv package current (`scripts/make_arxiv.sh`;
+metadata abstract `paper/arxiv-abstract.txt`, 1,918 chars). Credit **$23.99**. Open:
+why the 4-bit coordinate cell collapses on essays (the one research item between 6 and 7);
+TurboQuant head-to-head; fp16 gist; kernel.

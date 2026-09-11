@@ -22,7 +22,8 @@
 %  * the online axis was OPENED by OjaKV; BUG occupies it with a near-oracle
 %    rank-adaptive integrator + a content-selected exact tier.
 %  * stored ratio -> 2r/n (0.125x), NOT zero; the 1/T term is the O(rn+hn)
-%    overhead amortizing. "below the 2-bit floor" only for the composed q4 cell.
+%    overhead amortizing. "below the 2-bit floor" only for the composed q4 cell,
+%    and that cell is in-house-generator-only (0.00 on the official RULER anchor).
 \documentclass[11pt]{article}
 \usepackage[margin=1in]{geometry}
 \usepackage{amsmath,amssymb}
@@ -154,7 +155,8 @@ retrieval that 2-bit quantization loses; 4-bit quantization at twice the bytes i
 not separated from it in any cell; and the composed
 gist-plus-4-bit-coordinates cell reaches $0.048\times$, a depth neither fixed-bit
 quantization nor the eviction$\times$quantization composites we measured reach with
-retrieval, at a fluency cost
+retrieval \emph{on our in-house generator}, at a fluency cost and with no external
+validity yet---on the official RULER anchor that cell scores $0.00$
 (\S\ref{sec:quantbaseline}, \S\ref{sec:subcliff}).
 \end{itemize}
 
@@ -648,12 +650,13 @@ the 2-bit arm.\footnote{An earlier Week-18 arm also labeled \texttt{q4} never
 quantized---a budget inversion demoted no coordinates, so its rows billed
 identically to the unseeded flagship; those rows are annotated invalid
 (\texttt{results/w18-g1-report.md}) and are not the cell reported here, which is
-the corrected Week-19 \texttt{a1q} run.} At 16K ($n{=}12$, same needles) this cell scores
-single/multi-key/multi-value/variable-tracking $= 1.00/1.00/1.00/0.50$ on Llama
-and $1.00/1.00/0.92/0.33$ on Mistral---multi-key and multi-value retrieval that
-the 2-bit arm at three times the bytes loses ($0.67/0.42$ and $0.58/0.50$).
+the corrected Week-19 \texttt{a1q} run.} At 16K ($n{=}12$, same needles) this cell scores, \emph{on our in-house
+generator}, single/multi-key/multi-value/variable-tracking $= 1.00/1.00/1.00/0.50$
+on Llama and $1.00/1.00/0.92/0.33$ on Mistral---multi-key and multi-value retrieval
+that the 2-bit arm at three times the bytes loses ($0.67/0.42$ and $0.58/0.50$).
 This is a compression depth no fixed-bit scalar quantizer can be configured to
-reach ($0.156\times$ at 2 bits), with retrieval intact on the sharp-needle tasks;
+reach ($0.156\times$ at 2 bits), with retrieval intact on that generator's
+sharp-needle tasks though not on the official anchor, where the cell scores $0.00$;
 nor, as we measure below, does an eviction$\times$quantization composite reach it.
 At 32K the cell falls to
 $0.034\times$ (its $1/T$ term) and holds: Llama $1.00/1.00/1.00/0.83$, Mistral
@@ -704,8 +707,9 @@ run on the same nine tasks and records, \texttt{bugSseed-r64-h256-q4} scores $0.
 on every task ($8$ of $108$ records with a partial match; no harness error), where
 the unquantized flagship scores $0.79$ on the same records---the 4-bit coordinate
 codes that survive our fixed-pool filler do not survive the essay haystack. The
-band therefore has no external validity yet; it is a our-generator result
-(\S\ref{sec:limits}).
+band therefore has no external validity yet: it is an in-house-generator result,
+and stays one until a filler diagnostic and a re-run on a corrected generator say
+otherwise (\S\ref{sec:limits}).
 % source: results/w19-q4off-llama-lines.txt + results/w19_pertrial/q4off-llama-trials.txt (q4off pod @45d036a: 9 official tasks x 12, all acc=0.00; 100/108 frac=0, 8 partial).
 % source: results/w20-fork-report.md (scripts/w19_fork_report.py over the fork pod raws @5d3239f; composite = build_arms press_quant, paired on a1q needles in-repo and a2 needles official).
 
@@ -826,7 +830,7 @@ not separated from the flagship in any cell; and on the official RULER prompts
 (\S\ref{sec:realistic}) the multi-value edge does not reproduce and the two arms
 are not separated on any task (the flagship trails $0.79$ vs $0.87$ on average).
 What a fixed-bit scalar quantizer cannot do is reach below its own $b/16$ floor;
-an eviction$\times$quantization composite cannot reach the band with retrieval either
+on our generator an eviction$\times$quantization composite cannot reach the band with retrieval either
 (\S\ref{sec:subcliff}, Table~\ref{tab:composite}), which is where \S\ref{sec:subcliff}
 goes with pure low-rank$\times$quantization.
 % source: results/w19-a1-report.md (scripts/w19_a1_report.py over results/w19_intervals/*.json, W19 a1 pods qwen/mistral/llama @6734afa, paired with W18 g1 per-trial records); mechanism: results/w18_harvest/quant-findings.md.
@@ -876,7 +880,9 @@ per arm. The flagship (blue circles, $0.15\times$ on Llama/Mistral, $0.27\times$
 Qwen) sits beside the 2-bit KIVI arm (orange squares, $0.16\times$); the 4-bit arm
 (aqua triangles, $0.28\times$) is perfect almost everywhere; the composed cell
 (hollow blue diamonds, $0.048\times$) retrieves single/multi-key/multi-value on
-Llama and Mistral below any 2-bit floor and collapses on Qwen. Source:
+Llama and Mistral below any 2-bit floor and collapses on Qwen. All points are our
+in-house generator; on the official RULER anchor the composed cell scores $0.00$
+(\S\ref{sec:subcliff}). Source:
 \texttt{scripts/w19\_figures.py} over the committed line-files.}
 \label{fig:fairquant}
 \end{figure}
@@ -1146,8 +1152,9 @@ from the flagship in any cell (the flagship leads its variable-tracking on Mistr
 on point estimate, at half the bytes), and on Qwen---where the $n{=}512$ gist's
 fp32-at-rest state costs $0.275\times$, the same bytes as 4-bit---the $r{=}64$
 flagship is dominated outright. The band quantization cannot enter
-(\S\ref{sec:subcliff}) holds on Llama and Mistral only, costs fluency, and fails
-on Qwen. A fp16-storable gist (halving BUG's honest bytes) would change this
+(\S\ref{sec:subcliff}) holds on Llama and Mistral only, costs fluency, fails
+on Qwen, and is an in-house-generator result---on the official anchor that cell
+scores $0.00$. A fp16-storable gist (halving BUG's honest bytes) would change this
 comparison materially and is the most valuable single follow-up.
 
 \paragraph{Benchmark external validity: the official anchor cuts both ways.}

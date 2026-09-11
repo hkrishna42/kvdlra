@@ -416,8 +416,10 @@ On real Llama-3.2-1B KV, the streaming BUG tracker matches the truncated-SVD
 (Eckart--Young~\citep{eckart1936approximation}) optimum to within
 $1.01$--$1.03\times$ at every rank and beats Oja's
 rule~\citep{oja1982simplified,zhu2025ojakv} by $1.3$--$3.0\times$; the pre-RoPE
-operating point roughly halves the error at matched budget. Two honesty notes scope
-this. First, at the flagship's operating point (no truncation tolerance, floor off)
+operating point roughly halves the error at matched budget. Both figures score the
+final basis by re-projecting the full matrix onto it, so they are not the fidelity
+of the rotated coordinates the deployed cache stores, on which we make no claim
+here. Two honesty notes scope this. First, at the flagship's operating point (no truncation tolerance, floor off)
 the augmented BUG step \emph{is} blocked fixed-rank incremental
 SVD~\citep{brand2006fast}: the ``beats incremental SVD'' gap of our earlier study
 was a \emph{reconstruction-convention} difference (re-projecting the raw matrix onto

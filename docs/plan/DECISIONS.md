@@ -23,3 +23,8 @@
 
 ### D-001 evidence addendum (2026-09-11, orchestrator; still OPEN for the owner)
 - L7 searched paper/ for an arXiv ID, abs URL, report number or submission receipt: none; every `arXiv:` string is a citation in refs.bib; main.tex's "arXiv v1 preprint" header is intent, not a record. Combined with 9baf571 (tarball assembled) and the empty title search, the recommendation stands: (a) not posted, no v2.
+
+### D-005 addendum (2026-09-11, orchestrator; OPEN) — cost revised, reduced-arm option
+- L2prep's estimate from harvested per-trial timings: 5 arms × 4 tasks × n=12 = 9.1 h base, 18.3 h at the 2× safety factor → **$11–20** (credit $23.85). The earlier "$3–6" omitted tasks-per-cell.
+- Option (a) full design, 5 arms: $11–20, most of the credit. Option (b) decisive arms only — r64 config, q4 cell, full (the rule is written on r64/q4; KIVI-2 chunked is already known to be worse under chunked prefill and its single-shot variant is a Gate-2 question, not a filler question): ≈ 5.3 h base / 10.6 h at 2× → **$6–12**.
+- Recommendation: (b) now; the two KIVI arms join the ss2_families pod (L2 §4) where they belong. Prereg file to be amended to (b) before launch if you choose it; the pod-name/watchdog fixes L2prep listed are done at launch time by L2.

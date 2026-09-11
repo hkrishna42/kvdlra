@@ -20,3 +20,6 @@
 - Spec: in-house four tasks, Llama-3.1-8B, 16K, n=12, real-text filler; arms = isvd r64-h256 (the paper's r64 configuration), its q4 cell, KIVI-2 streaming, KIVI-2 single-shot, full. Reading pre-registered in prereg/filler_realism.md (committed before the launch commit): a drop > 0.25 on any task for the r64 or q4 arm retires the cycled-filler generator from every headline claim.
 - Cost: ~2–4 A100-hours ≈ $3–6 of the $23.85 credit. Spends money → needs your go; the orchestrator does not launch pods.
 - Recommendation: go, once prereg/filler_realism.md is committed and L2 confirms `--filler` accepts a real-text source (today `--filler wikitext` draws WikiText-2 test sentences — real text, but not the PG-19 chapter the brief names).
+
+### D-001 evidence addendum (2026-09-11, orchestrator; still OPEN for the owner)
+- L7 searched paper/ for an arXiv ID, abs URL, report number or submission receipt: none; every `arXiv:` string is a citation in refs.bib; main.tex's "arXiv v1 preprint" header is intent, not a record. Combined with 9baf571 (tarball assembled) and the empty title search, the recommendation stands: (a) not posted, no v2.

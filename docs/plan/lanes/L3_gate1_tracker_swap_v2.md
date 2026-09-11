@@ -1,0 +1,4 @@
+# L3_gate1_tracker_swap_v2
+
+
+Depends on L1 (guard, FD fix, Oja plumbing) and L2 (generator v2). `configs/pods/gate1_tracker_swap_v2.yaml`: same cache × tracker ∈ {isvd, oja_tuned, fd_fixed, frozen_prefill_svd, no_gist (bytes rebalanced to h ≈ 1024), random_basis} × {Llama-3.1-8B, Mistral-7B-v0.3, Qwen2.5-7B} × {16K, 32K} × 4 tasks × n=24 (2 haystacks × 3 depths × 4 codes) + perplexity 16 windows paired. `prereg/gate1_tracker_swap_v2.md` (L5 writes; L3 cannot launch before it): primary contrasts isvd vs frozen_prefill_svd and isvd vs no_gist on retrieval (McNemar, Holm over 12) and perplexity (paired CI, TOST ±0.02 bits); decision rule verbatim from ICML2027_PLAN.md §2 Gate 1. ≤ 50 GPU-h. Any arm with > 0 `error` trials is reported as failed, not as `--`. Harvest → `results/gate1_v2/` → `make tables` → DECISIONS.md names the branch.

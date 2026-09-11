@@ -1,0 +1,10 @@
+# L1_harness_hygiene
+
+
+1. **Orthogonality guard + tripwire.** Thin QR of U every K absorbs (default 64) and after any rank change; per-layer `‖UᵀU−I‖_F` and effective rank to `diag.jsonl`; re-orthonormalize immediately above 1e-3; mark the trial `error` above 1e-1. Regression test: the audit's synthetic ratchet (n=512, cap=256, outlier channels, bf16-rounded) exceeds 1 without the guard and stays < 1e-5 with it.
+2. **Effective-rank billing** in `accounting.py`; test that a collapsed floor-on config bills fewer bytes than its configured rank.
+3. **§4.1 scoring.** `kvdlra/eval/recon.py`: every tracker exposes `stored()`; error computed only from it. Methods: `svd_oracle`, `isvd`, `fd` (ℓ=r, 2r), `oja` (tuned on 2 held-out docs; schedule saved in config), `frozen_prefill_svd`, `random_basis`. Run first on the local `dumps/llama3.2-1b` (CPU/MPS, no pod), then on 8B dumps from `scripts/dump_kv.py` (8 PG-19/GovReport docs × 3 families × {16K, 32K}, all layers, K and V; SHA manifest committed, data not).
+4. **FD numerics fix.** `fd_step` crashed with `linalg.svd` non-convergence on real KV. Replace the dense SVD of the shrink step with an eigendecomposition of the small Gram (`torch.linalg.eigh` on `[B|A]`ᵀ-side, symmetric, well-conditioned) with a driver fallback (`gesvd`) and a tiny diagonal jitter only if `eigh` fails; test on the exact block that crashed (recover it from the swap pod's config + seed) and on the synthetic ratchet stream.
+5. **Oja schedule plumbing.** `bug_cache.py:890-897` must pass `eta0`, `decay` from config; default them to the Week-2 validated pre-RoPE schedule `(20.0, 0.03)` and add a `configs/arms/isvd_r64_h256_seed_oja_tuned.yaml`. Test asserts the config values reach `oja_step`.
+6. **Perplexity.** WikiText-103 TEST + PG-19 validation; window 2048; ≥ 32 windows; per-window NLL stored; fp32 accumulation; `stats.py` paired CI + TOST at ±0.05 bits.
+7. **Re-run the Table-4 cells** (guard on/off × floor on/off, Qwen r=128/256, Llama r=256) under `prereg/hygiene_table4.md`; DECISIONS.md states whether the guard alone removes divergence.

@@ -1,0 +1,4 @@
+# L7_paper_correction
+
+
+Same day, $0, no pod. In `paper/main.tex`: (a) remove or qualify every sentence derived from commit `4d37043` that says the tracker is load-bearing — the Oja arm was untuned and FD crashed; (b) mark the sub-0.05× band as "in-house generator only; 0.00 on the official anchor" until the filler diagnostic and a fixed-generator rerun say otherwise; (c) state the measured decode cost from `w20-close-report.md` §2 plainly (4–14× slower, KV peak above full KV) wherever the paper currently says "≈1.06× residency" or "+10%"; (d) replace "beats fixed-rank incremental SVD everywhere" with the stored-representation statement once L1 §3 lands (until then, delete it). Produce a diff for my review; do not push. DECISIONS entry: is arXiv v1 live? If yes, v2 with (a)–(c) within the week.

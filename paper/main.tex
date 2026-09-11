@@ -152,7 +152,7 @@ ratio, plus a measured persisted-cache cold start (\S\ref{sec:memory}).
 \item The crux comparison: a KIVI-scheme 2-bit baseline at matched stored
 bytes, paired needle-for-needle, which bounds the contribution honestly---BUG
 buys multi-value (and at 32K multi-key on Mistral, variable-tracking on Qwen)
-retrieval that 2-bit quantization loses; 4-bit quantization at twice the bytes is
+retrieval that 2-bit quantization loses under chunked prefill; 4-bit quantization at twice the bytes is
 not separated from it in any cell; and the composed
 gist-plus-4-bit-coordinates cell reaches $0.048\times$, a depth neither fixed-bit
 quantization nor the eviction$\times$quantization composites we measured reach with

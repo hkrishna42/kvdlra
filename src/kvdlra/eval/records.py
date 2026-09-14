@@ -236,11 +236,13 @@ def parse_pplw_lines(text: str, model: str, source: str) -> list[PplwRecord]:
     return out
 
 
-def parse_diag_lines(text: str, source: str) -> list[dict[str, object]]:
-    """``[diag] {json}`` payloads, verbatim plus their ``source``. Nothing reads them
-    yet -- the diagnostics land in L1 -- so they are carried through unparsed rather
-    than dropped. A line whose payload is not JSON is skipped, not fatal: diagnostics
-    are never evidence for a number."""
+def parse_diag_lines(text: str, model: str, source: str) -> list[dict[str, object]]:
+    """``[diag] {json}`` payloads, verbatim plus their ``model`` and ``source``. Nothing
+    reads them yet -- the diagnostics land in L1 -- so they are carried through unparsed
+    rather than dropped, but the model is stamped in like every other record type: a
+    rank or an orthogonality number means nothing without the family it came from. A
+    line whose payload is not JSON is skipped, not fatal: diagnostics are never evidence
+    for a number."""
     out: list[dict[str, object]] = []
     for i, line in enumerate(text.splitlines(), 1):
         m = DIAG_RE.match(line)
@@ -250,7 +252,7 @@ def parse_diag_lines(text: str, source: str) -> list[dict[str, object]]:
             payload = json.loads(m.group(1))
         except json.JSONDecodeError:
             continue
-        out.append({**payload, "source": f"{source}:{i}"})
+        out.append({"model": model, **payload, "source": f"{source}:{i}"})
     return out
 
 

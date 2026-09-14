@@ -63,6 +63,7 @@ docs/paper/figures/
 # and their manifest -- trials.jsonl, ppl.jsonl, pplw.jsonl, diag.jsonl, manifest.json,
 # env.txt -- and those are NOT matched here.
 results/*/pods.txt
+results/*/done.txt
 results/*/*.raw
 results/*/watchdog.pid
 results/*/status.txt

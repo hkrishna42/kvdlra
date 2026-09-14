@@ -153,7 +153,9 @@ def test_harvest_parses_a_log_into_records(dry_pod: Path, tmp_path: Path) -> Non
     (ppl,) = _rows(tmp_path, "ppl.jsonl")
     assert ppl["ppl"] == 5.403 and ppl["sbits"] == 0.163 and ppl["ctx"] == 16384
 
-    assert _rows(tmp_path, "diag.jsonl") == [{"layer": 0, "rank": 64, "source": f"{log}:12"}]
+    assert _rows(tmp_path, "diag.jsonl") == [
+        {"model": load_pod("w18_g1").model, "layer": 0, "rank": 64, "source": f"{log}:12"}
+    ]
     m = json.loads((tmp_path / "manifest.json").read_text())
     assert m["records"] == {
         "trials.jsonl": 2, "pplw.jsonl": 7, "ppl.jsonl": 1, "diag.jsonl": 1,
@@ -187,6 +189,78 @@ def test_harvest_records_a_failed_run(dry_pod: Path, tmp_path: Path) -> None:
     log.write_text(LOG.replace("===ALL_DONE_w18_g1", "===RUN_FAILED_w18_g1"))
     _run("harvest", "--pod", "w18_g1", "--log", str(log), "--out", str(tmp_path))
     assert json.loads((tmp_path / "manifest.json").read_text())["status"] == "RUN_FAILED"
+
+
+def test_harvest_refuses_to_shrink_an_existing_trials_file(dry_pod: Path, tmp_path: Path) -> None:
+    """A short log -- the 5000-line fallback, a truncated fetch -- must not overwrite a
+    good harvest. The files on disk are left exactly as they were."""
+    tmp_path = _copy(dry_pod, tmp_path)
+    log = tmp_path / "pod.log"
+    log.write_text(LOG)
+    first = _run("harvest", "--pod", "w18_g1", "--log", str(log), "--out", str(tmp_path))
+    assert first.returncode == 0, first.stderr
+    before = {p.name: p.read_text() for p in tmp_path.glob("*.jsonl")}
+
+    short = tmp_path / "short.log"
+    short.write_text("\n".join(LOG.splitlines()[:5]))  # one [trial] line, no pplw/ppl/diag
+    r = _run("harvest", "--pod", "w18_g1", "--log", str(short), "--out", str(tmp_path))
+    assert r.returncode == 1
+    assert "REFUSE: trials.jsonl would shrink from 2 to 1 rows" in r.stdout + r.stderr
+    assert {p.name: p.read_text() for p in tmp_path.glob("*.jsonl")} == before
+
+    forced = _run(
+        "harvest", "--pod", "w18_g1", "--log", str(short), "--out", str(tmp_path), "--force"
+    )
+    assert forced.returncode == 0, forced.stderr
+    assert len(_rows(tmp_path, "trials.jsonl")) == 1
+
+
+def test_harvest_writes_nothing_when_a_pplw_part_set_is_incomplete(
+    dry_pod: Path, tmp_path: Path
+) -> None:
+    """Everything is parsed before anything is written: the SystemExit an incomplete
+    [pplw] group raises used to land AFTER trials.jsonl had already been replaced."""
+    tmp_path = _copy(dry_pod, tmp_path)
+    good, bad = tmp_path / "good.log", tmp_path / "bad.log"
+    good.write_text(LOG)
+    _run("harvest", "--pod", "w18_g1", "--log", str(good), "--out", str(tmp_path))
+    before = {p.name: p.read_text() for p in tmp_path.glob("*.jsonl")}
+
+    bad.write_text("\n".join(x for x in LOG.splitlines() if "part=2/3" not in x))
+    r = _run("harvest", "--pod", "w18_g1", "--log", str(bad), "--out", str(tmp_path))
+    assert r.returncode != 0 and "part" in r.stdout + r.stderr
+    assert {p.name: p.read_text() for p in tmp_path.glob("*.jsonl")} == before
+
+
+def test_pods_line_is_unique_per_instance() -> None:
+    """The watchdog remembers harvested LABELS in done.txt. A label of just the pod name
+    made a relaunched pod "done" before it started -- never harvested, never destroyed,
+    billing until the credit floor. The label carries the instance id."""
+    a = pod.pods_line("w18_g1", "111", "unsloth/Meta-Llama-3.1-8B-Instruct")
+    b = pod.pods_line("w18_g1", "222", "unsloth/Meta-Llama-3.1-8B-Instruct")
+    assert a.split(":")[0] != b.split(":")[0]
+    assert a == "w18_g1-111:111:w18_g1:Meta-Llama-3.1-8B-Instruct\n"
+    # <label>:<id>:<pod>:<tag> -- field 3 is what the watchdog matches ===ALL_DONE_ on.
+    assert a.rstrip("\n").split(":")[2] == "w18_g1"
+    assert pod.pod_name("w18_g1-111") == "w18_g1" and pod.pod_name("w18_g1") == "w18_g1"
+
+
+def test_launch_refuses_a_sha_that_is_on_no_remote_branch(tmp_path: Path) -> None:
+    """The pod clones from GitHub, so an unpushed SHA boots into a CHECKOUT_FAILED and
+    bills for the privilege. A repo with no remotes is the strongest form of that."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    for cmd in (
+        ["git", "config", "user.email", "t@t"],
+        ["git", "config", "user.name", "t"],
+        ["git", "commit", "-q", "--allow-empty", "-m", "x"],
+    ):
+        subprocess.run(cmd, cwd=tmp_path, check=True)
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True, text=True
+    ).stdout.strip()
+    err = pod.unpushed_error(sha, tmp_path)
+    assert err is not None and err.startswith(f"HEAD {sha} is not on any remote branch")
+    assert "push first" in err
 
 
 def test_launch_refuses_a_pod_with_no_prereg() -> None:
@@ -240,13 +314,31 @@ def _trials(*arms: str) -> list[dict[str, object]]:
     ]  # fmt: skip
 
 
-def _harvested(dry_pod: Path, tmp_path: Path, rows: list[dict[str, object]]) -> Path:
+def _ppl(*arms: str) -> list[dict[str, object]]:
+    """w18_g1's two `ppl` tasks: one perplexity record per (arm, ctx)."""
+    return [
+        {
+            "model": "m", "arm": arm, "ctx": ctx, "ppl": 5.4, "ratio": 0.163,
+            "sbits": 0.163, "tok_eq": None, "source": "x",
+        }
+        for arm in arms
+        for ctx in CTXS
+    ]  # fmt: skip
+
+
+def _harvested(
+    dry_pod: Path,
+    tmp_path: Path,
+    rows: list[dict[str, object]],
+    ppl: list[dict[str, object]] | None = None,
+) -> Path:
     """A dry-run directory turned into what a real (non-dry) harvest leaves behind."""
     d = _copy(dry_pod, tmp_path)
     m = json.loads((d / "manifest.json").read_text())
     m["dry_run"] = False
     (d / "manifest.json").write_text(json.dumps(m))
     (d / "trials.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    (d / "ppl.jsonl").write_text("".join(json.dumps(r) + "\n" for r in ppl or []))
     return d
 
 
@@ -266,14 +358,37 @@ def test_check_fails_when_only_one_arm_reported(dry_pod: Path, tmp_path: Path) -
     r = _run("check", str(_harvested(dry_pod, tmp_path, _trials("bugSseed-r64-h256"))))
     assert r.returncode == 1
     out = r.stdout + r.stderr
-    assert out.count("CHECK FAIL cells") == 16
-    assert "bugSseed-r64-h256" not in out  # the arm that did run is not flagged
+    cells = [x for x in out.splitlines() if x.startswith("CHECK FAIL cells")]
+    assert len(cells) == 16
+    assert not [x for x in cells if "bugSseed-r64-h256" in x]  # the arm that ran is not flagged
 
 
 def test_check_passes_a_complete_synthetic_harvest(dry_pod: Path, tmp_path: Path) -> None:
-    r = _run("check", str(_harvested(dry_pod, tmp_path, _trials(*ARMS))))
+    r = _run("check", str(_harvested(dry_pod, tmp_path, _trials(*ARMS), _ppl(*ARMS))))
     assert r.returncode == 0, r.stdout + r.stderr
     assert "OK (288 trials, 0 errors)" in r.stdout
+
+
+def test_check_fails_a_ppl_task_that_produced_no_perplexity_record(
+    dry_pod: Path, tmp_path: Path
+) -> None:
+    """A `ppl` task contributes no Bernoulli cells, so the cell rule never looked at it
+    and a pod whose whole perplexity sweep died still passed. One record per (arm, ctx)
+    is expected in ppl.jsonl -- w18_g1 names two ppl tasks, so 3 arms x 2 ctx = 6."""
+    r = _run("check", str(_harvested(dry_pod, tmp_path, _trials(*ARMS))))
+    assert r.returncode == 1
+    out = r.stdout + r.stderr
+    assert out.count("CHECK FAIL ppl") == len(ARMS) * len(CTXS) == 6
+    assert "CHECK FAIL ppl: bugSseed-r64-h256 ctx=32768 has no perplexity record" in out
+
+
+def test_check_fails_when_one_arm_is_missing_from_the_ppl_sweep(
+    dry_pod: Path, tmp_path: Path
+) -> None:
+    d = _harvested(dry_pod, tmp_path, _trials(*ARMS), _ppl("quant-2bit-kivi", "quant-4bit-kivi"))
+    r = _run("check", str(d))
+    assert r.returncode == 1
+    assert r.stdout.count("CHECK FAIL ppl") == 2  # the r64 arm's two contexts
 
 
 def test_check_rejects_an_unresolvable_git_sha(dry_pod: Path, tmp_path: Path) -> None:
@@ -297,12 +412,13 @@ def test_check_rejects_an_env_that_drifted_from_the_pyproject_pins(
     assert r.returncode == 1 and "CHECK FAIL env: torch==0.0.0" in r.stdout + r.stderr
 
 
+def _git(*args: str) -> str:
+    out = subprocess.run(["git", *args], capture_output=True, text=True, cwd=REPO_ROOT)
+    return out.stdout.strip()
+
+
 def _first_commit(path: str) -> str:
-    out = subprocess.run(
-        ["git", "log", "--reverse", "--format=%H", "--", path],
-        capture_output=True, text=True, cwd=REPO_ROOT,
-    )  # fmt: skip
-    return out.stdout.split("\n")[0].strip()
+    return _git("log", "--reverse", "--format=%H", "--", path).split("\n")[0].strip()
 
 
 def test_prereg_commit_order_against_real_history() -> None:
@@ -313,6 +429,8 @@ def test_prereg_commit_order_against_real_history() -> None:
     against that very commit is the "written with the results in hand" case. And a
     commit `prereg/README.md`'s own commit does not descend to (L0.3, which predates it)
     is the not-an-ancestor case."""
+    if _git("rev-parse", "--is-shallow-repository") == "true":
+        pytest.skip("shallow clone: the commit-order rule needs the history to walk")
     makefile_first = _first_commit("Makefile")
     readme, readme_first = REPO_ROOT / "prereg" / "README.md", _first_commit("prereg/README.md")
     assert pod.prereg_error(REPO_ROOT / "Makefile", "HEAD") is None

@@ -282,5 +282,5 @@ def test_parse_pplw_lines_fails_loud_on_a_missing_part() -> None:
 
 
 def test_parse_diag_lines_carries_the_payload_and_its_source() -> None:
-    rows = parse_diag_lines('[diag] {"layer": 0, "rank": 64}\n', source="f.txt")
-    assert rows == [{"layer": 0, "rank": 64, "source": "f.txt:1"}]
+    rows = parse_diag_lines('[diag] {"layer": 0, "rank": 64}\n', model="M", source="f.txt")
+    assert rows == [{"model": "M", "layer": 0, "rank": 64, "source": "f.txt:1"}]

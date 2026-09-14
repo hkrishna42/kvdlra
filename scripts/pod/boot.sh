@@ -15,6 +15,11 @@
 #     --onstart scripts/pod/boot.sh --label kvdlra-w18_g1
 # Harvest with `scripts/pod.py harvest --pod <name>` (scripts/pod/watchdog.sh does it
 # unattended and destroys the instance on ALL_DONE). Does NOT self-destruct.
+#
+# EVERY marker this script prints carries the pod name: `===<MARKER>_${POD}...`. The
+# watchdog matches `===(ALL_DONE|RUN_FAILED|<boot failure>)_<pod>` and destroys the
+# instance on any of them, so a marker without the suffix is a pod that fails and then
+# bills until the credit floor.
 set -x
 export HF_HUB_ENABLE_HF_TRANSFER=${HF_HUB_ENABLE_HF_TRANSFER:-1}
 export HF_HUB_DOWNLOAD_TIMEOUT=${HF_HUB_DOWNLOAD_TIMEOUT:-120}
@@ -41,9 +46,9 @@ for attempt in 1 2 3 4 5; do
   [ -d kvdlra/scripts ] && break
   echo "===CLONE_RETRY_${attempt}==="; sleep 5
 done
-cd kvdlra || { echo "===CLONE_FAILED==="; exit 1; }
+cd kvdlra || { echo "===CLONE_FAILED_${POD}==="; exit 1; }
 # SHA pin: check out the exact commit and FAIL LOUD if it isn't what was asked for.
-git checkout -q "$SHA" >/dev/null 2>&1 || { echo "===CHECKOUT_FAILED_${SHA}==="; exit 1; }  # no pipe: the exit code is the guard
+git checkout -q "$SHA" >/dev/null 2>&1 || { echo "===CHECKOUT_FAILED_${POD}_${SHA}==="; exit 1; }  # no pipe: the exit code is the guard
 RUN_SHA="$(git rev-parse HEAD)"
 echo "===RUN_SHA_${RUN_SHA}==="
 
@@ -51,8 +56,8 @@ pip install -q hf_transfer hf_xet ninja numpy scipy matplotlib "kvpress==0.5.1" 
 pip install -q 'transformers==5.8.0' 'datasets==2.21.0' "optimum-quanto>=0.2.7" 'hqq==0.2.8.post1' 'omegaconf>=2.3' 2>&1 | tail -5
 echo "===DEPS_DONE==="
 # Fail loud if the quant baseline backend is missing (else the quant arms silently SKIP).
-python -c "import optimum.quanto" 2>/dev/null && echo "===QUANTO_OK===" || echo "===QUANTO_MISSING==="
-python -c "import hqq" 2>/dev/null && echo "===HQQ_OK===" || echo "===HQQ_MISSING==="
+python -c "import optimum.quanto" 2>/dev/null && echo "===QUANTO_OK===" || echo "===QUANTO_MISSING_${POD}==="
+python -c "import hqq" 2>/dev/null && echo "===HQQ_OK===" || echo "===HQQ_MISSING_${POD}==="
 
 # Reproducibility header, INSIDE the log block (the evidentiary chain). Everything a
 # camera-ready compute-disclosure needs: commit, card, driver/CUDA, and library set.
@@ -60,7 +65,7 @@ python -c "import hqq" 2>/dev/null && echo "===HQQ_OK===" || echo "===HQQ_MISSIN
 echo "===ENV_BEGIN==="
 echo "run_sha=${RUN_SHA}"
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader || true
-python - <<'PY' || echo "===DEPS_FAILED==="
+python - <<'PY' || echo "===DEPS_FAILED_${POD}==="
 import sys, importlib.metadata as md, torch, transformers, kvpress  # noqa: F401
 def _ver(pkg):
     try: return md.version(pkg)
@@ -73,7 +78,7 @@ if torch.cuda.is_available():
 PY
 # Fail loud on a bad $MODEL before any long harness call.
 python -c "from transformers import AutoTokenizer as T; T.from_pretrained('$MODEL'); print('===MODEL_OK===')" \
-  || { echo "===MODEL_FAILED_${MODEL}==="; exit 1; }
+  || { echo "===MODEL_FAILED_${POD}_${MODEL}==="; exit 1; }
 echo "===ENV_END==="
 
 # emit <marker> <json-path>: base64-fold a result JSON through the log so `vastai logs`

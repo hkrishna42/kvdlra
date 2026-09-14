@@ -8,10 +8,11 @@ model, library versions, GPU, wall clock, command line), `env.txt` (the pinned s
 different schema, hence a different file), `diag.jsonl`. `check` is the gate every citable
 number passes: it re-derives the config hash from `configs/pods/<pod>.yaml`, resolves the
 SHA, enforces the pre-registration commit order, and requires EVERY cell the config calls
-for -- arm x task x sub-task x ctx -- to hold exactly `n_trials x len(seeds)` records. A
-trial that raised is recorded with `error` and still counted, so a cell can never silently
-shrink; a cell with no records at all is the loudest failure there is, which is what makes
-a pod that produced nothing impossible to pass off as a clean run.
+for -- arm x task x sub-task x ctx -- to hold exactly `n_trials x len(seeds)` records, plus
+one perplexity record per (arm, ctx) for every `ppl` task. A trial that raised is recorded
+with `error` and still counted, so a cell can never silently shrink; a cell with no records
+at all is the loudest failure there is, which is what makes a pod that produced nothing
+impossible to pass off as a clean run.
 
 `run`'s eval loop lands in Task 8; here `run` writes the manifest and the environment and
 `--dry-run` stops there, which is what the tests and `make check` exercise. Archived
@@ -92,12 +93,13 @@ def versions() -> dict[str, str]:
     """
     out = {p: _dist(p) for p in ENV_PKGS if p != "cuda"}
     out["cuda"], out["gpu"] = "none", "none"
-    with contextlib.suppress(Exception):
+    try:
         import torch
-
-        out["cuda"] = torch.version.cuda or "none"
-        if torch.cuda.is_available():
-            out["gpu"] = torch.cuda.get_device_name(0)
+    except ImportError:  # a torch-less laptop records `none`; anything else is a bug
+        return out
+    out["cuda"] = torch.version.cuda or "none"
+    if torch.cuda.is_available():
+        out["gpu"] = torch.cuda.get_device_name(0)
     return out
 
 
@@ -131,8 +133,8 @@ def manifest(name: str, sha: str, command_line: str, dry_run: bool) -> dict[str,
         "command_line": command_line,
         "errors": 0,
         "records": {},
-        # ALL_DONE / RUN_FAILED, read off the log's end marker by `harvest`. The
-        # watchdog destroys the instance either way; this is where the failure shows.
+        # ALL_DONE / RUN_FAILED / BOOT_FAILED, read off the log's markers by `harvest`.
+        # The watchdog destroys the instance on all three; this is where the failure shows.
         "status": None,
         "dry_run": dry_run,
     }
@@ -214,10 +216,28 @@ def prereg_error(path: Path, sha: str) -> str | None:
     return None
 
 
+def unpushed_error(sha: str, root: Path = REPO_ROOT) -> str | None:
+    """Why launching at `sha` would boot into a CHECKOUT_FAILED, or None.
+
+    `boot.sh` clones from GitHub and checks out `$SHA`; a commit that exists only on
+    this laptop is a pod that boots, fails, and bills until the watchdog notices.
+    Containment in any remote branch is the test -- which branch is not this file's
+    business."""
+    contains = subprocess.run(
+        ["git", "-C", str(root), "branch", "-r", "--contains", sha], capture_output=True, text=True
+    )
+    if contains.stdout.strip():
+        return None
+    return f"HEAD {sha} is not on any remote branch; push first (the pod clones from GitHub)"
+
+
 def launch_refusals(pod: PodCfg, sha: str) -> list[str]:
     reasons = []
     if _git("status", "--porcelain").stdout.strip():
         reasons.append("the working tree is dirty; commit and push the launch commit first")
+    unpushed = unpushed_error(sha)
+    if unpushed:
+        reasons.append(unpushed)
     if not pod.prereg:
         reasons.append(f"pod {pod.name} names no prereg; write prereg/{pod.name}.md and commit it")
     else:
@@ -225,6 +245,26 @@ def launch_refusals(pod: PodCfg, sha: str) -> list[str]:
         if err:
             reasons.append(f"prereg {err}")
     return reasons
+
+
+def pods_line(name: str, instance: str, model: str) -> str:
+    """One `results/<pod>/pods.txt` row for the watchdog: `<label>:<id>:<pod>:<tag>`.
+
+    The label is `<pod>-<instance>`, NOT the pod name. The watchdog remembers harvested
+    labels in `done.txt` and skips them forever, so a relaunch under a label the first
+    instance already retired is never harvested and never destroyed -- it bills until
+    the credit floor. Field 3 stays the pod name: it is what the `===ALL_DONE_<pod>`
+    marker carries and what `pod.py harvest --pod` is given.
+    """
+    return f"{name}-{instance}:{instance}:{name}:{model.split('/')[-1]}\n"
+
+
+def pod_name(arg: str) -> str:
+    """`--pod` takes a pod name or a watchdog label (`<pod>-<instance id>`); both name
+    the same `configs/pods/<pod>.yaml` and the same `results/<pod>/`. No pod name
+    contains a hyphen, so the split is unambiguous."""
+    m = re.fullmatch(r"(.+)-\d+", arg)
+    return m.group(1) if m else arg
 
 
 def launch(name: str, offer: str, dry_run: bool) -> int:
@@ -251,8 +291,8 @@ def launch(name: str, offer: str, dry_run: bool) -> int:
     instance = found.group(1)
     m["command_line"] = shlex.join(cmd)
     _write_manifest(out, m)
-    with (out / "pods.txt").open("a") as f:  # <pod>:<id>:<mode>:<tag> for the watchdog
-        f.write(f"{name}:{instance}:{name}:{pod.model.split('/')[-1]}\n")
+    with (out / "pods.txt").open("a") as f:
+        f.write(pods_line(name, instance, pod.model))
     print(f"launched {name} as instance {instance}; watch with scripts/pod/watchdog.sh {name}")
     return 0
 
@@ -303,36 +343,67 @@ def _fetch_log(out: Path, name: str) -> str:
     raise SystemExit(f"empty log fetch for instance {instance}")
 
 
+# boot.sh's pre-run failures. The watchdog destroys the instance on any of them (no
+# idle billing) and the manifest keeps the reason. QUANTO/HQQ_MISSING do not stop the
+# run, but a pod whose quant backend is absent is not the pod that was configured.
+BOOT_FAILURES = (
+    "CLONE_FAILED",
+    "CHECKOUT_FAILED",
+    "DEPS_FAILED",
+    "MODEL_FAILED",
+    "QUANTO_MISSING",
+    "HQQ_MISSING",
+)
+
+
 def _status(text: str) -> str | None:
     """The end marker `boot.sh` printed. A run whose `pod.py run` exited non-zero prints
     `===RUN_FAILED_` instead of `===ALL_DONE_`; the watchdog destroys the instance on
-    either (no idle billing), so the manifest is where the failure has to survive."""
+    either (no idle billing), so the manifest is where the failure has to survive. A
+    boot failure outranks both: a log carrying one never ran what the config asked for,
+    whatever it printed afterwards."""
+    if any(f"==={m}_" in text for m in BOOT_FAILURES):
+        return "BOOT_FAILED"
     for marker in ("RUN_FAILED", "ALL_DONE"):
         if f"==={marker}_" in text:
             return marker
     return None
 
 
-def harvest(name: str, log: Path | None, out: Path) -> int:
+def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     model = load_pod(name).model
     out.mkdir(parents=True, exist_ok=True)
     text = log.read_text() if log else _fetch_log(out, name)
     source = str(log) if log else f"vastai logs ({_now()})"
-    trials = parse_trial_lines(text, model, source)
-    write_jsonl(out / "trials.jsonl", trials)
-    records = {"trials.jsonl": len(trials)}
 
+    # Parse EVERY artifact before writing ANY of them. An incomplete [pplw] part set
+    # raises SystemExit, and the 5000-line fallback fetch returns a shorter log than the
+    # one already harvested -- either used to land after trials.jsonl had been replaced,
+    # leaving a half-updated directory that looks like a complete, smaller run.
     # Two artifacts of one sweep, two schemas, two files -- parsed independently, never
     # one instead of the other.
+    trials = parse_trial_lines(text, model, source)
     pplw = parse_pplw_lines(text, model, source)
+    ppl = parse_ppl_lines(text, model, source)
+    diag = parse_diag_lines(text, model, source)
+
+    tpath = out / "trials.jsonl"
+    n_old = len(read_jsonl(tpath)) if tpath.is_file() else 0
+    if n_old > len(trials) and not force:
+        print(
+            f"REFUSE: trials.jsonl would shrink from {n_old} to {len(trials)} rows;"
+            " pass --force to overwrite"
+        )
+        return 1
+
+    write_jsonl(tpath, trials)
+    records = {"trials.jsonl": len(trials)}
     if pplw:
         write_jsonl(out / "pplw.jsonl", pplw)
         records["pplw.jsonl"] = len(pplw)
-    ppl = parse_ppl_lines(text, model, source)
     if ppl:
         write_jsonl(out / "ppl.jsonl", ppl)
         records["ppl.jsonl"] = len(ppl)
-    diag = parse_diag_lines(text, source)
     if diag:
         records["diag.jsonl"] = _jsonl(out / "diag.jsonl", diag)
 
@@ -402,6 +473,21 @@ def _cell_fails(pod: PodCfg, trials: list[TrialRecord]) -> list[str]:
     return fails
 
 
+def _ppl_fails(pod: PodCfg, d: Path) -> list[str]:
+    """Every `ppl` task holds one `PplRecord` per (arm, ctx) in `ppl.jsonl`.
+
+    A perplexity sweep is one number per (arm, ctx), not a set of Bernoulli trials, so
+    `_expected_cells` skips it -- which left nothing at all looking at `ppl.jsonl`, and
+    a pod whose entire sweep died passed `check` clean.
+    """
+    p = d / "ppl.jsonl"
+    got = {(r["arm"], r["ctx"]) for r in read_jsonl(p)} if p.is_file() else set()
+    ctxs = [t.ctx for t in (load_task(x) for x in pod.tasks) if t.generator == "ppl"]
+    arms = [load_arm(a) for a in pod.arms]
+    want = {(a.legacy_name or a.name, c) for a in arms for c in ctxs}
+    return [f"ppl: {arm} ctx={ctx} has no perplexity record" for arm, ctx in sorted(want - got)]
+
+
 def _env_fails(d: Path) -> list[str]:
     p = d / "env.txt"
     if not p.is_file():
@@ -453,6 +539,7 @@ def check(d: Path) -> int:
         fails.append(f"errors: manifest says {m.get('errors')}, records hold {n_err}")
     if trials or not m.get("dry_run"):  # a dry run has no records to count
         fails += _cell_fails(pod, trials)
+        fails += _ppl_fails(pod, d)
     fails += _env_fails(d)
 
     for f in fails:
@@ -474,20 +561,24 @@ def main() -> int:
     ln.add_argument("--offer", required=True)
     ln.add_argument("--dry-run", action="store_true", help="print the command, launch nothing")
     h = sub.add_parser("harvest", help="parse a pod's log into records")
-    h.add_argument("--pod", required=True)
+    h.add_argument("--pod", required=True, help="pod name, or a watchdog label <pod>-<instance>")
     h.add_argument("--log", default=None, help="default: fetch it with the vast.ai CLI")
     h.add_argument("--out", default=None, help="default: results/<pod>")
+    h.add_argument(
+        "--force", action="store_true", help="overwrite even if the parse has fewer trials"
+    )
     c = sub.add_parser("check", help="verify a results directory")
     c.add_argument("dir")
     a = ap.parse_args()
     if a.cmd == "check":
         return check(Path(a.dir))
-    out = Path(a.out) if getattr(a, "out", None) else REPO_ROOT / "results" / a.pod
+    name = pod_name(a.pod)
+    out = Path(a.out) if getattr(a, "out", None) else REPO_ROOT / "results" / name
     if a.cmd == "run":
-        return run(a.pod, out, a.dry_run)
+        return run(name, out, a.dry_run)
     if a.cmd == "launch":
-        return launch(a.pod, a.offer, a.dry_run)
-    return harvest(a.pod, Path(a.log) if a.log else None, out)
+        return launch(name, a.offer, a.dry_run)
+    return harvest(name, Path(a.log) if a.log else None, out, a.force)
 
 
 if __name__ == "__main__":

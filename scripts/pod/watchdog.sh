@@ -3,17 +3,20 @@
 #   usage: scripts/pod/watchdog.sh <pod>            # e.g. scripts/pod/watchdog.sh w18_g1
 #   pods:  results/<pod>/pods.txt   one "label:id:mode:tag" per line, appended by
 #          `scripts/pod.py launch` -- APPEND to add an instance mid-run (re-read every
-#          iteration; no restart needed).
+#          iteration; no restart needed). The label is "<pod>-<instance id>", unique per
+#          launch: done.txt below is keyed by it, so a label shared by two launches
+#          would retire the second instance before it started.
 #   done:  results/<pod>/done.txt   labels already harvested+destroyed (persisted, so a
 #          restart never hangs on a destroyed pod). The run-status marker is status.txt
 #          -- NOT DONE.txt, which is the same file as done.txt on macOS's APFS.
 # Per instance per iteration: append the short rows to results/<pod>/<label>.raw (the
 # vastai log buffer scrolls under per-[trial] emission, so the accumulated rows are the
-# record), and on its own ===ALL_DONE_<mode> -- or ===RUN_FAILED_<mode>, which is the
-# same signal for billing and is recorded as `status: RUN_FAILED` by the harvest:
-# destroy it, dedupe the rows into <label>.log and turn them into records with
-# `scripts/pod.py harvest`. It commits nothing and pushes nothing -- the orchestrator
-# commits the harvest.
+# record), and on its own ===ALL_DONE_<mode> -- or ===RUN_FAILED_<mode>, or any of
+# boot.sh's pre-run failures, which are the same signal for billing and are recorded as
+# `status: RUN_FAILED` / `BOOT_FAILED` by the harvest: destroy it, dedupe the rows into
+# <label>.log and turn them into records with `scripts/pod.py harvest` (which takes the
+# pod name or the label, and refuses to shrink an existing harvest). It commits nothing
+# and pushes nothing -- the orchestrator commits the harvest.
 # Credit floor -> destroy everything. Run detached (python double-fork) + caffeinate.
 #   BUDGET_ITERS (default 600 x 150s = 25h) -- give a long pole a bigger budget.
 POD="${1:?usage: watchdog.sh <pod>}"
@@ -22,7 +25,12 @@ export PATH="$HOME/.local/bin:$PATH"
 H="results/$POD"; mkdir -p "$H"; touch "$H/pods.txt" "$H/done.txt"
 echo $$ > "$H/watchdog.pid"  # for caffeinate -w and for teardown checks
 FLOOR="${FLOOR:-6.0}"; BUDGET_ITERS="${BUDGET_ITERS:-600}"
-ROWS='^\[(niah|vt|persist|latency)[^]]*\] +[^ ].* (acc=|SKIP|bytes=|ms/tok=)|^ +[^ ].* \[T=[0-9]+\] (ppl=|OOM|error|mem alloc)|^\[pplw|^\[diag|^\[trial\]|^===(ALL_DONE|RUN_FAILED|POD_|RUN_SHA|ENV_|QUANTO|HQQ|MODEL_)|^run_sha=|^device=|^torch=|^transformers=|NVIDIA'
+ROWS='^\[(niah|vt|persist|latency)[^]]*\] +[^ ].* (acc=|SKIP|bytes=|ms/tok=)|^ +[^ ].* \[T=[0-9]+\] (ppl=|OOM|error|mem alloc)|^\[pplw|^\[diag|^\[trial\]|^===(ALL_DONE|RUN_FAILED|CLONE_FAILED|CHECKOUT_FAILED|DEPS_FAILED|MODEL_FAILED|POD_|RUN_SHA|ENV_|QUANTO|HQQ|MODEL_)|^run_sha=|^device=|^torch=|^transformers=|NVIDIA'
+# boot.sh's pre-run failures. The instance is destroyed on any of them exactly as on
+# ALL_DONE -- a pod that could not clone, check out, install, load the model or import
+# its quant backend has nothing left to do but bill. `pod.py harvest` reads the same
+# markers back and records `status: BOOT_FAILED`.
+BOOT='CLONE_FAILED|CHECKOUT_FAILED|DEPS_FAILED|MODEL_FAILED|QUANTO_MISSING|HQQ_MISSING'
 for iter in $(seq 1 "$BUDGET_ITERS"); do
   while IFS=: read -r lab id mode tag; do
     [ -z "$lab" ] && continue
@@ -33,8 +41,9 @@ for iter in $(seq 1 "$BUDGET_ITERS"); do
     # back before skipping.
     [ -z "$L" ] && L="$(vastai logs "$id" --tail 5000 2>/dev/null)"; [ -z "$L" ] && continue
     echo "$L" | grep -aE "$ROWS" >> "$H/${lab}.raw"
-    if echo "$L" | grep -qaE "===(ALL_DONE|RUN_FAILED)_${mode}"; then
+    if echo "$L" | grep -qaE "===(ALL_DONE|RUN_FAILED|${BOOT})_${mode}"; then
       end="ALL_DONE"; echo "$L" | grep -qaE "===RUN_FAILED_${mode}" && end="RUN_FAILED"
+      echo "$L" | grep -qaE "===(${BOOT})_${mode}" && end="BOOT_FAILED"
       echo "$(date +%H:%M) $lab $end -> destroy"; echo y | vastai destroy instance "$id" >/dev/null 2>&1
       echo "$lab" >> "$H/done.txt"
       sort -u "$H/${lab}.raw" > "$H/${lab}.log"

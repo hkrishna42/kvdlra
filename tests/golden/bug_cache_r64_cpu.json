@@ -1,0 +1,37 @@
+{
+  "checksums": {
+    "hh_len": 64.0,
+    "hh_seeded": 8.0,
+    "k_abs": 65778.63060916707,
+    "k_sum": 348.1960018181999,
+    "mid_len": 2936.0,
+    "rank": 128.0,
+    "v_abs": 65299.60596069662,
+    "v_sum": 132.13626580905066
+  },
+  "config": {
+    "absorb_block": 16,
+    "hh_budget": 32,
+    "hh_neighbor": 1,
+    "hh_select": "surprise",
+    "n_sink": 4,
+    "rank": 64,
+    "recent_window": 32,
+    "retention": "lowrank_surprise",
+    "seed_hh_warmup": true
+  },
+  "device": "cpu",
+  "git_sha": "ee8c0ab",
+  "model": {
+    "arch": "LlamaForCausalLM",
+    "head_dim": 16,
+    "kv_heads": 8,
+    "layers": 2
+  },
+  "stream": {
+    "chunk": 512,
+    "model_seed": 0,
+    "seed": 1,
+    "tokens": 1536
+  }
+}

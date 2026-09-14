@@ -133,3 +133,32 @@ def test_filler_to_is_memoized_per_haystack() -> None:
     second = ruler._filler_to(tok, 64, filler="cycle")
     assert second == first and _CountTok.calls == n_calls
     assert ruler._filler_to(tok, 128, filler="cycle") != first  # a different ctx rebuilds
+
+
+def test_code_family_names_the_label_build_task_actually_used(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``ruler.code_family`` mirrors the two label expressions inside ``build_task``, so
+    a trial record can say which needle family it drew without the generator returning
+    it. Pinned against the real prompt: the label it names must be the one in the
+    question the generator built, and in the needle sentence it planted (and there is
+    none for the two tasks that use no label)."""
+    from kvdlra.eval.ruler import N_KEYS, N_VALUES, code_family
+
+    captured: dict[str, str] = {}
+
+    def _fake_templated(tok: Any, body: str, q: str) -> tuple[Any, Any]:
+        captured["body"], captured["q"] = body, q
+        return body, q
+
+    monkeypatch.setattr(wr, "_templated", _fake_templated)
+    tok = _WordTok()
+    for sub in ("niah_multikey", "niah_multivalue"):
+        for trial in range(5):
+            build_task(tok, sub, 40, trial, 0, N_KEYS, N_VALUES, 3, filler="cycle")
+            label = code_family(sub, trial)
+            assert label is not None
+            assert label in captured["q"], (sub, trial, label, captured["q"])
+            assert f"The {label} code is " in captured["body"]
+    for sub in ("niah_single", "vt"):
+        assert code_family(sub, 3) is None

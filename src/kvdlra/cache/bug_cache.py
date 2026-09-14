@@ -379,8 +379,6 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             raise ValueError("quant_budget > 0 requires an enabled low-rank middle")
         if hh_budget > 0 and not self.lowrank_enabled:
             raise ValueError("hh_budget > 0 requires an enabled low-rank middle")
-        # The second tier's column budget: the PolarQuant (variant D) tier.
-        self._second_tier_budget = quant_budget
         # SLASH exact heavy-hitter tier (Week-7 dominance program).
         self.hh_enabled = hh_budget >= 1 and self.lowrank_enabled
         self._quant_bank = (
@@ -522,9 +520,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             return 0, 0, query_length
         recent = self._recent_len() + query_length
         mid = self._mid_len()
-        mid_cap = (
-            self.coord_budget + self._second_tier_budget + (self.hh_budget if self.hh_retain else 0)
-        )
+        mid_cap = self.coord_budget + self.quant_budget + (self.hh_budget if self.hh_retain else 0)
         # Under hh_retain=False the *visible* middle grows per absorb by the
         # DEMOTED count (candidates minus what the pool keeps) -- 0 while the
         # pool is still filling -- so the invisible pool must be simulated here
@@ -782,7 +778,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
                 self.mid_surprise = self.mid_surprise[keep]
             if self.quant_bits is not None:
                 self._append_quant(out_ck, out_cv, out_pos, out_surprise)
-        q_over = self._q_len() - self._second_tier_budget
+        q_over = self._q_len() - self.quant_budget
         if q_over > 0:
             assert self.qk_codes is not None and self.qk_norm is not None
             assert self.qv_codes is not None and self.qv_norm is not None

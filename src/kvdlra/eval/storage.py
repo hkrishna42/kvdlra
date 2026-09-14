@@ -66,9 +66,9 @@ def _measure(
         # One decode step materializes the reconstruct-then-attend working set (u_k @ c_k
         # rebuilds the full-length middle). Measured AFTER stored/fp so the cache advance
         # does not perturb them; workspace ~ full KV is exactly why naive peak-VRAM shows
-        # no win -- the honest cost the future Mode-B kernel would remove. The peak-GPU
+        # no win -- the real cost the future Mode-B kernel would remove. The peak-GPU
         # probe now spans EVERY arm (Week-18 M2), not just eviction -> the ~1.06x resident
-        # is a disclosed measured number on CUDA (None on CPU, honestly unmeasured).
+        # is a disclosed measured number on CUDA (None on CPU, where it is unmeasured).
         pos = torch.arange(ctx, ctx + 1, device=hay.device).unsqueeze(0)
         model(hay[:, -1:], past_key_values=cache, use_cache=True, position_ids=pos)
         workspace = float(cache.workspace_numel()) if hasattr(cache, "workspace_numel") else 0.0
@@ -77,7 +77,7 @@ def _measure(
     analytic = fp.float_equiv() * n_layers
     # Full-KV resident (fp16) is 2*ctx*n*n_layers*2 bytes; peak_ratio compares the arm's
     # measured peak against it (CUDA only). The cold-load SIZE win is ratio_stored_bits
-    # itself (honest at-rest bits); the H2D/reconstruct TIMING is CUDA-only -> G5.
+    # itself (at-rest bits); the H2D/reconstruct TIMING is CUDA-only -> G5.
     full_kv_bytes = float(2 * ctx * n * n_layers * 2)
     return {
         "measured_floats": measured,

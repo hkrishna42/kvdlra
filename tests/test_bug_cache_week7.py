@@ -118,6 +118,54 @@ def test_week7_constructor_validation(tiny_model: LlamaForCausalLM) -> None:
 # --------------------------------------------------------------------------
 
 
+def _slash_layer(model: LlamaForCausalLM, hh_budget: int) -> BugStreamingLayer:
+    """The surprise-driven SLASH layer: a low-rank tail plus an exact tier of
+    ``hh_budget`` tokens kept verbatim."""
+    return BugStreamingLayer(
+        rope=_rope(model),
+        rank=4,
+        coord_budget=12,
+        recent_window=4,
+        absorb_block=4,
+        n_sink=2,
+        retention="lowrank_surprise",
+        hh_budget=hh_budget,
+        hh_select="surprise",
+    )
+
+
+def test_exact_tier_stores_the_verbatim_post_rope_key(tiny_model: LlamaForCausalLM) -> None:
+    """The exact tier is EXACT: every column it holds is the post-RoPE key the model
+    produced at that token, bit for bit -- not a reconstruction, not a re-rotation.
+
+    That is the whole claim the surprise-selected tier rests on (a needle survives
+    because its key was never projected), so it is pinned at the tensor level: for each
+    ``j``, ``hh_k[:, j]`` equals the flattened key column at ``hh_pos[j]`` of the stream
+    that was fed in, and ``hh_v`` the value column. The selection path is the
+    surprise-driven one -- ``_absorb_block_slash`` scoring the whole candidate pool
+    against the current basis -- not a hand-placed tier.
+    """
+    layer = _slash_layer(tiny_model, hh_budget=6)
+    g = torch.Generator().manual_seed(7)
+    k, v = _kv(18, g)
+    layer.update(k, v)
+    for _ in range(8):  # two absorbs: the tier fills and then re-selects
+        k1, v1 = _kv(1, g)
+        k = torch.cat([k, k1], dim=2)
+        v = torch.cat([v, v1], dim=2)
+        layer.update(k1, v1)
+
+    assert layer.hh_k is not None and layer.hh_v is not None and layer.hh_pos is not None
+    assert layer._hh_len() == 6, "the exact tier must be full, or this pins nothing"
+    k_mat, v_mat = layer._to_mat(k), layer._to_mat(v)
+    for j, pos in enumerate(layer.hh_pos.tolist()):
+        assert torch.equal(layer.hh_k[:, j], k_mat[:, pos]), f"hh_k column {j} (pos {pos})"
+        assert torch.equal(layer.hh_v[:, j], v_mat[:, pos]), f"hh_v column {j} (pos {pos})"
+    # ... and the tier is not just the most recent tokens (which would make the
+    # equality above trivially true of any ring buffer).
+    assert layer.hh_pos.tolist() != list(range(20, 26))
+
+
 def test_surprise_retention_keeps_top_scored_columns(tiny_model: LlamaForCausalLM) -> None:
     # Drive the layer directly; set the stored per-column surprise by hand (the
     # graduation snapshot's job) and check the eviction at the next absorb keeps

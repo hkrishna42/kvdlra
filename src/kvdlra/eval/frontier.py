@@ -290,13 +290,13 @@ def _press(cfg: ArmCfg) -> dict[str, Any]:
 
 
 def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> acc.Footprint:
-    """Honest per-layer footprint of the arm's *post-prefill* state."""
+    """Per-layer footprint of the arm's *post-prefill* state."""
     kind = arm["kind"]
     if kind == "bug":
         assert isinstance(cache, BugStreamingCache)
         layer = cache._bug_layers()[0]
         # Thread the arm's retention + hh_select so surprise arms count their
-        # position/surprise buffers honestly (fifo default keeps existing arms
+        # position/surprise buffers too (fifo default keeps existing arms
         # byte-identical); the anti-drift pin guards this against drift.
         # Split the fp32 coordinate tier from the quantized tier so the coded columns
         # are billed at their nbits, not as fp32 coords (Week-18: the old
@@ -348,7 +348,7 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
     if kind == "press_quant":  # Week-20 composite: kept fraction, survivors quantized.
         # The forward_hook prunes then re-quantizes and empties the fp16 residual
         # (compat.py: cl.keys = zeros(0), cl.cumulative_length = kept), so bill the
-        # measured kept-token count at nbits with NO residual -- the honest composite
+        # measured kept-token count at nbits with NO residual -- the composite
         # footprint (k*nbits/16 + aux).
         kept = int(getattr(cache.layers[0], "cumulative_length", 0))
         assert kept > 0, "press_quant: empty cache -- forward_hook did not fire?"

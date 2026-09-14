@@ -286,7 +286,7 @@ def retrieve(
     """Prefill the haystack (chunked, OOM-safe) then decode the query+answer. Returns
     (hit, fp16-memory-ratio, hits_fraction, stored-bits-ratio). A hit requires ALL
     ``targets`` in the output. Memory is the post-prefill compressed footprint
-    (kvdlra.accounting); the stored-bits ratio bills fp32-at-rest state honestly."""
+    (kvdlra.accounting); the stored-bits ratio bills fp32-at-rest state as stored."""
     hay = hay.to(device)
     ctx_len = int(hay.shape[1])
     streaming = arm["kind"] in ("bug", "morph", "shadow")

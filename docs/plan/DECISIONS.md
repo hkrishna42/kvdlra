@@ -60,3 +60,8 @@
 
 ### D-007 addendum (2026-09-14) — L0 has merged; this is the quiet point
 - Only the main checkout remains as a worktree (the L0 one is removed); lane branches L2/L4/L7 have no worktrees. Moving the clone out of iCloud is now `mv` + re-creating worktrees on demand. Recommendation unchanged: (a).
+
+### D-007 addendum 2 (2026-09-14) — iCloud also breaks the venv's `.pth` files
+- Finding: every dot-prefixed path under the clone carries the macOS `hidden` flag (UF_HIDDEN; 67 in the repo, 65,660 under `.venv/`) — iCloud Desktop sync sets it. Python 3.12.13's `site` skips hidden `.pth` files ("Skipping hidden .pth file" under `python -v`), so the editable install `_editable_impl_kvdlra.pth` and `_virtualenv.pth` were silently ignored: `import kvdlra` failed from any directory outside the repo. Tests, `make tables` and the pod scripts never noticed because `scripts/_paths.py` and the test conftest prepend `src/` themselves.
+- Fix applied locally (not a repo change): `chflags nohidden .venv/lib/python3.12/site-packages/*.pth` → import works. iCloud may re-flag files written later (a future `uv pip install -e` re-creates the `.pth`), so this is a symptom patch. The scratchpad clone used for the L6 gate (outside iCloud) never had the problem.
+- Recommendation strengthened: (a) move the clone out of iCloud. No Makefile workaround is added — a macOS-only `chflags` in `make env` would paper over the sync hazard the owner is deciding on.

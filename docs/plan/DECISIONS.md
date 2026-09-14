@@ -40,3 +40,8 @@
 - Evidence: `brctl status` shows com.apple.CloudDocs syncing Desktop; during L0's test runs macOS "conflicted copy" duplicates appeared (`scripts/tables 2.py`, `tests/test_records 2.py`, plus `.mypy_cache`/`__pycache__` twins). They are untracked and were deleted, but a sync race can also resurrect stale file contents.
 - Options: (a) move the clone out of iCloud (e.g. `~/src/kv-dlra`) and re-create the worktrees — the vast.ai pods clone from GitHub, so nothing else depends on the path; (b) exclude via a `.nosync` folder name (breaks every path in docs/scripts); (c) keep and mitigate (implementers commit by explicit path; orchestrator deletes `* 2.*` files at every checkpoint).
 - Recommendation: (a) at the next quiet point (after L0 merges). Until then (c) is in force.
+
+## 2026-09-14
+
+### D-008 CLOSED (orchestrator ruling R13, recorded for the owner) — G0 "Dockerfile + uv.lock"
+- uv.lock stays gitignored (the repo marks it platform-specific); reproducibility = pyproject exact pins + Dockerfile + `scripts/pod.py check` diffing env.txt against the pins. GATES.md G0 amended on the lane (96e1398, merged). Reopen if you want a committed lock for the pod image.

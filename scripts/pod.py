@@ -48,6 +48,7 @@ from kvdlra.eval.records import (
     TrialRecord,
     parse_diag_lines,
     parse_error_lines,
+    parse_latency_lines,
     parse_ppl_lines,
     parse_pplw_lines,
     parse_trial_lines,
@@ -442,6 +443,7 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     _fill_generators(name, trials)
     pplw = parse_pplw_lines(text, model, source)
     ppl = parse_ppl_lines(text, model, source)
+    lat = parse_latency_lines(text, model, source)
     diag = parse_diag_lines(text, model, source)
 
     tpath = out / "trials.jsonl"
@@ -461,6 +463,9 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     if ppl:
         write_jsonl(out / "ppl.jsonl", ppl)
         records["ppl.jsonl"] = len(ppl)
+    if lat:
+        write_jsonl(out / "latency.jsonl", lat)
+        records["latency.jsonl"] = len(lat)
     if diag:
         records["diag.jsonl"] = _jsonl(out / "diag.jsonl", diag)
 

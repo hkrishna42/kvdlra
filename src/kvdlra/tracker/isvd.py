@@ -99,7 +99,7 @@ def augmented_bug_step(
     The loop body of :func:`blocked_bug_subspace`, exposed as a *stateful* single
     step so callers that receive columns over time (the decode-time streaming
     cache, :mod:`kvdlra.cache`) can advance the tracked pair ``(U, B)`` one data
-    increment at a time with exactly the validated integrator math.
+    increment at a time with the same block incremental-SVD step.
 
     Parameters
     ----------

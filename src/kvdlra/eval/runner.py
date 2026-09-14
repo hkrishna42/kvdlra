@@ -159,7 +159,7 @@ def _latency_rows(
                     )
                 except Exception as exc:
                     print(
-                        f"[error] axis=latency arm={arm['name']} ctx={ctx}"
+                        f"[error] axis=latency arm={arm['name']} ctx={ctx} batch={batch}"
                         f" error={type(exc).__name__}: {exc}",
                         flush=True,
                     )

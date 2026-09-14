@@ -45,7 +45,10 @@ CELL_RE = re.compile(
     r"^\[([A-Za-z0-9_]+) ctx(\d+)\] (\S+)\s+acc=([0-9.]+) recall=([0-9.]+)(?: ratio=([0-9.]+))?"
     r"(?: sbits=([0-9.]+))?(?: n=(\d+))?(?: errors=(\d+))?"
 )
-ERROR_RE = re.compile(r"^\[error\] axis=(\S+) arm=(\S+) ctx=(\d+) error=(.*)$")
+# `batch=` is only on a `latency`-axis line (the ppl axis has no batch sweep); optional,
+# and placed before `error=`, which must stay last since the exception message can
+# contain anything, colons included.
+ERROR_RE = re.compile(r"^\[error\] axis=(\S+) arm=(\S+) ctx=(\d+)(?: batch=(\d+))? error=(.*)$")
 # Leading whitespace varies (0 or 2 spaces) across pods; tok_eq/layer and sbits are
 # each sometimes absent. Verified against every `ppl=` line in results/*-lines.txt
 # (175/175 match) -- see results/w11-table-ppl-lines.txt (no leading space, no sbits),
@@ -61,6 +64,15 @@ PPL_RE = re.compile(
 # at ~500 chars. Dropping the fragments -- which is what the first harvest did -- loses
 # the whole sweep silently.
 PPLW_RE = re.compile(r"^\[pplw\] T=(\d+) (\S+) ntok=(\d+)(?: part=(\d+)/(\d+))? nlls=([0-9.,]+)$")
+# `kvdlra.eval.latency.run_latency`'s own print. `weights_gb=` sits between `peak_gb=`
+# and `kv_peak_gb=` but is not part of `LatencyRecord` -- it is the subtrahend the
+# kv_*_gb figures already removed, not a KV-attributable number of its own -- so it is
+# matched, not captured.
+LATENCY_RE = re.compile(
+    r"^\[latency ctx(\d+)\] (\S+)\s+ms/tok=([0-9.]+) mean=([0-9.]+) max=([0-9.]+) "
+    r"spikes=(\d+) resident_gb=([0-9.]+) peak_gb=([0-9.]+) weights_gb=[0-9.]+"
+    r" kv_peak_gb=([0-9.]+) batch=(\d+)"
+)
 DIAG_RE = re.compile(r"^\[diag\] (\{.*\})\s*$")
 
 
@@ -217,14 +229,22 @@ def parse_error_lines(text: str, source: str) -> list[dict[str, object]]:
     perplexity axis has no record to carry one -- an arm that raises produces no row at
     all -- so its failures are their own log line. `scripts/pod.py harvest` counts them
     into the manifest, which is how a harvest of the log agrees with the run that wrote
-    it. No ``model``: the line is a failure, not evidence about a model."""
+    it. No ``model``: the line is a failure, not evidence about a model. ``batch`` is
+    the point's batch size for a ``latency`` axis line, ``None`` for every other axis."""
     out: list[dict[str, object]] = []
     for i, line in enumerate(text.splitlines(), 1):
         m = ERROR_RE.match(line)
         if m:
-            axis, arm, ctx, err = m.groups()
+            axis, arm, ctx, batch, err = m.groups()
             out.append(
-                {"axis": axis, "arm": arm, "ctx": int(ctx), "error": err, "source": f"{source}:{i}"}
+                {
+                    "axis": axis,
+                    "arm": arm,
+                    "ctx": int(ctx),
+                    "batch": int(batch) if batch is not None else None,
+                    "error": err,
+                    "source": f"{source}:{i}",
+                }
             )
     return out
 
@@ -300,6 +320,35 @@ def parse_pplw_lines(text: str, model: str, source: str) -> list[PplwRecord]:
             for (arm, ctx), (n, _tok, _first, parts) in pending.items()
         }
         raise SystemExit(f"{source}: incomplete [pplw] part set, missing {missing}")
+    return out
+
+
+def parse_latency_lines(text: str, model: str, source: str) -> list[LatencyRecord]:
+    """Every ``[latency ctx<T>]`` decode-measurement line
+    (``kvdlra.eval.latency.run_latency``) as a record -- the harvest-side counterpart
+    to that print, the same role ``parse_ppl_lines`` plays for ``ppl=`` lines."""
+    out: list[LatencyRecord] = []
+    for i, line in enumerate(text.splitlines(), 1):
+        m = LATENCY_RE.match(line)
+        if not m:
+            continue
+        ctx, arm, p50, mean, mx, spikes, resident_gb, peak_gb, kv_peak_gb, batch = m.groups()
+        out.append(
+            {
+                "model": model,
+                "arm": arm,
+                "ctx": int(ctx),
+                "batch": int(batch),
+                "ms_per_token_p50": float(p50),
+                "ms_mean": float(mean),
+                "ms_max": float(mx),
+                "spikes": int(spikes),
+                "resident_gb": float(resident_gb),
+                "peak_gb": float(peak_gb),
+                "kv_peak_gb": float(kv_peak_gb),
+                "source": f"{source}:{i}",
+            }
+        )
     return out
 
 

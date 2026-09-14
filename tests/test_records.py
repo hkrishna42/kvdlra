@@ -20,6 +20,7 @@ from kvdlra.eval.records import (
     parse_cell_lines,
     parse_diag_lines,
     parse_error_lines,
+    parse_latency_lines,
     parse_ppl_lines,
     parse_pplw_lines,
     parse_trial_lines,
@@ -41,6 +42,12 @@ PPLW_SPLIT = (
     "[pplw] T=32768 quant-2bit-kivi ntok=255 part=1/3 nlls=1.000000,2.000000\n"
     "[pplw] T=32768 quant-2bit-kivi ntok=255 part=2/3 nlls=3.000000,4.000000\n"
     "[pplw] T=32768 quant-2bit-kivi ntok=255 part=3/3 nlls=5.000000\n"
+)
+# kvdlra.eval.latency.run_latency's own print (weights_gb= between peak_gb= and
+# kv_peak_gb=, batch= last).
+LATENCY = (
+    "[latency ctx16384] bugSseed-r64-h256      ms/tok=103.25 mean=117.57 max=309.70 "
+    "spikes=4 resident_gb=15.79 peak_gb=18.20 weights_gb=14.96 kv_peak_gb=3.25 batch=1\n"
 )
 
 
@@ -142,15 +149,26 @@ def test_parse_cell_lines_of_a_wholly_failed_cell() -> None:
 def test_parse_error_lines_schema() -> None:
     """The perplexity axis has no per-trial record to hang an error on -- an arm that
     raises produces no row at all -- so the failure is its own log line, and that line
-    is what makes the harvested manifest's error count match the run's."""
+    is what makes the harvested manifest's error count match the run's. The ppl axis
+    has no batch sweep, so its line carries no `batch=` and the field reads None."""
     text = "noise\n[error] axis=ppl arm=bugSseed-r64-h256 ctx=32768 error=RuntimeError: boom\n"
     assert parse_error_lines(text, source="f.txt") == [
         {
-            "axis": "ppl", "arm": "bugSseed-r64-h256", "ctx": 32768,
+            "axis": "ppl", "arm": "bugSseed-r64-h256", "ctx": 32768, "batch": None,
             "error": "RuntimeError: boom", "source": "f.txt:2",
         }
     ]  # fmt: skip
     assert parse_error_lines(TRIAL + CELL, source="f") == []
+
+
+def test_parse_error_lines_reads_the_batch_a_latency_point_carries() -> None:
+    """`batch=` sits between `ctx=` and `error=` on a `latency`-axis line (the decode
+    axis sweeps batch sizes); `error=` must stay last so the exception message is never
+    truncated by the added group."""
+    text = "[error] axis=latency arm=full ctx=16384 batch=1 error=RuntimeError: CUDA out of mem\n"
+    (row,) = parse_error_lines(text, source="f")
+    assert row["axis"] == "latency" and row["batch"] == 1
+    assert row["error"] == "RuntimeError: CUDA out of mem"
 
 
 def test_parse_ppl_lines_schema() -> None:
@@ -179,6 +197,35 @@ def test_parse_ppl_lines_no_leading_space_and_no_sbits() -> None:
 def test_parse_ppl_lines_ignores_trial_and_cell_lines() -> None:
     assert parse_ppl_lines(TRIAL, model="M", source="f") == []
     assert parse_ppl_lines(CELL, model="M", source="f") == []
+
+
+def test_parse_latency_lines_schema() -> None:
+    """The harvest-side counterpart to `latency.run_latency`'s print -- without this a
+    results directory that never made it off the instance had no way back to a
+    checkable `latency.jsonl`. `weights_gb=` prints between `peak_gb=` and
+    `kv_peak_gb=` but is not a field of `LatencyRecord`, so it is matched, not kept."""
+    rows = parse_latency_lines(LATENCY, model="M", source="f.txt")
+    assert rows == [
+        {
+            "model": "M",
+            "arm": "bugSseed-r64-h256",
+            "ctx": 16384,
+            "batch": 1,
+            "ms_per_token_p50": 103.25,
+            "ms_mean": 117.57,
+            "ms_max": 309.70,
+            "spikes": 4,
+            "resident_gb": 15.79,
+            "peak_gb": 18.20,
+            "kv_peak_gb": 3.25,
+            "source": "f.txt:1",
+        }
+    ]
+
+
+def test_parse_latency_lines_ignores_trial_and_ppl_lines() -> None:
+    assert parse_latency_lines(TRIAL, model="M", source="f") == []
+    assert parse_latency_lines(PPL, model="M", source="f") == []
 
 
 def test_jsonl_roundtrip(tmp_path: Path) -> None:

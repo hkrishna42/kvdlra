@@ -123,8 +123,57 @@ def test_a_point_that_raises_is_logged_and_counted(
 
     out = capsys.readouterr().out
     errs = parse_error_lines(out, "log")
-    n = len(cfg.arms) * len(load_task(cfg.tasks[0]).ctxs or [])
+    task = load_task(cfg.tasks[0])
+    n = len(cfg.arms) * len(task.ctxs or []) * len(task.batch_sizes)
     assert len(errs) == n and {e["axis"] for e in errs} == {"latency"}
     assert errs[0]["error"] == "RuntimeError: CUDA out of memory"
+    assert {e["batch"] for e in errs} == set(task.batch_sizes)  # batch=, not None
     assert not (tmp_path / "latency.jsonl").exists()  # a failed point writes no record
     assert json.loads((tmp_path / "manifest.json").read_text())["errors"] == n
+
+
+def test_harvest_rebuilds_latency_jsonl_from_the_log(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`records.parse_latency_lines` is the harvest-side counterpart to
+    `kvdlra.eval.latency.run_latency`'s print -- without it a results directory that
+    never made it off the instance had no way back to a checkable `latency.jsonl` (only
+    `run_pod` ever wrote one). Mirrors `test_check_passes_on_the_full_grid_and_fails_
+    without_it` above, but the file comes from a harvested log instead of a live run."""
+    _launch(tmp_path)
+    cfg = load_pod(POD)
+    task = load_task(cfg.tasks[0])
+    names = [load_arm(a).legacy_name or a for a in cfg.arms]
+    ctxs = task.ctxs or [task.ctx]
+    lines = [
+        f"[latency ctx{ctx}] {arm:22s} ms/tok=100.00 mean=110.00 max=300.00 spikes=4 "
+        f"resident_gb=15.00 peak_gb=18.00 weights_gb=14.00 kv_peak_gb=4.00 batch=1"
+        for ctx in ctxs
+        for arm in names
+    ]
+    log = tmp_path / "pod.log"
+    log.write_text("\n".join(lines) + "\n")
+
+    assert pod.harvest(POD, log, tmp_path, force=False) == 0
+    rows = [json.loads(x) for x in (tmp_path / "latency.jsonl").read_text().splitlines()]
+    got = {(r["arm"], r["ctx"], r["batch"]) for r in rows}
+    assert got == {(a, c, 1) for a in names for c in ctxs}
+    m = json.loads((tmp_path / "manifest.json").read_text())
+    assert m["records"]["latency.jsonl"] == len(rows) == 9
+
+    capsys.readouterr()
+    assert pod.check(tmp_path) == 0
+
+    # Drop one row: the axis writes no trial, so this row is the only thing that can
+    # fail -- exactly what test_check_passes_on_the_full_grid... exercises for a
+    # run_pod-written file, now for a harvested one.
+    lat = tmp_path / "latency.jsonl"
+    kept = lat.read_text().splitlines()
+    lat.write_text("\n".join(kept[:-1]) + "\n")
+    capsys.readouterr()
+    assert pod.check(tmp_path) == 1
+    dropped = json.loads(kept[-1])
+    assert (
+        f"CHECK FAIL latency: {dropped['arm']} ctx={dropped['ctx']}"
+        f" batch={dropped['batch']} has no decode record" in capsys.readouterr().out
+    )

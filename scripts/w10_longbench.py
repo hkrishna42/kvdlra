@@ -316,7 +316,6 @@ def main() -> None:
     parser.add_argument("--hh-budgets", type=int, nargs="+", default=[256, 1024])
     parser.add_argument("--hh-neighbor", type=int, default=0)
     parser.add_argument("--hh-discard", action="store_true")
-    parser.add_argument("--qwhiten-file", default=None)
     parser.add_argument("--warmup-seed", action="store_true")
     parser.add_argument("--score-rank", type=int, default=None)
     parser.add_argument("--min-sv-frac", type=float, default=0.0)

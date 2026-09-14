@@ -515,7 +515,7 @@ def phase3_real_dump(dumps_root: Path) -> dict[str, Any]:
     cand[:, needle_col] = needle
 
     # Score with the REAL layer method (a real BugStreamingLayer as the vehicle; the
-    # method uses only self.u_k + self._whiten_key, identity without w_key).
+    # method uses only self.u_k).
     vehicle = _bug_layer(
         BugStreamingCache(
             _tiny_model(),
@@ -527,7 +527,7 @@ def phase3_real_dump(dumps_root: Path) -> dict[str, Any]:
         )
     )
     vehicle.u_k = basis
-    surprise = vehicle._surprise_scores(vehicle._whiten_key(cand))  # real code, real data
+    surprise = vehicle._surprise_scores(cand)  # real code, real data
     bg_mask = torch.ones(block, dtype=torch.bool)
     bg_mask[needle_col] = False
     needle_surprise = float(surprise[needle_col])

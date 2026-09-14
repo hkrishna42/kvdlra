@@ -209,7 +209,7 @@ def _score_cell(
     full) and report the needle's standing among the 31 real background columns."""
     vehicle.u_k = basis
     with torch.no_grad():
-        s = vehicle._surprise_scores(vehicle._whiten_key(cand), cap=cap)
+        s = vehicle._surprise_scores(cand, cap=cap)
     bg = torch.ones(int(cand.shape[1]), dtype=torch.bool)
     bg[needle_col] = False
     ns = float(s[needle_col])

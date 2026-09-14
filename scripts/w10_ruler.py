@@ -594,12 +594,6 @@ def main() -> None:
         "pool invisible to attention) -> bugSdrop-* arm names",
     )
     parser.add_argument(
-        "--qwhiten-file",
-        default=None,
-        help="Week-12 Q-BUG: calibrated per-layer key-whitening diagonal "
-        "(scripts/w12_calibrate_qkey.py) -> bugSQ-* arms (query-metric gist)",
-    )
-    parser.add_argument(
         "--warmup-seed",
         action="store_true",
         help="Week-13 T-B: seed the exact tier from the first ingest chunk's outliers "

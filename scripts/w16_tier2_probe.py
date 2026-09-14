@@ -147,7 +147,6 @@ def _g_smoke(model: Any, tok: Any, args: argparse.Namespace) -> dict[str, Any]:
         absorb_block=16,
         hh_neighbor=1,
         hh_discard=False,
-        qwhiten_file=None,
         warmup_seed=True,
         score_rank=None,
     )

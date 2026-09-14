@@ -33,3 +33,10 @@
 - ADR 0001 drafted (lane/L4-kernel @ e432df3): (iii) primary, (i) parallel accuracy row `isvd_postrope_r128`, (ii) rejected (GQA: 4× the key-side FLOPs of (iii); the pair factorization is per query head, reconstruction per KV head). Cost model regenerable from docs/adr/0001-cost-model.py; Week-3 gate reachable in principle (resident KV 0.60 GB vs full 4.29 GB at 32K; roofline 10.7 ms vs measured 188 ms reconstruct).
 - Three concerns the owner should weigh before accepting: (1) `BugStreamingLayer.lazy_initialization` raises above batch 1 — Gate 3's batch ≥ 4 criterion needs a batched cache first (scope for L4 Week 2–3); (2) weights + full KV at 64K batch 4 = 50.4 GB does not fit an A100-40GB — that contrast moves to H100 or to "max batch that fits"; (3) the traffic model under-predicts the measured reconstruct path by 6.6–16× (full KV by 2.1–2.3×), so absolute kernel timings are not predicted, only the floors.
 - Recommendation: ACCEPT (iii) primary + (i) row, with concern (1) added to the L4 milestones as the first Week-2 task.
+
+## 2026-09-13
+
+### D-007 OPEN — The repository lives inside an iCloud-synced folder (~/Desktop)
+- Evidence: `brctl status` shows com.apple.CloudDocs syncing Desktop; during L0's test runs macOS "conflicted copy" duplicates appeared (`scripts/tables 2.py`, `tests/test_records 2.py`, plus `.mypy_cache`/`__pycache__` twins). They are untracked and were deleted, but a sync race can also resurrect stale file contents.
+- Options: (a) move the clone out of iCloud (e.g. `~/src/kv-dlra`) and re-create the worktrees — the vast.ai pods clone from GitHub, so nothing else depends on the path; (b) exclude via a `.nosync` folder name (breaks every path in docs/scripts); (c) keep and mitigate (implementers commit by explicit path; orchestrator deletes `* 2.*` files at every checkpoint).
+- Recommendation: (a) at the next quiet point (after L0 merges). Until then (c) is in force.

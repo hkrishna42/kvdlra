@@ -1,0 +1,12 @@
+## Table 1 — cross-model 16K retrieval, config `bugSseed-r64-h256`
+<!-- paper-v1: paper/main.tex @ee8c0ab, table `tab:xmodel` (renders as Table 2 in the PDF) -->
+<!-- source: results/paper-v1/w18-g1-{qwen,mistral,llama}/trials.jsonl (per-trial records only) -->
+<!-- cell: acc [Wilson 95% lo,hi] (hits/n) -->
+<!-- v1 printed the Llama var-track upper bound as 0.80 (truncated); correct rounding 0.81 -->
+<!-- the stored-state column of v1 is omitted: memory ratios are not per-trial records -->
+
+| model | single | multi-key (not in v1) | multi-value | var-track |
+| --- | --- | --- | --- | --- |
+| Qwen2.5-7B | 1.00 [0.76,1.00] (12/12) | 1.00 [0.76,1.00] (12/12) | 1.00 [0.76,1.00] (12/12) | 1.00 [0.76,1.00] (12/12) |
+| Mistral-7B-v0.3 | 1.00 [0.76,1.00] (12/12) | 1.00 [0.76,1.00] (12/12) | 1.00 [0.76,1.00] (12/12) | 0.50 [0.25,0.75] (6/12) |
+| Llama-3.1-8B | 1.00 [0.76,1.00] (12/12) | 1.00 [0.76,1.00] (12/12) | 1.00 [0.76,1.00] (12/12) | 0.58 [0.32,0.81] (7/12) |

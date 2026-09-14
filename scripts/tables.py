@@ -15,9 +15,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
+from collections.abc import Callable, Sequence
+from functools import cache
 from pathlib import Path
+from typing import cast
 
 import _paths  # noqa: F401
 
@@ -28,8 +32,10 @@ from kvdlra.eval.records import (
     parse_cell_lines,
     parse_ppl_lines,
     parse_trial_lines,
+    read_jsonl,
     write_jsonl,
 )
+from kvdlra.eval.stats import Key, McNemar, mcnemar_exact, wilson
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MODEL_BY_TAG = {  # the exact HF ids the Week-18/19 pods ran (docs/week18-kickoff.md)
@@ -144,15 +150,313 @@ def _model(src: Path, per_trial: bool) -> str:
     return MODEL_BY_TAG[_tag(src.stem)]
 
 
+# --- build: regenerate the paper-v1 tables ------------------------------------
+#
+# Every cell is counted from per-trial records, never from a pooled `acc=` line: some
+# pods printed the same (task, ctx, arm) cell twice, and the same (model, arm, task,
+# ctx) key exists in several pods under different generators (e.g. Llama 16K vt for
+# `bugSseed-r64-h256` in both w18-g1-llama and w19-a2-llama). Selection is therefore
+# pod-scoped -- a pod is the provenance unit and identifies the model.
+#
+# The v1 memory columns (float-equivalent `ratio`, stored-bits `sbits`) are not per-trial
+# records and `sbits` is not carried in the archive's cell schema at all, so they are
+# omitted here rather than half-regenerated; each table says so in a footnote.
+
+ARCHIVE = REPO_ROOT / "results" / "paper-v1"
+DISPLAY = {"qwen": "Qwen2.5-7B", "mistral": "Mistral-7B-v0.3", "llama": "Llama-3.1-8B"}
+TASKS = ("niah_single", "niah_multikey", "niah_multivalue", "vt")
+OFFICIAL = (
+    "niah_single_1",
+    "niah_single_2",
+    "niah_single_3",
+    "niah_multikey_1",
+    "niah_multikey_2",
+    "niah_multikey_3",
+    "niah_multivalue",
+    "niah_multiquery",
+    "vt",
+)
+K16, K32 = 16384, 32768
+ALPHA = 0.05
+R64, R128 = "bugSseed-r64-h256", "bugSseed-r128-h1024-s32"
+KIVI = ("quant-2bit-kivi", "quant-4bit-kivi")
+OMIT_MEM = "the stored-state column of v1 is omitted: memory ratios are not per-trial records"
+OMIT_BITS = "the stored-bits column of v1 is omitted: memory ratios are not per-trial records"
+
+
+@cache
+def _pod(pod: str) -> tuple[TrialRecord, ...]:
+    """Every per-trial record of one pod (cached: each pod is read once per build)."""
+    return tuple(cast(TrialRecord, r) for r in read_jsonl(ARCHIVE / pod / "trials.jsonl"))
+
+
+def _keyed(pod: str, arm: str, task: str, ctx: int) -> dict[Key, int]:
+    """One cell's Bernoulli outcomes, keyed by (seed, trial) so cells can be paired."""
+    rows = [r for r in _pod(pod) if r["arm"] == arm and r["task"] == task and r["ctx"] == ctx]
+    hits = {(r["seed"], r["trial"]): r["hit"] for r in rows}
+    if not hits:
+        raise SystemExit(f"no records: {pod} {arm} {task} ctx={ctx}")
+    if len(hits) != len(rows):  # w19-fork-llama repeats needles; keying would silently drop them
+        raise SystemExit(f"duplicate (seed,trial): {pod} {arm} {task} ctx={ctx}")
+    return hits
+
+
+def _count(pod: str, arm: str, task: str, ctx: int) -> tuple[int, int]:
+    d = _keyed(pod, arm, task, ctx)
+    return sum(d.values()), len(d)
+
+
+def cell(pod: str, arm: str, task: str, ctx: int) -> str:
+    """`acc [Wilson 95% lo,hi] (hits/n)`."""
+    h, n = _count(pod, arm, task, ctx)
+    lo, hi = wilson(h, n)
+    return f"{h / n:.2f} [{lo:.2f},{hi:.2f}] ({h}/{n})"
+
+
+def acc(pod: str, arm: str, task: str, ctx: int) -> str:
+    """`acc (hits/n)` -- the tables v1 printed without intervals."""
+    h, n = _count(pod, arm, task, ctx)
+    return f"{h / n:.2f} ({h}/{n})"
+
+
+def paired(pod_a: str, arm_a: str, pod_b: str, arm_b: str, task: str, ctx: int) -> McNemar:
+    """Exact paired McNemar over the (seed, trial) keys the two arms share."""
+    m = mcnemar_exact(_keyed(pod_a, arm_a, task, ctx), _keyed(pod_b, arm_b, task, ctx))
+    if m is None:
+        raise SystemExit(f"no shared needles: {arm_a} vs {arm_b} {task} ctx={ctx}")
+    return m
+
+
+def _favors_a(m: McNemar) -> bool:
+    return m["a_favored"] > m["b_favored"] and m["p_value"] < ALPHA
+
+
+def _tex(s: str) -> str:
+    return re.sub(r"\*\*(.+?)\*\*", r"\\textbf{\1}", s.replace("_", r"\_"))
+
+
+def _table(
+    n: int, title: str, notes: Sequence[str], header: Sequence[str], rows: Sequence[Sequence[str]]
+) -> tuple[str, str]:
+    """One table as (markdown, latex). The markdown is the contract the golden pins;
+    the .tex mirrors it. No blank line closes a file: the next table's `##` heading
+    follows the last row directly, so `cat table*.md` is valid markdown."""
+    md = [f"## Table {n} — {title}"]
+    md += [f"<!-- {x} -->" for x in notes]
+    md += ["", "| " + " | ".join(header) + " |", "|" + " --- |" * len(header)]
+    md += ["| " + " | ".join(r) + " |" for r in rows]
+    tex = [f"% Table {n} -- {title}"] + [f"% {x}" for x in notes]
+    tex += [
+        "\\begin{tabular}{" + "l" + "c" * (len(header) - 1) + "}",
+        "\\toprule",
+        " & ".join(_tex(h) for h in header) + " \\\\",
+        "\\midrule",
+    ]
+    tex += [" & ".join(_tex(c) for c in r) + " \\\\" for r in rows]
+    tex += ["\\bottomrule", "\\end{tabular}"]
+    return "\n".join(md) + "\n", "\n".join(tex) + "\n"
+
+
+def _xmodel(n: int, ctx: int, label: str, pdf_n: int, mk: str, trunc: str) -> tuple[str, str]:
+    """Tables 1 and 2: the same three families under `bugSseed-r64-h256`, 16K and 32K."""
+    notes = [
+        f"paper-v1: paper/main.tex @ee8c0ab, table `{label}` (renders as Table {pdf_n} in the PDF)",
+        "source: results/paper-v1/w18-g1-{qwen,mistral,llama}/trials.jsonl"
+        " (per-trial records only)",
+        "cell: acc [Wilson 95% lo,hi] (hits/n)",
+        trunc,
+        OMIT_MEM,
+    ]
+    rows = [
+        [DISPLAY[t], *(cell(f"w18-g1-{t}", R64, task, ctx) for task in TASKS)]
+        for t in ("qwen", "mistral", "llama")
+    ]
+    title = f"cross-model {ctx // 1024}K retrieval, config `{R64}`"
+    return _table(n, title, notes, ["model", "single", mk, "multi-value", "var-track"], rows)
+
+
+def table_1() -> tuple[str, str]:
+    return _xmodel(
+        1,
+        K16,
+        "tab:xmodel",
+        2,
+        "multi-key (not in v1)",
+        "v1 printed the Llama var-track upper bound as 0.80 (truncated); correct rounding 0.81",
+    )
+
+
+def table_2() -> tuple[str, str]:
+    return _xmodel(
+        2,
+        K32,
+        "tab:xmodel32",
+        3,
+        "multi-key",
+        "v1 printed the Llama var-track upper bound as 0.98 (truncated); correct rounding 0.99",
+    )
+
+
+def table_3() -> tuple[str, str]:
+    """32K variable-tracking on Llama: the r128 config against the three baselines it
+    was contrasted with, plus the r/n=0.25 control column v1 discussed only in prose."""
+    g4, a1 = "w18-g4-llama", "w19-a1-llama"
+    notes = [
+        "paper-v1: paper/main.tex @ee8c0ab, the 32K Llama variable-tracking table (its LaTeX"
+        " label carries a word CLAUDE.md bans from new files, so it is not quoted here; it"
+        " renders as Table 4 in the PDF)",
+        f"source: results/paper-v1/{g4}/trials.jsonl (n=16 arms, and the n=12 r256 control),"
+        f" results/paper-v1/{a1}/trials.jsonl (quant-4bit-kivi, n=12)",
+        "cell: acc [Wilson 95% lo,hi] (hits/n); p = exact paired McNemar vs"
+        f" {R128} on the shared (seed,trial) keys, 2 significant figures",
+        f"discordant = pairs won by {R128} / pairs won by the row's arm",
+        "v1 printed no McNemar p for the 4-bit row; it is computed here on the 12 shared keys",
+        "the stored-state and verdict columns of v1 are omitted: neither is a per-trial statistic",
+    ]
+    rows = [[R128, cell(g4, R128, "vt", K32), "---", "---", "---"]]
+    for label, pod, arm in (
+        ("think-c0.5", g4, "think-c0.5"),
+        ("palu-r0.5", g4, "palu-r0.5"),
+        ("quant-4bit-kivi", a1, "quant-4bit-kivi"),
+        ("bugSseed-r256-h1024 (not in v1)", g4, "bugSseed-r256-h1024"),
+    ):
+        m = paired(g4, R128, pod, arm, "vt", K32)
+        rows.append(
+            [
+                label,
+                cell(pod, arm, "vt", K32),
+                f"{m['p_value']:.1e}",
+                f"{m['a_favored']}/{m['b_favored']}",
+                str(m["n_paired"]),
+            ]
+        )
+    return _table(
+        3,
+        f"32K variable-tracking on Llama-3.1-8B, config `{R128}` vs baselines",
+        notes,
+        ["config", "var-track", "McNemar p", "discordant", "n paired"],
+        rows,
+    )
+
+
+def table_6() -> tuple[str, str]:
+    """Eviction (`ea-k0.1`) on the model x ctx cells v1 printed."""
+    notes = [
+        "paper-v1: paper/main.tex @ee8c0ab, table `tab:evict` (renders as Table 7 in the PDF)",
+        "source: results/paper-v1/w18-g3-{llama,qwen,mistral}/trials.jsonl"
+        " (per-trial records only)",
+        "cell: acc [Wilson 95% lo,hi] (hits/n)",
+        "rows are the model x ctx cells v1 showed; the pods also hold Qwen/Mistral 32K,"
+        " which v1 did not print",
+        OMIT_MEM,
+    ]
+    rows = [
+        [DISPLAY[t], str(ctx), *(cell(f"w18-g3-{t}", "ea-k0.1", task, ctx) for task in TASKS)]
+        for t, ctx in (("llama", K16), ("llama", K32), ("qwen", K16), ("mistral", K16))
+    ]
+    return _table(
+        6,
+        "eviction at 0.100x stored state, arm `ea-k0.1`",
+        notes,
+        ["model", "ctx", "single", "multi-key", "multi-value", "var-track"],
+        rows,
+    )
+
+
+def table_7() -> tuple[str, str]:
+    """The r64 config against the 2-bit and 4-bit KIVI arms at matched stored bytes."""
+    notes = [
+        "paper-v1: paper/main.tex @ee8c0ab, table `tab:fairquant` (renders as Table 8 in the PDF)",
+        "source: results/paper-v1/w18-g1-{llama,mistral,qwen}/trials.jsonl (r64 rows),"
+        " results/paper-v1/w19-a1-{llama,mistral,qwen}/trials.jsonl (KIVI rows)",
+        "cell: acc (hits/n)",
+        "bold = exact paired McNemar p<0.05 in the r64 arm's favour against a KIVI arm of the"
+        " same model x ctx x task, paired on (seed,trial); no cell is significant in a KIVI"
+        " arm's favour",
+        OMIT_BITS,
+    ]
+    rows: list[list[str]] = []
+    for t in ("llama", "mistral", "qwen"):
+        g1, a1 = f"w18-g1-{t}", f"w19-a1-{t}"
+        for ctx in (K16, K32):
+            base: list[str] = []
+            for task in TASKS:
+                c = acc(g1, R64, task, ctx)
+                won = any(_favors_a(paired(g1, R64, a1, q, task, ctx)) for q in KIVI)
+                base.append(f"**{c}**" if won else c)
+            rows.append([DISPLAY[t], str(ctx), R64, *base])
+            rows += [
+                [DISPLAY[t], str(ctx), q, *(acc(a1, q, task, ctx) for task in TASKS)] for q in KIVI
+            ]
+    return _table(
+        7,
+        "the 2-bit/4-bit KIVI baseline at matched stored bytes",
+        notes,
+        ["model", "ctx", "arm", "single", "multi-key", "multi-value", "var-track"],
+        rows,
+    )
+
+
+def table_8() -> tuple[str, str]:
+    """Official NVIDIA RULER at 16K on Llama: nine tasks, eight arms, 12 records each."""
+    a2, q4 = "w19-a2-llama", "w19-q4off-llama"
+    notes = [
+        "paper-v1: paper/main.tex @ee8c0ab, table `tab:official` (renders as Table 9 in the PDF)",
+        f"source: results/paper-v1/{a2}/trials.jsonl (7 arms),"
+        f" results/paper-v1/{q4}/trials.jsonl (the q4 cell arm)",
+        "cell: acc (hits/n); mean = mean of the nine printed 2-dp accuracies, as in v1"
+        f" (pooling the records instead gives 0.80 for {R64})",
+        OMIT_BITS,
+    ]
+    rows: list[list[str]] = []
+    for arm, pod in (
+        ("full", a2),
+        ("think-c0.5", a2),
+        ("palu-r0.5", a2),
+        ("quant-4bit-kivi", a2),
+        ("quant-2bit-kivi", a2),
+        (R64, a2),
+        (f"{R64}-q4", q4),
+        ("ea-k0.1", a2),
+    ):
+        counts = [_count(pod, arm, task, K16) for task in OFFICIAL]
+        mean = sum(round(h / n, 2) for h, n in counts) / len(counts)
+        rows.append([arm, *(f"{h / n:.2f} ({h}/{n})" for h, n in counts), f"{mean:.2f}"])
+    head = ["arm", "s1", "s2", "s3", "mk1", "mk2", "mk3", "mv", "mq", "vt", "mean"]
+    return _table(8, "official NVIDIA RULER at 16K on Llama-3.1-8B", notes, head, rows)
+
+
+TABLES: dict[int, Callable[[], tuple[str, str]]] = {
+    1: table_1,
+    2: table_2,
+    3: table_3,
+    6: table_6,
+    7: table_7,
+    8: table_8,
+}
+
+
+def build(out: Path) -> None:
+    out.mkdir(parents=True, exist_ok=True)
+    for n, fn in TABLES.items():
+        md, tex = fn()
+        (out / f"table{n}.md").write_text(md)
+        (out / f"table{n}.tex").write_text(tex)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("convert-v1", help="archive the paper-v1 line files as JSONL")
     c.add_argument("--out", default=None, help="default: <repo_root>/results/paper-v1")
+    b = sub.add_parser("build", help="regenerate the paper-v1 tables from results/paper-v1")
+    b.add_argument("--out", default="docs/paper/tables")
     a = ap.parse_args()
     if a.cmd == "convert-v1":
         out = Path(a.out) if a.out else REPO_ROOT / "results" / "paper-v1"
         convert_v1(out)
+    else:
+        build(Path(a.out))
 
 
 if __name__ == "__main__":

@@ -25,7 +25,7 @@ export PATH="$HOME/.local/bin:$PATH"
 H="results/$POD"; mkdir -p "$H"; touch "$H/pods.txt" "$H/done.txt"
 echo $$ > "$H/watchdog.pid"  # for caffeinate -w and for teardown checks
 FLOOR="${FLOOR:-6.0}"; BUDGET_ITERS="${BUDGET_ITERS:-600}"
-ROWS='^\[(niah|vt|persist|latency)[^]]*\] +[^ ].* (acc=|SKIP|bytes=|ms/tok=)|^ +[^ ].* \[T=[0-9]+\] (ppl=|OOM|error|mem alloc)|^\[pplw|^\[diag|^\[trial\]|^===(ALL_DONE|RUN_FAILED|CLONE_FAILED|CHECKOUT_FAILED|DEPS_FAILED|MODEL_FAILED|POD_|RUN_SHA|ENV_|QUANTO|HQQ|MODEL_)|^run_sha=|^device=|^torch=|^transformers=|NVIDIA'
+ROWS='^\[(niah|vt|persist|latency)[^]]*\] +[^ ].* (acc=|SKIP|bytes=|ms/tok=)|^ +[^ ].* \[T=[0-9]+\] (ppl=|OOM|error|mem alloc)|^\[pplw|^\[diag|^\[trial\]|^\[error\]|^===(ALL_DONE|RUN_FAILED|CLONE_FAILED|CHECKOUT_FAILED|DEPS_FAILED|MODEL_FAILED|POD_|RUN_SHA|ENV_|QUANTO|HQQ|MODEL_)|^run_sha=|^device=|^torch=|^transformers=|NVIDIA'
 # boot.sh's pre-run failures. The instance is destroyed on any of them exactly as on
 # ALL_DONE -- a pod that could not clone, check out, install, load the model or import
 # its quant backend has nothing left to do but bill. `pod.py harvest` reads the same

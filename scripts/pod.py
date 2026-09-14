@@ -639,7 +639,7 @@ def _env_fails(d: Path) -> list[str]:
     return fails
 
 
-def check(d: Path) -> int:
+def check(d: Path, log: Path | None = None) -> int:
     m = _read_manifest(d)
     if m is None:
         print(f"CHECK FAIL manifest: {d / 'manifest.json'} does not exist")
@@ -678,13 +678,21 @@ def check(d: Path) -> int:
     # an `[error]` log line and no record at all, so the excess over the trial rows is the
     # non-trial count, not a disagreement -- name it instead of reporting a mismatch.
     # FEWER than the rows is a real one: the manifest cannot have counted what it has not
-    # seen. (There is no `[error]` line count to cross-check against here: the only log a
-    # results directory keeps is the watchdog's `<label>.log`, whose row filter drops
-    # `[error]` lines, so counting them there would read 0 for every pod.)
+    # seen. Since R39 the watchdog's row filter keeps `[error]` lines, so when a harvested
+    # log is on hand (`--log`), its `[error]` line count is cross-checked against
+    # `m_err - n_err`; with no log passed, there is nothing to check it against, and the
+    # cross-check is skipped.
     if m_err > n_err:
         fails.append(
             f"errors: {n_err} trial error(s) + {m_err - n_err} perplexity/latency error(s)"
         )
+        if log and log.is_file():
+            lines = log.read_text().splitlines()
+            n_log_err = sum(1 for ln in lines if ln.startswith("[error]"))
+            if n_log_err != m_err - n_err:
+                fails.append(
+                    f"errors: {log} has {n_log_err} [error] line(s), wants {m_err - n_err}"
+                )
     elif m_err < n_err:
         fails.append(
             f"errors: manifest/rows mismatch -- the manifest counts {m_err},"
@@ -727,9 +735,10 @@ def main() -> int:
     )
     c = sub.add_parser("check", help="verify a results directory")
     c.add_argument("dir")
+    c.add_argument("--log", default=None, help="cross-check its [error] lines vs manifest.errors")
     a = ap.parse_args()
     if a.cmd == "check":
-        return check(Path(a.dir))
+        return check(Path(a.dir), Path(a.log) if a.log else None)
     name = pod_name(a.pod)
     out = Path(a.out) if getattr(a, "out", None) else REPO_ROOT / "results" / name
     if a.cmd == "run":

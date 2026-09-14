@@ -772,12 +772,18 @@ path against this ledger:
 
 | how the `D` path is covered | count |
 |---|---|
-| a row that names the exact path | 126 |
-| a row that names the file (stem) in prose or a table | 35 |
-| the `figures/` group row (R22: "the other 86 tracked files under `figures/`") | 82 |
-| the `results/` group rows (R18: 109 byte-archived, 91 cited by nothing, 11 archived-then-deleted) | 73 |
-| the `docs/` group row (R23: "Deleted, 57 files: `docs/week*.md` (49), `docs/notes/` (5), `docs/board/` (2), `docs/week10_report/` (1), ...") | 36 |
+| a row that names the exact path | 112 |
+| a row that names the file (stem) in prose or a table | 6 |
+| the `figures/` group row (R22: "the other 86 tracked files under `figures/`") | 86 |
+| the `results/` group rows (R18: 109 byte-archived, 91 cited by nothing, 11 archived-then-deleted) | 91 |
+| the `docs/` group row (R23: "Deleted, 57 files: `docs/week*.md` (49), `docs/notes/` (5), `docs/board/` (2), `docs/week10_report/` (1), ...") | 57 |
 | **not covered** | **0** |
+
+Computed mechanically: a throwaway script pulls every `D` path from the
+complete listing below and classifies each by first match — a directory-group
+row first (`figures/`, `docs/`, `results/`, each a blanket per-prefix ruling
+that accounts for every path under it), then a row naming the exact path, then
+a row naming the file's stem or a brace/glob sub-pattern elsewhere in this file.
 
 The four that had no row until this task --- `scripts/perplexity_sweep.py`,
 `scripts/w16_storage.py`, `scripts/w19_official_ruler.py`,

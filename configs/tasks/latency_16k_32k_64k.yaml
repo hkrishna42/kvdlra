@@ -1,0 +1,14 @@
+name: latency_16k_32k_64k
+generator: latency
+ctx: 16384
+ctxs: [16384, 32768, 65536]
+doc: >-
+  Measured decode cost at 16K / 32K / 64K: after a chunked prefill, one token per forward at
+  true positions (the protocol every arm can run), CUDA-synchronized per step, 64 timed steps
+  of which the first 8 are discarded -- the p50 is the median of the remaining 56, and a spike
+  is a step above twice it (an absorb-event rebuild, or a per-step dequantize). Peak VRAM is
+  read during decode with the model weights subtracted, so `kv_peak_gb` is the KV-attributable
+  contrast rather than process VRAM. One row per (arm, ctx, batch); no trials, no seeds.
+batch_sizes: [1]
+n_steps: 64
+warmup: 8

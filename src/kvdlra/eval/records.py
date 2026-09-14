@@ -123,6 +123,29 @@ class PplRecord(TypedDict):
     source: str
 
 
+class LatencyRecord(TypedDict):
+    """One measured decode point: (arm, ctx, batch) -> steady-state cost and peak VRAM.
+
+    ``ms_per_token_p50`` is the median over the timed steps left after the warm-up;
+    ``spikes`` counts the steps above twice that median (the absorb-event rebuild and
+    KIVI's per-step dequantize show up there). ``kv_peak_gb`` has the model weights
+    subtracted, so it is the KV-attributable contrast, not process VRAM.
+    """
+
+    model: str
+    arm: str
+    ctx: int
+    batch: int
+    ms_per_token_p50: float
+    ms_mean: float
+    ms_max: float
+    spikes: int
+    resident_gb: float
+    peak_gb: float
+    kv_peak_gb: float
+    source: str
+
+
 def parse_trial_lines(text: str, model: str, source: str) -> list[TrialRecord]:
     """Every ``[trial]`` line in ``text`` as a record citing ``<source>:<lineno>``."""
     out: list[TrialRecord] = []
@@ -302,7 +325,11 @@ def parse_diag_lines(text: str, model: str, source: str) -> list[dict[str, objec
 
 def write_jsonl(
     path: Path,
-    rows: list[TrialRecord] | list[CellRecord] | list[PplRecord] | list[PplwRecord],
+    rows: list[TrialRecord]
+    | list[CellRecord]
+    | list[PplRecord]
+    | list[PplwRecord]
+    | list[LatencyRecord],
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as f:

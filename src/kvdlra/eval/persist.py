@@ -1,7 +1,7 @@
 """The realized systems win: persisted-cache cold start, measured.
 
-The byte ratio of the stored state is measured by ``storage.py`` (cold-load 0.150x /
-0.139x at 16K/32K). What turns it into a deployment existence proof is the *wall-clock*
+The byte ratio of the stored state is what ``kvdlra.accounting`` bills (cold-load 0.150x
+/ 0.139x at 16K/32K). What turns it into a deployment existence proof is the *wall-clock*
 of bringing a persisted cache back to attend-ready: serialize -> reload from disk ->
 host-to-device -> reconstruct (the streaming cache: ``_ensure_mid_cache``, the
 reconstruct-then-attend middle; the quant baseline: one full dequantize; full KV:

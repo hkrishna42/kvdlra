@@ -694,3 +694,32 @@ known exceptions, listed here so it is not mistaken for a clean pass.
 | after Task 8 (start of Task 9) | 26,681 |
 | after Task 9a | 16,465 |
 | **delta, Task 9** | **-10,216** |
+
+## Task 10 --- the two orphaned `src/` modules, resolved (R31)
+
+Task 9 flagged `eval/latency.py` and `eval/storage.py` as having no importer at
+all and handed the decision on. R31 splits them: the decode bench gets a caller,
+the storage bench goes.
+
+| path | LOC | resolution |
+|---|---|---|
+| `src/kvdlra/eval/latency.py` | 127 | **wired**, not deleted --- `generator: latency` in `kvdlra.eval.runner.run_pod`, driven by `configs/tasks/latency_16k_32k_64k.yaml` + `configs/pods/w19_sysfix_latency.yaml`; rows land in `results/<pod>/latency.jsonl` and `scripts/pod.py check` requires the full (arm, ctx, batch) grid |
+| `src/kvdlra/eval/storage.py` | 145 | **deleted** |
+
+Why `storage.py` goes: its headline output is the reconstruction-workspace ratio
+(`0.982x` at 16K, `0.991x` at 32K), and a workspace that is ~1.0x full KV is the
+identity the code audit flagged --- reconstruct-then-attend materializes the
+full-length middle, so the measurement says only that a full-length tensor is
+full length. The residency question it was built to answer is now answered by a
+*measured contrast* instead: the decode-time KV peak per arm, which is
+`latency.py`'s `kv_peak_gb` (1.6x full KV --- the number the paper reports, and
+the number the kernel lane has to move). Nothing imports it, no task config
+names it, no test covers it. `paper/main.tex:1118` cites its numbers; the file
+is preserved byte-for-byte at the tag `paper-v1-archive` (ee8c0ab), which is
+what the "a citable number must stay regenerable" rule asks for once the number
+is superseded rather than re-run.
+
+With this, the reachability sweep has **no** exceptions: every `.py` under
+`src/` and `scripts/` is in the static import closure of the four entrypoints,
+`tests/test_*.py`, and what `scripts/pod/*.sh` invokes --- pinned by
+`tests/test_reachability.py`.

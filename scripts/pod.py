@@ -5,11 +5,13 @@ One directory per pod, `results/<pod>/`, holding `manifest.json` (git SHA, confi
 model, library versions, GPU, wall clock, command line), `env.txt` (the pinned set as
 `name==version`), and the records a harvest parsed out of the log: `trials.jsonl`,
 `ppl.jsonl` (aggregate perplexity), `pplw.jsonl` (the per-window NLLs behind it -- a
-different schema, hence a different file), `diag.jsonl`. `check` is the gate every citable
-number passes: it re-derives the config hash from `configs/pods/<pod>.yaml`, resolves the
-SHA, enforces the pre-registration commit order, and requires EVERY cell the config calls
-for -- arm x generator x sub-task x ctx -- to hold exactly `n_trials x len(seeds)` records,
-plus one perplexity record per (arm, ctx) for every `ppl` task. A trial that raised is recorded
+different schema, hence a different file), `latency.jsonl` (measured decode cost, one row
+per arm x ctx x batch), `diag.jsonl`. `check` is the gate every citable number passes: it
+re-derives the config hash from `configs/pods/<pod>.yaml`, resolves the SHA, enforces the
+pre-registration commit order, and requires EVERY cell the config calls for -- arm x
+generator x sub-task x ctx -- to hold exactly `n_trials x len(seeds)` records, plus one
+perplexity record per (arm, ctx) for every `ppl` task and one decode record per (arm, ctx,
+batch) for every `latency` task. A trial that raised is recorded
 with `error` and still counted, so a cell can never silently shrink; a cell with no records
 at all is the loudest failure there is, which is what makes a pod that produced nothing
 impossible to pass off as a clean run. And because recording rather than skipping keeps every
@@ -500,14 +502,15 @@ def _expected_cells(pod: PodCfg) -> dict[tuple[str, str, str, int], tuple[int, s
     it: the generator sweeps the grid across trial indices (`depths[trial % len]`), so
     pinning depths changes which needle each trial places, not how many trials run.
 
-    `ppl` tasks contribute no cells: a perplexity sweep is one number per (arm, ctx),
-    not a set of Bernoulli trials, and it is checked through `ppl.jsonl` rather than here.
+    `ppl` and `latency` tasks contribute no cells: a perplexity sweep is one number per
+    (arm, ctx) and a decode measurement one row per (arm, ctx, batch), not sets of
+    Bernoulli trials -- each is checked through its own file instead of here.
     """
     arms = [load_arm(a) for a in pod.arms]
     expect = {}
     for tname in pod.tasks:
         t = load_task(tname)
-        if t.generator == "ppl":
+        if t.generator in ("ppl", "latency"):
             continue
         for sub in t.tasks:
             for arm in arms:
@@ -556,6 +559,31 @@ def _ppl_fails(pod: PodCfg, d: Path) -> list[str]:
     arms = [load_arm(a) for a in pod.arms]
     want = {(a.legacy_name or a.name, c) for a in arms for c in ctxs}
     return [f"ppl: {arm} ctx={ctx} has no perplexity record" for arm, ctx in sorted(want - got)]
+
+
+def _latency_fails(pod: PodCfg, d: Path) -> list[str]:
+    """Every `latency` task holds one `LatencyRecord` per (arm, ctx, batch).
+
+    The decode axis writes one row per point and no trial at all, so without this rule a
+    pod whose 64K points OOMed -- or whose whole task never ran -- would show an empty
+    `latency.jsonl` and nothing to fail on, exactly the hole `_ppl_fails` closes for the
+    perplexity axis.
+    """
+    p = d / "latency.jsonl"
+    got = {(r["arm"], r["ctx"], r["batch"]) for r in read_jsonl(p)} if p.is_file() else set()
+    tasks = [t for t in (load_task(x) for x in pod.tasks) if t.generator == "latency"]
+    arms = [load_arm(a) for a in pod.arms]
+    want = {
+        (a.legacy_name or a.name, c, b)
+        for t in tasks
+        for c in (t.ctxs or [t.ctx])
+        for b in t.batch_sizes
+        for a in arms
+    }
+    return [
+        f"latency: {arm} ctx={ctx} batch={batch} has no decode record"
+        for arm, ctx, batch in sorted(want - got)
+    ]
 
 
 def _env_fails(d: Path) -> list[str]:
@@ -618,6 +646,7 @@ def check(d: Path) -> int:
     if trials or not m.get("dry_run"):  # a dry run has no records to count
         fails += _cell_fails(pod, trials)
         fails += _ppl_fails(pod, d)
+        fails += _latency_fails(pod, d)
     fails += _env_fails(d)
 
     for f in fails:

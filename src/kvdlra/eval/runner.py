@@ -11,10 +11,10 @@ shrank a cell's n; `scripts/pod.py check` now requires every configured cell to 
 exactly ``n_trials x len(seeds)`` records, so a dropped trial would fail the run
 instead of quietly weakening it.
 
-The ``[trial]``, ``[<task> ctx<T>]``, ``[pplw]`` and ``ppl=`` lines are printed as
-well as written: they are the pod's stdout contract, and `pod.py harvest` can rebuild
-the same records from a `vastai logs` capture when the results directory never made it
-off the instance.
+The ``[trial]``, ``[<task> ctx<T>]``, ``[pplw]``, ``[latency ctx<T>]`` and ``ppl=``
+lines are printed as well as written: they are the pod's stdout contract, and `pod.py
+harvest` can rebuild the same records from a `vastai logs` capture when the results
+directory never made it off the instance.
 """
 
 from __future__ import annotations
@@ -27,13 +27,21 @@ from typing import Any
 import torch
 
 from kvdlra.baselines.compat import install_kvpress_prefill_compat
-from kvdlra.eval import frontier, longbench, official_ruler, ruler
+from kvdlra.eval import frontier, latency, longbench, official_ruler, ruler
 from kvdlra.eval.config import PodCfg, TaskCfg, load_arm, load_task
 from kvdlra.eval.data import load_corpus_ids, load_corpus_sentences
-from kvdlra.eval.records import PplRecord, PplwRecord, TrialRecord, write_jsonl
+from kvdlra.eval.records import (
+    LatencyRecord,
+    PplRecord,
+    PplwRecord,
+    TrialRecord,
+    write_jsonl,
+)
 
 # Which module answers for a task config's `generator:`. Looked up as a module, not as
-# a function, so the attribute resolves at call time (a test can substitute one).
+# a function, so the attribute resolves at call time (a test can substitute one). The
+# `ppl` and `latency` axes are not in the map: neither runs per-trial, and each has its
+# own loop in `run_pod`.
 GENERATORS = {
     "inhouse": ruler,
     "official_ruler": official_ruler,
@@ -75,8 +83,14 @@ def run_pod(pod: PodCfg, out: Path, model: Any, dry_model: bool = False) -> None
     n_err = 0
     ppl: list[PplRecord] = []
     pplw: list[PplwRecord] = []
+    lat: list[LatencyRecord] = []
     for tname in pod.tasks:
         task = load_task(tname)
+        if task.generator == "latency":
+            # Its own loop: it sweeps context lengths within one task, so the arms are
+            # rebuilt per context rather than once per task.
+            n_err += _latency_rows(pod, task, mdl, lat, device=device)
+            continue
         arms = [_build(a, mdl, task.ctx) for a in pod.arms]
         if task.generator == "ppl":
             rows = _ppl_rows(arms, mdl, tok, task, device=device, n=n, h_kv=h_kv)
@@ -95,6 +109,9 @@ def run_pod(pod: PodCfg, out: Path, model: Any, dry_model: bool = False) -> None
     if pplw:
         write_jsonl(out / "pplw.jsonl", pplw)
         records["pplw.jsonl"] = len(pplw)
+    if lat:
+        write_jsonl(out / "latency.jsonl", lat)
+        records["latency.jsonl"] = len(lat)
     _finish(out, records, n_err, time.perf_counter() - t0)
 
 
@@ -112,6 +129,61 @@ def _log_ppl_errors(rows: list[dict[str, Any]]) -> int:
             flush=True,
         )
     return len(rows)
+
+
+def _latency_rows(
+    pod: PodCfg,
+    task: TaskCfg,
+    model: Any,
+    out: list[LatencyRecord],
+    *,
+    device: str,
+) -> int:
+    """One measured decode point per (arm, ctx, batch), appended to ``out``.
+
+    Not a set of Bernoulli trials and not a perplexity sweep: one row per point, so it
+    has neither a cell nor a ``ppl`` record to hang a failure on. A point that raises is
+    an ``[error] axis=latency`` line and a counted error, exactly as a failed perplexity
+    arm is -- otherwise a pod whose 64K points all OOMed would land a short
+    ``latency.jsonl`` and call itself clean. `scripts/pod.py check` requires the full
+    (arm, ctx, batch) grid, which is what turns the missing row into a failure.
+    """
+    errors = 0
+    for ctx in task.ctxs or [task.ctx]:
+        for name in pod.arms:
+            arm = _build(name, model, ctx)
+            for batch in task.batch_sizes:
+                try:
+                    (row,) = latency.run_latency(
+                        model, [arm], ctx, device, task.chunk, task.n_steps, task.warmup, batch
+                    )
+                except Exception as exc:
+                    print(
+                        f"[error] axis=latency arm={arm['name']} ctx={ctx}"
+                        f" error={type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
+                    errors += 1
+                    if device.startswith("cuda"):
+                        torch.cuda.empty_cache()
+                    continue
+                out.append(
+                    {
+                        "model": pod.model,
+                        "arm": arm["name"],
+                        "ctx": ctx,
+                        "batch": batch,
+                        "ms_per_token_p50": float(row["ms_per_tok_p50"]),
+                        "ms_mean": float(row["ms_per_tok_mean"]),
+                        "ms_max": float(row["ms_per_tok_max"]),
+                        "spikes": int(row["spikes_gt_2x"]),
+                        "resident_gb": float(row["resident_gb"]),
+                        "peak_gb": float(row["peak_gb"]),
+                        "kv_peak_gb": float(row["kv_peak_gb"]),
+                        "source": f"{pod.name}:run",
+                    }
+                )
+    return errors
 
 
 def _dims(cfg: Any) -> tuple[int, int]:

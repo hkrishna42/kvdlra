@@ -42,7 +42,7 @@ class TaskCfg:
     """One evaluation protocol at one context length."""
 
     name: str
-    generator: str  # inhouse | official_ruler | longbench | ppl
+    generator: str  # inhouse | official_ruler | longbench | ppl | latency
     ctx: int
     doc: str = ""
     tasks: list[str] = field(default_factory=list)
@@ -53,6 +53,14 @@ class TaskCfg:
     chunk: int = 4096
     window: int = 512
     n_samples: int = 4
+    # `latency` only. That axis is one measurement per (arm, context, batch) rather than
+    # a set of trials, and it sweeps context lengths WITHIN one task -- each one rebuilds
+    # the arms, because a cache arm's budgets resolve against the context length. `ctx`
+    # stays the scalar every other generator reads; `ctxs` is the sweep when it is set.
+    ctxs: list[int] | None = None
+    batch_sizes: list[int] = field(default_factory=lambda: [1])
+    n_steps: int = 64  # timed decode forwards per point
+    warmup: int = 8  # of which the first this many are discarded before the p50
 
 
 @dataclass

@@ -1,4 +1,8 @@
 PY ?= .venv/bin/python
+# torch's C++ extension loader shells out to the `ninja` EXECUTABLE, and `$(PY) -m pytest`
+# does not put the venv's bin/ on PATH -- without this the quant tests fail to JIT (8 of
+# them on a clean clone: "Ninja is required to load C++ extensions").
+export PATH := $(dir $(abspath $(PY))):$(PATH)
 
 .PHONY: test tables env figures check clean
 test:

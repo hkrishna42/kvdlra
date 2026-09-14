@@ -88,5 +88,9 @@ emit() {
 export -f emit
 
 # Hand off to the committed, SHA-pinned entrypoint. Every knob is in the pod YAML.
-python scripts/pod.py run --pod "$POD" 2>&1
+# ALL_DONE is what the watchdog destroys on, so it must NOT be printed after a failed
+# run -- an unconditional echo turns a crash into a clean-looking pod. RUN_FAILED is
+# the same signal for the watchdog (destroy: no idle billing) and a visible status in
+# the harvested manifest.
+python scripts/pod.py run --pod "$POD" 2>&1 || { echo "===RUN_FAILED_${POD}_${RUN_SHA}==="; exit 1; }
 echo "===ALL_DONE_${POD}_${RUN_SHA}==="

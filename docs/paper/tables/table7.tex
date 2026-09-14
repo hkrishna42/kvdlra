@@ -1,30 +1,31 @@
 % Table 7 -- the 2-bit/4-bit KIVI baseline at matched stored bytes
 % paper-v1: paper/main.tex @ee8c0ab, table `tab:fairquant` (renders as Table 8 in the PDF)
-% source: results/paper-v1/w18-g1-{llama,mistral,qwen}/trials.jsonl (r64 rows), results/paper-v1/w19-a1-{llama,mistral,qwen}/trials.jsonl (KIVI rows)
+% source: results/paper-v1/w18-g1-{llama,mistral,qwen}/trials.jsonl (r64 rows), results/paper-v1/w19-a1-{llama,mistral,qwen}/trials.jsonl (KIVI rows); stored bits from results/paper-v1/w18-{llama,mistral,qwen}/cells.jsonl (r64) and each w19-a1 pod's own cells.jsonl (KIVI)
 % cell: acc (hits/n)
 % bold = exact paired McNemar p<0.05 in the r64 arm's favour against a KIVI arm of the same model x ctx x task, paired on (seed,trial); no cell is significant in a KIVI arm's favour
-% the stored-bits column of v1 is omitted: memory ratios are not per-trial records
-\begin{tabular}{lcccccc}
+% stored = the arm's fp32-at-rest stored bits (`sbits=`), the convention v1's caption states for this table
+% a memory value is the mean of the arm's archived cell rows, which agree to within one 0.001 print unit (stored state is a property of the run, not of a needle)
+\begin{tabular}{lccccccc}
 \toprule
-model & ctx & arm & single & multi-key & multi-value & var-track \\
+model & ctx & arm & stored & single & multi-key & multi-value & var-track \\
 \midrule
-Llama-3.1-8B & 16384 & bugSseed-r64-h256 & 1.00 (12/12) & 1.00 (12/12) & \textbf{1.00 (12/12)} & 0.58 (7/12) \\
-Llama-3.1-8B & 16384 & quant-2bit-kivi & 1.00 (12/12) & 0.67 (8/12) & 0.42 (5/12) & 0.67 (8/12) \\
-Llama-3.1-8B & 16384 & quant-4bit-kivi & 1.00 (12/12) & 1.00 (12/12) & 1.00 (12/12) & 1.00 (12/12) \\
-Llama-3.1-8B & 32768 & bugSseed-r64-h256 & 1.00 (12/12) & 1.00 (12/12) & 1.00 (12/12) & 0.92 (11/12) \\
-Llama-3.1-8B & 32768 & quant-2bit-kivi & 1.00 (12/12) & 0.83 (10/12) & 0.92 (11/12) & 0.92 (11/12) \\
-Llama-3.1-8B & 32768 & quant-4bit-kivi & 1.00 (12/12) & 1.00 (12/12) & 1.00 (12/12) & 1.00 (12/12) \\
-Mistral-7B-v0.3 & 16384 & bugSseed-r64-h256 & 1.00 (12/12) & 1.00 (12/12) & \textbf{1.00 (12/12)} & 0.50 (6/12) \\
-Mistral-7B-v0.3 & 16384 & quant-2bit-kivi & 0.92 (11/12) & 0.58 (7/12) & 0.50 (6/12) & 0.33 (4/12) \\
-Mistral-7B-v0.3 & 16384 & quant-4bit-kivi & 1.00 (12/12) & 1.00 (12/12) & 1.00 (12/12) & 0.25 (3/12) \\
-Mistral-7B-v0.3 & 32768 & bugSseed-r64-h256 & 1.00 (12/12) & \textbf{1.00 (12/12)} & \textbf{0.83 (10/12)} & 0.42 (5/12) \\
-Mistral-7B-v0.3 & 32768 & quant-2bit-kivi & 0.83 (10/12) & 0.25 (3/12) & 0.08 (1/12) & 0.00 (0/12) \\
-Mistral-7B-v0.3 & 32768 & quant-4bit-kivi & 1.00 (12/12) & 1.00 (12/12) & 1.00 (12/12) & 0.25 (3/12) \\
-Qwen2.5-7B & 16384 & bugSseed-r64-h256 & 1.00 (12/12) & 1.00 (12/12) & \textbf{1.00 (12/12)} & 1.00 (12/12) \\
-Qwen2.5-7B & 16384 & quant-2bit-kivi & 1.00 (12/12) & 0.83 (10/12) & 0.33 (4/12) & 0.92 (11/12) \\
-Qwen2.5-7B & 16384 & quant-4bit-kivi & 1.00 (12/12) & 1.00 (12/12) & 0.92 (11/12) & 1.00 (12/12) \\
-Qwen2.5-7B & 32768 & bugSseed-r64-h256 & 1.00 (12/12) & 1.00 (12/12) & \textbf{1.00 (12/12)} & \textbf{1.00 (12/12)} \\
-Qwen2.5-7B & 32768 & quant-2bit-kivi & 0.92 (11/12) & 0.58 (7/12) & 0.17 (2/12) & 0.25 (3/12) \\
-Qwen2.5-7B & 32768 & quant-4bit-kivi & 1.00 (12/12) & 1.00 (12/12) & 1.00 (12/12) & 1.00 (12/12) \\
+Llama-3.1-8B & 16384 & bugSseed-r64-h256 & 0.151x & 1.00 (12/12) & 1.00 (12/12) & \textbf{1.00 (12/12)} & 0.58 (7/12) \\
+Llama-3.1-8B & 16384 & quant-2bit-kivi & 0.163x & 1.00 (12/12) & 0.67 (8/12) & 0.42 (5/12) & 0.67 (8/12) \\
+Llama-3.1-8B & 16384 & quant-4bit-kivi & 0.287x & 1.00 (12/12) & 1.00 (12/12) & 1.00 (12/12) & 1.00 (12/12) \\
+Llama-3.1-8B & 32768 & bugSseed-r64-h256 & 0.139x & 1.00 (12/12) & 1.00 (12/12) & 1.00 (12/12) & 0.92 (11/12) \\
+Llama-3.1-8B & 32768 & quant-2bit-kivi & 0.160x & 1.00 (12/12) & 0.83 (10/12) & 0.92 (11/12) & 0.92 (11/12) \\
+Llama-3.1-8B & 32768 & quant-4bit-kivi & 0.284x & 1.00 (12/12) & 1.00 (12/12) & 1.00 (12/12) & 1.00 (12/12) \\
+Mistral-7B-v0.3 & 16384 & bugSseed-r64-h256 & 0.150x & 1.00 (12/12) & 1.00 (12/12) & \textbf{1.00 (12/12)} & 0.50 (6/12) \\
+Mistral-7B-v0.3 & 16384 & quant-2bit-kivi & 0.163x & 0.92 (11/12) & 0.58 (7/12) & 0.50 (6/12) & 0.33 (4/12) \\
+Mistral-7B-v0.3 & 16384 & quant-4bit-kivi & 0.287x & 1.00 (12/12) & 1.00 (12/12) & 1.00 (12/12) & 0.25 (3/12) \\
+Mistral-7B-v0.3 & 32768 & bugSseed-r64-h256 & 0.139x & 1.00 (12/12) & \textbf{1.00 (12/12)} & \textbf{0.83 (10/12)} & 0.42 (5/12) \\
+Mistral-7B-v0.3 & 32768 & quant-2bit-kivi & 0.160x & 0.83 (10/12) & 0.25 (3/12) & 0.08 (1/12) & 0.00 (0/12) \\
+Mistral-7B-v0.3 & 32768 & quant-4bit-kivi & 0.284x & 1.00 (12/12) & 1.00 (12/12) & 1.00 (12/12) & 0.25 (3/12) \\
+Qwen2.5-7B & 16384 & bugSseed-r64-h256 & 0.275x & 1.00 (12/12) & 1.00 (12/12) & \textbf{1.00 (12/12)} & 1.00 (12/12) \\
+Qwen2.5-7B & 16384 & quant-2bit-kivi & 0.163x & 1.00 (12/12) & 0.83 (10/12) & 0.33 (4/12) & 0.92 (11/12) \\
+Qwen2.5-7B & 16384 & quant-4bit-kivi & 0.287x & 1.00 (12/12) & 1.00 (12/12) & 0.92 (11/12) & 1.00 (12/12) \\
+Qwen2.5-7B & 32768 & bugSseed-r64-h256 & 0.265x & 1.00 (12/12) & 1.00 (12/12) & \textbf{1.00 (12/12)} & \textbf{1.00 (12/12)} \\
+Qwen2.5-7B & 32768 & quant-2bit-kivi & 0.160x & 0.92 (11/12) & 0.58 (7/12) & 0.17 (2/12) & 0.25 (3/12) \\
+Qwen2.5-7B & 32768 & quant-4bit-kivi & 0.284x & 1.00 (12/12) & 1.00 (12/12) & 1.00 (12/12) & 1.00 (12/12) \\
 \bottomrule
 \end{tabular}

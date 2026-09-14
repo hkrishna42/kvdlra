@@ -1,23 +1,23 @@
-{"acc": 0.0, "arm": "bugSseed-r256-h1024", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.316, "source": "results/w15-confirm-lines.txt:11", "task": "niah_multikey"}
-{"acc": 0.0, "arm": "bugSseed-r256-h1024", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.316, "source": "results/w15-confirm-lines.txt:12", "task": "vt"}
-{"acc": 0.0, "arm": "bugSseed-r256-h1024-s32", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.316, "source": "results/w15-confirm-lines.txt:13", "task": "niah_multikey"}
-{"acc": 0.0, "arm": "bugSseed-r256-h1024-s32", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.316, "source": "results/w15-confirm-lines.txt:14", "task": "vt"}
-{"acc": 1.0, "arm": "shadow-r64", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.815, "source": "results/w15-confirm-lines.txt:15", "task": "niah_single"}
-{"acc": 1.0, "arm": "shadow-r64", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.815, "source": "results/w15-confirm-lines.txt:16", "task": "niah_multikey"}
-{"acc": 0.0, "arm": "shadow-r64", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.815, "source": "results/w15-confirm-lines.txt:17", "task": "vt"}
-{"acc": 1.0, "arm": "palu-r0.5", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.504, "source": "results/w15-confirm-lines.txt:18", "task": "niah_multikey"}
-{"acc": 1.0, "arm": "palu-r0.5", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.504, "source": "results/w15-confirm-lines.txt:19", "task": "niah_multivalue"}
-{"acc": 0.75, "arm": "palu-r0.5", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.504, "source": "results/w15-confirm-lines.txt:20", "task": "vt"}
-{"acc": 1.0, "arm": "palu-r0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.502, "source": "results/w15-confirm-lines.txt:21", "task": "niah_multikey"}
-{"acc": 1.0, "arm": "palu-r0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.502, "source": "results/w15-confirm-lines.txt:22", "task": "niah_multivalue"}
-{"acc": 0.25, "arm": "palu-r0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.502, "source": "results/w15-confirm-lines.txt:23", "task": "vt"}
-{"acc": 1.0, "arm": "bugSseed-r128-h1024", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.192, "source": "results/w15-confirm-lines.txt:24", "task": "niah_multikey"}
-{"acc": 0.75, "arm": "bugSseed-r128-h1024", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.191, "source": "results/w15-confirm-lines.txt:25", "task": "vt"}
-{"acc": 1.0, "arm": "bugSseed-r128-h1024-s32", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.192, "source": "results/w15-confirm-lines.txt:26", "task": "niah_multikey"}
-{"acc": 1.0, "arm": "bugSseed-r128-h1024-s32", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.191, "source": "results/w15-confirm-lines.txt:27", "task": "vt"}
-{"acc": 0.25, "arm": "bugSseed-r128-h1024", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.191, "source": "results/w15-confirm-lines.txt:28", "task": "niah_multivalue"}
-{"acc": 1.0, "arm": "bugSseed-r128-h1024-s32", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.191, "source": "results/w15-confirm-lines.txt:29", "task": "niah_multivalue"}
-{"acc": 1.0, "arm": "bugSseed-r128-h1024", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.159, "source": "results/w15-confirm-lines.txt:30", "task": "niah_multikey"}
-{"acc": 0.0, "arm": "bugSseed-r128-h1024", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.16, "source": "results/w15-confirm-lines.txt:31", "task": "vt"}
-{"acc": 1.0, "arm": "bugSseed-r128-h1024-s32", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.159, "source": "results/w15-confirm-lines.txt:32", "task": "niah_multikey"}
-{"acc": 1.0, "arm": "bugSseed-r128-h1024-s32", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.16, "source": "results/w15-confirm-lines.txt:33", "task": "vt"}
+{"acc": 0.0, "arm": "bugSseed-r256-h1024", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.316, "sbits": null, "source": "results/w15-confirm-lines.txt:11", "task": "niah_multikey"}
+{"acc": 0.0, "arm": "bugSseed-r256-h1024", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.316, "sbits": null, "source": "results/w15-confirm-lines.txt:12", "task": "vt"}
+{"acc": 0.0, "arm": "bugSseed-r256-h1024-s32", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.316, "sbits": null, "source": "results/w15-confirm-lines.txt:13", "task": "niah_multikey"}
+{"acc": 0.0, "arm": "bugSseed-r256-h1024-s32", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.316, "sbits": null, "source": "results/w15-confirm-lines.txt:14", "task": "vt"}
+{"acc": 1.0, "arm": "shadow-r64", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.815, "sbits": null, "source": "results/w15-confirm-lines.txt:15", "task": "niah_single"}
+{"acc": 1.0, "arm": "shadow-r64", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.815, "sbits": null, "source": "results/w15-confirm-lines.txt:16", "task": "niah_multikey"}
+{"acc": 0.0, "arm": "shadow-r64", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.815, "sbits": null, "source": "results/w15-confirm-lines.txt:17", "task": "vt"}
+{"acc": 1.0, "arm": "palu-r0.5", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.504, "sbits": null, "source": "results/w15-confirm-lines.txt:18", "task": "niah_multikey"}
+{"acc": 1.0, "arm": "palu-r0.5", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.504, "sbits": null, "source": "results/w15-confirm-lines.txt:19", "task": "niah_multivalue"}
+{"acc": 0.75, "arm": "palu-r0.5", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.504, "sbits": null, "source": "results/w15-confirm-lines.txt:20", "task": "vt"}
+{"acc": 1.0, "arm": "palu-r0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.502, "sbits": null, "source": "results/w15-confirm-lines.txt:21", "task": "niah_multikey"}
+{"acc": 1.0, "arm": "palu-r0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.502, "sbits": null, "source": "results/w15-confirm-lines.txt:22", "task": "niah_multivalue"}
+{"acc": 0.25, "arm": "palu-r0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.502, "sbits": null, "source": "results/w15-confirm-lines.txt:23", "task": "vt"}
+{"acc": 1.0, "arm": "bugSseed-r128-h1024", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.192, "sbits": null, "source": "results/w15-confirm-lines.txt:24", "task": "niah_multikey"}
+{"acc": 0.75, "arm": "bugSseed-r128-h1024", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.191, "sbits": null, "source": "results/w15-confirm-lines.txt:25", "task": "vt"}
+{"acc": 1.0, "arm": "bugSseed-r128-h1024-s32", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.192, "sbits": null, "source": "results/w15-confirm-lines.txt:26", "task": "niah_multikey"}
+{"acc": 1.0, "arm": "bugSseed-r128-h1024-s32", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.191, "sbits": null, "source": "results/w15-confirm-lines.txt:27", "task": "vt"}
+{"acc": 0.25, "arm": "bugSseed-r128-h1024", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.191, "sbits": null, "source": "results/w15-confirm-lines.txt:28", "task": "niah_multivalue"}
+{"acc": 1.0, "arm": "bugSseed-r128-h1024-s32", "ctx": 16384, "hits": null, "model": "unknown", "n": null, "ratio": 0.191, "sbits": null, "source": "results/w15-confirm-lines.txt:29", "task": "niah_multivalue"}
+{"acc": 1.0, "arm": "bugSseed-r128-h1024", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.159, "sbits": null, "source": "results/w15-confirm-lines.txt:30", "task": "niah_multikey"}
+{"acc": 0.0, "arm": "bugSseed-r128-h1024", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.16, "sbits": null, "source": "results/w15-confirm-lines.txt:31", "task": "vt"}
+{"acc": 1.0, "arm": "bugSseed-r128-h1024-s32", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.159, "sbits": null, "source": "results/w15-confirm-lines.txt:32", "task": "niah_multikey"}
+{"acc": 1.0, "arm": "bugSseed-r128-h1024-s32", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.16, "sbits": null, "source": "results/w15-confirm-lines.txt:33", "task": "vt"}

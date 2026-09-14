@@ -21,7 +21,7 @@ import subprocess
 from collections.abc import Callable, Sequence
 from functools import cache
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 import _paths  # noqa: F401
 
@@ -158,12 +158,25 @@ def _model(src: Path, per_trial: bool) -> str:
 # `bugSseed-r64-h256` in both w18-g1-llama and w19-a2-llama). Selection is therefore
 # pod-scoped -- a pod is the provenance unit and identifies the model.
 #
-# The v1 memory columns (float-equivalent `ratio`, stored-bits `sbits`) are not per-trial
-# records and `sbits` is not carried in the archive's cell schema at all, so they are
-# omitted here rather than half-regenerated; each table says so in a footnote.
+# The memory columns are the exception: stored state is a property of the run, not of
+# a needle, so they come from the pods' archived aggregate rows -- see `memory()`.
 
 ARCHIVE = REPO_ROOT / "results" / "paper-v1"
 DISPLAY = {"qwen": "Qwen2.5-7B", "mistral": "Mistral-7B-v0.3", "llama": "Llama-3.1-8B"}
+N_FEATURES = {  # num_key_value_heads x head_dim -- an architecture constant, not a result
+    "unsloth/Meta-Llama-3.1-8B-Instruct": 1024,  # 8 kv heads x 128
+    "mistralai/Mistral-7B-Instruct-v0.3": 1024,  # 8 kv heads x 128
+    "Qwen/Qwen2.5-7B-Instruct": 512,  # 4 kv heads x 128
+}
+MEMORY_SOURCE = {
+    # The w18-g1-* pods printed [trial] lines only; the `[task ctxN] ... ratio= sbits=`
+    # rows of the same run went to results/w18-<model>-lines.txt, which the archive
+    # holds under a pod name of its own. Every other pod these tables read carries its
+    # own cells.jsonl, so `memory()` falls back to the pod itself.
+    "w18-g1-llama": "w18-llama",
+    "w18-g1-mistral": "w18-mistral",
+    "w18-g1-qwen": "w18-qwen",
+}
 TASKS = ("niah_single", "niah_multikey", "niah_multivalue", "vt")
 OFFICIAL = (
     "niah_single_1",
@@ -180,14 +193,37 @@ K16, K32 = 16384, 32768
 ALPHA = 0.05
 R64, R128 = "bugSseed-r64-h256", "bugSseed-r128-h1024-s32"
 KIVI = ("quant-2bit-kivi", "quant-4bit-kivi")
-OMIT_MEM = "the stored-state column of v1 is omitted: memory ratios are not per-trial records"
-OMIT_BITS = "the stored-bits column of v1 is omitted: memory ratios are not per-trial records"
+FP16_MEM = (
+    "stored state = the arm's float-equivalent ratio (`ratio=`), the convention v1's"
+    " caption states for this table"
+)
+BITS_MEM = (
+    "stored = the arm's fp32-at-rest stored bits (`sbits=`), the convention v1's"
+    " caption states for this table"
+)
+MEM_RULE = (
+    "a memory value is the mean of the arm's archived cell rows, which agree to within"
+    " one 0.001 print unit (stored state is a property of the run, not of a needle)"
+)
+
+
+def _read(pod: str, name: str) -> list[dict[str, object]]:
+    path = ARCHIVE / pod / name
+    if not path.is_file():
+        raise SystemExit(f"no such archived artifact: {path}")
+    return read_jsonl(path)
 
 
 @cache
 def _pod(pod: str) -> tuple[TrialRecord, ...]:
     """Every per-trial record of one pod (cached: each pod is read once per build)."""
-    return tuple(cast(TrialRecord, r) for r in read_jsonl(ARCHIVE / pod / "trials.jsonl"))
+    return tuple(cast(TrialRecord, r) for r in _read(pod, "trials.jsonl"))
+
+
+@cache
+def _cells(pod: str) -> tuple[CellRecord, ...]:
+    """Every archived aggregate row of one pod -- the only source of memory columns."""
+    return tuple(cast(CellRecord, r) for r in _read(pod, "cells.jsonl"))
 
 
 def _keyed(pod: str, arm: str, task: str, ctx: int) -> dict[Key, int]:
@@ -204,6 +240,42 @@ def _keyed(pod: str, arm: str, task: str, ctx: int) -> dict[Key, int]:
 def _count(pod: str, arm: str, task: str, ctx: int) -> tuple[int, int]:
     d = _keyed(pod, arm, task, ctx)
     return sum(d.values()), len(d)
+
+
+def memory(pod: str, arm: str, ctx: int, kind: Literal["ratio", "sbits"]) -> float:
+    """One arm's stored state, from the archived aggregate rows of ``MEMORY_SOURCE[pod]``.
+
+    ``kind`` is the convention the table's v1 caption names: ``ratio`` is
+    float-equivalent, ``sbits`` is fp32-at-rest stored bits. The pods printed one row
+    per task, each a 3-decimal print of the same run-level quantity (they differ by at
+    most one print unit, from prompt-length jitter), so the arm's value is their mean
+    and a wider spread is a selection bug -- fail loud. Because the rows come from a
+    *different* pod name for the w18-g1-* tables, every row is also checked against the
+    per-trial records it claims to summarise.
+    """
+    src = MEMORY_SOURCE.get(pod, pod)
+    rows = [r for r in _cells(src) if r["arm"] == arm and r["ctx"] == ctx]
+    vals = [r["ratio"] if kind == "ratio" else r["sbits"] for r in rows]
+    if not rows or None in vals:
+        raise SystemExit(f"no {kind}= aggregate row: {src} {arm} ctx={ctx}")
+    v = cast(list[float], vals)
+    if max(v) - min(v) > 1e-3 + 1e-9:
+        raise SystemExit(f"{kind} spans {min(v)}..{max(v)} across tasks: {src} {arm} ctx={ctx}")
+    for r in rows:
+        h, n = _count_or_none(pod, arm, r["task"], ctx)
+        if n and abs(h / n - r["acc"]) > 0.005:
+            raise SystemExit(
+                f"{src} aggregate row is not {pod}'s run: {arm} {r['task']} ctx={ctx}"
+                f" acc={r['acc']} but per-trial {h}/{n}"
+            )
+    return sum(v) / len(v)
+
+
+def _count_or_none(pod: str, arm: str, task: str, ctx: int) -> tuple[int, int]:
+    """``(hits, n)`` from the per-trial pod, or ``(0, 0)`` when it holds no such cell
+    (the aggregate sources carry rows for arms and tasks the tables never print)."""
+    rows = [r for r in _pod(pod) if r["arm"] == arm and r["task"] == task and r["ctx"] == ctx]
+    return sum(r["hit"] for r in rows), len(rows)
 
 
 def cell(pod: str, arm: str, task: str, ctx: int) -> str:
@@ -257,22 +329,36 @@ def _table(
     return "\n".join(md) + "\n", "\n".join(tex) + "\n"
 
 
-def _xmodel(n: int, ctx: int, label: str, pdf_n: int, mk: str, trunc: str) -> tuple[str, str]:
+def _xmodel(
+    n: int, ctx: int, label: str, pdf_n: int, mk: str, trunc: str, feat: bool = False
+) -> tuple[str, str]:
     """Tables 1 and 2: the same three families under `bugSseed-r64-h256`, 16K and 32K."""
     notes = [
         f"paper-v1: paper/main.tex @ee8c0ab, table `{label}` (renders as Table {pdf_n} in the PDF)",
-        "source: results/paper-v1/w18-g1-{qwen,mistral,llama}/trials.jsonl"
-        " (per-trial records only)",
+        "source: results/paper-v1/w18-g1-{qwen,mistral,llama}/trials.jsonl (cells),"
+        " results/paper-v1/w18-{qwen,mistral,llama}/cells.jsonl (stored state)",
         "cell: acc [Wilson 95% lo,hi] (hits/n)",
         trunc,
-        OMIT_MEM,
+        FP16_MEM,
+        MEM_RULE,
     ]
-    rows = [
-        [DISPLAY[t], *(cell(f"w18-g1-{t}", R64, task, ctx) for task in TASKS)]
-        for t in ("qwen", "mistral", "llama")
-    ]
+    if feat:
+        notes.append(
+            "feat. n = num_key_value_heads x head_dim, a model constant, not a measurement"
+        )
+    rows = []
+    for t in ("qwen", "mistral", "llama"):
+        pod = f"w18-g1-{t}"
+        row = [DISPLAY[t]]
+        if feat:
+            row.append(str(N_FEATURES[MODEL_BY_TAG[t]]))
+        row += [cell(pod, R64, task, ctx) for task in TASKS]
+        row.append(f"{memory(pod, R64, ctx, 'ratio'):.3f}x")
+        rows.append(row)
+    head = ["model"] + (["feat. n"] if feat else [])
+    head += ["single", mk, "multi-value", "var-track", "stored state"]
     title = f"cross-model {ctx // 1024}K retrieval, config `{R64}`"
-    return _table(n, title, notes, ["model", "single", mk, "multi-value", "var-track"], rows)
+    return _table(n, title, notes, head, rows)
 
 
 def table_1() -> tuple[str, str]:
@@ -283,6 +369,7 @@ def table_1() -> tuple[str, str]:
         2,
         "multi-key (not in v1)",
         "v1 printed the Llama var-track upper bound as 0.80 (truncated); correct rounding 0.81",
+        feat=True,
     )
 
 
@@ -300,31 +387,50 @@ def table_2() -> tuple[str, str]:
 def table_3() -> tuple[str, str]:
     """32K variable-tracking on Llama: the r128 config against the three baselines it
     was contrasted with, plus the r/n=0.25 control column v1 discussed only in prose."""
-    g4, a1 = "w18-g4-llama", "w19-a1-llama"
+    g4, a1, r256 = "w18-g4-llama", "w19-a1-llama", "bugSseed-r256-h1024"
+    q4 = paired(g4, R128, a1, "quant-4bit-kivi", "vt", K32)
     notes = [
         "paper-v1: paper/main.tex @ee8c0ab, the 32K Llama variable-tracking table (its LaTeX"
         " label carries a word CLAUDE.md bans from new files, so it is not quoted here; it"
         " renders as Table 4 in the PDF)",
-        f"source: results/paper-v1/{g4}/trials.jsonl (n=16 arms, and the n=12 r256 control),"
-        f" results/paper-v1/{a1}/trials.jsonl (quant-4bit-kivi, n=12)",
+        f"source: results/paper-v1/{g4}/trials.jsonl (the n={_count(g4, R128, 'vt', K32)[1]} arms"
+        f" and the n={_count(g4, r256, 'vt', K32)[1]} r256 control),"
+        f" results/paper-v1/{a1}/trials.jsonl (quant-4bit-kivi,"
+        f" n={_count(a1, 'quant-4bit-kivi', 'vt', K32)[1]}); stored state from each pod's"
+        " own cells.jsonl",
         "cell: acc [Wilson 95% lo,hi] (hits/n); p = exact paired McNemar vs"
         f" {R128} on the shared (seed,trial) keys, 2 significant figures",
         f"discordant = pairs won by {R128} / pairs won by the row's arm",
-        "v1 printed no McNemar p for the 4-bit row; it is computed here on the 12 shared keys",
-        "the stored-state and verdict columns of v1 are omitted: neither is a per-trial statistic",
+        "v1 printed no McNemar p for the 4-bit row; it is computed here on the"
+        f" {q4['n_paired']} shared keys",
+        BITS_MEM.replace("stored =", "stored state ="),
+        MEM_RULE,
+        "v1 printed think-c0.5/palu-r0.5 to 2 decimals (0.75x/0.50x); the archived rows are"
+        " printed here at the 3 decimals the other rows need",
+        "the verdict column of v1 is omitted: it is an editorial reading, not a statistic",
     ]
-    rows = [[R128, cell(g4, R128, "vt", K32), "---", "---", "---"]]
+    rows = [
+        [
+            R128,
+            cell(g4, R128, "vt", K32),
+            f"{memory(g4, R128, K32, 'sbits'):.3f}x",
+            "---",
+            "---",
+            "---",
+        ]
+    ]
     for label, pod, arm in (
         ("think-c0.5", g4, "think-c0.5"),
         ("palu-r0.5", g4, "palu-r0.5"),
         ("quant-4bit-kivi", a1, "quant-4bit-kivi"),
-        ("bugSseed-r256-h1024 (not in v1)", g4, "bugSseed-r256-h1024"),
+        (f"{r256} (not in v1)", g4, r256),
     ):
         m = paired(g4, R128, pod, arm, "vt", K32)
         rows.append(
             [
                 label,
                 cell(pod, arm, "vt", K32),
+                f"{memory(pod, arm, K32, 'sbits'):.3f}x",
                 f"{m['p_value']:.1e}",
                 f"{m['a_favored']}/{m['b_favored']}",
                 str(m["n_paired"]),
@@ -334,29 +440,35 @@ def table_3() -> tuple[str, str]:
         3,
         f"32K variable-tracking on Llama-3.1-8B, config `{R128}` vs baselines",
         notes,
-        ["config", "var-track", "McNemar p", "discordant", "n paired"],
+        ["config", "var-track", "stored state", "McNemar p", "discordant", "n paired"],
         rows,
     )
 
 
 def table_6() -> tuple[str, str]:
     """Eviction (`ea-k0.1`) on the model x ctx cells v1 printed."""
+    cells = (("llama", K16), ("llama", K32), ("qwen", K16), ("mistral", K16))
+    budgets = {f"{memory(f'w18-g3-{t}', 'ea-k0.1', ctx, 'ratio'):.3f}x" for t, ctx in cells}
+    if len(budgets) != 1:  # v1's caption states one budget for the whole table
+        raise SystemExit(f"ea-k0.1 stored state differs across rows: {sorted(budgets)}")
+    (budget,) = budgets
     notes = [
         "paper-v1: paper/main.tex @ee8c0ab, table `tab:evict` (renders as Table 7 in the PDF)",
-        "source: results/paper-v1/w18-g3-{llama,qwen,mistral}/trials.jsonl"
-        " (per-trial records only)",
+        "source: results/paper-v1/w18-g3-{llama,qwen,mistral}/trials.jsonl (cells),"
+        " and their cells.jsonl (the budget in the title)",
         "cell: acc [Wilson 95% lo,hi] (hits/n)",
         "rows are the model x ctx cells v1 showed; the pods also hold Qwen/Mistral 32K,"
         " which v1 did not print",
-        OMIT_MEM,
+        "v1's table has no memory column: its budget is stated once in the caption, and is"
+        f" regenerated in the title above from the `ratio=` rows of all {len(cells)} cells",
     ]
     rows = [
         [DISPLAY[t], str(ctx), *(cell(f"w18-g3-{t}", "ea-k0.1", task, ctx) for task in TASKS)]
-        for t, ctx in (("llama", K16), ("llama", K32), ("qwen", K16), ("mistral", K16))
+        for t, ctx in cells
     ]
     return _table(
         6,
-        "eviction at 0.100x stored state, arm `ea-k0.1`",
+        f"eviction at {budget} stored state, arm `ea-k0.1`",
         notes,
         ["model", "ctx", "single", "multi-key", "multi-value", "var-track"],
         rows,
@@ -368,12 +480,15 @@ def table_7() -> tuple[str, str]:
     notes = [
         "paper-v1: paper/main.tex @ee8c0ab, table `tab:fairquant` (renders as Table 8 in the PDF)",
         "source: results/paper-v1/w18-g1-{llama,mistral,qwen}/trials.jsonl (r64 rows),"
-        " results/paper-v1/w19-a1-{llama,mistral,qwen}/trials.jsonl (KIVI rows)",
+        " results/paper-v1/w19-a1-{llama,mistral,qwen}/trials.jsonl (KIVI rows);"
+        " stored bits from results/paper-v1/w18-{llama,mistral,qwen}/cells.jsonl (r64)"
+        " and each w19-a1 pod's own cells.jsonl (KIVI)",
         "cell: acc (hits/n)",
         "bold = exact paired McNemar p<0.05 in the r64 arm's favour against a KIVI arm of the"
         " same model x ctx x task, paired on (seed,trial); no cell is significant in a KIVI"
         " arm's favour",
-        OMIT_BITS,
+        BITS_MEM,
+        MEM_RULE,
     ]
     rows: list[list[str]] = []
     for t in ("llama", "mistral", "qwen"):
@@ -384,15 +499,22 @@ def table_7() -> tuple[str, str]:
                 c = acc(g1, R64, task, ctx)
                 won = any(_favors_a(paired(g1, R64, a1, q, task, ctx)) for q in KIVI)
                 base.append(f"**{c}**" if won else c)
-            rows.append([DISPLAY[t], str(ctx), R64, *base])
+            rows.append([DISPLAY[t], str(ctx), R64, f"{memory(g1, R64, ctx, 'sbits'):.3f}x", *base])
             rows += [
-                [DISPLAY[t], str(ctx), q, *(acc(a1, q, task, ctx) for task in TASKS)] for q in KIVI
+                [
+                    DISPLAY[t],
+                    str(ctx),
+                    q,
+                    f"{memory(a1, q, ctx, 'sbits'):.3f}x",
+                    *(acc(a1, q, task, ctx) for task in TASKS),
+                ]
+                for q in KIVI
             ]
     return _table(
         7,
         "the 2-bit/4-bit KIVI baseline at matched stored bytes",
         notes,
-        ["model", "ctx", "arm", "single", "multi-key", "multi-value", "var-track"],
+        ["model", "ctx", "arm", "stored", "single", "multi-key", "multi-value", "var-track"],
         rows,
     )
 
@@ -400,13 +522,17 @@ def table_7() -> tuple[str, str]:
 def table_8() -> tuple[str, str]:
     """Official NVIDIA RULER at 16K on Llama: nine tasks, eight arms, 12 records each."""
     a2, q4 = "w19-a2-llama", "w19-q4off-llama"
+    pooled = [_count(a2, R64, task, K16) for task in OFFICIAL]
     notes = [
         "paper-v1: paper/main.tex @ee8c0ab, table `tab:official` (renders as Table 9 in the PDF)",
         f"source: results/paper-v1/{a2}/trials.jsonl (7 arms),"
-        f" results/paper-v1/{q4}/trials.jsonl (the q4 cell arm)",
+        f" results/paper-v1/{q4}/trials.jsonl (the q4 cell arm); stored bits from the same"
+        " two pods' cells.jsonl",
         "cell: acc (hits/n); mean = mean of the nine printed 2-dp accuracies, as in v1"
-        f" (pooling the records instead gives 0.80 for {R64})",
-        OMIT_BITS,
+        f" (pooling the records instead gives"
+        f" {sum(h for h, _ in pooled) / sum(n for _, n in pooled):.2f} for {R64})",
+        BITS_MEM,
+        MEM_RULE,
     ]
     rows: list[list[str]] = []
     for arm, pod in (
@@ -421,8 +547,15 @@ def table_8() -> tuple[str, str]:
     ):
         counts = [_count(pod, arm, task, K16) for task in OFFICIAL]
         mean = sum(round(h / n, 2) for h, n in counts) / len(counts)
-        rows.append([arm, *(f"{h / n:.2f} ({h}/{n})" for h, n in counts), f"{mean:.2f}"])
-    head = ["arm", "s1", "s2", "s3", "mk1", "mk2", "mk3", "mv", "mq", "vt", "mean"]
+        rows.append(
+            [
+                arm,
+                f"{memory(pod, arm, K16, 'sbits'):.2f}x",
+                *(f"{h / n:.2f} ({h}/{n})" for h, n in counts),
+                f"{mean:.2f}",
+            ]
+        )
+    head = ["arm", "stored", "s1", "s2", "s3", "mk1", "mk2", "mk3", "mv", "mq", "vt", "mean"]
     return _table(8, "official NVIDIA RULER at 16K on Llama-3.1-8B", notes, head, rows)
 
 

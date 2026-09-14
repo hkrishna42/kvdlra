@@ -1,15 +1,17 @@
 % Table 1 -- cross-model 16K retrieval, config `bugSseed-r64-h256`
 % paper-v1: paper/main.tex @ee8c0ab, table `tab:xmodel` (renders as Table 2 in the PDF)
-% source: results/paper-v1/w18-g1-{qwen,mistral,llama}/trials.jsonl (per-trial records only)
+% source: results/paper-v1/w18-g1-{qwen,mistral,llama}/trials.jsonl (cells), results/paper-v1/w18-{qwen,mistral,llama}/cells.jsonl (stored state)
 % cell: acc [Wilson 95% lo,hi] (hits/n)
 % v1 printed the Llama var-track upper bound as 0.80 (truncated); correct rounding 0.81
-% the stored-state column of v1 is omitted: memory ratios are not per-trial records
-\begin{tabular}{lcccc}
+% stored state = the arm's float-equivalent ratio (`ratio=`), the convention v1's caption states for this table
+% a memory value is the mean of the arm's archived cell rows, which agree to within one 0.001 print unit (stored state is a property of the run, not of a needle)
+% feat. n = num_key_value_heads x head_dim, a model constant, not a measurement
+\begin{tabular}{lcccccc}
 \toprule
-model & single & multi-key (not in v1) & multi-value & var-track \\
+model & feat. n & single & multi-key (not in v1) & multi-value & var-track & stored state \\
 \midrule
-Qwen2.5-7B & 1.00 [0.76,1.00] (12/12) & 1.00 [0.76,1.00] (12/12) & 1.00 [0.76,1.00] (12/12) & 1.00 [0.76,1.00] (12/12) \\
-Mistral-7B-v0.3 & 1.00 [0.76,1.00] (12/12) & 1.00 [0.76,1.00] (12/12) & 1.00 [0.76,1.00] (12/12) & 0.50 [0.25,0.75] (6/12) \\
-Llama-3.1-8B & 1.00 [0.76,1.00] (12/12) & 1.00 [0.76,1.00] (12/12) & 1.00 [0.76,1.00] (12/12) & 0.58 [0.32,0.81] (7/12) \\
+Qwen2.5-7B & 512 & 1.00 [0.76,1.00] (12/12) & 1.00 [0.76,1.00] (12/12) & 1.00 [0.76,1.00] (12/12) & 1.00 [0.76,1.00] (12/12) & 0.149x \\
+Mistral-7B-v0.3 & 1024 & 1.00 [0.76,1.00] (12/12) & 1.00 [0.76,1.00] (12/12) & 1.00 [0.76,1.00] (12/12) & 0.50 [0.25,0.75] (6/12) & 0.085x \\
+Llama-3.1-8B & 1024 & 1.00 [0.76,1.00] (12/12) & 1.00 [0.76,1.00] (12/12) & 1.00 [0.76,1.00] (12/12) & 0.58 [0.32,0.81] (7/12) & 0.085x \\
 \bottomrule
 \end{tabular}

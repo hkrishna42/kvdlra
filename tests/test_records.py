@@ -64,16 +64,33 @@ def test_parse_lines_ignore_noise_and_cite_the_source_line() -> None:
     assert parse_cell_lines(TRIAL, model="M", source="f") == []  # and vice versa
 
 
-def test_parse_cell_lines_recovers_hits() -> None:
+def test_parse_cell_lines_schema() -> None:
+    """`sbits` (fp32-at-rest stored bits) is the memory convention half the v1 tables
+    print; dropping it made those columns unregenerable (task-3 review, ruling R7)."""
     rows = parse_cell_lines(CELL, model="M", source="f.txt")
-    assert rows[0]["hits"] == 12 and rows[0]["n"] == 12 and rows[0]["ratio"] == 0.151
+    assert rows == [
+        {
+            "model": "M",
+            "arm": "bugSseed-r64-h256",
+            "task": "niah_single",
+            "ctx": 16384,
+            "acc": 1.0,
+            "n": 12,
+            "hits": 12,
+            "ratio": 0.151,
+            "sbits": 0.151,
+            "source": "f.txt:1",
+        }
+    ]
 
 
-def test_parse_cell_lines_without_n_has_no_hits() -> None:
-    """Pre-Week-18 rows carry no `n=`, so the Bernoulli count is unrecoverable."""
+def test_parse_cell_lines_without_n_or_sbits() -> None:
+    """Pre-Week-18 rows carry no `n=`, so the Bernoulli count is unrecoverable, and no
+    `sbits=`, so only the float-equivalent ratio is known."""
     old = "[niah_single ctx16384] bug-r64 acc=0.500 recall=0.500 ratio=0.068\n"
     (row,) = parse_cell_lines(old, model="M", source="f")
     assert row["n"] is None and row["hits"] is None and row["acc"] == 0.5
+    assert row["sbits"] is None and row["ratio"] == 0.068
 
 
 def test_parse_ppl_lines_schema() -> None:

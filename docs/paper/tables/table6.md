@@ -1,9 +1,9 @@
 ## Table 6 — eviction at 0.100x stored state, arm `ea-k0.1`
 <!-- paper-v1: paper/main.tex @ee8c0ab, table `tab:evict` (renders as Table 7 in the PDF) -->
-<!-- source: results/paper-v1/w18-g3-{llama,qwen,mistral}/trials.jsonl (per-trial records only) -->
+<!-- source: results/paper-v1/w18-g3-{llama,qwen,mistral}/trials.jsonl (cells), and their cells.jsonl (the budget in the title) -->
 <!-- cell: acc [Wilson 95% lo,hi] (hits/n) -->
 <!-- rows are the model x ctx cells v1 showed; the pods also hold Qwen/Mistral 32K, which v1 did not print -->
-<!-- the stored-state column of v1 is omitted: memory ratios are not per-trial records -->
+<!-- v1's table has no memory column: its budget is stated once in the caption, and is regenerated in the title above from the `ratio=` rows of all 4 cells -->
 
 | model | ctx | single | multi-key | multi-value | var-track |
 | --- | --- | --- | --- | --- | --- |

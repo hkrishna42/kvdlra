@@ -60,6 +60,7 @@ class CellRecord(TypedDict):
     n: int | None
     hits: int | None
     ratio: float
+    sbits: float | None
     source: str
 
 
@@ -105,13 +106,15 @@ def parse_trial_lines(text: str, model: str, source: str) -> list[TrialRecord]:
 def parse_cell_lines(text: str, model: str, source: str) -> list[CellRecord]:
     """Every pooled ``[task ctxN] arm acc=...`` line as a record. ``n``/``hits`` are
     ``None`` for pre-Week-18 rows, which printed no ``n=`` (no Bernoulli count to
-    recover -- an interval cannot be computed from them)."""
+    recover -- an interval cannot be computed from them); ``sbits`` (fp32-at-rest
+    stored bits, the memory convention half the v1 tables print) is ``None`` for the
+    rows that printed no ``sbits=``."""
     out: list[CellRecord] = []
     for i, line in enumerate(text.splitlines(), 1):
         m = CELL_RE.match(line)
         if not m:
             continue
-        task, ctx, arm, acc, _recall, ratio, _sbits, n = m.groups()
+        task, ctx, arm, acc, _recall, ratio, sbits, n = m.groups()
         n_i = int(n) if n is not None else None
         out.append(
             {
@@ -123,6 +126,7 @@ def parse_cell_lines(text: str, model: str, source: str) -> list[CellRecord]:
                 "n": n_i,
                 "hits": round(float(acc) * n_i) if n_i is not None else None,
                 "ratio": float(ratio),
+                "sbits": float(sbits) if sbits is not None else None,
                 "source": f"{source}:{i}",
             }
         )

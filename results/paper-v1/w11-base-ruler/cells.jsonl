@@ -1,52 +1,52 @@
-{"acc": 0.0, "arm": "morph-k0.1", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.125, "source": "results/w11-base-ruler-lines.txt:1", "task": "niah_multikey"}
-{"acc": 1.0, "arm": "morph-k0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.312, "source": "results/w11-base-ruler-lines.txt:2", "task": "niah_multikey"}
-{"acc": 1.0, "arm": "morph-k0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.624, "source": "results/w11-base-ruler-lines.txt:3", "task": "niah_multikey"}
-{"acc": 0.0, "arm": "palu-r0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.251, "source": "results/w11-base-ruler-lines.txt:4", "task": "niah_multikey"}
-{"acc": 1.0, "arm": "palu-r0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.502, "source": "results/w11-base-ruler-lines.txt:5", "task": "niah_multikey"}
-{"acc": 0.0, "arm": "shadow-r128", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 1.064, "source": "results/w11-base-ruler-lines.txt:6", "task": "niah_multikey"}
-{"acc": 0.0, "arm": "shadow-r64", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.814, "source": "results/w11-base-ruler-lines.txt:7", "task": "niah_multikey"}
-{"acc": 0.0, "arm": "snapkv-k0.1", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.1, "source": "results/w11-base-ruler-lines.txt:8", "task": "niah_multikey"}
-{"acc": 0.0, "arm": "snapkv-k0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.25, "source": "results/w11-base-ruler-lines.txt:9", "task": "niah_multikey"}
-{"acc": 1.0, "arm": "snapkv-k0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.5, "source": "results/w11-base-ruler-lines.txt:10", "task": "niah_multikey"}
-{"acc": 1.0, "arm": "think-c0.3", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.852, "source": "results/w11-base-ruler-lines.txt:11", "task": "niah_multikey"}
-{"acc": 1.0, "arm": "think-c0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.75, "source": "results/w11-base-ruler-lines.txt:12", "task": "niah_multikey"}
-{"acc": 0.0, "arm": "think-c0.7", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.648, "source": "results/w11-base-ruler-lines.txt:13", "task": "niah_multikey"}
-{"acc": 0.0, "arm": "morph-k0.1", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.125, "source": "results/w11-base-ruler-lines.txt:14", "task": "niah_multivalue"}
-{"acc": 1.0, "arm": "morph-k0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.312, "source": "results/w11-base-ruler-lines.txt:15", "task": "niah_multivalue"}
-{"acc": 1.0, "arm": "morph-k0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.624, "source": "results/w11-base-ruler-lines.txt:16", "task": "niah_multivalue"}
-{"acc": 0.0, "arm": "palu-r0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.251, "source": "results/w11-base-ruler-lines.txt:17", "task": "niah_multivalue"}
-{"acc": 1.0, "arm": "palu-r0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.502, "source": "results/w11-base-ruler-lines.txt:18", "task": "niah_multivalue"}
-{"acc": 0.0, "arm": "shadow-r128", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 1.064, "source": "results/w11-base-ruler-lines.txt:19", "task": "niah_multivalue"}
-{"acc": 0.0, "arm": "shadow-r64", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.814, "source": "results/w11-base-ruler-lines.txt:20", "task": "niah_multivalue"}
-{"acc": 0.5, "arm": "snapkv-k0.1", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.1, "source": "results/w11-base-ruler-lines.txt:21", "task": "niah_multivalue"}
-{"acc": 1.0, "arm": "snapkv-k0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.25, "source": "results/w11-base-ruler-lines.txt:22", "task": "niah_multivalue"}
-{"acc": 1.0, "arm": "snapkv-k0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.5, "source": "results/w11-base-ruler-lines.txt:23", "task": "niah_multivalue"}
-{"acc": 1.0, "arm": "think-c0.3", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.852, "source": "results/w11-base-ruler-lines.txt:24", "task": "niah_multivalue"}
-{"acc": 1.0, "arm": "think-c0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.75, "source": "results/w11-base-ruler-lines.txt:25", "task": "niah_multivalue"}
-{"acc": 0.0, "arm": "think-c0.7", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.648, "source": "results/w11-base-ruler-lines.txt:26", "task": "niah_multivalue"}
-{"acc": 0.0, "arm": "morph-k0.1", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.125, "source": "results/w11-base-ruler-lines.txt:27", "task": "niah_single"}
-{"acc": 1.0, "arm": "morph-k0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.312, "source": "results/w11-base-ruler-lines.txt:28", "task": "niah_single"}
-{"acc": 1.0, "arm": "morph-k0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.625, "source": "results/w11-base-ruler-lines.txt:29", "task": "niah_single"}
-{"acc": 0.0, "arm": "palu-r0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.251, "source": "results/w11-base-ruler-lines.txt:30", "task": "niah_single"}
-{"acc": 1.0, "arm": "palu-r0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.502, "source": "results/w11-base-ruler-lines.txt:31", "task": "niah_single"}
-{"acc": 0.0, "arm": "shadow-r128", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 1.064, "source": "results/w11-base-ruler-lines.txt:32", "task": "niah_single"}
-{"acc": 0.0, "arm": "shadow-r64", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.814, "source": "results/w11-base-ruler-lines.txt:33", "task": "niah_single"}
-{"acc": 1.0, "arm": "snapkv-k0.1", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.1, "source": "results/w11-base-ruler-lines.txt:34", "task": "niah_single"}
-{"acc": 1.0, "arm": "snapkv-k0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.25, "source": "results/w11-base-ruler-lines.txt:35", "task": "niah_single"}
-{"acc": 1.0, "arm": "snapkv-k0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.5, "source": "results/w11-base-ruler-lines.txt:36", "task": "niah_single"}
-{"acc": 1.0, "arm": "think-c0.3", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.852, "source": "results/w11-base-ruler-lines.txt:37", "task": "niah_single"}
-{"acc": 1.0, "arm": "think-c0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.75, "source": "results/w11-base-ruler-lines.txt:38", "task": "niah_single"}
-{"acc": 0.5, "arm": "think-c0.7", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.648, "source": "results/w11-base-ruler-lines.txt:39", "task": "niah_single"}
-{"acc": 0.0, "arm": "morph-k0.1", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.125, "source": "results/w11-base-ruler-lines.txt:40", "task": "vt"}
-{"acc": 0.5, "arm": "morph-k0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.312, "source": "results/w11-base-ruler-lines.txt:41", "task": "vt"}
-{"acc": 1.0, "arm": "morph-k0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.624, "source": "results/w11-base-ruler-lines.txt:42", "task": "vt"}
-{"acc": 0.0, "arm": "palu-r0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.251, "source": "results/w11-base-ruler-lines.txt:43", "task": "vt"}
-{"acc": 1.0, "arm": "palu-r0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.502, "source": "results/w11-base-ruler-lines.txt:44", "task": "vt"}
-{"acc": 0.0, "arm": "shadow-r128", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 1.064, "source": "results/w11-base-ruler-lines.txt:45", "task": "vt"}
-{"acc": 0.0, "arm": "shadow-r64", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.814, "source": "results/w11-base-ruler-lines.txt:46", "task": "vt"}
-{"acc": 0.0, "arm": "snapkv-k0.1", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.1, "source": "results/w11-base-ruler-lines.txt:47", "task": "vt"}
-{"acc": 0.0, "arm": "snapkv-k0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.25, "source": "results/w11-base-ruler-lines.txt:48", "task": "vt"}
-{"acc": 1.0, "arm": "snapkv-k0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.5, "source": "results/w11-base-ruler-lines.txt:49", "task": "vt"}
-{"acc": 1.0, "arm": "think-c0.3", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.852, "source": "results/w11-base-ruler-lines.txt:50", "task": "vt"}
-{"acc": 0.5, "arm": "think-c0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.75, "source": "results/w11-base-ruler-lines.txt:51", "task": "vt"}
-{"acc": 0.0, "arm": "think-c0.7", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.648, "source": "results/w11-base-ruler-lines.txt:52", "task": "vt"}
+{"acc": 0.0, "arm": "morph-k0.1", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.125, "sbits": null, "source": "results/w11-base-ruler-lines.txt:1", "task": "niah_multikey"}
+{"acc": 1.0, "arm": "morph-k0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.312, "sbits": null, "source": "results/w11-base-ruler-lines.txt:2", "task": "niah_multikey"}
+{"acc": 1.0, "arm": "morph-k0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.624, "sbits": null, "source": "results/w11-base-ruler-lines.txt:3", "task": "niah_multikey"}
+{"acc": 0.0, "arm": "palu-r0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.251, "sbits": null, "source": "results/w11-base-ruler-lines.txt:4", "task": "niah_multikey"}
+{"acc": 1.0, "arm": "palu-r0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.502, "sbits": null, "source": "results/w11-base-ruler-lines.txt:5", "task": "niah_multikey"}
+{"acc": 0.0, "arm": "shadow-r128", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 1.064, "sbits": null, "source": "results/w11-base-ruler-lines.txt:6", "task": "niah_multikey"}
+{"acc": 0.0, "arm": "shadow-r64", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.814, "sbits": null, "source": "results/w11-base-ruler-lines.txt:7", "task": "niah_multikey"}
+{"acc": 0.0, "arm": "snapkv-k0.1", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.1, "sbits": null, "source": "results/w11-base-ruler-lines.txt:8", "task": "niah_multikey"}
+{"acc": 0.0, "arm": "snapkv-k0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.25, "sbits": null, "source": "results/w11-base-ruler-lines.txt:9", "task": "niah_multikey"}
+{"acc": 1.0, "arm": "snapkv-k0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.5, "sbits": null, "source": "results/w11-base-ruler-lines.txt:10", "task": "niah_multikey"}
+{"acc": 1.0, "arm": "think-c0.3", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.852, "sbits": null, "source": "results/w11-base-ruler-lines.txt:11", "task": "niah_multikey"}
+{"acc": 1.0, "arm": "think-c0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.75, "sbits": null, "source": "results/w11-base-ruler-lines.txt:12", "task": "niah_multikey"}
+{"acc": 0.0, "arm": "think-c0.7", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.648, "sbits": null, "source": "results/w11-base-ruler-lines.txt:13", "task": "niah_multikey"}
+{"acc": 0.0, "arm": "morph-k0.1", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.125, "sbits": null, "source": "results/w11-base-ruler-lines.txt:14", "task": "niah_multivalue"}
+{"acc": 1.0, "arm": "morph-k0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.312, "sbits": null, "source": "results/w11-base-ruler-lines.txt:15", "task": "niah_multivalue"}
+{"acc": 1.0, "arm": "morph-k0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.624, "sbits": null, "source": "results/w11-base-ruler-lines.txt:16", "task": "niah_multivalue"}
+{"acc": 0.0, "arm": "palu-r0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.251, "sbits": null, "source": "results/w11-base-ruler-lines.txt:17", "task": "niah_multivalue"}
+{"acc": 1.0, "arm": "palu-r0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.502, "sbits": null, "source": "results/w11-base-ruler-lines.txt:18", "task": "niah_multivalue"}
+{"acc": 0.0, "arm": "shadow-r128", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 1.064, "sbits": null, "source": "results/w11-base-ruler-lines.txt:19", "task": "niah_multivalue"}
+{"acc": 0.0, "arm": "shadow-r64", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.814, "sbits": null, "source": "results/w11-base-ruler-lines.txt:20", "task": "niah_multivalue"}
+{"acc": 0.5, "arm": "snapkv-k0.1", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.1, "sbits": null, "source": "results/w11-base-ruler-lines.txt:21", "task": "niah_multivalue"}
+{"acc": 1.0, "arm": "snapkv-k0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.25, "sbits": null, "source": "results/w11-base-ruler-lines.txt:22", "task": "niah_multivalue"}
+{"acc": 1.0, "arm": "snapkv-k0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.5, "sbits": null, "source": "results/w11-base-ruler-lines.txt:23", "task": "niah_multivalue"}
+{"acc": 1.0, "arm": "think-c0.3", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.852, "sbits": null, "source": "results/w11-base-ruler-lines.txt:24", "task": "niah_multivalue"}
+{"acc": 1.0, "arm": "think-c0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.75, "sbits": null, "source": "results/w11-base-ruler-lines.txt:25", "task": "niah_multivalue"}
+{"acc": 0.0, "arm": "think-c0.7", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.648, "sbits": null, "source": "results/w11-base-ruler-lines.txt:26", "task": "niah_multivalue"}
+{"acc": 0.0, "arm": "morph-k0.1", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.125, "sbits": null, "source": "results/w11-base-ruler-lines.txt:27", "task": "niah_single"}
+{"acc": 1.0, "arm": "morph-k0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.312, "sbits": null, "source": "results/w11-base-ruler-lines.txt:28", "task": "niah_single"}
+{"acc": 1.0, "arm": "morph-k0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.625, "sbits": null, "source": "results/w11-base-ruler-lines.txt:29", "task": "niah_single"}
+{"acc": 0.0, "arm": "palu-r0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.251, "sbits": null, "source": "results/w11-base-ruler-lines.txt:30", "task": "niah_single"}
+{"acc": 1.0, "arm": "palu-r0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.502, "sbits": null, "source": "results/w11-base-ruler-lines.txt:31", "task": "niah_single"}
+{"acc": 0.0, "arm": "shadow-r128", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 1.064, "sbits": null, "source": "results/w11-base-ruler-lines.txt:32", "task": "niah_single"}
+{"acc": 0.0, "arm": "shadow-r64", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.814, "sbits": null, "source": "results/w11-base-ruler-lines.txt:33", "task": "niah_single"}
+{"acc": 1.0, "arm": "snapkv-k0.1", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.1, "sbits": null, "source": "results/w11-base-ruler-lines.txt:34", "task": "niah_single"}
+{"acc": 1.0, "arm": "snapkv-k0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.25, "sbits": null, "source": "results/w11-base-ruler-lines.txt:35", "task": "niah_single"}
+{"acc": 1.0, "arm": "snapkv-k0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.5, "sbits": null, "source": "results/w11-base-ruler-lines.txt:36", "task": "niah_single"}
+{"acc": 1.0, "arm": "think-c0.3", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.852, "sbits": null, "source": "results/w11-base-ruler-lines.txt:37", "task": "niah_single"}
+{"acc": 1.0, "arm": "think-c0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.75, "sbits": null, "source": "results/w11-base-ruler-lines.txt:38", "task": "niah_single"}
+{"acc": 0.5, "arm": "think-c0.7", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.648, "sbits": null, "source": "results/w11-base-ruler-lines.txt:39", "task": "niah_single"}
+{"acc": 0.0, "arm": "morph-k0.1", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.125, "sbits": null, "source": "results/w11-base-ruler-lines.txt:40", "task": "vt"}
+{"acc": 0.5, "arm": "morph-k0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.312, "sbits": null, "source": "results/w11-base-ruler-lines.txt:41", "task": "vt"}
+{"acc": 1.0, "arm": "morph-k0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.624, "sbits": null, "source": "results/w11-base-ruler-lines.txt:42", "task": "vt"}
+{"acc": 0.0, "arm": "palu-r0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.251, "sbits": null, "source": "results/w11-base-ruler-lines.txt:43", "task": "vt"}
+{"acc": 1.0, "arm": "palu-r0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.502, "sbits": null, "source": "results/w11-base-ruler-lines.txt:44", "task": "vt"}
+{"acc": 0.0, "arm": "shadow-r128", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 1.064, "sbits": null, "source": "results/w11-base-ruler-lines.txt:45", "task": "vt"}
+{"acc": 0.0, "arm": "shadow-r64", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.814, "sbits": null, "source": "results/w11-base-ruler-lines.txt:46", "task": "vt"}
+{"acc": 0.0, "arm": "snapkv-k0.1", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.1, "sbits": null, "source": "results/w11-base-ruler-lines.txt:47", "task": "vt"}
+{"acc": 0.0, "arm": "snapkv-k0.25", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.25, "sbits": null, "source": "results/w11-base-ruler-lines.txt:48", "task": "vt"}
+{"acc": 1.0, "arm": "snapkv-k0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.5, "sbits": null, "source": "results/w11-base-ruler-lines.txt:49", "task": "vt"}
+{"acc": 1.0, "arm": "think-c0.3", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.852, "sbits": null, "source": "results/w11-base-ruler-lines.txt:50", "task": "vt"}
+{"acc": 0.5, "arm": "think-c0.5", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.75, "sbits": null, "source": "results/w11-base-ruler-lines.txt:51", "task": "vt"}
+{"acc": 0.0, "arm": "think-c0.7", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.648, "sbits": null, "source": "results/w11-base-ruler-lines.txt:52", "task": "vt"}

@@ -1,20 +1,20 @@
-{"acc": 0.83, "arm": "quant-2bit-kivi", "ctx": 16384, "hits": 10, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.163, "source": "results/w19-a1-qwen-lines.txt:5", "task": "niah_multikey"}
-{"acc": 1.0, "arm": "quant-4bit-kivi", "ctx": 16384, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.287, "source": "results/w19-a1-qwen-lines.txt:6", "task": "niah_multikey"}
-{"acc": 1.0, "arm": "quant-8bit-kivi-hqq", "ctx": 16384, "hits": 4, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 4, "ratio": 0.535, "source": "results/w19-a1-qwen-lines.txt:7", "task": "niah_multikey"}
-{"acc": 0.58, "arm": "quant-2bit-kivi", "ctx": 32768, "hits": 7, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.16, "source": "results/w19-a1-qwen-lines.txt:8", "task": "niah_multikey"}
-{"acc": 1.0, "arm": "quant-4bit-kivi", "ctx": 32768, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.284, "source": "results/w19-a1-qwen-lines.txt:9", "task": "niah_multikey"}
-{"acc": 0.33, "arm": "quant-2bit-kivi", "ctx": 16384, "hits": 4, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.163, "source": "results/w19-a1-qwen-lines.txt:10", "task": "niah_multivalue"}
-{"acc": 0.92, "arm": "quant-4bit-kivi", "ctx": 16384, "hits": 11, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.287, "source": "results/w19-a1-qwen-lines.txt:11", "task": "niah_multivalue"}
-{"acc": 1.0, "arm": "quant-8bit-kivi-hqq", "ctx": 16384, "hits": 4, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 4, "ratio": 0.535, "source": "results/w19-a1-qwen-lines.txt:12", "task": "niah_multivalue"}
-{"acc": 0.17, "arm": "quant-2bit-kivi", "ctx": 32768, "hits": 2, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.16, "source": "results/w19-a1-qwen-lines.txt:13", "task": "niah_multivalue"}
-{"acc": 1.0, "arm": "quant-4bit-kivi", "ctx": 32768, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.284, "source": "results/w19-a1-qwen-lines.txt:14", "task": "niah_multivalue"}
-{"acc": 1.0, "arm": "quant-2bit-kivi", "ctx": 16384, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.163, "source": "results/w19-a1-qwen-lines.txt:15", "task": "niah_single"}
-{"acc": 1.0, "arm": "quant-4bit-kivi", "ctx": 16384, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.287, "source": "results/w19-a1-qwen-lines.txt:16", "task": "niah_single"}
-{"acc": 1.0, "arm": "quant-8bit-kivi-hqq", "ctx": 16384, "hits": 4, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 4, "ratio": 0.535, "source": "results/w19-a1-qwen-lines.txt:17", "task": "niah_single"}
-{"acc": 0.92, "arm": "quant-2bit-kivi", "ctx": 32768, "hits": 11, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.16, "source": "results/w19-a1-qwen-lines.txt:18", "task": "niah_single"}
-{"acc": 1.0, "arm": "quant-4bit-kivi", "ctx": 32768, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.284, "source": "results/w19-a1-qwen-lines.txt:19", "task": "niah_single"}
-{"acc": 0.92, "arm": "quant-2bit-kivi", "ctx": 16384, "hits": 11, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.163, "source": "results/w19-a1-qwen-lines.txt:20", "task": "vt"}
-{"acc": 1.0, "arm": "quant-4bit-kivi", "ctx": 16384, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.287, "source": "results/w19-a1-qwen-lines.txt:21", "task": "vt"}
-{"acc": 1.0, "arm": "quant-8bit-kivi-hqq", "ctx": 16384, "hits": 4, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 4, "ratio": 0.535, "source": "results/w19-a1-qwen-lines.txt:22", "task": "vt"}
-{"acc": 0.25, "arm": "quant-2bit-kivi", "ctx": 32768, "hits": 3, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.16, "source": "results/w19-a1-qwen-lines.txt:23", "task": "vt"}
-{"acc": 1.0, "arm": "quant-4bit-kivi", "ctx": 32768, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.284, "source": "results/w19-a1-qwen-lines.txt:24", "task": "vt"}
+{"acc": 0.83, "arm": "quant-2bit-kivi", "ctx": 16384, "hits": 10, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.163, "sbits": 0.163, "source": "results/w19-a1-qwen-lines.txt:5", "task": "niah_multikey"}
+{"acc": 1.0, "arm": "quant-4bit-kivi", "ctx": 16384, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.287, "sbits": 0.287, "source": "results/w19-a1-qwen-lines.txt:6", "task": "niah_multikey"}
+{"acc": 1.0, "arm": "quant-8bit-kivi-hqq", "ctx": 16384, "hits": 4, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 4, "ratio": 0.535, "sbits": 0.535, "source": "results/w19-a1-qwen-lines.txt:7", "task": "niah_multikey"}
+{"acc": 0.58, "arm": "quant-2bit-kivi", "ctx": 32768, "hits": 7, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.16, "sbits": 0.16, "source": "results/w19-a1-qwen-lines.txt:8", "task": "niah_multikey"}
+{"acc": 1.0, "arm": "quant-4bit-kivi", "ctx": 32768, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.284, "sbits": 0.284, "source": "results/w19-a1-qwen-lines.txt:9", "task": "niah_multikey"}
+{"acc": 0.33, "arm": "quant-2bit-kivi", "ctx": 16384, "hits": 4, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.163, "sbits": 0.163, "source": "results/w19-a1-qwen-lines.txt:10", "task": "niah_multivalue"}
+{"acc": 0.92, "arm": "quant-4bit-kivi", "ctx": 16384, "hits": 11, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.287, "sbits": 0.287, "source": "results/w19-a1-qwen-lines.txt:11", "task": "niah_multivalue"}
+{"acc": 1.0, "arm": "quant-8bit-kivi-hqq", "ctx": 16384, "hits": 4, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 4, "ratio": 0.535, "sbits": 0.535, "source": "results/w19-a1-qwen-lines.txt:12", "task": "niah_multivalue"}
+{"acc": 0.17, "arm": "quant-2bit-kivi", "ctx": 32768, "hits": 2, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.16, "sbits": 0.16, "source": "results/w19-a1-qwen-lines.txt:13", "task": "niah_multivalue"}
+{"acc": 1.0, "arm": "quant-4bit-kivi", "ctx": 32768, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.284, "sbits": 0.284, "source": "results/w19-a1-qwen-lines.txt:14", "task": "niah_multivalue"}
+{"acc": 1.0, "arm": "quant-2bit-kivi", "ctx": 16384, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.163, "sbits": 0.163, "source": "results/w19-a1-qwen-lines.txt:15", "task": "niah_single"}
+{"acc": 1.0, "arm": "quant-4bit-kivi", "ctx": 16384, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.287, "sbits": 0.287, "source": "results/w19-a1-qwen-lines.txt:16", "task": "niah_single"}
+{"acc": 1.0, "arm": "quant-8bit-kivi-hqq", "ctx": 16384, "hits": 4, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 4, "ratio": 0.535, "sbits": 0.535, "source": "results/w19-a1-qwen-lines.txt:17", "task": "niah_single"}
+{"acc": 0.92, "arm": "quant-2bit-kivi", "ctx": 32768, "hits": 11, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.16, "sbits": 0.16, "source": "results/w19-a1-qwen-lines.txt:18", "task": "niah_single"}
+{"acc": 1.0, "arm": "quant-4bit-kivi", "ctx": 32768, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.284, "sbits": 0.284, "source": "results/w19-a1-qwen-lines.txt:19", "task": "niah_single"}
+{"acc": 0.92, "arm": "quant-2bit-kivi", "ctx": 16384, "hits": 11, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.163, "sbits": 0.163, "source": "results/w19-a1-qwen-lines.txt:20", "task": "vt"}
+{"acc": 1.0, "arm": "quant-4bit-kivi", "ctx": 16384, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.287, "sbits": 0.287, "source": "results/w19-a1-qwen-lines.txt:21", "task": "vt"}
+{"acc": 1.0, "arm": "quant-8bit-kivi-hqq", "ctx": 16384, "hits": 4, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 4, "ratio": 0.535, "sbits": 0.535, "source": "results/w19-a1-qwen-lines.txt:22", "task": "vt"}
+{"acc": 0.25, "arm": "quant-2bit-kivi", "ctx": 32768, "hits": 3, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.16, "sbits": 0.16, "source": "results/w19-a1-qwen-lines.txt:23", "task": "vt"}
+{"acc": 1.0, "arm": "quant-4bit-kivi", "ctx": 32768, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.284, "sbits": 0.284, "source": "results/w19-a1-qwen-lines.txt:24", "task": "vt"}

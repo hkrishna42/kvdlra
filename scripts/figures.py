@@ -9,6 +9,9 @@ Three figures, one per `\\includegraphics` in paper/main.tex @ee8c0ab:
   2r/n=0.125x asymptote, the 2-bit arm toward 0.156x. Picks up the 64K point
   automatically when the w19-a4-llama archive directory exists.
 * ``coldstart`` -- persisted-cache cold start (seconds) at 16K/32K: full vs r64 vs 2-bit.
+  The protocol behind those rows -- warm page-cache read, H2D, reconstruct, median of 5
+  repeats -- is `scripts/pod/w19.sh@ee8c0ab` (its persist block, ``--repeats 5``); the
+  figure's subtitle states it, so this is where that claim comes from.
 
 Every accuracy is counted from `results/paper-v1/<pod>/trials.jsonl`, the same per-trial
 provenance `scripts/tables.py build` uses -- so a figure and a table can never disagree.
@@ -21,7 +24,7 @@ Palette = the dataviz reference instance, first three categorical slots (validat
 all-pairs); colour follows the entity across every figure (r64 blue, 2-bit orange,
 4-bit aqua; the compose cell is r64's hue with a hollow diamond; full KV is ink).
 
-    python scripts/figures.py build --out docs/paper/figures
+    python scripts/figures.py --out docs/paper/figures
 """
 
 from __future__ import annotations
@@ -340,11 +343,8 @@ def build(out: Path) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    sub = ap.add_subparsers(dest="cmd", required=True)
-    b = sub.add_parser("build", help="regenerate the paper figures from results/paper-v1")
-    b.add_argument("--out", default="docs/paper/figures")
-    a = ap.parse_args()
-    build(Path(a.out))
+    ap.add_argument("--out", default="docs/paper/figures")
+    build(Path(ap.parse_args().out))
 
 
 if __name__ == "__main__":

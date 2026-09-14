@@ -20,7 +20,7 @@ def _run(script: str, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 def test_figures_build_writes_every_paper_figure(tmp_path: Path) -> None:
-    r = _run("figures.py", "build", "--out", str(tmp_path))
+    r = _run("figures.py", "--out", str(tmp_path))
     assert r.returncode == 0, r.stderr
     assert sorted(p.name for p in tmp_path.iterdir()) == [
         "coldstart.pdf", "coldstart.png",

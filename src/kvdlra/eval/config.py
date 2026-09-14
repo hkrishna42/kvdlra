@@ -71,9 +71,8 @@ class PodCfg:
 
 
 def _load(kind: str, name: str, schema: type) -> Any:
+    # A missing file is OmegaConf.load's own FileNotFoundError, naming the same path.
     p = ROOT / kind / f"{name}.yaml"
-    if not p.exists():
-        raise FileNotFoundError(p)
     cfg = OmegaConf.merge(OmegaConf.structured(schema), OmegaConf.load(p))
     return OmegaConf.to_object(cfg)
 

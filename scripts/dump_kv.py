@@ -100,48 +100,15 @@ import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import _paths  # noqa: F401  # bootstrap: make kvdlra importable when run as a script
-import torch
-import transformers.models.llama.modeling_llama as llama_mod
-from datasets import load_dataset
-from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
 
-from kvdlra.utils.seed import seed_everything
-
-
-class CapturingCache(DynamicCache):
-    """``DynamicCache`` that snapshots full per-layer (K, V) after each update.
-
-    Matches the ``transformers==5.8.0`` ``update`` signature
-    ``(key_states, value_states, layer_idx, *args, **kwargs)`` and stores a
-    detached CPU copy of the full accumulated key/value tensors returned by the
-    superclass. On a single full-prompt prefill (the only way this script calls
-    the model) each layer is updated exactly once, so the snapshot holds the
-    complete ``(1, num_kv_heads, T, head_dim)`` prefill tensors. The cached keys
-    are post-RoPE (see module docstring).
-    """
-
-    def __init__(self, config: Any | None = None) -> None:
-        super().__init__(config=config)
-        self.snapshots: dict[int, dict[str, torch.Tensor]] = {}
-
-    def update(
-        self,
-        key_states: torch.Tensor,
-        value_states: torch.Tensor,
-        layer_idx: int,
-        *args: Any,
-        **kwargs: Any,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        k_full, v_full = super().update(key_states, value_states, layer_idx, *args, **kwargs)
-        # Detached CPU copies of the full prefill tensors (single update per layer).
-        self.snapshots[layer_idx] = {
-            "K": k_full.detach().to("cpu"),
-            "V": v_full.detach().to("cpu"),
-        }
-        return k_full, v_full
+# torch / transformers / datasets are imported by the capture path only (`dump`), not at
+# module scope: `sha256` and `verify` hash files and need none of it, and paying ~12 s of
+# import for a manifest check is 12 s on every test run and every `dump_kv.py verify`.
+if TYPE_CHECKING:
+    import torch
 
 
 @contextmanager
@@ -167,6 +134,8 @@ def capture_pre_rope_keys(
     and identical across layers, so the probe can rotate a reconstructed pre-RoPE
     key/query with the model's exact operator.
     """
+    import transformers.models.llama.modeling_llama as llama_mod
+
     original = llama_mod.apply_rotary_pos_emb
 
     def patched(
@@ -199,6 +168,8 @@ def resolve_device(device: str) -> str:
     ``"cpu"``. Any explicit value is returned unchanged.
     """
     if device == "auto":
+        import torch
+
         return "cuda" if torch.cuda.is_available() else "cpu"
     return device
 
@@ -217,11 +188,8 @@ def hashes(root: Path) -> dict[str, str]:
     for p in sorted(root.rglob("*")):
         if not p.is_file() or p.name.startswith("."):
             continue
-        h = hashlib.sha256()
         with p.open("rb") as f:
-            for chunk in iter(lambda: f.read(1 << 20), b""):
-                h.update(chunk)
-        out[str(p.relative_to(root))] = h.hexdigest()
+            out[str(p.relative_to(root))] = hashlib.file_digest(f, "sha256").hexdigest()
     return out
 
 
@@ -267,7 +235,50 @@ def verify(root: Path) -> int:
 
 
 def dump(args: argparse.Namespace) -> None:
-    """Run a single prefill and write the per-layer dumps plus the sha256 manifest."""
+    """Run a single prefill and write the per-layer dumps plus the sha256 manifest.
+
+    The heavy imports live here rather than at module scope (see the note at the top of
+    the file), which is also why ``CapturingCache`` is defined here: its base class is
+    one of them.
+    """
+    import torch
+    from datasets import load_dataset
+    from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
+
+    from kvdlra.utils.seed import seed_everything
+
+    class CapturingCache(DynamicCache):
+        """``DynamicCache`` that snapshots full per-layer (K, V) after each update.
+
+        Matches the ``transformers==5.8.0`` ``update`` signature
+        ``(key_states, value_states, layer_idx, *args, **kwargs)`` and stores a
+        detached CPU copy of the full accumulated key/value tensors returned by the
+        superclass. On a single full-prompt prefill (the only way this script calls
+        the model) each layer is updated exactly once, so the snapshot holds the
+        complete ``(1, num_kv_heads, T, head_dim)`` prefill tensors. The cached keys
+        are post-RoPE (see module docstring).
+        """
+
+        def __init__(self, config: Any | None = None) -> None:
+            super().__init__(config=config)
+            self.snapshots: dict[int, dict[str, torch.Tensor]] = {}
+
+        def update(
+            self,
+            key_states: torch.Tensor,
+            value_states: torch.Tensor,
+            layer_idx: int,
+            *args: Any,
+            **kwargs: Any,
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+            k_full, v_full = super().update(key_states, value_states, layer_idx, *args, **kwargs)
+            # Detached CPU copies of the full prefill tensors (single update per layer).
+            self.snapshots[layer_idx] = {
+                "K": k_full.detach().to("cpu"),
+                "V": v_full.detach().to("cpu"),
+            }
+            return k_full, v_full
+
     seed_everything(args.seed)
     device = resolve_device(args.device)
     dtype = torch.bfloat16 if device.startswith("cuda") else torch.float32

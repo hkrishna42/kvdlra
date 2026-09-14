@@ -1,0 +1,6 @@
+{"arm": "bugEVICT-h1024", "ctx": 32768, "model": "unknown", "ppl": 8.812, "ratio": 0.032, "sbits": null, "source": "results/w11-goalB-ppl-lines.txt:1", "tok_eq": 1061.5}
+{"arm": "bugEVICT-h256", "ctx": 32768, "model": "unknown", "ppl": 8.951, "ratio": 0.009, "sbits": null, "source": "results/w11-goalB-ppl-lines.txt:2", "tok_eq": 293.1}
+{"arm": "bugS-r32-h1024", "ctx": 32768, "model": "unknown", "ppl": 8.881, "ratio": 0.065, "sbits": null, "source": "results/w11-goalB-ppl-lines.txt:3", "tok_eq": 2114.4}
+{"arm": "bugS-r32-h256", "ctx": 32768, "model": "unknown", "ppl": 9.164, "ratio": 0.043, "sbits": null, "source": "results/w11-goalB-ppl-lines.txt:4", "tok_eq": 1370.7}
+{"arm": "ea-k0.1", "ctx": 32768, "model": "unknown", "ppl": 8.277, "ratio": 0.115, "sbits": null, "source": "results/w11-goalB-ppl-lines.txt:5", "tok_eq": 3784.0}
+{"arm": "full", "ctx": 32768, "model": "unknown", "ppl": 7.624, "ratio": 1.0, "sbits": null, "source": "results/w11-goalB-ppl-lines.txt:6", "tok_eq": 32768.0}

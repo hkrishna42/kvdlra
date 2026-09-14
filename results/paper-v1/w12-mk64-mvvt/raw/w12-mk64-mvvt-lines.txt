@@ -1,0 +1,4 @@
+[niah_multivalue ctx65536] bugS-r32-h256  acc=0.50 recall=0.88 ratio=0.038
+[niah_multivalue ctx65536] ea-k0.1        acc=1.00 recall=1.00 ratio=0.100
+[vt ctx65536] bugS-r32-h256  acc=1.00 recall=1.00 ratio=0.038
+[vt ctx65536] ea-k0.1        acc=1.00 recall=1.00 ratio=0.100

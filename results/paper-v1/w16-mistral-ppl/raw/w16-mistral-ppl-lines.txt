@@ -1,0 +1,15 @@
+# w16-mistral-ppl-lines.txt  sources=['w16-mistral-sweep-raw.log', 'w16-mistral-raw.log']
+  bug-r16 [T=16384] ppl=7.375 tok_eq/layer=0.0 ratio=0.019
+  bug-r32 [T=16384] ppl=6.995 tok_eq/layer=0.0 ratio=0.035
+  bug-r64 [T=16384] ppl=6.220 tok_eq/layer=0.0 ratio=0.068
+  bug-r128 [T=16384] ppl=138.317 tok_eq/layer=0.0 ratio=0.135
+  bug-r256 [T=16384] ppl=37.205 tok_eq/layer=0.0 ratio=0.267
+  bugSseed-r16-h256 [T=16384] ppl=5.888 tok_eq/layer=0.0 ratio=0.036
+  bugSseed-r32-h256 [T=16384] ppl=5.946 tok_eq/layer=0.0 ratio=0.052
+  bugSseed-r64-h256 [T=16384] ppl=5.499 tok_eq/layer=0.0 ratio=0.085
+  bugSseed-r128-h256 [T=16384] ppl=43.938 tok_eq/layer=0.0 ratio=0.150
+  full [T=16384] ppl=4.866 tok_eq/layer=0.0 ratio=1.000
+  think-c0.5 [T=16384] ppl=4.933 tok_eq/layer=0.0 ratio=0.750
+  palu-r0.5 [T=16384] ppl=5.090 tok_eq/layer=0.0 ratio=0.504
+  bugSseed-r128-h1024 [T=16384] ppl=47.330 tok_eq/layer=0.0 ratio=0.191
+  bugSseed-r128-h1024-s32 [T=16384] ppl=12.731 tok_eq/layer=0.0 ratio=0.191

@@ -1,0 +1,6 @@
+[niah_multikey ctx32768] bugSQ-r32-h256 acc=0.50 recall=0.50 ratio=0.043
+[niah_multivalue ctx32768] bugSQ-r32-h256 acc=1.00 recall=1.00 ratio=0.043
+[vt ctx32768] bugSQ-r32-h256 acc=0.75 recall=0.75 ratio=0.043
+[niah_multikey ctx32768] bugSQ-r128-h1024 acc=0.50 recall=0.50 ratio=0.159
+[niah_multivalue ctx32768] bugSQ-r128-h1024 acc=1.00 recall=1.00 ratio=0.159
+[vt ctx32768] bugSQ-r128-h1024 acc=0.75 recall=0.75 ratio=0.160

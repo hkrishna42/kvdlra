@@ -1,0 +1,13 @@
+# w16-qwen-sweep-lines.txt  n_by_ctx={'16384': 4}  sources=['w16-qwen-sweep-raw.log']
+[niah_single ctx16384] bugSseed-r16-h256 acc=1.00 recall=1.00 ratio=0.054
+[niah_single ctx16384] bugSseed-r32-h256 acc=1.00 recall=1.00 ratio=0.086
+[niah_single ctx16384] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.149
+[niah_single ctx16384] bugSseed-r128-h256 acc=0.00 recall=0.00 ratio=0.276
+[niah_multivalue ctx16384] bugSseed-r16-h256 acc=1.00 recall=1.00 ratio=0.054
+[niah_multivalue ctx16384] bugSseed-r32-h256 acc=1.00 recall=1.00 ratio=0.086
+[niah_multivalue ctx16384] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.149
+[niah_multivalue ctx16384] bugSseed-r128-h256 acc=0.00 recall=0.00 ratio=0.276
+[vt ctx16384] bugSseed-r16-h256 acc=1.00 recall=1.00 ratio=0.054
+[vt ctx16384] bugSseed-r32-h256 acc=1.00 recall=1.00 ratio=0.086
+[vt ctx16384] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.149
+[vt ctx16384] bugSseed-r128-h256 acc=0.00 recall=0.00 ratio=0.275

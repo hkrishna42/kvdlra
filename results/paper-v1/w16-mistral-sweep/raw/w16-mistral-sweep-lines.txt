@@ -1,0 +1,13 @@
+# w16-mistral-sweep-lines.txt  n_by_ctx={'16384': 4}  sources=['w16-mistral-sweep-raw.log']
+[niah_single ctx16384] bugSseed-r16-h256 acc=1.00 recall=1.00 ratio=0.036
+[niah_single ctx16384] bugSseed-r32-h256 acc=1.00 recall=1.00 ratio=0.052
+[niah_single ctx16384] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.085
+[niah_single ctx16384] bugSseed-r128-h256 acc=0.50 recall=0.50 ratio=0.150
+[niah_multivalue ctx16384] bugSseed-r16-h256 acc=1.00 recall=1.00 ratio=0.037
+[niah_multivalue ctx16384] bugSseed-r32-h256 acc=1.00 recall=1.00 ratio=0.053
+[niah_multivalue ctx16384] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.086
+[niah_multivalue ctx16384] bugSseed-r128-h256 acc=0.00 recall=0.00 ratio=0.151
+[vt ctx16384] bugSseed-r16-h256 acc=0.50 recall=0.50 ratio=0.037
+[vt ctx16384] bugSseed-r32-h256 acc=0.25 recall=0.25 ratio=0.053
+[vt ctx16384] bugSseed-r64-h256 acc=0.50 recall=0.50 ratio=0.086
+[vt ctx16384] bugSseed-r128-h256 acc=0.00 recall=0.00 ratio=0.151

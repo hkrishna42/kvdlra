@@ -1,0 +1,2 @@
+{"arm": "bugS-r192-h1024", "ctx": 16384, "model": "unknown", "ppl": 4.124, "ratio": 0.254, "sbits": null, "source": "results/w12-r192-ppl-lines.txt:1", "tok_eq": 4140.9}
+{"arm": "bugS-r192-h1024", "ctx": 32768, "model": "unknown", "ppl": 7.867, "ratio": 0.222, "sbits": null, "source": "results/w12-r192-ppl-lines.txt:2", "tok_eq": 7228.9}

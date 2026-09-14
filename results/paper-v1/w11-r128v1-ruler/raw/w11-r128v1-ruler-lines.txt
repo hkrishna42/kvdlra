@@ -1,0 +1,3 @@
+[niah_single ctx16384] bugS-r128-h1024 acc=1.00 recall=1.00 ratio=0.191
+[niah_single ctx16384] bugS-r128-h256 acc=1.00 recall=1.00 ratio=0.150
+[niah_single ctx32768] bugS-r32-h256  acc=1.00 recall=1.00 ratio=0.043

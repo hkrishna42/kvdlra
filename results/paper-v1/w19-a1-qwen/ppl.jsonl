@@ -1,0 +1,4 @@
+{"arm": "quant-2bit-kivi", "ctx": 16384, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 6.7, "ratio": 0.163, "sbits": 0.163, "source": "results/w19-a1-qwen-lines.txt:1", "tok_eq": 1398.0}
+{"arm": "quant-2bit-kivi", "ctx": 32768, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 8.229, "ratio": 0.16, "sbits": 0.16, "source": "results/w19-a1-qwen-lines.txt:2", "tok_eq": 2678.0}
+{"arm": "quant-4bit-kivi", "ctx": 16384, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 6.196, "ratio": 0.287, "sbits": 0.287, "source": "results/w19-a1-qwen-lines.txt:3", "tok_eq": 2414.0}
+{"arm": "quant-4bit-kivi", "ctx": 32768, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 7.714, "ratio": 0.284, "sbits": 0.284, "source": "results/w19-a1-qwen-lines.txt:4", "tok_eq": 4718.0}

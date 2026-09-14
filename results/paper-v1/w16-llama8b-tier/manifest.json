@@ -2,7 +2,17 @@
   "pod": "w16-llama8b-tier",
   "git_sha": "ee8c0ab",
   "source_files": [
-    "results/w16-llama8b-tier-lines.txt"
+    {
+      "path": "results/w16-llama8b-tier-lines.txt",
+      "lines": 17,
+      "parsed": {
+        "trials": 0,
+        "cells": 16,
+        "ppl": 0
+      },
+      "unconverted": 1,
+      "raw": "raw/w16-llama8b-tier-lines.txt"
+    }
   ],
   "converted_by": "scripts/tables.py convert-v1",
   "records": {

@@ -1,0 +1,2 @@
+{"arm": "bugSseed-r64-h256", "ctx": 16384, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 5.308, "ratio": 0.085, "sbits": 0.15, "source": "results/w18-llama-ppl-lines.txt:1", "tok_eq": 1377.7}
+{"arm": "bugSseed-r64-h256", "ctx": 32768, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 8.326, "ratio": 0.075, "sbits": 0.139, "source": "results/w18-llama-ppl-lines.txt:2", "tok_eq": 2417.7}

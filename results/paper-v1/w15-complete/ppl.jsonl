@@ -1,0 +1,5 @@
+{"arm": "full", "ctx": 16384, "model": "unknown", "ppl": 5.272, "ratio": 1.0, "sbits": null, "source": "results/w15-complete-lines.txt:8", "tok_eq": 16384.0}
+{"arm": "think-c0.5", "ctx": 16384, "model": "unknown", "ppl": 5.413, "ratio": 0.75, "sbits": null, "source": "results/w15-complete-lines.txt:10", "tok_eq": 12288.2}
+{"arm": "palu-r0.5", "ctx": 16384, "model": "unknown", "ppl": 5.419, "ratio": 0.504, "sbits": null, "source": "results/w15-complete-lines.txt:12", "tok_eq": 8258.0}
+{"arm": "bugSseed-r128-h1024", "ctx": 16384, "model": "unknown", "ppl": 5.429, "ratio": 0.191, "sbits": null, "source": "results/w15-complete-lines.txt:14", "tok_eq": 3119.1}
+{"arm": "bugSseed-r128-h1024-s32", "ctx": 16384, "model": "unknown", "ppl": 5.434, "ratio": 0.191, "sbits": null, "source": "results/w15-complete-lines.txt:16", "tok_eq": 3119.1}

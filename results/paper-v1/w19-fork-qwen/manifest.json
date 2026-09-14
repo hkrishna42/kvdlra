@@ -2,8 +2,28 @@
   "pod": "w19-fork-qwen",
   "git_sha": "ee8c0ab",
   "source_files": [
-    "results/w19-fork-qwen-lines.txt",
-    "results/w19_pertrial/fork-qwen-trials.txt"
+    {
+      "path": "results/w19-fork-qwen-lines.txt",
+      "lines": 32,
+      "parsed": {
+        "trials": 0,
+        "cells": 32,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/w19-fork-qwen-lines.txt"
+    },
+    {
+      "path": "results/w19_pertrial/fork-qwen-trials.txt",
+      "lines": 384,
+      "parsed": {
+        "trials": 384,
+        "cells": 0,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/fork-qwen-trials.txt"
+    }
   ],
   "converted_by": "scripts/tables.py convert-v1",
   "records": {

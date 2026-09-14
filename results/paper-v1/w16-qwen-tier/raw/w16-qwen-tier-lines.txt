@@ -1,0 +1,15 @@
+# w16-qwen-tier-lines.txt  n_by_ctx={'16384': 8, '32768': 4}  sources=['w16-qwen-raw.log']
+[niah_single ctx16384] bugSseed-r128-h1024 acc=0.00 recall=0.00 ratio=0.311
+[niah_single ctx16384] think-c0.5 acc=1.00 recall=1.00 ratio=0.750
+[niah_single ctx16384] palu-r0.5 acc=1.00 recall=1.00 ratio=0.504
+[niah_multivalue ctx16384] bugSseed-r128-h1024 acc=0.00 recall=0.00 ratio=0.311
+[niah_multivalue ctx16384] think-c0.5 acc=0.75 recall=0.94 ratio=0.750
+[niah_multivalue ctx16384] palu-r0.5 acc=0.88 recall=0.97 ratio=0.504
+[vt ctx16384] bugSseed-r128-h1024 acc=0.00 recall=0.00 ratio=0.310
+[vt ctx16384] think-c0.5 acc=1.00 recall=1.00 ratio=0.750
+[vt ctx16384] palu-r0.5 acc=1.00 recall=1.00 ratio=0.504
+[niah_multivalue ctx16384] bugSseed-r128-h1024-s32 acc=0.00 recall=0.00 ratio=0.311
+[vt ctx16384] bugSseed-r128-h1024-s32 acc=0.00 recall=0.00 ratio=0.310
+[vt ctx32768] bugSseed-r128-h1024 acc=0.00 recall=0.00 ratio=0.282
+[vt ctx32768] think-c0.5 acc=1.00 recall=1.00 ratio=0.750
+[vt ctx32768] palu-r0.5 acc=1.00 recall=1.00 ratio=0.502

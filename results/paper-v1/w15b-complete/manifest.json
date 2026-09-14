@@ -2,11 +2,22 @@
   "pod": "w15b-complete",
   "git_sha": "ee8c0ab",
   "source_files": [
-    "results/w15b-complete-lines.txt"
+    {
+      "path": "results/w15b-complete-lines.txt",
+      "lines": 12,
+      "parsed": {
+        "trials": 0,
+        "cells": 6,
+        "ppl": 3
+      },
+      "unconverted": 3,
+      "raw": "raw/w15b-complete-lines.txt"
+    }
   ],
   "converted_by": "scripts/tables.py convert-v1",
   "records": {
-    "cells.jsonl": 6
+    "cells.jsonl": 6,
+    "ppl.jsonl": 3
   },
   "note": "paper-v1 archive; haystack_id/depth/prompt_sha256 were not recorded and are null"
 }

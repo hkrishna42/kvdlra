@@ -1,0 +1,13 @@
+{"arm": "morph-k0.1", "ctx": 16384, "model": "unknown", "ppl": 4.108, "ratio": 0.125, "sbits": null, "source": "results/w11-base-ppl16-lines.txt:1", "tok_eq": 1842.8}
+{"arm": "morph-k0.25", "ctx": 16384, "model": "unknown", "ppl": 4.076, "ratio": 0.312, "sbits": null, "source": "results/w11-base-ppl16-lines.txt:2", "tok_eq": 4608.0}
+{"arm": "morph-k0.5", "ctx": 16384, "model": "unknown", "ppl": 4.06, "ratio": 0.625, "sbits": null, "source": "results/w11-base-ppl16-lines.txt:3", "tok_eq": 9216.0}
+{"arm": "palu-r0.25", "ctx": 16384, "model": "unknown", "ppl": 7.05, "ratio": 0.252, "sbits": null, "source": "results/w11-base-ppl16-lines.txt:4", "tok_eq": 4128.0}
+{"arm": "palu-r0.5", "ctx": 16384, "model": "unknown", "ppl": 5.236, "ratio": 0.504, "sbits": null, "source": "results/w11-base-ppl16-lines.txt:5", "tok_eq": 8256.0}
+{"arm": "shadow-r128", "ctx": 16384, "model": "unknown", "ppl": 4.076, "ratio": 1.066, "sbits": null, "source": "results/w11-base-ppl16-lines.txt:6", "tok_eq": 17469.5}
+{"arm": "shadow-r64", "ctx": 16384, "model": "unknown", "ppl": 4.108, "ratio": 0.815, "sbits": null, "source": "results/w11-base-ppl16-lines.txt:7", "tok_eq": 13351.5}
+{"arm": "snapkv-k0.1", "ctx": 16384, "model": "unknown", "ppl": 4.108, "ratio": 0.131, "sbits": null, "source": "results/w11-base-ppl16-lines.txt:8", "tok_eq": 2148.0}
+{"arm": "snapkv-k0.25", "ctx": 16384, "model": "unknown", "ppl": 4.044, "ratio": 0.281, "sbits": null, "source": "results/w11-base-ppl16-lines.txt:9", "tok_eq": 4608.0}
+{"arm": "snapkv-k0.5", "ctx": 16384, "model": "unknown", "ppl": 4.044, "ratio": 0.531, "sbits": null, "source": "results/w11-base-ppl16-lines.txt:10", "tok_eq": 8704.0}
+{"arm": "think-c0.3", "ctx": 16384, "model": "unknown", "ppl": 4.092, "ratio": 0.852, "sbits": null, "source": "results/w11-base-ppl16-lines.txt:11", "tok_eq": 13952.4}
+{"arm": "think-c0.5", "ctx": 16384, "model": "unknown", "ppl": 4.189, "ratio": 0.75, "sbits": null, "source": "results/w11-base-ppl16-lines.txt:12", "tok_eq": 12288.2}
+{"arm": "think-c0.7", "ctx": 16384, "model": "unknown", "ppl": 4.674, "ratio": 0.648, "sbits": null, "source": "results/w11-base-ppl16-lines.txt:13", "tok_eq": 10624.1}

@@ -2,7 +2,17 @@
   "pod": "w14-wc2n4-ruler",
   "git_sha": "ee8c0ab",
   "source_files": [
-    "results/w14-wc2n4-ruler-lines.txt"
+    {
+      "path": "results/w14-wc2n4-ruler-lines.txt",
+      "lines": 6,
+      "parsed": {
+        "trials": 0,
+        "cells": 6,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/w14-wc2n4-ruler-lines.txt"
+    }
   ],
   "converted_by": "scripts/tables.py convert-v1",
   "records": {

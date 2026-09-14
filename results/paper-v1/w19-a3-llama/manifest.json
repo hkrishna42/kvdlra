@@ -1,0 +1,31 @@
+{
+  "pod": "w19-a3-llama",
+  "git_sha": "ee8c0ab",
+  "source_files": [
+    {
+      "path": "results/w19-a3-llama-lines.txt",
+      "lines": 0,
+      "parsed": {
+        "trials": 0,
+        "cells": 0,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/w19-a3-llama-lines.txt"
+    },
+    {
+      "path": "results/w19_pertrial/a3-llama-trials.txt",
+      "lines": 0,
+      "parsed": {
+        "trials": 0,
+        "cells": 0,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/a3-llama-trials.txt"
+    }
+  ],
+  "converted_by": "scripts/tables.py convert-v1",
+  "records": {},
+  "note": "paper-v1 archive; haystack_id/depth/prompt_sha256 were not recorded and are null"
+}

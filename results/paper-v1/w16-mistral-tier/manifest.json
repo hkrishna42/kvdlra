@@ -2,7 +2,17 @@
   "pod": "w16-mistral-tier",
   "git_sha": "ee8c0ab",
   "source_files": [
-    "results/w16-mistral-tier-lines.txt"
+    {
+      "path": "results/w16-mistral-tier-lines.txt",
+      "lines": 15,
+      "parsed": {
+        "trials": 0,
+        "cells": 14,
+        "ppl": 0
+      },
+      "unconverted": 1,
+      "raw": "raw/w16-mistral-tier-lines.txt"
+    }
   ],
   "converted_by": "scripts/tables.py convert-v1",
   "records": {

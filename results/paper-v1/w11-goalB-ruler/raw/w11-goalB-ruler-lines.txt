@@ -1,0 +1,13 @@
+[niah_multikey ctx32768] bugS-r32-h256  acc=0.83 recall=0.83 ratio=0.043
+[niah_multikey ctx32768] bugS-r32-h512  acc=0.83 recall=0.83 ratio=0.050
+[niah_multikey ctx32768] full           acc=1.00 recall=1.00 ratio=1.000
+[niah_single ctx32768] bugEVICT-h1024 acc=1.00 recall=1.00 ratio=0.033
+[niah_single ctx32768] bugEVICT-h2048 acc=1.00 recall=1.00 ratio=0.064
+[niah_single ctx32768] bugEVICT-h256  acc=1.00 recall=1.00 ratio=0.009
+[niah_single ctx32768] bugEVICT-h512  acc=1.00 recall=1.00 ratio=0.017
+[niah_single ctx32768] bugS-r32-h1024 acc=1.00 recall=1.00 ratio=0.066
+[niah_single ctx32768] bugS-r32-h2048 acc=1.00 recall=1.00 ratio=0.096
+[niah_single ctx32768] bugS-r32-h256  acc=1.00 recall=1.00 ratio=0.043
+[niah_single ctx32768] bugS-r32-h512  acc=1.00 recall=1.00 ratio=0.051
+[niah_single ctx32768] ea-k0.1        acc=1.00 recall=1.00 ratio=0.100
+[niah_single ctx32768] full           acc=1.00 recall=1.00 ratio=1.000

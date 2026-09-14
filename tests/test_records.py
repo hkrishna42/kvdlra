@@ -1,18 +1,28 @@
 """The record schema behind `results/paper-v1/`: parse, round-trip, archive counts.
 
-`parse_trial_lines` / `parse_cell_lines` are the single readers for the two formats
-the Week-18/19 pods emitted; `scripts/tables.py convert-v1` is the only writer of the
-archive. These pins are what let Task 9 delete the original line files.
+`parse_trial_lines` / `parse_cell_lines` / `parse_ppl_lines` are the single readers for
+the three formats the Week-18/19 pods emitted; `scripts/tables.py convert-v1` is the
+only writer of the archive. These pins are what let Task 9 delete the original line
+files: every source gets a verbatim `raw/` copy and a manifest whose line/parsed/
+unconverted counts add up, so `test_v1_archive_manifests_add_up_and_match_jsonl` can
+re-derive the whole count audit from the archive alone, forever.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 import tables
 
-from kvdlra.eval.records import parse_cell_lines, parse_trial_lines, read_jsonl, write_jsonl
+from kvdlra.eval.records import (
+    parse_cell_lines,
+    parse_ppl_lines,
+    parse_trial_lines,
+    read_jsonl,
+    write_jsonl,
+)
 
 ARCHIVE = Path(__file__).parent.parent / "results" / "paper-v1"
 
@@ -20,6 +30,7 @@ TRIAL = "[trial] task=niah_single ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=3
 CELL = (
     "[niah_single ctx16384] bugSseed-r64-h256 acc=1.000 recall=1.000 ratio=0.151 sbits=0.151 n=12\n"
 )
+PPL = "  bugSseed-r64-h256 [T=16384] ppl=5.308 tok_eq/layer=1377.7 ratio=0.085 sbits=0.150\n"
 
 
 def test_parse_trial_lines_schema() -> None:
@@ -65,6 +76,34 @@ def test_parse_cell_lines_without_n_has_no_hits() -> None:
     assert row["n"] is None and row["hits"] is None and row["acc"] == 0.5
 
 
+def test_parse_ppl_lines_schema() -> None:
+    rows = parse_ppl_lines(PPL, model="M", source="f.txt")
+    assert rows == [
+        {
+            "model": "M",
+            "arm": "bugSseed-r64-h256",
+            "ctx": 16384,
+            "ppl": 5.308,
+            "ratio": 0.085,
+            "sbits": 0.150,
+            "tok_eq": 1377.7,
+            "source": "f.txt:1",
+        }
+    ]
+
+
+def test_parse_ppl_lines_no_leading_space_and_no_sbits() -> None:
+    """w11's ppl lines have no leading whitespace and never printed sbits=."""
+    old = "bug-r32        [T=16384] ppl=4.566 tok_eq/layer=578.9 ratio=0.035\n"
+    (row,) = parse_ppl_lines(old, model="M", source="f")
+    assert row["arm"] == "bug-r32" and row["sbits"] is None and row["tok_eq"] == 578.9
+
+
+def test_parse_ppl_lines_ignores_trial_and_cell_lines() -> None:
+    assert parse_ppl_lines(TRIAL, model="M", source="f") == []
+    assert parse_ppl_lines(CELL, model="M", source="f") == []
+
+
 def test_jsonl_roundtrip(tmp_path: Path) -> None:
     rows = parse_trial_lines(TRIAL, model="M", source="f.txt")
     write_jsonl(tmp_path / "t.jsonl", rows)
@@ -79,12 +118,39 @@ def test_emit_refuses_untagged_per_trial_source(tmp_path: Path) -> None:
         tables._emit(tmp_path / "pod", src, "deadbee", per_trial=True)
 
 
-def test_emit_skips_empty_sources(tmp_path: Path) -> None:
-    """Some archived `-trials.txt` files hold storage tables, not [trial] lines."""
+def test_emit_creates_pod_dir_and_raw_copy_even_when_source_yields_no_records(
+    tmp_path: Path,
+) -> None:
+    """Some archived `-trials.txt` files hold storage tables, not [trial] lines. The
+    pod dir and a verbatim raw/ copy must still exist -- Task 9's deletion gate is
+    "every source has an archived counterpart", not "produced a non-empty JSONL"
+    (fix round 1, review Important #1)."""
     src = tmp_path / "llama-trials.txt"
     src.write_text("[ctx 16384] bug-r64 stored_ratio=0.0685\n")
     tables._emit(tmp_path / "pod", src, "deadbee", per_trial=True)
-    assert not (tmp_path / "pod").exists()
+    pod = tmp_path / "pod"
+    assert not (pod / "trials.jsonl").exists()
+    assert (pod / "raw" / "llama-trials.txt").read_text() == src.read_text()
+    manifest = json.loads((pod / "manifest.json").read_text())
+    (entry,) = manifest["source_files"]
+    assert entry["lines"] == 1
+    assert entry["parsed"] == {"trials": 0, "cells": 0, "ppl": 0}
+    assert entry["unconverted"] == 1
+    assert entry["raw"] == "raw/llama-trials.txt"
+
+
+def test_emit_raises_rather_than_silently_clobber_a_second_contributor(tmp_path: Path) -> None:
+    """Every (pod, artifact) pair in the real archive has exactly one contributing
+    source (verified across all 98 source files); if that ever stops being true,
+    fail loud rather than silently drop the first source's rows."""
+    pod = tmp_path / "pod"
+    first = tmp_path / "a-llama-trials.txt"
+    first.write_text(TRIAL)
+    tables._emit(pod, first, "deadbee", per_trial=True)
+    second = tmp_path / "b-llama-trials.txt"
+    second.write_text(TRIAL)
+    with pytest.raises(SystemExit, match="clobber"):
+        tables._emit(pod, second, "deadbee", per_trial=True)
 
 
 def test_v1_archive_counts_match_sources() -> None:
@@ -97,8 +163,6 @@ def test_v1_archive_counts_match_sources() -> None:
 def test_v1_archive_manifest_keeps_both_artifacts() -> None:
     """24 pods have both a per-trial and an aggregate source; the manifest must name
     both (a single-source manifest would drop half the provenance)."""
-    import json
-
     m = json.loads((ARCHIVE / "w19-a2-llama" / "manifest.json").read_text())
     assert m["git_sha"] == "ee8c0ab"
     assert set(m["records"]) == {"trials.jsonl", "cells.jsonl"}
@@ -109,3 +173,52 @@ def test_v1_archive_manifest_keeps_both_artifacts() -> None:
 def test_v1_archive_models_are_the_pod_hf_ids() -> None:
     rows = read_jsonl(ARCHIVE / "w18-g1-llama" / "trials.jsonl")
     assert {r["model"] for r in rows} == {"unsloth/Meta-Llama-3.1-8B-Instruct"}
+
+
+def test_v1_archive_ppl_pod_exists() -> None:
+    """The ppl parser (fix round 1) recovers perplexity rows the original archive
+    silently dropped -- see task-1-report.md Concerns / review Important #1."""
+    rows = read_jsonl(ARCHIVE / "w17-qwen" / "ppl.jsonl")
+    assert len(rows) == 17
+    assert {r["model"] for r in rows} == {"Qwen/Qwen2.5-7B-Instruct"}
+
+
+def test_v1_archive_previously_missing_pods_now_exist() -> None:
+    """These 4 pod names were entirely absent before fix round 1 (both of their
+    sources produced zero rows under the old two-format parser). They must now exist
+    with a raw/ copy of every source that named them, per review ruling R4."""
+    expect = {
+        "w18-g5-llama": {"g5-llama-trials.txt", "w18-g5-llama-lines.txt"},
+        "w19-a3-llama": {"a3-llama-trials.txt", "w19-a3-llama-lines.txt"},
+        "w19-a3-llama2": {"a3-llama2-trials.txt", "w19-a3-llama2-lines.txt"},
+        "w19-forkdiag-qwen": {"forkdiag-qwen-trials.txt", "w19-forkdiag-qwen-lines.txt"},
+    }
+    for pod, raw_names in expect.items():
+        pod_dir = ARCHIVE / pod
+        assert pod_dir.is_dir(), pod
+        assert {p.name for p in (pod_dir / "raw").iterdir()} == raw_names, pod
+
+
+def test_v1_archive_manifests_add_up_and_match_jsonl() -> None:
+    """The manifest is the whole count audit, forever repeatable from the archive
+    alone: every raw/ copy exists, every source's parsed+unconverted equals its line
+    count, every per-trial source's parsed.trials equals its raw copy's [trial] line
+    count, and every records[] count equals its JSONL file's actual line count."""
+    manifests = sorted(ARCHIVE.glob("*/manifest.json"))
+    assert len(manifests) == 74  # one dir per unique pod name across all 98 sources
+    for manifest_path in manifests:
+        pod_dir = manifest_path.parent
+        manifest = json.loads(manifest_path.read_text())
+        for entry in manifest["source_files"]:
+            raw_path = pod_dir / entry["raw"]
+            assert raw_path.is_file(), f"{pod_dir.name}: missing {entry['raw']}"
+            assert sum(entry["parsed"].values()) + entry["unconverted"] == entry["lines"], (
+                pod_dir.name,
+                entry["path"],
+            )
+            n_trial_lines = sum(
+                1 for line in raw_path.read_text().splitlines() if line.startswith("[trial]")
+            )
+            assert entry["parsed"]["trials"] == n_trial_lines, pod_dir.name
+        for name, n in manifest["records"].items():
+            assert len(read_jsonl(pod_dir / name)) == n, (pod_dir.name, name)

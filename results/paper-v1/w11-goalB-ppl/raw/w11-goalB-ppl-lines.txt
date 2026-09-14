@@ -1,0 +1,6 @@
+bugEVICT-h1024 [T=32768] ppl=8.812 tok_eq/layer=1061.5 ratio=0.032
+bugEVICT-h256  [T=32768] ppl=8.951 tok_eq/layer=293.1 ratio=0.009
+bugS-r32-h1024 [T=32768] ppl=8.881 tok_eq/layer=2114.4 ratio=0.065
+bugS-r32-h256  [T=32768] ppl=9.164 tok_eq/layer=1370.7 ratio=0.043
+ea-k0.1        [T=32768] ppl=8.277 tok_eq/layer=3784.0 ratio=0.115
+full           [T=32768] ppl=7.624 tok_eq/layer=32768.0 ratio=1.000

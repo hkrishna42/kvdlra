@@ -1,0 +1,22 @@
+{
+  "pod": "w11-base-ppl16",
+  "git_sha": "ee8c0ab",
+  "source_files": [
+    {
+      "path": "results/w11-base-ppl16-lines.txt",
+      "lines": 13,
+      "parsed": {
+        "trials": 0,
+        "cells": 0,
+        "ppl": 13
+      },
+      "unconverted": 0,
+      "raw": "raw/w11-base-ppl16-lines.txt"
+    }
+  ],
+  "converted_by": "scripts/tables.py convert-v1",
+  "records": {
+    "ppl.jsonl": 13
+  },
+  "note": "paper-v1 archive; haystack_id/depth/prompt_sha256 were not recorded and are null"
+}

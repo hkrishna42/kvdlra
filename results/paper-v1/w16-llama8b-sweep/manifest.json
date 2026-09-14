@@ -2,7 +2,17 @@
   "pod": "w16-llama8b-sweep",
   "git_sha": "ee8c0ab",
   "source_files": [
-    "results/w16-llama8b-sweep-lines.txt"
+    {
+      "path": "results/w16-llama8b-sweep-lines.txt",
+      "lines": 12,
+      "parsed": {
+        "trials": 0,
+        "cells": 11,
+        "ppl": 0
+      },
+      "unconverted": 1,
+      "raw": "raw/w16-llama8b-sweep-lines.txt"
+    }
   ],
   "converted_by": "scripts/tables.py convert-v1",
   "records": {

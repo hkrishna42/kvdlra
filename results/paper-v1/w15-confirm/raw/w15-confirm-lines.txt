@@ -1,0 +1,33 @@
+[pplw] T=32768 full ntok=511 nlls=1.917808,2.144814,1.925636,2.082192,1.800391,1.416830,2.301370,1.949119
+  full           [T=32768] ppl=6.975 tok_eq/layer=32768.0 ratio=1.000
+[pplw] T=32768 think-c0.5 ntok=511 nlls=1.956947,2.176125,1.949119,2.129159,1.816047,1.424658,2.317025,2.019569
+  think-c0.5     [T=32768] ppl=7.196 tok_eq/layer=24576.2 ratio=0.750
+[pplw] T=32768 palu-r0.5 ntok=511 nlls=1.941292,2.176125,1.933464,2.113503,1.823875,1.463796,2.379648,1.996086
+  palu-r0.5      [T=32768] ppl=7.232 tok_eq/layer=16450.0 ratio=0.502
+[pplw] T=32768 bugSseed-r128-h1024 ntok=511 nlls=1.988258,2.191781,1.933464,2.113503,1.847358,1.416830,2.395303,2.050881
+  bugSseed-r128-h1024 [T=32768] ppl=7.331 tok_eq/layer=5183.1 ratio=0.159
+[pplw] T=32768 bugSseed-r128-h1024-s32 ntok=511 nlls=1.980431,2.191781,1.949119,2.113503,1.847358,1.416830,2.410959,2.050881
+  bugSseed-r128-h1024-s32 [T=32768] ppl=7.353 tok_eq/layer=5183.1 ratio=0.159
+[niah_multikey ctx16384] bugSseed-r256-h1024 acc=0.00 recall=0.00 ratio=0.316
+[vt ctx16384] bugSseed-r256-h1024 acc=0.00 recall=0.00 ratio=0.316
+[niah_multikey ctx16384] bugSseed-r256-h1024-s32 acc=0.00 recall=0.00 ratio=0.316
+[vt ctx16384] bugSseed-r256-h1024-s32 acc=0.00 recall=0.00 ratio=0.316
+[niah_single ctx16384] shadow-r64     acc=1.00 recall=1.00 ratio=0.815
+[niah_multikey ctx16384] shadow-r64     acc=1.00 recall=1.00 ratio=0.815
+[vt ctx16384] shadow-r64     acc=0.00 recall=0.00 ratio=0.815
+[niah_multikey ctx16384] palu-r0.5      acc=1.00 recall=1.00 ratio=0.504
+[niah_multivalue ctx16384] palu-r0.5      acc=1.00 recall=1.00 ratio=0.504
+[vt ctx16384] palu-r0.5      acc=0.75 recall=0.75 ratio=0.504
+[niah_multikey ctx32768] palu-r0.5      acc=1.00 recall=1.00 ratio=0.502
+[niah_multivalue ctx32768] palu-r0.5      acc=1.00 recall=1.00 ratio=0.502
+[vt ctx32768] palu-r0.5      acc=0.25 recall=0.25 ratio=0.502
+[niah_multikey ctx16384] bugSseed-r128-h1024 acc=1.00 recall=1.00 ratio=0.192
+[vt ctx16384] bugSseed-r128-h1024 acc=0.75 recall=0.75 ratio=0.191
+[niah_multikey ctx16384] bugSseed-r128-h1024-s32 acc=1.00 recall=1.00 ratio=0.192
+[vt ctx16384] bugSseed-r128-h1024-s32 acc=1.00 recall=1.00 ratio=0.191
+[niah_multivalue ctx16384] bugSseed-r128-h1024 acc=0.25 recall=0.69 ratio=0.191
+[niah_multivalue ctx16384] bugSseed-r128-h1024-s32 acc=1.00 recall=1.00 ratio=0.191
+[niah_multikey ctx32768] bugSseed-r128-h1024 acc=1.00 recall=1.00 ratio=0.159
+[vt ctx32768] bugSseed-r128-h1024 acc=0.00 recall=0.00 ratio=0.160
+[niah_multikey ctx32768] bugSseed-r128-h1024-s32 acc=1.00 recall=1.00 ratio=0.159
+[vt ctx32768] bugSseed-r128-h1024-s32 acc=1.00 recall=1.00 ratio=0.160

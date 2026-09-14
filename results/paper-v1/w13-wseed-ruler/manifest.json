@@ -2,7 +2,17 @@
   "pod": "w13-wseed-ruler",
   "git_sha": "ee8c0ab",
   "source_files": [
-    "results/w13-wseed-ruler-lines.txt"
+    {
+      "path": "results/w13-wseed-ruler-lines.txt",
+      "lines": 22,
+      "parsed": {
+        "trials": 0,
+        "cells": 22,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/w13-wseed-ruler-lines.txt"
+    }
   ],
   "converted_by": "scripts/tables.py convert-v1",
   "records": {

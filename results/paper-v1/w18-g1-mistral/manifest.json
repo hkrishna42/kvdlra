@@ -2,7 +2,17 @@
   "pod": "w18-g1-mistral",
   "git_sha": "ee8c0ab",
   "source_files": [
-    "results/w18_pertrial/mistral-trials.txt"
+    {
+      "path": "results/w18_pertrial/mistral-trials.txt",
+      "lines": 192,
+      "parsed": {
+        "trials": 192,
+        "cells": 0,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/mistral-trials.txt"
+    }
   ],
   "converted_by": "scripts/tables.py convert-v1",
   "records": {

@@ -1,0 +1,20 @@
+{
+  "pod": "w11-goalA-lb",
+  "git_sha": "ee8c0ab",
+  "source_files": [
+    {
+      "path": "results/w11-goalA-lb-lines.txt",
+      "lines": 23,
+      "parsed": {
+        "trials": 0,
+        "cells": 0,
+        "ppl": 0
+      },
+      "unconverted": 23,
+      "raw": "raw/w11-goalA-lb-lines.txt"
+    }
+  ],
+  "converted_by": "scripts/tables.py convert-v1",
+  "records": {},
+  "note": "paper-v1 archive; haystack_id/depth/prompt_sha256 were not recorded and are null"
+}

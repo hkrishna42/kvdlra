@@ -2,11 +2,22 @@
   "pod": "w17-mistral",
   "git_sha": "ee8c0ab",
   "source_files": [
-    "results/w17-mistral-lines.txt"
+    {
+      "path": "results/w17-mistral-lines.txt",
+      "lines": 49,
+      "parsed": {
+        "trials": 0,
+        "cells": 27,
+        "ppl": 17
+      },
+      "unconverted": 5,
+      "raw": "raw/w17-mistral-lines.txt"
+    }
   ],
   "converted_by": "scripts/tables.py convert-v1",
   "records": {
-    "cells.jsonl": 27
+    "cells.jsonl": 27,
+    "ppl.jsonl": 17
   },
   "note": "paper-v1 archive; haystack_id/depth/prompt_sha256 were not recorded and are null"
 }

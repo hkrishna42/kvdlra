@@ -2,8 +2,28 @@
   "pod": "w18-g3-mistral",
   "git_sha": "ee8c0ab",
   "source_files": [
-    "results/w18-g3-mistral-lines.txt",
-    "results/w18_pertrial/g3-mistral-trials.txt"
+    {
+      "path": "results/w18-g3-mistral-lines.txt",
+      "lines": 24,
+      "parsed": {
+        "trials": 0,
+        "cells": 24,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/w18-g3-mistral-lines.txt"
+    },
+    {
+      "path": "results/w18_pertrial/g3-mistral-trials.txt",
+      "lines": 288,
+      "parsed": {
+        "trials": 288,
+        "cells": 0,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/g3-mistral-trials.txt"
+    }
   ],
   "converted_by": "scripts/tables.py convert-v1",
   "records": {

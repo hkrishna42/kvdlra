@@ -1,0 +1,5 @@
+{"arm": "bugSseed-r64-h256", "ctx": 65536, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 8.591, "ratio": 0.07, "sbits": 0.133, "source": "results/w19-a4-llama-lines.txt:1", "tok_eq": 4497.7}
+{"arm": "ea-k0.1", "ctx": 65536, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 8.149, "ratio": 0.108, "sbits": 0.108, "source": "results/w19-a4-llama-lines.txt:2", "tok_eq": 7056.0}
+{"arm": "full", "ctx": 65536, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 7.26, "ratio": 1.0, "sbits": 1.0, "source": "results/w19-a4-llama-lines.txt:3", "tok_eq": 65536.0}
+{"arm": "quant-2bit-kivi", "ctx": 65536, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 8.149, "ratio": 0.158, "sbits": 0.158, "source": "results/w19-a4-llama-lines.txt:4", "tok_eq": 5238.0}
+{"arm": "quant-4bit-kivi", "ctx": 65536, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 7.274, "ratio": 0.283, "sbits": 0.283, "source": "results/w19-a4-llama-lines.txt:5", "tok_eq": 9326.0}

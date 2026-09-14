@@ -1,0 +1,1 @@
+{"arm": "bugSseed-r64-h256-oja", "ctx": 16384, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 732.875, "ratio": 0.085, "sbits": 0.15, "source": "results/w19-swap-llama-lines.txt:1", "tok_eq": 1377.7}

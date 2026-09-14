@@ -2,8 +2,28 @@
   "pod": "w19-q4off-llama",
   "git_sha": "ee8c0ab",
   "source_files": [
-    "results/w19-q4off-llama-lines.txt",
-    "results/w19_pertrial/q4off-llama-trials.txt"
+    {
+      "path": "results/w19-q4off-llama-lines.txt",
+      "lines": 9,
+      "parsed": {
+        "trials": 0,
+        "cells": 9,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/w19-q4off-llama-lines.txt"
+    },
+    {
+      "path": "results/w19_pertrial/q4off-llama-trials.txt",
+      "lines": 108,
+      "parsed": {
+        "trials": 108,
+        "cells": 0,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/q4off-llama-trials.txt"
+    }
   ],
   "converted_by": "scripts/tables.py convert-v1",
   "records": {

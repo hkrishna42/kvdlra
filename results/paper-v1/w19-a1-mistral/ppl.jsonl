@@ -1,0 +1,4 @@
+{"arm": "quant-2bit-kivi", "ctx": 16384, "model": "mistralai/Mistral-7B-Instruct-v0.3", "ppl": 4.986, "ratio": 0.163, "sbits": 0.163, "source": "results/w19-a1-mistral-lines.txt:1", "tok_eq": 1398.0}
+{"arm": "quant-2bit-kivi", "ctx": 32768, "model": "mistralai/Mistral-7B-Instruct-v0.3", "ppl": 3.458, "ratio": 0.16, "sbits": 0.16, "source": "results/w19-a1-mistral-lines.txt:2", "tok_eq": 2678.0}
+{"arm": "quant-4bit-kivi", "ctx": 16384, "model": "mistralai/Mistral-7B-Instruct-v0.3", "ppl": 4.832, "ratio": 0.287, "sbits": 0.287, "source": "results/w19-a1-mistral-lines.txt:3", "tok_eq": 2414.0}
+{"arm": "quant-4bit-kivi", "ctx": 32768, "model": "mistralai/Mistral-7B-Instruct-v0.3", "ppl": 3.306, "ratio": 0.284, "sbits": 0.284, "source": "results/w19-a1-mistral-lines.txt:4", "tok_eq": 4718.0}

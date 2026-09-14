@@ -1,0 +1,15 @@
+# w16-qwen-ppl-lines.txt  sources=['w16-qwen-sweep-raw.log', 'w16-qwen-raw.log']
+  bug-r16 [T=16384] ppl=9.345 tok_eq/layer=0.0 ratio=0.034
+  bug-r32 [T=16384] ppl=8.326 tok_eq/layer=0.0 ratio=0.067
+  bug-r64 [T=16384] ppl=7.867 tok_eq/layer=0.0 ratio=0.131
+  bug-r128 [T=16384] ppl=7.317 tok_eq/layer=0.0 ratio=0.259
+  bug-r256 [T=16384] ppl=27531.666 tok_eq/layer=0.0 ratio=0.517
+  bugSseed-r16-h256 [T=16384] ppl=8.149 tok_eq/layer=0.0 ratio=0.053
+  bugSseed-r32-h256 [T=16384] ppl=7.913 tok_eq/layer=0.0 ratio=0.085
+  bugSseed-r64-h256 [T=16384] ppl=8.181 tok_eq/layer=0.0 ratio=0.148
+  bugSseed-r128-h256 [T=16384] ppl=7.805 tok_eq/layer=0.0 ratio=0.275
+  full [T=16384] ppl=6.217 tok_eq/layer=0.0 ratio=1.000
+  think-c0.5 [T=16384] ppl=6.424 tok_eq/layer=0.0 ratio=0.750
+  palu-r0.5 [T=16384] ppl=6.384 tok_eq/layer=0.0 ratio=0.504
+  bugSseed-r128-h1024 [T=16384] ppl=466.978 tok_eq/layer=0.0 ratio=0.310
+  bugSseed-r128-h1024-s32 [T=16384] ppl=47.516 tok_eq/layer=0.0 ratio=0.310

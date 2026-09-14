@@ -2,7 +2,17 @@
   "pod": "w11-table-ruler",
   "git_sha": "ee8c0ab",
   "source_files": [
-    "results/w11-table-ruler-lines.txt"
+    {
+      "path": "results/w11-table-ruler-lines.txt",
+      "lines": 44,
+      "parsed": {
+        "trials": 0,
+        "cells": 44,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/w11-table-ruler-lines.txt"
+    }
   ],
   "converted_by": "scripts/tables.py convert-v1",
   "records": {

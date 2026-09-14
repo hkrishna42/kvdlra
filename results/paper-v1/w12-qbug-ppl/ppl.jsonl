@@ -1,0 +1,8 @@
+{"arm": "bugS-r32-h256", "ctx": 16384, "model": "unknown", "ppl": 4.477, "ratio": 0.052, "sbits": null, "source": "results/w12-qbug-ppl-lines.txt:1", "tok_eq": 842.7}
+{"arm": "bugS-r32-h256", "ctx": 32768, "model": "unknown", "ppl": 9.164, "ratio": 0.043, "sbits": null, "source": "results/w12-qbug-ppl-lines.txt:2", "tok_eq": 1370.7}
+{"arm": "bugSQ-r32-h256", "ctx": 16384, "model": "unknown", "ppl": 4.425, "ratio": 0.052, "sbits": null, "source": "results/w12-qbug-ppl-lines.txt:3", "tok_eq": 843.2}
+{"arm": "bugSQ-r32-h256", "ctx": 32768, "model": "unknown", "ppl": 9.092, "ratio": 0.043, "sbits": null, "source": "results/w12-qbug-ppl-lines.txt:4", "tok_eq": 1371.2}
+{"arm": "bugS-r128-h1024", "ctx": 16384, "model": "unknown", "ppl": 4.156, "ratio": 0.191, "sbits": null, "source": "results/w12-qbug-ppl-lines.txt:5", "tok_eq": 3119.1}
+{"arm": "bugS-r128-h1024", "ctx": 32768, "model": "unknown", "ppl": 8.117, "ratio": 0.159, "sbits": null, "source": "results/w12-qbug-ppl-lines.txt:6", "tok_eq": 5183.1}
+{"arm": "bugSQ-r128-h1024", "ctx": 16384, "model": "unknown", "ppl": 4.124, "ratio": 0.191, "sbits": null, "source": "results/w12-qbug-ppl-lines.txt:7", "tok_eq": 3119.6}
+{"arm": "bugSQ-r128-h1024", "ctx": 32768, "model": "unknown", "ppl": 8.085, "ratio": 0.159, "sbits": null, "source": "results/w12-qbug-ppl-lines.txt:8", "tok_eq": 5183.6}

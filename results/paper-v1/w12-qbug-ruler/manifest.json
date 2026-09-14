@@ -2,7 +2,17 @@
   "pod": "w12-qbug-ruler",
   "git_sha": "ee8c0ab",
   "source_files": [
-    "results/w12-qbug-ruler-lines.txt"
+    {
+      "path": "results/w12-qbug-ruler-lines.txt",
+      "lines": 6,
+      "parsed": {
+        "trials": 0,
+        "cells": 6,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/w12-qbug-ruler-lines.txt"
+    }
   ],
   "converted_by": "scripts/tables.py convert-v1",
   "records": {

@@ -47,7 +47,7 @@ function; `/ponytail-audit` + `/ponytail-debt` in the cleanup lane;
 validation, data-loss guards, the orthogonality tripwire, provenance, tests.
 
 ## Repo rules (CI-enforced after L0)
-- Reuse what exists: uv.lock, pyproject pins, pre-commit, ci.yml, hydra configs,
+- Reuse what exists: uv.lock, pyproject pins, pre-commit, ci.yml, omegaconf configs,
   the vast.ai pod scripts + watchdog. Extend; do not rewrite.
 - Target layout:
     src/kvdlra/{tracker,cache,tier,quant,baselines,kernel,eval,accounting,util}

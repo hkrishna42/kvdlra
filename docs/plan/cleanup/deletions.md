@@ -620,9 +620,10 @@ Added: `ninja` to `dev`. `torch`'s C++ extension loader shells out to the `ninja
 quant tests fail on a clean clone. The `Makefile` already puts the venv's `bin/`
 on `PATH` for exactly this reason; the dependency is what puts `ninja` there.
 
-Kept, deliberately: `hydra-core` + `omegaconf` (the config layer under
-`kvdlra.eval.config`), `optimum-quanto` and `hqq` (the quant backends the KIVI
-arm names as strings, so grep finds no import), `datasets`, `scipy`,
+Kept, deliberately: `omegaconf` (the config layer under `kvdlra.eval.config`;
+`hydra-core` was removed in the Phase-B fix round (4714d74) after a grep
+confirmed zero importers), `optimum-quanto` and `hqq` (the quant backends the
+KIVI arm names as strings, so grep finds no import), `datasets`, `scipy`,
 `matplotlib`, `kvpress`, `transformers`, `torch`, `numpy`.
 
 Two follow-ons from the 3.11 floor, both `ruff --fix` output: `scripts/pod.py`

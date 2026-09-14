@@ -19,9 +19,6 @@ results/*.csv
 # macOS
 .DS_Store
 
-# Local planning artifact: keep the original on disk, out of the published tree.
-compass_artifact_*.md
-
 # .env.* (above) would also swallow the committed template; keep it tracked.
 !.env.example
 
@@ -30,23 +27,11 @@ compass_artifact_*.md
 # pre-commit guard tight for catching stray tensors/checkpoints.
 uv.lock
 
-# Local handoff / internal notes — keep out of the (public) repo entirely.
-handover.md
-explanation_week_1_2.md
-explanation_week_3_4.md
-explanation_week_5_6.md
-next-session-prompt.md
-results/gpu_logs/
-
-# Session-generated research dashboards (not part of the library)
-dashboards/
-
 # Claude Code local worktrees (never commit)
 .claude/worktrees/
 
 # scratch plots from local smoke runs (never clobber tracked figures)
 figures/scratch/
-results/scratch/
 
 # Generated figure output: `make figures` writes it, `make clean` deletes it. The
 # tables next door are generated AND committed because the paper cites their numbers;

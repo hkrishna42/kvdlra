@@ -45,3 +45,18 @@
 
 ### D-008 CLOSED (orchestrator ruling R13, recorded for the owner) — G0 "Dockerfile + uv.lock"
 - uv.lock stays gitignored (the repo marks it platform-specific); reproducibility = pyproject exact pins + Dockerfile + `scripts/pod.py check` diffing env.txt against the pins. GATES.md G0 amended on the lane (96e1398, merged). Reopen if you want a committed lock for the pod image.
+
+### D-009 CLOSED (orchestrator rulings during L0 Phase B, recorded for the owner — reopen any line)
+- R34: `src/kvdlra/baselines/turbo_press.py` (+ its test) KEPT although it was a deletion candidate — Phase 2's composition Pareto (ICML plan §3.4) needs TurboQuant as a pure quantizer; L2 adds its arm YAML. Listed under "Kept despite being a candidate" in deletions.md.
+- R35: `hydra-core` dropped; `omegaconf` is the direct pin (configs are plain structured configs, no hydra CLI). Two zero-caller accounting helpers and `seed_everything`'s never-passed parameter deleted.
+- R29: `scripts/pod.py check` FAILS whenever a pod's manifest counts errors > 0 (`CHECK FAIL errors: N trials raised`); no tolerance knob. An errored pod becomes citable only by an L6 ruling per case. Cost if wrong: one flag to add.
+- R36/R37: tests/ stays outside the forbidden-word scope (tests pin the words); skipped `[diag]` lines are counted into the manifest (`diag_skipped`) and fail `check` when > 0 — L1's diagnostics must emit rows under 400 chars or reuse the `part=` splitter.
+- R38: `kvdlra.eval.persist` stays archive-only (its rows are parsed, not produced) until L4 wires it as a runner generator.
+- R39: the watchdog's ROWS filter keeps `[error]` lines so a watchdog harvest counts the same errors a full-log harvest does.
+
+### D-010 OPEN — the gitignored litter was parked, not deleted
+- The L0 plan said `rm`. I moved the files instead to `~/Desktop/kv-dlra-litter-2026-09-14/` (2.7 MB): handover.md, explanation_week_{1_2,3_4,5_6}.md, next-session-prompt.md, compass_artifact_*.md, dashboards/ (two HTML dashboards), results/gpu_logs/ (30 raw `vastai logs` tails, Weeks 11–12 + the 1B/8B runs — paper-source-map.md cites none of them, so they exist nowhere else), results/scratch/ (9 smoke-run JSONs). Reason: irreversible deletion of files that live only on this disk is the owner's call; the repo outcome is identical (ignore lines dropped, tree clean, nothing under src/scripts/Makefile/configs references the paths).
+- Decision: `rm -rf ~/Desktop/kv-dlra-litter-2026-09-14` when satisfied, or keep it outside the repo. Nothing depends on it.
+
+### D-007 addendum (2026-09-14) — L0 has merged; this is the quiet point
+- Only the main checkout remains as a worktree (the L0 one is removed); lane branches L2/L4/L7 have no worktrees. Moving the clone out of iCloud is now `mv` + re-creating worktrees on demand. Recommendation unchanged: (a).

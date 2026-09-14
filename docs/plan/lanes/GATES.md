@@ -1,16 +1,17 @@
 # GATES — definition of done per lane (from KICKOFF_WEEKS0-3.md Part D)
 
 G0  cleanup + reproducibility
-    [ ] git tag paper-v1-archive == ee8c0ab
-    [ ] docs/plan/cleanup/deletions.md: every removed path + reachability evidence
-    [ ] reachability check: 0 unreachable files under src/; net LOC delta negative
-    [ ] `make env && make test` green on clean clone; tests < 90 s
-    [ ] `make tables` regenerates v1 Tables 1,2,3,6,7,8 from results/paper-v1/ and diffs
+    [x] git tag paper-v1-archive == ee8c0ab
+    [x] docs/plan/cleanup/deletions.md: every removed path + reachability evidence
+    [x] reachability check: 0 unreachable files under src/; net LOC delta negative
+    [x] `make env && make test` green on clean clone; tests < 90 s
+    [x] `make tables` regenerates v1 Tables 1,2,3,6,7,8 from results/paper-v1/ and diffs
         clean against docs/plan/paper-v1-tables.md
-    [ ] every v1 arm/task/pod is a YAML under configs/; w10_ruler/w10_frontier flag soup gone
-    [ ] Dockerfile + pyproject exact pins (R13 2026-09-14: uv.lock stays gitignored — platform-specific; `pod.py check` diffs env.txt against the pins); scripts/pod.py --check passes on a synthetic manifest;
+    [x] every v1 arm/task/pod is a YAML under configs/; w10_ruler/w10_frontier flag soup gone
+    [x] Dockerfile + pyproject exact pins (R13 2026-09-14: uv.lock stays gitignored — platform-specific; `pod.py check` diffs env.txt against the pins); scripts/pod.py --check passes on a synthetic manifest;
         pod launch/watchdog path reused, not rewritten
-    [ ] forbidden-word grep clean; README ≤ 120 lines; ponytail after-report committed
+    [x] forbidden-word grep clean; README ≤ 120 lines; ponytail after-report committed
+    ✔ G0 PASSED 2026-09-14 at week7 10c19ac — evidence per line in docs/plan/STATE.md (L0 Phase B entry); ledger docs/plan/cleanup/l0-ledger.md.
 
 G1  harness hygiene
     [ ] guard + tripwire merged; ratchet regression test passes in both directions

@@ -23,10 +23,19 @@ what is captured:
 For ``pre`` / ``both`` the rope mode is encoded both in the dump dir name
 (``..._len{T}_rope-{mode}``) and in ``meta.json`` (``"rope": "<mode>"``).
 
+Subcommands
+-----------
+``dump`` captures (everything below), then refreshes the manifest; ``sha256`` writes
+that manifest for a tree that already exists; ``verify --dir DIR`` re-hashes the tree
+and exits 1 naming every file that changed or vanished. The dumps are gitignored (4.7
+GB); ``dumps/llama3.2-1b.sha256`` is committed, so the tree a figure was built from is
+identifiable on any machine.
+
 Output layout::
 
     dumps/llama3.2-1b/<slug>/layer_{i:02d}.pt   # one file per layer
     dumps/llama3.2-1b/<slug>/meta.json          # provenance + rope flag
+    dumps/llama3.2-1b.sha256                    # sha256  <path relative to the dir>
 
 Each ``layer_{i:02d}.pt`` is a dict with shapes (batch dim squeezed out)::
 
@@ -63,7 +72,7 @@ Shape / device / dtype notes
   applies ``apply_rotary_pos_emb`` to the keys *before* calling
   ``past_key_values.update``, so the cached (and therefore captured) keys are
   post-RoPE. RoPE smears low-rank structure across positions, so any
-  singular-value / DLRA analysis on these keys is measuring the harder,
+  singular-value / low-rank analysis on these keys is measuring the harder,
   post-RoPE object. Values are never rotated. See
   ``docs/notes/rope-pitfall.md``.
 * **Pre-RoPE capture (``pre`` / ``both``)** monkey-patches the module-level
@@ -194,44 +203,71 @@ def resolve_device(device: str) -> str:
     return device
 
 
-def main() -> None:
-    """Parse arguments, run a single prefill, and write the per-layer dumps."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--model",
-        default="meta-llama/Llama-3.2-1B-Instruct",
-        help="HF model id. If the gated meta-llama repo is not allowlisted for "
-        "your account, pass the ungated mirror unsloth/Llama-3.2-1B-Instruct "
-        "(verbatim weights; config-identical -- 8 KV heads, head_dim 64, 16 layers).",
-    )
-    parser.add_argument("--seq_len", type=int, default=4096)
-    parser.add_argument("--doc_idx", type=int, default=0)
-    parser.add_argument("--out", default="dumps/llama3.2-1b")
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument(
-        "--rope",
-        default="post",
-        choices=["post", "pre", "both"],
-        help="which keys to capture: post (default, cached post-RoPE K; "
-        "byte-for-byte Week-1 behavior), pre (pre-RoPE K via monkey-patch), or "
-        "both (post-RoPE K + pre-RoPE K_pre per layer for direct comparison).",
-    )
-    parser.add_argument(
-        "--device",
-        default="auto",
-        help="auto (cuda if available else cpu), or an explicit device string",
-    )
-    parser.add_argument(
-        "--with-q",
-        action="store_true",
-        help="Week-12 Q-BUG probe: also dump the pre-RoPE query per layer "
-        "(``Q_pre``) and the shared RoPE angles (``rope.pt``). Requires "
-        "--rope pre|both (the pre-RoPE monkey-patch is the capture hook).",
-    )
-    args = parser.parse_args()
-    if args.with_q and args.rope == "post":
-        parser.error("--with-q requires --rope pre or both (needs the pre-RoPE hook)")
+def manifest_path(root: Path) -> Path:
+    """`dumps/llama3.2-1b` -> `dumps/llama3.2-1b.sha256` (the dump dir name carries
+    dots, so this is not `Path.with_suffix`)."""
+    return root.parent / f"{root.name}.sha256"
 
+
+def hashes(root: Path) -> dict[str, str]:
+    """sha256 of every file under ``root``, keyed by its path relative to ``root``.
+    Dot-files are skipped: the tree lives in a synced folder that sprinkles .DS_Store
+    through it, and those are not dump content."""
+    out = {}
+    for p in sorted(root.rglob("*")):
+        if not p.is_file() or p.name.startswith("."):
+            continue
+        h = hashlib.sha256()
+        with p.open("rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        out[str(p.relative_to(root))] = h.hexdigest()
+    return out
+
+
+def write_manifest(root: Path) -> Path:
+    """Write `<root>.sha256`: one `sha256  relative/path` line per file, sorted.
+
+    The dumps themselves are gitignored (4.7 GB); the manifest is committed, so a
+    re-capture or a copy onto another machine is verifiable against the tree the
+    figures were built from.
+    """
+    path = manifest_path(root)
+    rows = hashes(root)
+    path.write_text("".join(f"{sha}  {rel}\n" for rel, sha in rows.items()))
+    print(f"wrote {path} ({len(rows)} files)")
+    return path
+
+
+def verify(root: Path) -> int:
+    """Re-hash ``root`` and compare against its committed manifest. Every file that
+    changed or vanished is printed; extra files are reported but are not a failure
+    (a new capture is an addition, not a corruption)."""
+    path = manifest_path(root)
+    if not path.is_file():
+        print(f"MISSING MANIFEST {path}")
+        return 1
+    want = {
+        rel: sha
+        for sha, _, rel in (line.partition("  ") for line in path.read_text().splitlines())
+        if rel
+    }
+    got = hashes(root)
+    bad = [f"MISSING {rel}" for rel in want if rel not in got]
+    bad += [f"CHANGED {rel}" for rel, sha in want.items() if rel in got and got[rel] != sha]
+    for line in sorted(bad):
+        print(line)
+    for rel in sorted(set(got) - set(want)):
+        print(f"EXTRA   {rel} (not in {path.name}; re-run `dump_kv.py sha256`)")
+    if bad:
+        print(f"{root}: {len(bad)} of {len(want)} files do not match {path.name}")
+        return 1
+    print(f"{root}: {len(want)} files match {path.name}")
+    return 0
+
+
+def dump(args: argparse.Namespace) -> None:
+    """Run a single prefill and write the per-layer dumps plus the sha256 manifest."""
     seed_everything(args.seed)
     device = resolve_device(args.device)
     dtype = torch.bfloat16 if device.startswith("cuda") else torch.float32
@@ -369,6 +405,7 @@ def main() -> None:
     }
     (out_dir / "meta.json").write_text(json.dumps(meta, indent=2))
     print(f"wrote {len(cache.snapshots)} layer dumps to {out_dir}")
+    write_manifest(Path(args.out))
 
 
 @contextmanager
@@ -377,5 +414,56 @@ def _noop() -> Iterator[None]:
     yield
 
 
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    d = sub.add_parser("dump", help="capture one document's per-layer K/V")
+    d.add_argument(
+        "--model",
+        default="meta-llama/Llama-3.2-1B-Instruct",
+        help="HF model id. If the gated meta-llama repo is not allowlisted for "
+        "your account, pass the ungated mirror unsloth/Llama-3.2-1B-Instruct "
+        "(verbatim weights; config-identical -- 8 KV heads, head_dim 64, 16 layers).",
+    )
+    d.add_argument("--seq_len", type=int, default=4096)
+    d.add_argument("--doc_idx", type=int, default=0)
+    d.add_argument("--out", default="dumps/llama3.2-1b")
+    d.add_argument("--seed", type=int, default=0)
+    d.add_argument(
+        "--rope",
+        default="post",
+        choices=["post", "pre", "both"],
+        help="which keys to capture: post (default, cached post-RoPE K; "
+        "byte-for-byte Week-1 behavior), pre (pre-RoPE K via monkey-patch), or "
+        "both (post-RoPE K + pre-RoPE K_pre per layer for direct comparison).",
+    )
+    d.add_argument(
+        "--device",
+        default="auto",
+        help="auto (cuda if available else cpu), or an explicit device string",
+    )
+    d.add_argument(
+        "--with-q",
+        action="store_true",
+        help="Week-12 Q-BUG probe: also dump the pre-RoPE query per layer "
+        "(``Q_pre``) and the shared RoPE angles (``rope.pt``). Requires "
+        "--rope pre|both (the pre-RoPE monkey-patch is the capture hook).",
+    )
+    s = sub.add_parser("sha256", help="(re)write <dir>.sha256 for an existing dump tree")
+    s.add_argument("--dir", default="dumps/llama3.2-1b")
+    v = sub.add_parser("verify", help="re-hash a dump tree against its committed manifest")
+    v.add_argument("--dir", default="dumps/llama3.2-1b")
+    args = ap.parse_args()
+    if args.cmd == "verify":
+        return verify(Path(args.dir))
+    if args.cmd == "sha256":
+        write_manifest(Path(args.dir))
+        return 0
+    if args.with_q and args.rope == "post":
+        ap.error("--with-q requires --rope pre or both (needs the pre-RoPE hook)")
+    dump(args)
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

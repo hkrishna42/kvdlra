@@ -15,6 +15,9 @@ figs/*.pdf
 figs/*.png
 !figs/.gitkeep
 !dumps/.gitkeep
+# The dumps themselves stay out (4.7 GB); their sha256 manifest is the committed
+# identity of the tree -- scripts/dump_kv.py verify --dir dumps/llama3.2-1b.
+!dumps/*.sha256
 !results/.gitkeep
 
 # macOS

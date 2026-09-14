@@ -1,25 +1,36 @@
-"""Week-19 paper figures from the committed line-files (never retyped numbers).
+"""The paper figures, built from the archived records (never retyped numbers).
 
-* ``fairquant`` -- retrieval vs stored bytes, small multiples (rows = family, cols = task):
-  flagship, the sub-cliff compose cell, KIVI 2-bit and 4-bit; 16K filled, 32K hollow,
-  the two joined by a thin segment (the flagship's drifts left = its 1/T term).
-* ``one_over_t`` -- stored ratio vs context (Llama): the flagship amortizes toward
-  its 2r/n=0.125x asymptote, the 2-bit arm toward 0.156x.
-  Picks up the 64K point automatically when ``results/w19-a4-llama-lines.txt`` exists.
-* ``coldstart`` -- persisted-cache cold start (seconds) at 16K/32K: full vs flagship vs 2-bit.
+Three figures, one per `\\includegraphics` in paper/main.tex @ee8c0ab:
+
+* ``fairquant`` -- retrieval vs stored bytes, small multiples (rows = family, cols =
+  task): the r64 arm, the sub-cliff compose cell, KIVI 2-bit and 4-bit; 16K filled, 32K
+  hollow, the two joined by a thin segment (the r64 arm's drifts left = its 1/T term).
+* ``one_over_t`` -- stored ratio vs context (Llama): r64 amortizes toward its
+  2r/n=0.125x asymptote, the 2-bit arm toward 0.156x. Picks up the 64K point
+  automatically when the w19-a4-llama archive directory exists.
+* ``coldstart`` -- persisted-cache cold start (seconds) at 16K/32K: full vs r64 vs 2-bit.
+
+Every accuracy is counted from `results/paper-v1/<pod>/trials.jsonl`, the same per-trial
+provenance `scripts/tables.py build` uses -- so a figure and a table can never disagree.
+Stored state is a property of the run rather than of a needle, so it comes from the
+archived aggregate rows (`cells.jsonl`, `ppl.jsonl`). The persisted-cache rows the
+cold-start figure needs are a Week-19 storage-bench format that no record type covers;
+they are read from that pod's verbatim `raw/` copy, which is archived for exactly this.
 
 Palette = the dataviz reference instance, first three categorical slots (validated
-all-pairs); colour follows the entity across every figure (flagship blue, 2-bit orange,
-4-bit aqua; the compose cell is the flagship's hue with a hollow diamond; full KV is ink).
+all-pairs); colour follows the entity across every figure (r64 blue, 2-bit orange,
+4-bit aqua; the compose cell is r64's hue with a hollow diamond; full KV is ink).
 
-    uv run python scripts/w19_figures.py   # -> figures/week19/*.{pdf,png}
+    python scripts/figures.py build --out docs/paper/figures
 """
 
 from __future__ import annotations
 
-import json
+import argparse
 import re
+from functools import cache
 from pathlib import Path
+from typing import cast
 
 import _paths  # noqa: F401
 import matplotlib
@@ -29,10 +40,11 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.ticker import NullFormatter
-from w18_intervals import ROW
 
-RES = Path("results")
-OUT = Path("figures/week19")
+from kvdlra.eval.records import CellRecord, PplRecord, TrialRecord, read_jsonl
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+ARCHIVE = REPO_ROOT / "results" / "paper-v1"
 BLUE, ORANGE, AQUA, INK, MUTED = "#2a78d6", "#eb6834", "#1baf7a", "#0b0b0b", "#52514e"
 FAMILIES = [("llama", "Llama-3.1-8B"), ("mistral", "Mistral-7B-v0.3"), ("qwen", "Qwen2.5-7B")]
 TASKS = [
@@ -42,17 +54,19 @@ TASKS = [
     ("vt", "var-track"),
 ]
 ARMS = {  # arm -> (label, colour, marker)
-    "bugSseed-r64-h256": ("BUG flagship (r64, fp32 at rest)", BLUE, "o"),
-    "bugSseed-r64-h256-q4": ("BUG + 4-bit coordinates", BLUE, "D"),
+    "bugSseed-r64-h256": ("BUG r64 (fp32 at rest)", BLUE, "o"),
+    "bugSseed-r64-h256-q4": ("BUG r64 + 4-bit coordinates", BLUE, "D"),
     "quant-2bit-kivi": ("KIVI 2-bit", ORANGE, "s"),
     "quant-4bit-kivi": ("KIVI 4-bit", AQUA, "^"),
 }
+CTXS = (16384, 32768)
+# The persisted-cache bench printed its own row format; no record type parses it, so the
+# cold-start figure reads the archived raw copy of that pod's line file.
 PERSIST_RE = re.compile(
     r"^\[persist ctx(\d+)\] (\S+)\s+bytes=(\d+) ratio=([0-9.]+) save=[0-9.]+s load=([0-9.]+)s "
     r"h2d=([0-9.]+)s ready=([0-9.]+)s cold=([0-9.]+)s",
     re.M,
 )
-PPL_RE = re.compile(r"^\s+(\S+)\s+\[T=(\d+)\] ppl=[0-9.]+ .*?sbits=([0-9.]+)", re.M)
 
 
 def _style() -> None:
@@ -73,26 +87,72 @@ def _style() -> None:
     )
 
 
-def _cells(tag: str) -> dict[str, dict[str, dict[str, dict[str, float]]]]:
-    """ctx -> arm -> task -> cell, merging the a1 intervals with the a1q compose rows."""
-    blob = json.loads((RES / "w19_intervals" / f"a1-{tag}-ruler-intervals.json").read_text())
-    cells: dict[str, dict[str, dict[str, dict[str, float]]]] = blob["cells"]
-    qf = RES / f"w19-a1q-{tag}-lines.txt"
-    if qf.exists():
-        for m in ROW.finditer(qf.read_text()):
-            task, ctx, arm = m.group(1), m.group(2), m.group(3)
-            cells.setdefault(ctx, {}).setdefault(arm, {})[task] = {
-                "acc": float(m.group(4)),
-                "sbits": float(m.group(7) or m.group(6)),
-                "n": float(m.group(8)),
-            }
-    return cells
+# --- the archive ---------------------------------------------------------------
 
 
-def fig_fairquant() -> None:
+def _read(pod: str, name: str) -> list[dict[str, object]]:
+    """One archived artifact, or nothing when that pod never produced it (w19-a4-llama
+    is the optional 64K point; w18-llama carries no perplexity rows of its own)."""
+    path = ARCHIVE / pod / name
+    return read_jsonl(path) if path.is_file() else []
+
+
+@cache
+def _trials(pod: str) -> tuple[TrialRecord, ...]:
+    return tuple(cast(TrialRecord, r) for r in _read(pod, "trials.jsonl"))
+
+
+@cache
+def _cells(pod: str) -> tuple[CellRecord, ...]:
+    return tuple(cast(CellRecord, r) for r in _read(pod, "cells.jsonl"))
+
+
+@cache
+def _ppl(pod: str) -> tuple[PplRecord, ...]:
+    return tuple(cast(PplRecord, r) for r in _read(pod, "ppl.jsonl"))
+
+
+def _acc_pods(tag: str) -> tuple[str, ...]:
+    """Where one family's per-trial records live: the KIVI arms and the r64 arm ran on
+    different pods, and the compose cell on a third."""
+    return (f"w19-a1-{tag}", f"w19-a1q-{tag}", f"w18-g1-{tag}")
+
+
+def _mem_pods(tag: str) -> tuple[str, ...]:
+    """Where the same family's aggregate rows live. The w18-g1-* pods printed `[trial]`
+    lines only; their run-level `ratio=`/`sbits=` rows went to the line file the archive
+    holds under `w18-<tag>` (the mapping `scripts/tables.py` calls MEMORY_SOURCE)."""
+    return (f"w19-a1-{tag}", f"w19-a1q-{tag}", f"w18-{tag}")
+
+
+def _acc(pods: tuple[str, ...], arm: str, task: str, ctx: int) -> float | None:
+    """Pooled accuracy of one cell, counted from the per-trial records."""
+    rows = [
+        r
+        for pod in pods
+        for r in _trials(pod)
+        if r["arm"] == arm and r["task"] == task and r["ctx"] == ctx
+    ]
+    return sum(r["hit"] for r in rows) / len(rows) if rows else None
+
+
+def _stored(pods: tuple[str, ...], arm: str, task: str, ctx: int) -> float | None:
+    """Stored state of one cell: fp32-at-rest bits when the pod printed them, else the
+    float-equivalent ratio (the pre-Week-18 rows print only the latter)."""
+    for pod in pods:
+        for r in _cells(pod):
+            if r["arm"] == arm and r["task"] == task and r["ctx"] == ctx:
+                return r["sbits"] if r["sbits"] is not None else r["ratio"]
+    return None
+
+
+# --- the figures ---------------------------------------------------------------
+
+
+def fig_fairquant(out: Path) -> None:
     fig, axes = plt.subplots(3, 4, figsize=(7.2, 5.4), sharex=True, sharey=True)
     for i, (tag, fam) in enumerate(FAMILIES):
-        cells = _cells(tag)
+        acc_pods, mem_pods = _acc_pods(tag), _mem_pods(tag)
         for j, (task, tlabel) in enumerate(TASKS):
             ax = axes[i][j]
             ax.grid(True, axis="y")
@@ -104,11 +164,11 @@ def fig_fairquant() -> None:
             ax.xaxis.set_minor_formatter(NullFormatter())
             ax.set_yticks([0, 0.5, 1.0])
             for arm, (_label, colour, marker) in ARMS.items():
-                pts = []
-                for ctx in ("16384", "32768"):
-                    c = cells.get(ctx, {}).get(arm, {}).get(task)
-                    if c:
-                        pts.append((ctx, c["sbits"], c["acc"]))
+                pts = [
+                    (ctx, _stored(mem_pods, arm, task, ctx), _acc(acc_pods, arm, task, ctx))
+                    for ctx in CTXS
+                ]
+                pts = [p for p in pts if p[1] is not None and p[2] is not None]
                 if not pts:
                     continue
                 if len(pts) == 2:
@@ -121,7 +181,7 @@ def fig_fairquant() -> None:
                         zorder=1,
                     )
                 for ctx, x, y in pts:
-                    hollow = ctx == "32768" or arm.endswith("-q4")
+                    hollow = ctx == 32768 or arm.endswith("-q4")
                     ax.plot(
                         x, y, marker=marker, ms=6.5, color=colour, mec=colour,
                         mfc="white" if hollow else colour, mew=1.6, ls="none", zorder=3,
@@ -146,31 +206,28 @@ def fig_fairquant() -> None:
         handles=handles, loc="lower center", ncol=3, fontsize=7.5, bbox_to_anchor=(0.5, -0.02)
     )
     fig.suptitle(
-        "Retrieval vs stored bytes: flagship, its 4-bit-coordinate compose cell, "
+        "Retrieval vs stored bytes: the r64 arm, its 4-bit-coordinate compose cell, "
         "and the fair KIVI baseline (n=12)",
         fontsize=9,
         color=INK,
     )
     fig.tight_layout(rect=(0, 0.07, 1, 0.97))
-    _save(fig, "fairquant")
+    _save(fig, "fairquant", out)
 
 
-def fig_one_over_t() -> None:
+def fig_one_over_t(out: Path) -> None:
     series: dict[str, dict[int, float]] = {
         a: {} for a in ("bugSseed-r64-h256", "quant-2bit-kivi", "quant-4bit-kivi")
     }
-    for name in ("w19-a1-llama-lines.txt", "w18-llama-lines.txt", "w19-a4-llama-lines.txt"):
-        f = RES / name
-        if not f.exists():
-            continue
-        text = f.read_text()
-        for m in ROW.finditer(text):
-            arm, ctx, sb = m.group(3), int(m.group(2)), m.group(7)
-            if arm in series and sb:
-                series[arm].setdefault(ctx, float(sb))
-        for m in PPL_RE.finditer(text):
-            if m.group(1) in series:
-                series[m.group(1)].setdefault(int(m.group(2)), float(m.group(3)))
+    for pod in ("w19-a1-llama", "w18-llama", "w19-a4-llama"):
+        for c in _cells(pod):
+            sb = c["sbits"]
+            if c["arm"] in series and sb is not None:
+                series[c["arm"]].setdefault(c["ctx"], sb)
+        for p in _ppl(pod):
+            sb = p["sbits"]
+            if p["arm"] in series and sb is not None:
+                series[p["arm"]].setdefault(p["ctx"], sb)
     fig, ax = plt.subplots(figsize=(3.4, 2.5))
     ax.grid(True, axis="y")
     for arm, pts in series.items():
@@ -213,21 +270,22 @@ def fig_one_over_t() -> None:
     ax.set_xlabel("context length T")
     ax.set_ylabel("stored state / full KV")
     ax.set_title(
-        "Llama-3.1-8B: BUG amortizes toward 2r/n=0.125x; 2-bit toward 0.156x",
+        "Llama-3.1-8B: BUG r64 amortizes toward 2r/n=0.125x; 2-bit toward 0.156x",
         fontsize=8,
         color=INK,
     )
     ax.legend(fontsize=7, loc="lower right")
     fig.tight_layout()
-    _save(fig, "one_over_t")
+    _save(fig, "one_over_t", out)
 
 
-def fig_coldstart() -> None:
-    rows = PERSIST_RE.findall((RES / "w19-a3-llama2-lines.txt").read_text())
+def fig_coldstart(out: Path) -> None:
+    pod = "w19-a3-llama2"
+    rows = PERSIST_RE.findall((ARCHIVE / pod / "raw" / f"{pod}-lines.txt").read_text())
     order = ["full", "bugSseed-r64-h256", "quant-2bit-kivi"]
     labels = {
         "full": "full KV (fp16)",
-        "bugSseed-r64-h256": "BUG flagship",
+        "bugSseed-r64-h256": "BUG r64",
         "quant-2bit-kivi": "KIVI 2-bit",
     }
     colours = {"full": MUTED, "bugSseed-r64-h256": BLUE, "quant-2bit-kivi": ORANGE}
@@ -262,22 +320,31 @@ def fig_coldstart() -> None:
         color=INK,
     )
     fig.tight_layout(rect=(0, 0, 1, 0.94))
-    _save(fig, "coldstart")
+    _save(fig, "coldstart", out)
 
 
-def _save(fig: Figure, name: str) -> None:
-    OUT.mkdir(parents=True, exist_ok=True)
+def _save(fig: Figure, name: str, out: Path) -> None:
+    out.mkdir(parents=True, exist_ok=True)
     for ext in ("pdf", "png"):
-        fig.savefig(OUT / f"{name}.{ext}", dpi=200, bbox_inches="tight")
+        fig.savefig(out / f"{name}.{ext}", dpi=200, bbox_inches="tight")
     plt.close(fig)
-    print(f"[wrote figures/week19/{name}.pdf|png]")
+    print(f"[wrote {out}/{name}.pdf|png]")
+
+
+def build(out: Path) -> None:
+    _style()
+    fig_fairquant(out)
+    fig_one_over_t(out)
+    fig_coldstart(out)
 
 
 def main() -> None:
-    _style()
-    fig_fairquant()
-    fig_one_over_t()
-    fig_coldstart()
+    ap = argparse.ArgumentParser(description=__doc__)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    b = sub.add_parser("build", help="regenerate the paper figures from results/paper-v1")
+    b.add_argument("--out", default="docs/paper/figures")
+    a = ap.parse_args()
+    build(Path(a.out))
 
 
 if __name__ == "__main__":

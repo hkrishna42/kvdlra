@@ -1,0 +1,12 @@
+{
+  "pod": "w15-complete",
+  "git_sha": "ee8c0ab",
+  "source_files": [
+    "results/w15-complete-lines.txt"
+  ],
+  "converted_by": "scripts/tables.py convert-v1",
+  "records": {
+    "cells.jsonl": 6
+  },
+  "note": "paper-v1 archive; haystack_id/depth/prompt_sha256 were not recorded and are null"
+}

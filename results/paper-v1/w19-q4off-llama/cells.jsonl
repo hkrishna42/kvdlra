@@ -1,0 +1,9 @@
+{"acc": 0.0, "arm": "bugSseed-r64-h256-q4", "ctx": 16384, "hits": 0, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "n": 12, "ratio": 0.044, "source": "results/w19-q4off-llama-lines.txt:1", "task": "niah_multikey_1"}
+{"acc": 0.0, "arm": "bugSseed-r64-h256-q4", "ctx": 16384, "hits": 0, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "n": 12, "ratio": 0.043, "source": "results/w19-q4off-llama-lines.txt:2", "task": "niah_multikey_2"}
+{"acc": 0.0, "arm": "bugSseed-r64-h256-q4", "ctx": 16384, "hits": 0, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "n": 12, "ratio": 0.044, "source": "results/w19-q4off-llama-lines.txt:3", "task": "niah_multikey_3"}
+{"acc": 0.0, "arm": "bugSseed-r64-h256-q4", "ctx": 16384, "hits": 0, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "n": 12, "ratio": 0.043, "source": "results/w19-q4off-llama-lines.txt:4", "task": "niah_multiquery"}
+{"acc": 0.0, "arm": "bugSseed-r64-h256-q4", "ctx": 16384, "hits": 0, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "n": 12, "ratio": 0.043, "source": "results/w19-q4off-llama-lines.txt:5", "task": "niah_multivalue"}
+{"acc": 0.0, "arm": "bugSseed-r64-h256-q4", "ctx": 16384, "hits": 0, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "n": 12, "ratio": 0.043, "source": "results/w19-q4off-llama-lines.txt:6", "task": "niah_single_1"}
+{"acc": 0.0, "arm": "bugSseed-r64-h256-q4", "ctx": 16384, "hits": 0, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "n": 12, "ratio": 0.043, "source": "results/w19-q4off-llama-lines.txt:7", "task": "niah_single_2"}
+{"acc": 0.0, "arm": "bugSseed-r64-h256-q4", "ctx": 16384, "hits": 0, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "n": 12, "ratio": 0.043, "source": "results/w19-q4off-llama-lines.txt:8", "task": "niah_single_3"}
+{"acc": 0.0, "arm": "bugSseed-r64-h256-q4", "ctx": 16384, "hits": 0, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "n": 12, "ratio": 0.043, "source": "results/w19-q4off-llama-lines.txt:9", "task": "vt"}

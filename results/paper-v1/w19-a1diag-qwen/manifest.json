@@ -1,0 +1,14 @@
+{
+  "pod": "w19-a1diag-qwen",
+  "git_sha": "ee8c0ab",
+  "source_files": [
+    "results/w19-a1diag-qwen-lines.txt",
+    "results/w19_pertrial/a1diag-qwen-trials.txt"
+  ],
+  "converted_by": "scripts/tables.py convert-v1",
+  "records": {
+    "trials.jsonl": 24,
+    "cells.jsonl": 6
+  },
+  "note": "paper-v1 archive; haystack_id/depth/prompt_sha256 were not recorded and are null"
+}

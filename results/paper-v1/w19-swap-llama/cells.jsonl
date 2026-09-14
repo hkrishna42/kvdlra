@@ -1,0 +1,4 @@
+{"acc": 0.08, "arm": "bugSseed-r64-h256-oja", "ctx": 16384, "hits": 1, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "n": 12, "ratio": 0.085, "source": "results/w19-swap-llama-lines.txt:2", "task": "niah_multikey"}
+{"acc": 0.08, "arm": "bugSseed-r64-h256-oja", "ctx": 16384, "hits": 1, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "n": 12, "ratio": 0.085, "source": "results/w19-swap-llama-lines.txt:3", "task": "niah_multivalue"}
+{"acc": 0.92, "arm": "bugSseed-r64-h256-oja", "ctx": 16384, "hits": 11, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "n": 12, "ratio": 0.085, "source": "results/w19-swap-llama-lines.txt:4", "task": "niah_single"}
+{"acc": 0.0, "arm": "bugSseed-r64-h256-oja", "ctx": 16384, "hits": 0, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "n": 12, "ratio": 0.085, "source": "results/w19-swap-llama-lines.txt:5", "task": "vt"}

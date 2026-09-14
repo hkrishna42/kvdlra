@@ -1,0 +1,6 @@
+{"acc": 1.0, "arm": "full", "ctx": 16384, "hits": 4, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 4, "ratio": 1.0, "source": "results/w19-a1diag-qwen-lines.txt:1", "task": "niah_single"}
+{"acc": 1.0, "arm": "quant-2bit-kivi", "ctx": 16384, "hits": 4, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 4, "ratio": 0.163, "source": "results/w19-a1diag-qwen-lines.txt:2", "task": "niah_single"}
+{"acc": 1.0, "arm": "quant-2bit-kivi-hqq", "ctx": 16384, "hits": 4, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 4, "ratio": 0.163, "source": "results/w19-a1diag-qwen-lines.txt:3", "task": "niah_single"}
+{"acc": 0.0, "arm": "quant-4bit", "ctx": 16384, "hits": 0, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 4, "ratio": 0.287, "source": "results/w19-a1diag-qwen-lines.txt:4", "task": "niah_single"}
+{"acc": 1.0, "arm": "quant-4bit-kivi", "ctx": 16384, "hits": 4, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 4, "ratio": 0.287, "source": "results/w19-a1diag-qwen-lines.txt:5", "task": "niah_single"}
+{"acc": 1.0, "arm": "quant-8bit-kivi-hqq", "ctx": 16384, "hits": 4, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 4, "ratio": 0.535, "source": "results/w19-a1diag-qwen-lines.txt:6", "task": "niah_single"}

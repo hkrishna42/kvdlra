@@ -1,0 +1,4 @@
+{"acc": 1.0, "arm": "quant-2bit-kivi", "ctx": 16384, "hits": 12, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "n": 12, "ratio": 0.163, "source": "results/w19-sysfix-llama-lines.txt:10", "task": "niah_multikey"}
+{"acc": 0.83, "arm": "quant-2bit-kivi", "ctx": 16384, "hits": 10, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "n": 12, "ratio": 0.163, "source": "results/w19-sysfix-llama-lines.txt:11", "task": "niah_multivalue"}
+{"acc": 1.0, "arm": "quant-2bit-kivi", "ctx": 16384, "hits": 12, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "n": 12, "ratio": 0.163, "source": "results/w19-sysfix-llama-lines.txt:12", "task": "niah_single"}
+{"acc": 0.67, "arm": "quant-2bit-kivi", "ctx": 16384, "hits": 8, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "n": 12, "ratio": 0.163, "source": "results/w19-sysfix-llama-lines.txt:13", "task": "vt"}

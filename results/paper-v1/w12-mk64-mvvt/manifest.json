@@ -1,0 +1,12 @@
+{
+  "pod": "w12-mk64-mvvt",
+  "git_sha": "ee8c0ab",
+  "source_files": [
+    "results/w12-mk64-mvvt-lines.txt"
+  ],
+  "converted_by": "scripts/tables.py convert-v1",
+  "records": {
+    "cells.jsonl": 4
+  },
+  "note": "paper-v1 archive; haystack_id/depth/prompt_sha256 were not recorded and are null"
+}

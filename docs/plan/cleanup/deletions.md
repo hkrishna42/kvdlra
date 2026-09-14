@@ -566,3 +566,131 @@ either. Recoverable at the tag `paper-v1-archive` (ee8c0ab).
 
 Kept: `results/.gitkeep` (the directory is where a new pod writes) and all of
 `results/paper-v1/`.
+
+## Task 9c --- dependencies, `.gitignore`, `README.md`
+
+### `pyproject.toml` (R20, R25)
+
+`requires-python = ">=3.10"` → `">=3.11"`: the code already needs it
+(`tomllib` in `scripts/pod.py`, `hashlib.file_digest` in `scripts/dump_kv.py`
+are both 3.11 stdlib). CI and `make env` keep pinning 3.12.
+
+Removed --- each verified unimported by
+`grep -rn 'import <m>\|from <m>' src/ scripts/ tests/ configs/ Makefile .github/`,
+which returns 0 hits for every one:
+
+| dep | where it lived | why it goes |
+|---|---|---|
+| `accelerate==1.13.0` | runtime | 0 imports; the pods load models with `transformers` directly (`device_map` is never used) |
+| `huggingface_hub==1.14.0` | runtime | 0 imports; `transformers` pulls its own |
+| `wandb==0.26.1` | runtime | 0 imports; no run was ever logged to it. Its `.gitignore` entry and its `[[tool.mypy.overrides]]` module go too |
+| `python-dotenv` | runtime | 0 imports; the pod reads plain `-e` env vars |
+| `tqdm` | runtime | 0 imports; the pods print marker lines the watchdog greps, not bars |
+| `eval = ["lm-eval[vllm]==0.4.11"]` | extra | 0 imports; RULER/LongBench are `kvdlra.eval`, and the official RULER path shells out to NVIDIA's generator |
+| `flash = ["flash-attn"]` | extra | 0 imports; `attn_implementation` is never set to flash. Its mypy override goes too |
+| `mkdocs-material==9.7.6`, `mkdocstrings[python]==1.0.4`, `mkdocs-jupyter`, `pymdown-extensions` | dev | the site they built is `mkdocs.yml` + `docs/index.md` + `docs/reference.md`, all deleted in 9a (R23) |
+
+Added: `ninja` to `dev`. `torch`'s C++ extension loader shells out to the `ninja`
+**executable**, so without it `optimum-quanto` cannot JIT `quanto_cuda.so` and the
+quant tests fail on a clean clone. The `Makefile` already puts the venv's `bin/`
+on `PATH` for exactly this reason; the dependency is what puts `ninja` there.
+
+Kept, deliberately: `hydra-core` + `omegaconf` (the config layer under
+`kvdlra.eval.config`), `optimum-quanto` and `hqq` (the quant backends the KIVI
+arm names as strings, so grep finds no import), `datasets`, `scipy`,
+`matplotlib`, `kvpress`, `transformers`, `torch`, `numpy`.
+
+Two follow-ons from the 3.11 floor, both `ruff --fix` output: `scripts/pod.py`
+sorts `tomllib` into the stdlib block (it *is* stdlib at 3.11) and uses
+`datetime.UTC` instead of `datetime.timezone.utc`. `[tool.ruff] target-version`
+moves `py310` → `py311` to match. The `[project] description` is reworded to
+match the README's first paragraph.
+
+### `.pre-commit-config.yaml`
+
+`trailing-whitespace` and `end-of-file-fixer` now `exclude: ^results/paper-v1/`.
+Caught in 9b: the end-of-file hook silently stripped a trailing blank line from a
+verbatim archive copy, which is precisely the byte-identity the archive exists to
+guarantee. The file was restored from the pre-deletion blob and re-verified with
+`cmp`.
+
+### `.gitignore` (R25)
+
+Removed: `wandb/` (no longer a dependency), `figs/*.pdf` / `figs/*.png` /
+`!figs/.gitkeep` (the directory is deleted). The `compass_artifact_*.md` comment
+loses its `docs/PLAN.md` reference (that file is deleted; the on-disk artifact
+is not).
+
+Kept: `dumps/**` and its `.sha256` / `.gitkeep` negations; the per-pod runtime
+patterns `results/*/{pods.txt,done.txt,*.raw,watchdog.pid,status.txt,*.log}`;
+`results/{gpu_logs,scratch}/`, `figures/scratch/`; `docs/paper/figures/`;
+`uv.lock`; `paper/{arxiv/,arxiv-v1.tar.gz,main.bbl,main.pdf}`; `.venv/` and the
+tool caches. Kept too: `handover.md`, `explanation_week_*.md`,
+`next-session-prompt.md`, `compass_artifact_*.md`, `dashboards/` --- those files
+still exist on disk in the main checkout (see the next section), so their
+entries are still load-bearing.
+
+### `README.md` (R26)
+
+Rewritten, 236 → 104 lines: what it is (one paragraph), install, reproduce a
+table in three commands, the layout tree, the pod loop
+(pre-register → launch → harvest → check), license. No forbidden words, no week
+labels, no SHAs; every path it names was checked to exist.
+
+### Untracked on-disk litter --- for the orchestrator, post-merge (R27)
+
+A worktree cannot see these: they are untracked files in the **main** checkout
+(`/Users/hari/Desktop/kv-dlra`), all matched by `.gitignore`, so no commit can
+remove them. Delete them there after the merge:
+
+| path | what it is |
+|---|---|
+| `handover.md` | rolling session handover note |
+| `explanation_week_1_2.md`, `explanation_week_3_4.md`, `explanation_week_5_6.md` | narrative explainers |
+| `next-session-prompt.md` | scratch prompt |
+| `compass_artifact_*.md` | the raw planning artifact `docs/PLAN.md` was derived from |
+| `dashboards/` | session-generated research dashboards |
+| `**/.DS_Store` | macOS metadata |
+
+Also untracked and to be left alone: `results/gpu_logs/`, `results/scratch/`,
+`figures/scratch/`, `docs/paper/figures/` (regenerated by `make figures`),
+`dumps/` (4.7 GB, identified by its committed `.sha256`), `.venv/`.
+
+The orchestrator also re-syncs the venv after the merge
+(`uv pip install -e ".[dev]"`) --- this worktree shares the main checkout's
+`.venv`, so 9c could not install `ninja` or uninstall the eight pruned
+dependencies. The removals were verified statically instead (0 imports each),
+and `make test` runs green against the pre-prune venv.
+
+### Kept and flagged --- two orphaned `src/` modules (NOT a Task-9 ruling)
+
+The closing reachability sweep ("every `src/kvdlra/**/*.py` is imported by some
+entrypoint or test") finds two modules with **no importer at all**:
+
+| path | LOC | why it is still here |
+|---|---|---|
+| `src/kvdlra/eval/latency.py` | 127 | the measured decode p50 / KV-peak bench --- `paper/main.tex:1056` cites its numbers |
+| `src/kvdlra/eval/storage.py` | 145 | the measured stored-state / cold-load / workspace bench --- `paper/main.tex:1118` cites its numbers |
+
+Both were ported out of `scripts/` in Task 8, but nothing was wired to call
+them: `kvdlra.eval.runner.GENERATORS` maps only `inhouse` / `official_ruler` /
+`longbench`, no `configs/tasks/*.yaml` names them, and no test imports them.
+
+Task 9 does not delete them. No ruling covers them (R24 is about `scripts/`),
+and they are the only in-repo way to regenerate two numbers the paper reports,
+so deleting them would break the rule that a citable number must be
+regenerable. What they need is a caller --- a `generator:` (or a `pod.py`
+sub-command) plus a task config --- or an explicit decision to drop the systems
+tier. Owner: whoever owns the Task-8 port. Until then the sweep has exactly two
+known exceptions, listed here so it is not mistaken for a clean pass.
+
+## LOC (Task 9)
+
+`find src scripts tests -name '*.py' | xargs wc -l | tail -1`
+
+| point | total |
+|---|---|
+| after the Task-7 self-review pass | 27,224 |
+| after Task 8 (start of Task 9) | 26,681 |
+| after Task 9a | 16,465 |
+| **delta, Task 9** | **-10,216** |

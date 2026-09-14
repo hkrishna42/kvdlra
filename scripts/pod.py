@@ -32,14 +32,14 @@ import re
 import shlex
 import subprocess
 import sys
+import tomllib
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from importlib import metadata as md
 from pathlib import Path
 from typing import Any, cast
 
 import _paths  # noqa: F401
-import tomllib
 
 from kvdlra.eval.config import PodCfg, config_hash, load_arm, load_pod, load_task
 from kvdlra.eval.records import (
@@ -79,7 +79,7 @@ def _head() -> str:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _dist(pkg: str) -> str:

@@ -4,7 +4,8 @@ dtype: bfloat16
 doc: >-
   Week-19 A1Q: the first real measurement of the composed sub-cliff cell -- 512 fp32 coordinate
   columns kept, everything demoted from them coded at 4 bits. ~25 min per 16K cell, ~1.4 h per
-  32K cell for the streaming r64 arm. v1 had no pre-registration: `prereg: null` records that,
+  32K cell for the streaming r64 arm. As archived only the 16K half of this pod exists: its four
+  32K cells hold no rows. v1 had no pre-registration: `prereg: null` records that,
   and it is the one field a re-run of this pod must fill before launch (scripts/pod.py check
   enforces the commit order from L0 on).
 prereg: null

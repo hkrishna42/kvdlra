@@ -31,6 +31,7 @@
 <!-- cell: acc [Wilson 95% lo,hi] (hits/n); p = exact paired McNemar vs bugSseed-r128-h1024-s32 on the shared (seed,trial) keys, 2 significant figures -->
 <!-- discordant = pairs won by bugSseed-r128-h1024-s32 / pairs won by the row's arm -->
 <!-- v1 printed no McNemar p for the 4-bit row; it is computed here on the 12 shared keys -->
+<!-- the quant-4bit-kivi row is a different pod (w19-a1-llama) from every other row (w18-g4-llama): pairing on (seed,trial) assumes both pods built the same prompt for a given key -- which a deterministic generator under greedy decode does, but prompt_sha256 is null in the v1 records, so the archive cannot verify it -->
 <!-- stored state = the arm's fp32-at-rest stored bits (`sbits=`), the convention v1's caption states for this table -->
 <!-- a memory value is the mean of the arm's archived cell rows, which agree to within one 0.001 print unit (stored state is a property of the run, not of a needle) -->
 <!-- v1 printed think-c0.5/palu-r0.5 to 2 decimals (0.75x/0.50x); the archived rows are printed here at the 3 decimals the other rows need -->
@@ -61,6 +62,7 @@
 <!-- source: results/paper-v1/w18-g1-{llama,mistral,qwen}/trials.jsonl (r64 rows), results/paper-v1/w19-a1-{llama,mistral,qwen}/trials.jsonl (KIVI rows); stored bits from results/paper-v1/w18-{llama,mistral,qwen}/cells.jsonl (r64) and each w19-a1 pod's own cells.jsonl (KIVI) -->
 <!-- cell: acc (hits/n) -->
 <!-- bold = exact paired McNemar p<0.05 in the r64 arm's favour against a KIVI arm of the same model x ctx x task, paired on (seed,trial); no cell is significant in a KIVI arm's favour -->
+<!-- the r64 rows and the KIVI rows are different pods (w18-g1-<model> vs w19-a1-<model>): pairing on (seed,trial) assumes both pods built the same prompt for a given key -- which a deterministic generator under greedy decode does, but prompt_sha256 is null in the v1 records, so the archive cannot verify it -->
 <!-- stored = the arm's fp32-at-rest stored bits (`sbits=`), the convention v1's caption states for this table -->
 <!-- a memory value is the mean of the arm's archived cell rows, which agree to within one 0.001 print unit (stored state is a property of the run, not of a needle) -->
 

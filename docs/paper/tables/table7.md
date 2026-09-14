@@ -3,6 +3,7 @@
 <!-- source: results/paper-v1/w18-g1-{llama,mistral,qwen}/trials.jsonl (r64 rows), results/paper-v1/w19-a1-{llama,mistral,qwen}/trials.jsonl (KIVI rows); stored bits from results/paper-v1/w18-{llama,mistral,qwen}/cells.jsonl (r64) and each w19-a1 pod's own cells.jsonl (KIVI) -->
 <!-- cell: acc (hits/n) -->
 <!-- bold = exact paired McNemar p<0.05 in the r64 arm's favour against a KIVI arm of the same model x ctx x task, paired on (seed,trial); no cell is significant in a KIVI arm's favour -->
+<!-- the r64 rows and the KIVI rows are different pods (w18-g1-<model> vs w19-a1-<model>): pairing on (seed,trial) assumes both pods built the same prompt for a given key -- which a deterministic generator under greedy decode does, but prompt_sha256 is null in the v1 records, so the archive cannot verify it -->
 <!-- stored = the arm's fp32-at-rest stored bits (`sbits=`), the convention v1's caption states for this table -->
 <!-- a memory value is the mean of the arm's archived cell rows, which agree to within one 0.001 print unit (stored state is a property of the run, not of a needle) -->
 

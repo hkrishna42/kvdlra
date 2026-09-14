@@ -3,7 +3,9 @@ model: "Qwen/Qwen2.5-7B-Instruct"
 dtype: bfloat16
 doc: >-
   Week-18 G2: the realistic-filler control against the archived cyclic filler, 16K, 12 records
-  per cell. Pre-registered bar: ~$65, blocking. v1 had no pre-registration: `prereg: null`
+  per cell. As archived it DIVERGES from the cell set below: `isvd_r64_h256_seed` ran
+  `niah_single` only (the pinned depth grid), so its other three sub-tasks hold no rows.
+  Pre-registered bar: ~$65, blocking. v1 had no pre-registration: `prereg: null`
   records that, and it is the one field a re-run of this pod must fill before launch
   (scripts/pod.py check enforces the commit order from L0 on).
 prereg: null

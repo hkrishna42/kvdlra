@@ -4,7 +4,6 @@ ctx: 65536
 doc: >-
   Teacher-forced perplexity at 64K: prefill the context with the arm's compression active, then
   score a frozen 512-token continuation window against the compressed cache, averaged over 4
-  sampled windows. v1 read WikiText-103 TRAIN (a known defect recorded in CODE_AUDIT). One pod
-  (w18_g4) ran the same protocol at 8 windows.
+  sampled windows. v1 read WikiText-103 TRAIN (a known defect recorded in CODE_AUDIT).
 n_trials: 1
 seeds: [0]

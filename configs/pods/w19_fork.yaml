@@ -4,7 +4,10 @@ dtype: bfloat16
 doc: >-
   Week-20 fork: the byte-matched eviction x quantization composites on the same needles as
   w19_a1q, to test whether the sub-cliff band is exclusive of composites or only of scalar
-  quantizers. Needs the -devel image (quanto). v1 had no pre-registration: `prereg: null`
+  quantizers. Needs the -devel image (quanto). As archived its 16K `niah_multivalue` and `vt`
+  keys hold 21-24 records rather than 12: the in-house and the official task give those two
+  sub-tasks the SAME name at the same context, so both generators' records pool under one
+  (arm, task, ctx) key. v1 had no pre-registration: `prereg: null`
   records that, and it is the one field a re-run of this pod must fill before launch
   (scripts/pod.py check enforces the commit order from L0 on).
 prereg: null

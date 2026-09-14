@@ -303,6 +303,21 @@ def _favors_a(m: McNemar) -> bool:
     return m["a_favored"] > m["b_favored"] and m["p_value"] < ALPHA
 
 
+def _favors_b(m: McNemar) -> bool:
+    return m["b_favored"] > m["a_favored"] and m["p_value"] < ALPHA
+
+
+# Tables 3 and 7 pair arms that ran on DIFFERENT pods. Pairing on (seed, trial) is only
+# valid if both pods built the same prompt for a given key; the generator is
+# deterministic and decoding is greedy, so they should have -- but the v1 records carry
+# no prompt_sha256, so nothing in the archive proves it. Said once, cited twice.
+CROSS_POD = (
+    "pairing on (seed,trial) assumes both pods built the same prompt for a given key --"
+    " which a deterministic generator under greedy decode does, but prompt_sha256 is null"
+    " in the v1 records, so the archive cannot verify it"
+)
+
+
 def _tex(s: str) -> str:
     return re.sub(r"\*\*(.+?)\*\*", r"\\textbf{\1}", s.replace("_", r"\_"))
 
@@ -403,6 +418,8 @@ def table_3() -> tuple[str, str]:
         f"discordant = pairs won by {R128} / pairs won by the row's arm",
         "v1 printed no McNemar p for the 4-bit row; it is computed here on the"
         f" {q4['n_paired']} shared keys",
+        f"the quant-4bit-kivi row is a different pod ({a1}) from every other row ({g4}):"
+        f" {CROSS_POD}",
         BITS_MEM.replace("stored =", "stored state ="),
         MEM_RULE,
         "v1 printed think-c0.5/palu-r0.5 to 2 decimals (0.75x/0.50x); the archived rows are"
@@ -487,18 +504,26 @@ def table_7() -> tuple[str, str]:
         "bold = exact paired McNemar p<0.05 in the r64 arm's favour against a KIVI arm of the"
         " same model x ctx x task, paired on (seed,trial); no cell is significant in a KIVI"
         " arm's favour",
+        f"the r64 rows and the KIVI rows are different pods (w18-g1-<model> vs"
+        f" w19-a1-<model>): {CROSS_POD}",
         BITS_MEM,
         MEM_RULE,
     ]
     rows: list[list[str]] = []
+    kivi_wins: list[str] = []  # the note above is a claim; this is what checks it
     for t in ("llama", "mistral", "qwen"):
         g1, a1 = f"w18-g1-{t}", f"w19-a1-{t}"
         for ctx in (K16, K32):
             base: list[str] = []
             for task in TASKS:
                 c = acc(g1, R64, task, ctx)
-                won = any(_favors_a(paired(g1, R64, a1, q, task, ctx)) for q in KIVI)
-                base.append(f"**{c}**" if won else c)
+                ms = [paired(g1, R64, a1, q, task, ctx) for q in KIVI]
+                kivi_wins += [
+                    f"{t} ctx={ctx} {task} {q}"
+                    for q, m in zip(KIVI, ms, strict=True)
+                    if _favors_b(m)
+                ]
+                base.append(f"**{c}**" if any(_favors_a(m) for m in ms) else c)
             rows.append([DISPLAY[t], str(ctx), R64, f"{memory(g1, R64, ctx, 'sbits'):.3f}x", *base])
             rows += [
                 [
@@ -510,6 +535,8 @@ def table_7() -> tuple[str, str]:
                 ]
                 for q in KIVI
             ]
+    if kivi_wins:  # never let the note above become a claim the records stopped backing
+        raise SystemExit(f"a KIVI arm significantly beats {R64} in: {kivi_wins}")
     return _table(
         7,
         "the 2-bit/4-bit KIVI baseline at matched stored bytes",
@@ -580,7 +607,12 @@ def build(out: Path) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    c = sub.add_parser("convert-v1", help="archive the paper-v1 line files as JSONL")
+    c = sub.add_parser(
+        "convert-v1",
+        help="archive the paper-v1 line files as JSONL; write-once -- re-running it over an"
+        " existing archive raises rather than clobber rows, so a re-run means"
+        " `rm -rf results/paper-v1` first",
+    )
     c.add_argument("--out", default=None, help="default: <repo_root>/results/paper-v1")
     b = sub.add_parser("build", help="regenerate the paper-v1 tables from results/paper-v1")
     b.add_argument("--out", default="docs/paper/tables")

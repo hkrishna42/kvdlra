@@ -33,7 +33,7 @@ from perplexity_sweep import load_model
 from transformers.cache_utils import DynamicCache
 from w10_frontier import _prefill_chunked, _prefill_plain, build_arms, build_parser
 
-from kvdlra.press.compat import install_kvpress_prefill_compat
+from kvdlra.baselines.compat import install_kvpress_prefill_compat
 from kvdlra.quant.kivi_cache import _PerChannel
 
 JSON_BEGIN = "===W19_PERSIST_JSON_BEGIN==="

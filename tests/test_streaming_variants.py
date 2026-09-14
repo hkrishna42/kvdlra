@@ -2,7 +2,7 @@
 
 Validates that :mod:`kvdlra.integrators.streaming_variants` runs through the same
 block-streaming subspace-tracking contract as
-:func:`kvdlra.integrators.streaming_torch.blocked_bug_subspace`:
+:func:`kvdlra.tracker.isvd.blocked_bug_subspace`:
 
 * a single block (``block_size = T``) reproduces the truncated-SVD **oracle**;
 * an exactly rank-``r`` input is recovered exactly at ``rank_cap >= r``;
@@ -20,13 +20,13 @@ from __future__ import annotations
 import pytest
 import torch
 
-from kvdlra.integrators.streaming_torch import blocked_bug_subspace
 from kvdlra.integrators.streaming_variants import (
     parallel_bug_project,
     parallel_bug_subspace,
     psi_project,
     psi_subspace,
 )
+from kvdlra.tracker.isvd import blocked_bug_subspace
 
 # (name -> (subspace_fn, project_fn)) for the two new integrators.
 VARIANTS = {

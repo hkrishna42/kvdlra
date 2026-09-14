@@ -271,7 +271,7 @@ def test_quant_roundtrip_error_bounded(tiny_model: LlamaForCausalLM) -> None:
     def spy(
         block_k: torch.Tensor, block_v: torch.Tensor, positions: torch.Tensor, scores: object
     ) -> None:
-        from kvdlra.integrators.streaming_torch import augmented_bug_step
+        from kvdlra.tracker.isvd import augmented_bug_step
 
         assert layer.u_k is not None and layer.b_k is not None
         _, _, rot_k = augmented_bug_step(

@@ -42,7 +42,7 @@ from transformers import PreTrainedModel, PreTrainedTokenizerBase
 from transformers.cache_utils import Cache, DynamicCache, DynamicLayer
 
 from kvdlra.cache import BugStreamingCache, MorphKVCache
-from kvdlra.utils.seed import seed_everything
+from kvdlra.util.seed import seed_everything
 
 matplotlib.use("Agg")  # headless / CPU-safe backend; set before pyplot import
 import matplotlib.pyplot as plt

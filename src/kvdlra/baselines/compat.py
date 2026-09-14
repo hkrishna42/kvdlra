@@ -12,7 +12,7 @@ byte-for-byte copy of the upstream logic (including the ``QuantizedCache`` branc
 except the pre-fill check falls back to ``q_len > 1`` when ``cache_position`` is
 absent. It changes **no compression behaviour** — only how pre-fill is detected —
 so head-to-head baselines (SnapKV/ExpectedAttention/...) are unaffected in
-substance. :class:`kvdlra.press.BUGPress` overrides ``forward_hook`` itself and is
+substance. :class:`kvdlra.baselines.lowrank_press.BUGPress` overrides ``forward_hook`` itself and is
 unaffected by this patch.
 
 Call once before running any stock press under our harness. Idempotent.

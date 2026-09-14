@@ -323,7 +323,7 @@ def palu_footprint(
     """Per-layer footprint of Palu (arXiv:2407.21118): low-rank projection of K AND
     V into a rank-``r`` latent per head-group, ``r = rank_ratio * head_dim * group``.
     Stores the ``n_sink`` leading token columns **verbatim** (the sink exemption
-    :class:`kvdlra.press.PaluPress` applies since the Week-15 audit fix -- only
+    :class:`kvdlra.baselines.svd_oracle.SVDOraclePress` applies since the Week-15 audit fix -- only
     columns ``n_sink:`` are low-ranked, K+V), the per-token latent ``H``
     (``(t-n_sink)*r``) for K and V, plus the reconstruction basis ``B``
     (``r*head_dim*group``) per group -- all counted. ``group`` = KV heads sharing

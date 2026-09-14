@@ -40,7 +40,7 @@ from w5_streamppl import N_SINK, stream_score
 from kvdlra.cache import BugStreamingCache
 from kvdlra.cache.bug_cache import BugStreamingLayer
 from kvdlra.quant import ProductQuantizer
-from kvdlra.utils.seed import seed_everything
+from kvdlra.util.seed import seed_everything
 
 DEFAULT_MODEL = "unsloth/Llama-3.2-1B-Instruct"
 

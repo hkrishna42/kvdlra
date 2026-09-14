@@ -1,7 +1,7 @@
 """Week-3 perplexity sweep: language-modeling loss under a compressed KV cache.
 
 Measures how much replacing a *context's* KV cache with its rank-``r``
-dynamical-low-rank reconstruction (:class:`kvdlra.press.BUGPress`) degrades the
+dynamical-low-rank reconstruction (:class:`kvdlra.baselines.lowrank_press.BUGPress`) degrades the
 model's predictions of the *following* tokens, on WikiText-2.
 
 Why not a plain rolling-window perplexity (and not lm-eval-harness directly)
@@ -59,8 +59,8 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 
-from kvdlra.press import BUGPress
-from kvdlra.utils.seed import seed_everything
+from kvdlra.baselines.lowrank_press import BUGPress
+from kvdlra.util.seed import seed_everything
 
 DEFAULT_MODEL = "unsloth/Llama-3.2-1B-Instruct"
 

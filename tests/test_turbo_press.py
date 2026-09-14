@@ -1,11 +1,11 @@
-"""Hermetic tests for :class:`kvdlra.press.turbo_press.TurboQuantPress`."""
+"""Hermetic tests for :class:`kvdlra.baselines.turbo_press.TurboQuantPress`."""
 
 from __future__ import annotations
 
 import pytest
 import torch
 
-from kvdlra.press import TurboQuantPress
+from kvdlra.baselines.turbo_press import TurboQuantPress
 
 H, D = 8, 64
 

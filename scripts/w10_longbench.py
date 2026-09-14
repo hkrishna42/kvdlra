@@ -44,7 +44,7 @@ from transformers.cache_utils import Cache, DynamicCache
 from w10_frontier import _footprint, _prefill_chunked, build_arms
 from w10_ruler import _decode
 
-from kvdlra.press.compat import install_kvpress_prefill_compat
+from kvdlra.baselines.compat import install_kvpress_prefill_compat
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt

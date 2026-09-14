@@ -22,7 +22,7 @@ import pytest
 import torch
 from transformers import LlamaConfig, LlamaForCausalLM
 
-from kvdlra.press.compat import install_kvpress_prefill_compat
+from kvdlra.baselines.compat import install_kvpress_prefill_compat
 
 H, D = 2, 16  # KV heads x head_dim -> n_features 32; num query heads 4
 

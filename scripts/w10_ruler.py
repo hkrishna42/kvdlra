@@ -53,7 +53,7 @@ from w4_needle import _FILLER
 from w5_ruler import _LABELS
 from w10_frontier import _footprint, _prefill_chunked, _prefill_plain, build_arms
 
-from kvdlra.press.compat import install_kvpress_prefill_compat
+from kvdlra.baselines.compat import install_kvpress_prefill_compat
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt

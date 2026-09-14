@@ -1,13 +1,10 @@
-"""Parity + correctness tests for the blocked torch BUG tracker.
+"""Correctness tests for the blocked subspace tracker.
 
-Validates :func:`kvdlra.integrators.streaming_torch.blocked_bug_subspace`
-against the Week-2-validated numpy tracker
-:class:`kvdlra.integrators.streaming.StreamingBUG` and the truncated-SVD oracle.
-The load-bearing guarantees (see the module docstring):
+Validates :func:`kvdlra.tracker.isvd.blocked_bug_subspace` against the
+truncated-SVD oracle. The load-bearing guarantees (see the module docstring):
 
-* ``block_size == 1`` reproduces the numpy per-token tracker to ~fp precision;
 * ``block_size == T`` equals the Eckart--Young (truncated-SVD) oracle;
-* intermediate block sizes land in the ``[oracle, numpy-stream]`` fidelity band;
+* intermediate block sizes land in the ``[oracle, per-token]`` fidelity band;
 * an exactly rank-``r`` input is reconstructed exactly at any block size.
 """
 
@@ -18,8 +15,7 @@ import numpy.typing as npt
 import pytest
 import torch
 
-from kvdlra.integrators.streaming import StreamingBUG
-from kvdlra.integrators.streaming_torch import blocked_bug_project, blocked_bug_subspace
+from kvdlra.tracker.isvd import blocked_bug_project, blocked_bug_subspace
 
 
 def _rel_err(m: npt.NDArray[np.float64], u: npt.NDArray[np.float64]) -> float:
@@ -39,18 +35,6 @@ def _heavy_tailed(n: int, t: int, true_rank: int, seed: int) -> npt.NDArray[np.f
     return a @ b + 0.05 * rng.standard_normal((n, t))
 
 
-def test_block1_matches_numpy_streaming() -> None:
-    # block_size == 1 is the per-token tracker: same algorithm, so the
-    # reconstruction error must match StreamingBUG to ~fp precision.
-    m = _heavy_tailed(512, 600, true_rank=40, seed=0)
-    mt = torch.from_numpy(m)
-    for r in (16, 32, 64):
-        sb = StreamingBUG(n_features=512, rank_cap=r)
-        sb.update_many(m)
-        u = blocked_bug_subspace(mt, rank_cap=r, block_size=1, compute_dtype=torch.float64)
-        assert _rel_err(m, u.numpy()) == pytest.approx(sb.reconstruction_error(m), abs=1e-4)
-
-
 def test_blockT_equals_oracle() -> None:
     # A single augmented step over all columns == the truncated-SVD oracle.
     m = _heavy_tailed(512, 400, true_rank=40, seed=1)
@@ -61,15 +45,13 @@ def test_blockT_equals_oracle() -> None:
 
 
 def test_intermediate_blocks_in_fidelity_band() -> None:
-    # Intermediate block sizes sit between the oracle (best) and the per-token
-    # tracker, within a small tolerance -- never worse than streaming, never
-    # better than the oracle.
+    # Intermediate block sizes sit between the oracle (best, block_size == T) and
+    # the per-token tracker (block_size == 1), within a small tolerance -- never
+    # worse than per-token, never better than the oracle.
     m = _heavy_tailed(512, 512, true_rank=40, seed=2)
     mt = torch.from_numpy(m)
     r = 32
-    sb = StreamingBUG(n_features=512, rank_cap=r)
-    sb.update_many(m)
-    stream_err = sb.reconstruction_error(m)
+    stream_err = _rel_err(m, blocked_bug_subspace(mt, r, 1, compute_dtype=torch.float64).numpy())
     oracle_err = _oracle_err(m, r)
     for bs in (16, 64, 128):
         e = _rel_err(m, blocked_bug_subspace(mt, r, bs, compute_dtype=torch.float64).numpy())

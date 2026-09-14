@@ -27,7 +27,7 @@ from datasets import load_dataset
 from dump_kv import capture_pre_rope_keys, resolve_device
 from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
 
-from kvdlra.utils.seed import seed_everything
+from kvdlra.util.seed import seed_everything
 
 
 def calibrate(

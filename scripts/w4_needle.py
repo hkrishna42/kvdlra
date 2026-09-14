@@ -35,8 +35,8 @@ from kvpress import ExpectedAttentionPress, SnapKVPress
 from perplexity_sweep import load_model
 from w4_hybrid_sweep import kv_memory_ratio
 
-from kvdlra.press import BUGPress
-from kvdlra.press.compat import install_kvpress_prefill_compat
+from kvdlra.baselines.compat import install_kvpress_prefill_compat
+from kvdlra.baselines.lowrank_press import BUGPress
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt

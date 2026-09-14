@@ -245,7 +245,7 @@ def dump(args: argparse.Namespace) -> None:
     from datasets import load_dataset
     from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
 
-    from kvdlra.utils.seed import seed_everything
+    from kvdlra.util.seed import seed_everything
 
     class CapturingCache(DynamicCache):
         """``DynamicCache`` that snapshots full per-layer (K, V) after each update.

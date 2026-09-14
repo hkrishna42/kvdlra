@@ -8,7 +8,7 @@ the identical block-streaming harness (same first-block seed, same rank
 truncation, same ``|| M - U U^T M ||_F / || M ||_F`` metric, which depends only on
 ``span(U)``) and differ only in the per-block step:
 
-* **BUG** -- :func:`kvdlra.integrators.streaming_torch.blocked_bug_subspace`
+* **BUG** -- :func:`kvdlra.tracker.isvd.blocked_bug_subspace`
   (augmented Galerkin, forward, square-root core). The incumbent.
 * **PSI** -- :func:`kvdlra.integrators.streaming_variants.psi_subspace`
   (projector-splitting, backward S-step, covariance core) -- **fixed-rank**.
@@ -43,8 +43,8 @@ import matplotlib
 import numpy as np
 import torch
 
-from kvdlra.integrators.streaming_torch import blocked_bug_subspace
 from kvdlra.integrators.streaming_variants import parallel_bug_subspace, psi_subspace
+from kvdlra.tracker.isvd import blocked_bug_subspace
 
 matplotlib.use("Agg")  # headless / CPU-safe backend; set before pyplot import
 import matplotlib.pyplot as plt

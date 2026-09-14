@@ -55,8 +55,9 @@ from transformers import PreTrainedModel
 from w4_fair import evict_quant_memory
 from w4_hybrid_sweep import kv_memory_ratio
 
-from kvdlra.press import BUGPress, TurboQuantPress
-from kvdlra.press.compat import install_kvpress_prefill_compat
+from kvdlra.baselines.compat import install_kvpress_prefill_compat
+from kvdlra.baselines.lowrank_press import BUGPress
+from kvdlra.baselines.turbo_press import TurboQuantPress
 
 matplotlib.use("Agg")  # headless / CPU-safe backend; set before pyplot import
 import matplotlib.pyplot as plt

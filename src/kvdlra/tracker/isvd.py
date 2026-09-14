@@ -1,7 +1,7 @@
 """Blocked (chunked) streaming BUG subspace tracker in PyTorch.
 
-A GPU-capable, ``torch`` reimplementation of the augmented rank-adaptive BUG
-subspace tracker in :class:`kvdlra.integrators.streaming.StreamingBUG`, processing
+A GPU-capable, ``torch`` implementation of the augmented rank-adaptive BUG
+subspace tracker (Ceruti--Kusch--Lubich, arXiv:2104.05247 §2), processing
 the feature-by-token matrix ``M`` (rows = features, columns = tokens;
 ``docs/notes/conventions.md``) **a block of columns at a time** instead of one
 column at a time.
@@ -18,12 +18,12 @@ integrator (Ceruti--Kusch--Lubich 2022, arXiv:2104.05247 §2) with a rank-``b``
 data increment per step rather than rank-1; the block size is a speed/fidelity
 knob:
 
-    * ``block_size = 1``   -> the per-token streaming tracker (matches numpy).
+    * ``block_size = 1``   -> the per-token streaming tracker.
     * ``block_size = T``   -> a single augmented step == the truncated-SVD oracle.
     * intermediate         -> a coarse streaming integration; Week-2 showed BUG
       and the oracle agree to ~1-3% on real KV, so all block sizes land in that
-      band. :func:`blocked_bug_subspace` is validated for reconstruction-error
-      parity against :class:`StreamingBUG` in ``tests/test_streaming_torch.py``.
+      band. ``tests/test_isvd.py`` pins the two endpoints and the band between
+      them.
 
 The blocked augmented-BUG step (for a block ``C`` of ``b`` columns)
 ------------------------------------------------------------------
@@ -51,9 +51,8 @@ References
 ----------
 G. Ceruti, J. Kusch and C. Lubich, "A rank-adaptive robust integrator for
 dynamical low-rank approximation," BIT Numer. Math. 62 (2022) 1149--1174,
-arXiv:2104.05247, §2. See also :mod:`kvdlra.integrators.streaming` (the numpy
-per-token tracker this mirrors) and :mod:`kvdlra.integrators.bug_torch` (the
-fp32-core convention).
+arXiv:2104.05247, §2. The core runs in fp32 even when the data is stored in
+bf16 (PLAN §8 pitfall #4).
 """
 
 from __future__ import annotations
@@ -66,8 +65,7 @@ __all__ = ["augmented_bug_step", "blocked_bug_project", "blocked_bug_subspace"]
 
 def _truncation_rank(sigma: Tensor, theta: float) -> int:
     """Smallest ``k`` whose discarded singular tail ``(sum_{j>k} sigma_j^2)^{1/2}``
-    is ``<= theta`` (torch mirror of
-    :func:`kvdlra.integrators.bug_adaptive.truncation_rank`)."""
+    is ``<= theta`` (the rank-adaptive truncation criterion, arXiv:2104.05247 §2)."""
     # sigma is sorted descending (torch.linalg.svd convention).
     tail_sq = torch.flip(torch.cumsum(torch.flip(sigma**2, (0,)), 0), (0,))
     # tail_sq[k] == sum_{j>=k} sigma_j^2; we want the smallest k with the tail
@@ -270,9 +268,8 @@ def blocked_bug_project(
 ) -> Tensor:
     """Orthogonal projection ``U (U^T M)`` of ``M`` onto the tracked subspace.
 
-    The reconstruction model for the data (mirrors
-    :meth:`kvdlra.integrators.streaming.StreamingBUG.project`), returned in ``M``'s
-    original storage dtype.
+    The reconstruction model for the data, returned in ``M``'s original storage
+    dtype.
     """
     u = blocked_bug_subspace(
         M, rank_cap, block_size, theta=theta, min_sv_frac=min_sv_frac, compute_dtype=compute_dtype
@@ -289,7 +286,7 @@ def blocked_bug_project(
 # other part of the cache (sinks, ring, surprise tier, seed, accounting) is held
 # fixed. ``rot = u_new^T u_old`` carries stored coordinates across the basis
 # change exactly as the BUG step does. Note that ``augmented_bug_step`` with
-# ``theta=None, min_sv_frac=0`` (the flagship's defaults) IS fixed-rank
+# ``theta=None, min_sv_frac=0`` (the r64 configuration's defaults) IS fixed-rank
 # incremental SVD (Brand 2006), so that arm needs no new code.
 # ----------------------------------------------------------------------------
 
@@ -316,7 +313,7 @@ def oja_step(
 ) -> tuple[Tensor, Tensor, Tensor]:
     """Oja's-rule subspace tracker (the OjaKV baseline), one block of columns.
 
-    A faithful torch port of :class:`kvdlra.integrators.oja.OjaTracker`: each
+    Oja's rule as the tracker's drop-in alternative (Week-20 swap): each
     column is L2-normalized and applied sequentially,
     ``U <- orth(U + eta_t * c (c^T U))`` with ``eta_t = eta0 / (1 + decay * t)``
     (``t`` = tokens seen so far, the validated Week-2 schedule). Seeding is the

@@ -249,7 +249,7 @@ def test_palu_ratio_tracks_rank_ratio() -> None:
 
 
 def test_palu_footprint_counts_sinks() -> None:
-    """Week-15: ``PaluPress`` keeps the ``n_sink`` leading columns exact, so the
+    """Week-15: ``SVDOraclePress`` keeps the ``n_sink`` leading columns exact, so the
     footprint counts them verbatim (``2*n*n_sink``, K+V at full feature width)
     and pays the per-token latent only over ``t - n_sink`` columns -- the exact
     sinks are stored, never free (the one-unit ethos)."""

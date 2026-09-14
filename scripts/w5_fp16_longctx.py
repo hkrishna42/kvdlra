@@ -49,8 +49,8 @@ from w4_hybrid_sweep import kv_memory_ratio
 from w5_hybrid import hybrid_memory_ratio
 from w5_longctx import pareto, ppl_at_budget
 
-from kvdlra.press import BUGPress
-from kvdlra.press.compat import install_kvpress_prefill_compat
+from kvdlra.baselines.compat import install_kvpress_prefill_compat
+from kvdlra.baselines.lowrank_press import BUGPress
 
 matplotlib.use("Agg")  # headless / CPU-safe backend; set before pyplot import
 import matplotlib.pyplot as plt

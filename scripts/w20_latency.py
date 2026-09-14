@@ -37,7 +37,7 @@ from perplexity_sweep import load_model
 from transformers.cache_utils import DynamicCache
 from w10_frontier import _prefill_chunked, _prefill_plain, build_arms, build_parser
 
-from kvdlra.press.compat import install_kvpress_prefill_compat
+from kvdlra.baselines.compat import install_kvpress_prefill_compat
 
 JSON_BEGIN = "===W20_LATENCY_JSON_BEGIN==="
 JSON_END = "===W20_LATENCY_JSON_END==="

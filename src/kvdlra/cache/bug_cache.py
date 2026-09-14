@@ -3,7 +3,7 @@
 Week-5 Axis B (``docs/week5-plan.md`` §"New capability to build",
 ``docs/notes/streaming-decode-design.md``): the first use of BUG *as a streaming
 integrator during generation*. Everywhere else in this project BUG compresses
-the pre-fill and is static during decode (:class:`kvdlra.press.BUGPress`); this
+the pre-fill and is static during decode (:class:`kvdlra.baselines.lowrank_press.BUGPress`); this
 cache advances the tracked subspace **per generated token** at a fixed rank cap,
 so the stored cache size is *bounded* -- independent of how many tokens have
 been generated -- while attention keeps seeing a running low-rank reconstruction
@@ -33,7 +33,7 @@ passes no kwargs to the cache) and pushes it verbatim into the recent ring.
 When the ring overflows, the oldest ``absorb_block`` tokens *graduate*: their
 keys are exactly un-rotated to pre-RoPE (the model's own rotary embedding, so
 angles are bit-identical; the inverse divides by ``attention_scaling**2``), one
-augmented rank-adaptive BUG step (:func:`kvdlra.integrators.streaming_torch.
+augmented rank-adaptive BUG step (:func:`kvdlra.tracker.isvd.
 augmented_bug_step` -- the validated integrator math, fp32 core per PLAN §8
 pitfall #4) advances ``(U, B)``, existing coordinates are re-expressed in the
 new basis (``C <- rot @ C`` -- each truncation projects old tokens onto the new
@@ -156,8 +156,8 @@ from transformers.cache_utils import Cache, CacheLayerMixin, LinearAttentionCach
 from transformers.models.llama.modeling_llama import rotate_half
 
 from kvdlra.cache.morph_cache import _aggregated_attention_row, _window_attention_rows
-from kvdlra.integrators.streaming_torch import augmented_bug_step, fd_step, oja_step
 from kvdlra.quant import PolarQuant, ProductQuantizer
+from kvdlra.tracker.isvd import augmented_bug_step, fd_step, oja_step
 
 logger = logging.getLogger(__name__)
 

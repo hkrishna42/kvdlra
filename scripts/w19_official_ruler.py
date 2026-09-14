@@ -41,7 +41,7 @@ from perplexity_sweep import load_model
 from w10_frontier import build_arms, build_parser
 from w10_ruler import _tail_len, retrieve
 
-from kvdlra.press.compat import install_kvpress_prefill_compat
+from kvdlra.baselines.compat import install_kvpress_prefill_compat
 
 JSON_BEGIN = "===W19_OFFICIAL_RULER_JSON_BEGIN==="
 JSON_END = "===W19_OFFICIAL_RULER_JSON_END==="

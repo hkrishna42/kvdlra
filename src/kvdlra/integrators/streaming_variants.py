@@ -5,7 +5,7 @@ enters the expensive Week-5 comparisons we pick the best DLRA integrator for the
 streaming-KV subspace-tracking problem via an *offline* bake-off (reconstruction
 error vs the SVD oracle **+ per-step cost**, on captured KV; no LLM, no pod). The
 incumbent -- the augmented rank-adaptive BUG step -- is
-:func:`kvdlra.integrators.streaming_torch.blocked_bug_subspace`. This module adds
+:func:`kvdlra.tracker.isvd.blocked_bug_subspace`. This module adds
 its two rivals so all three run through the **same** block-streaming harness
 (identical first-block seeding, identical rank/``theta`` truncation, identical
 ``|| M - U U^T M ||_F / || M ||_F`` metric) and differ *only* in the per-block
@@ -36,7 +36,7 @@ integrator step:
   sizeable fraction of ``r`` (``r^3 + b^3`` vs ``(r+b)^3``); the measured accuracy
   gap is exactly the discarded cross-coupling energy.
 
-Both mirror :mod:`kvdlra.integrators.streaming_torch`'s conventions: rows =
+Both mirror :mod:`kvdlra.tracker.isvd`'s conventions: rows =
 features, columns = tokens (``docs/notes/conventions.md``); mixed precision with
 the QR/SVD/matmuls in ``compute_dtype`` (default ``float32``; pass ``float64`` for
 the offline ablation) regardless of ``M``'s storage dtype (PLAN §8 pitfall #4).
@@ -53,7 +53,7 @@ G. Ceruti, J. Kusch and C. Lubich, "A parallel rank-adaptive integrator for
 dynamical low-rank approximation," SIAM J. Sci. Comput. 46 (2024) B205--B228,
 arXiv:2304.05660.
 
-See also :mod:`kvdlra.integrators.streaming_torch` (the incumbent BUG tracker and
+See also :mod:`kvdlra.tracker.isvd` (the incumbent BUG tracker and
 the shared blocked harness) and :mod:`kvdlra.integrators.streaming` (the numpy
 per-token reference).
 """
@@ -63,7 +63,7 @@ from __future__ import annotations
 import torch
 from torch import Tensor
 
-from kvdlra.integrators.streaming_torch import _truncation_rank
+from kvdlra.tracker.isvd import _truncation_rank
 
 __all__ = [
     "parallel_bug_project",
@@ -185,7 +185,7 @@ def parallel_bug_subspace(
     """Track the left subspace of ``M`` with the decoupled parallel-BUG integrator.
 
     Signature/semantics mirror
-    :func:`kvdlra.integrators.streaming_torch.blocked_bug_subspace`; the per-block
+    :func:`kvdlra.tracker.isvd.blocked_bug_subspace`; the per-block
     rule is :func:`parallel_bug_step`. Returns the orthonormal basis ``U``
     ``(n, r)`` in ``compute_dtype`` on ``M``'s device, ``r <= rank_cap``.
     """
@@ -222,7 +222,7 @@ def psi_subspace(
     """Track the left subspace of ``M`` with the projector-splitting integrator.
 
     Signature/semantics mirror
-    :func:`kvdlra.integrators.streaming_torch.blocked_bug_subspace`; the per-block
+    :func:`kvdlra.tracker.isvd.blocked_bug_subspace`; the per-block
     rule is :func:`psi_step` (fixed-rank; ``theta`` only affects the first-block
     seed rank). Returns the orthonormal basis ``U`` ``(n, r)`` in ``compute_dtype``
     on ``M``'s device, ``r <= rank_cap``.

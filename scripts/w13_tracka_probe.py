@@ -7,7 +7,7 @@ never sees. Does a *damped* or *energy-weighted* truncation at the single BUG
 basis-update site lower long-horizon rank-r reconstruction error vs raw-sigma,
 WITHOUT regressing the moderate band?
 
-WHAT THIS REPLICATES (no src/ edit). ``kvdlra.integrators.streaming_torch.
+WHAT THIS REPLICATES (no src/ edit). ``kvdlra.tracker.isvd.
 augmented_bug_step`` builds, per block, the augmented basis ``u_aug`` and square-
 root core ``b_fac``, then at lines 182-187 truncates::
 

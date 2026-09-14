@@ -39,8 +39,8 @@ from torch.nn.functional import cross_entropy
 from transformers.cache_utils import Cache, DynamicCache
 
 from kvdlra import accounting as acc
+from kvdlra.baselines.compat import install_kvpress_prefill_compat
 from kvdlra.cache import BugStreamingCache, MorphKVCache, ShadowKVCache
-from kvdlra.press.compat import install_kvpress_prefill_compat
 from kvdlra.quant.kivi_cache import aux_words, flush, make_quant_cache
 
 matplotlib.use("Agg")
@@ -456,7 +456,7 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
             )
 
     if "palu" in want:  # Palu: low-rank projection of K+V (reconstruct-then-attend)
-        from kvdlra.press import PaluPress
+        from kvdlra.baselines.svd_oracle import SVDOraclePress
 
         for rr in args.palu_ranks:
             arms.append(
@@ -468,7 +468,7 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                     "palu_rank_ratio": rr,
                     "palu_group": args.palu_group,
                     "chunkable": False,  # single-shot prefill only (SVD over the whole T)
-                    "make": lambda rr=rr: PaluPress(rank_ratio=rr, group=args.palu_group),
+                    "make": lambda rr=rr: SVDOraclePress(rank_ratio=rr, group=args.palu_group),
                 }
             )
 

@@ -31,7 +31,7 @@ import _paths  # noqa: F401  # bootstrap: make kvdlra importable when run as a s
 import matplotlib
 from perplexity_sweep import evaluate, load_model, load_wikitext_ids
 
-from kvdlra.press import BUGPress
+from kvdlra.baselines.lowrank_press import BUGPress
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt

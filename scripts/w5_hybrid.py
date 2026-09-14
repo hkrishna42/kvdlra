@@ -51,8 +51,9 @@ from w4_fair import evict_quant_memory
 from w4_hybrid_sweep import FP16, kv_memory_ratio
 from w5_longctx import pareto, ppl_at_budget
 
-from kvdlra.press import BUGPress, TurboQuantPress
-from kvdlra.press.compat import install_kvpress_prefill_compat
+from kvdlra.baselines.compat import install_kvpress_prefill_compat
+from kvdlra.baselines.lowrank_press import BUGPress
+from kvdlra.baselines.turbo_press import TurboQuantPress
 
 matplotlib.use("Agg")  # headless / CPU-safe backend; set before pyplot import
 import matplotlib.pyplot as plt

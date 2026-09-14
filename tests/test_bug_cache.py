@@ -28,7 +28,7 @@ from transformers.cache_utils import DynamicCache, DynamicLayer
 
 from kvdlra.cache import BugStreamingCache
 from kvdlra.cache.bug_cache import BugStreamingLayer, _RopeAngles
-from kvdlra.integrators.streaming_torch import augmented_bug_step, blocked_bug_subspace
+from kvdlra.tracker.isvd import augmented_bug_step, blocked_bug_subspace
 
 # Tiny Llama: 2 layers, 2 KV heads x head_dim 16 => n_features = 32.
 H, D = 2, 16

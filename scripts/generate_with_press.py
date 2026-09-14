@@ -1,4 +1,4 @@
-"""Greedy generation with (or without) :class:`kvdlra.press.BUGPress`.
+"""Greedy generation with (or without) :class:`kvdlra.baselines.lowrank_press.BUGPress`.
 
 Two jobs (Week-3 Tue + Wed, ``docs/PLAN.md``):
 
@@ -38,8 +38,8 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 
-from kvdlra.press import BUGPress
-from kvdlra.utils.seed import seed_everything
+from kvdlra.baselines.lowrank_press import BUGPress
+from kvdlra.util.seed import seed_everything
 
 DEFAULT_MODEL = "unsloth/Llama-3.2-1B-Instruct"
 

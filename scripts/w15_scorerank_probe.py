@@ -55,7 +55,7 @@ from transformers import LlamaConfig, LlamaForCausalLM
 
 from kvdlra.cache import BugStreamingCache
 from kvdlra.cache.bug_cache import BugStreamingLayer
-from kvdlra.integrators.streaming_torch import augmented_bug_step
+from kvdlra.tracker.isvd import augmented_bug_step
 
 REPO = Path(__file__).resolve().parents[1]
 OUT_DEFAULT = REPO / "results" / "w15-scorerank-probe.json"

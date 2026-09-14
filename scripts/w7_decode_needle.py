@@ -53,7 +53,7 @@ from transformers.cache_utils import Cache, DynamicCache
 from w5_streamppl import bug_budget_floats, build_methods
 
 from kvdlra.cache import BugStreamingCache, MorphKVCache
-from kvdlra.utils.seed import seed_everything
+from kvdlra.util.seed import seed_everything
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt

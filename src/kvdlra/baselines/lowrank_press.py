@@ -1,7 +1,7 @@
 """``BUGPress`` -- a streaming dynamical-low-rank KV-cache press for kvpress.
 
 This is the Week-3 bridge between the validated streaming BUG tracker
-(:class:`kvdlra.integrators.streaming.StreamingBUG`, the Week-2 go/no-go winner)
+(:func:`kvdlra.tracker.isvd.blocked_bug_project`, the Week-2 go/no-go winner)
 and NVIDIA's ``kvpress`` compression framework. It plugs the tracker into the
 :class:`kvpress.BasePress` ``compress`` hook so we can measure the *generation*
 and *perplexity* cost of replacing a layer's KV cache with its rank-``r``
@@ -57,15 +57,13 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-import numpy as np
 import torch
 from torch import nn
 from transformers import PreTrainedModel
 from transformers.models.llama.modeling_llama import rotate_half
 
-from kvdlra.integrators.streaming import StreamingBUG
-from kvdlra.integrators.streaming_torch import blocked_bug_project, blocked_bug_subspace
 from kvdlra.quant import PolarQuant
+from kvdlra.tracker.isvd import blocked_bug_project, blocked_bug_subspace
 
 try:  # kvpress is an optional heavy dependency; keep import errors legible.
     from kvpress.presses.base_press import BasePress
@@ -94,7 +92,7 @@ class BUGPress(BasePress):  # type: ignore[misc]
     ----------
     rank:
         Target tracked rank ``r`` of the ``(512, T)`` feature-by-token
-        factorization (the ``rank_cap`` handed to :class:`StreamingBUG`). Typical
+        factorization (the ``rank_cap`` handed to the tracker). Typical
         Week-3 sweep values: 16, 32, 64. ``rank >= min(512, T - n_sink)`` recovers
         the input essentially exactly (used by the parity tests).
     pre_rope:
@@ -120,17 +118,10 @@ class BUGPress(BasePress):  # type: ignore[misc]
         eviction ``x TurboQuant`` quantizes ITS kept tokens -- a fair memory
         accounting; only the ``n_sink`` sinks stay fp16). Memory is ``T``-dependent
         (kept tokens cost per-token, not amortized); use the sweep's hybrid memory
-        model, not :attr:`compression_ratio`, for the honest axis.
-    backend:
-        Which BUG tracker to use. ``"torch"`` (default) runs the blocked tracker
-        (:func:`kvdlra.integrators.streaming_torch.blocked_bug_project`)
-        **on-device** (GPU-capable, no CPU/numpy round-trip) -- the fast path.
-        ``"numpy"`` runs the per-token :class:`StreamingBUG` in fp64 on CPU (the
-        Week-2 tracker; slower but the reference). Both are parity-validated
-        (``tests/test_streaming_torch.py``).
+        model, not :attr:`compression_ratio`, for the true axis.
     block_size:
-        Columns per augmented-BUG step for the ``"torch"`` backend (ignored for
-        ``"numpy"``). Speed/fidelity knob; ``1`` == per-token, ``>= T`` == oracle.
+        Columns per augmented-BUG step. Speed/fidelity knob; ``1`` == per-token,
+        ``>= T`` == oracle.
     """
 
     rank: int = 32
@@ -138,10 +129,9 @@ class BUGPress(BasePress):  # type: ignore[misc]
     compress_values: bool = True
     n_sink: int = 4
     n_exact: int = 0
-    backend: str = "torch"
     block_size: int = 128
     # TurboQuant (Week 4): if set, quantize the per-token BUG coordinate vectors
-    # with PolarQuant at ``quant_bits`` bits/coord (torch backend only). ``None``
+    # with PolarQuant at ``quant_bits`` bits/coord. ``None``
     # keeps fp factors. See docs/notes/turboquant-rope-interaction.md.
     quant_bits: int | None = None
     # ``head_dim * num_kv_heads``; set from the model in ``post_init_from_model``
@@ -158,15 +148,10 @@ class BUGPress(BasePress):  # type: ignore[misc]
             raise ValueError(f"n_sink must be >= 0, got {self.n_sink}")
         if self.n_exact < 0:
             raise ValueError(f"n_exact must be >= 0, got {self.n_exact}")
-        if self.backend not in ("torch", "numpy"):
-            raise ValueError(f"backend must be 'torch' or 'numpy', got {self.backend!r}")
         if self.block_size < 1:
             raise ValueError(f"block_size must be >= 1, got {self.block_size}")
-        if self.quant_bits is not None:
-            if self.quant_bits < 1:
-                raise ValueError(f"quant_bits must be >= 1, got {self.quant_bits}")
-            if self.backend != "torch":
-                raise ValueError("quant_bits requires backend='torch'")
+        if self.quant_bits is not None and self.quant_bits < 1:
+            raise ValueError(f"quant_bits must be >= 1, got {self.quant_bits}")
 
     def post_init_from_model(self, model: PreTrainedModel) -> None:
         """Pin ``n_features = head_dim * num_kv_heads`` from the model config."""
@@ -213,20 +198,12 @@ class BUGPress(BasePress):  # type: ignore[misc]
     def _project_lowrank(self, cols: torch.Tensor) -> torch.Tensor:
         """Rank-``rank`` BUG reconstruction of a ``(features, k)`` column block.
 
-        The BUG core runs in high precision (fp32 for the torch backend, fp64 numpy
-        for the numpy backend; PLAN §8 pitfall #4); the result matches ``cols``'s
+        The BUG core runs in fp32 (PLAN §8 pitfall #4); the result matches ``cols``'s
         dtype and device. No sink/exact handling here -- that is the caller's job.
         """
-        if self.backend == "torch":
-            if self.quant_bits is None:
-                return blocked_bug_project(cols, self.rank, self.block_size)
-            return self._torch_quantized_reconstruct(cols)
-        # numpy backend: per-token StreamingBUG in fp64 on CPU (the reference).
-        cols_np = np.ascontiguousarray(cols.detach().to(torch.float64).cpu().numpy())
-        tracker = StreamingBUG(n_features=int(cols.shape[0]), rank_cap=self.rank)
-        tracker.update_many(cols_np)
-        recon = tracker.project(cols_np)
-        return torch.from_numpy(recon).to(dtype=cols.dtype, device=cols.device)
+        if self.quant_bits is None:
+            return blocked_bug_project(cols, self.rank, self.block_size)
+        return self._torch_quantized_reconstruct(cols)
 
     def _lowrank_reconstruct(self, mat: torch.Tensor) -> torch.Tensor:
         """Reconstruct a ``(features, T)`` matrix: exact/kept columns + low-rank rest.
@@ -253,7 +230,7 @@ class BUGPress(BasePress):  # type: ignore[misc]
         if lowrank_cols.shape[1] > 0:
             out[:, ~mask] = self._project_lowrank(lowrank_cols)
         # Kept (non-sink) columns: quantize to match eviction's x TurboQuant fairness.
-        if self.quant_bits is not None and self.backend == "torch":
+        if self.quant_bits is not None:
             kept = mask.clone()
             kept[: self.n_sink] = False  # sinks stay fp16-exact
             if bool(kept.any()):
@@ -361,7 +338,7 @@ class BUGPress(BasePress):  # type: ignore[misc]
         cache (chunked or continued pre-fill), the returned keys would be shorter
         than the values and the cache would silently desync. We detect that and
         raise rather than corrupt. (Supporting streaming across forwards would
-        require carrying per-layer :class:`StreamingBUG` state between calls -- a
+        require carrying per-layer tracker state between calls -- a
         later extension.)
         """
         q_len = hidden_states.shape[1]

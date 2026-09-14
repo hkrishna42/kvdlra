@@ -22,7 +22,7 @@ import torch
 from transformers import Qwen2Config, Qwen2ForCausalLM
 
 from kvdlra.cache import BugStreamingCache
-from kvdlra.integrators.streaming_torch import augmented_bug_step
+from kvdlra.tracker.isvd import augmented_bug_step
 
 
 def _low_rank_stream(

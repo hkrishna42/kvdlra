@@ -189,7 +189,7 @@ def test_quant_arm_retrieves_with_chunked_prefill() -> None:
     from w10_frontier import build_arms
     from w10_ruler import retrieve
 
-    from kvdlra.press.compat import install_kvpress_prefill_compat
+    from kvdlra.baselines.compat import install_kvpress_prefill_compat
 
     install_kvpress_prefill_compat()
     m = _model()

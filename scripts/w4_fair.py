@@ -32,8 +32,8 @@ from kvpress import ComposedPress, ExpectedAttentionPress, SnapKVPress
 from perplexity_sweep import evaluate, load_model, load_wikitext_ids
 from w4_hybrid_sweep import FP16
 
-from kvdlra.press import TurboQuantPress
-from kvdlra.press.compat import install_kvpress_prefill_compat
+from kvdlra.baselines.compat import install_kvpress_prefill_compat
+from kvdlra.baselines.turbo_press import TurboQuantPress
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt

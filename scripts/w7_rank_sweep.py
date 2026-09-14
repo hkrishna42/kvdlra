@@ -57,7 +57,7 @@ from w5_streamppl import (
 )
 
 from kvdlra.cache import BugStreamingCache, MorphKVCache
-from kvdlra.utils.seed import seed_everything
+from kvdlra.util.seed import seed_everything
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt

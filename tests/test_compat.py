@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kvdlra.press.compat import install_kvpress_prefill_compat
+from kvdlra.baselines.compat import install_kvpress_prefill_compat
 
 
 def test_install_patches_base_press_and_is_idempotent() -> None:

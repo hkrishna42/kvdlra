@@ -30,7 +30,7 @@ import matplotlib
 from kvpress import ExpectedAttentionPress, SnapKVPress
 from perplexity_sweep import evaluate, load_model, load_wikitext_ids
 
-from kvdlra.press.compat import install_kvpress_prefill_compat
+from kvdlra.baselines.compat import install_kvpress_prefill_compat
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt

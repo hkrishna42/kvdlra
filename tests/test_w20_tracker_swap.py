@@ -18,7 +18,7 @@ import torch
 from transformers import LlamaConfig, LlamaForCausalLM
 
 from kvdlra.cache import BugStreamingCache
-from kvdlra.integrators.streaming_torch import augmented_bug_step, fd_step, oja_step
+from kvdlra.tracker.isvd import augmented_bug_step, fd_step, oja_step
 
 N, R, B = 32, 6, 5  # features, rank cap, block columns
 

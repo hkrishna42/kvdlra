@@ -75,8 +75,7 @@ def _bug_layer(cache: BugStreamingCache) -> BugStreamingLayer:
     "rank,retention,hh_budget,hh_select,hh_retain",
     [
         (8, "fifo", 0, "attn", True),
-        (8, "attn", 0, "attn", True),
-        (8, "attn", 6, "attn", True),
+        (8, "lowrank_surprise", 0, "attn", True),
         # Week-11 SurpriseSLASH: surprise-selected exact tier (no hh_score) on a
         # lowrank_surprise tail -- the tier the retrieval arms deploy.
         (8, "lowrank_surprise", 6, "surprise", True),
@@ -122,7 +121,6 @@ def test_bug_footprint_matches_stored_state_numel(
         n_sink=4,
         retention=retention,
         hh_count=layer._hh_len(),
-        hh_select=hh_select,
         u_present=layer.u_k is not None,
     )
     assert fp.float_equiv() == layer.stored_state_numel()
@@ -144,7 +142,6 @@ def test_balanced_config_ratio_pin() -> None:
         n_sink=sink,
         retention="lowrank_surprise",
         hh_count=hh,
-        hh_select="surprise",
     )
     ratio = fp.ratio_fp16(t, n)
     assert 0.12 < ratio < 0.20  # "~0.15x": rank is the ppl lever, paid in memory
@@ -165,7 +162,6 @@ def test_r192_h1024_ratio_pin() -> None:
         n_sink=sink,
         retention="lowrank_surprise",
         hh_count=hh,
-        hh_select="surprise",
     )
     ratio = fp.ratio_fp16(t, n)
     assert 0.19 < ratio < 0.25  # computed 0.2216 at authoring time
@@ -315,7 +311,6 @@ def test_bug_ratio_stored_bits_exceeds_fp16_honest_band() -> None:
             n_sink=sink,
             retention="lowrank_surprise",
             hh_count=hh,
-            hh_select="surprise",
         )
         assert fp.ratio_fp16(t, n) == pytest.approx(fp16_exp, abs=2e-3)
         assert fp.ratio_stored_bits(t, n) == pytest.approx(stored_exp, abs=2e-3)

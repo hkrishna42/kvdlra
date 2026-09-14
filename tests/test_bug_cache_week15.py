@@ -12,8 +12,7 @@ snapshot (``_absorb_columns``), storage rank and accounting untouched.
 This file is the regression contract: off-path bit-for-bit identity (omitted vs
 ``None``; ``score_rank=rank`` -- the plumbing pin), the validation surface,
 composition with ``seed_hh_warmup``, the caps-only-SLASH site discipline, and
-accounting neutrality. Plus the Week-15 T3 scoping deliverable: a strict-xfail
-characterization test pinning the latent ``seed_scores`` chunked-ingest bug.
+accounting neutrality.
 
 Hermetic tiny Llama, mirroring ``tests/test_bug_cache_seed_regression.py``.
 """
@@ -48,10 +47,8 @@ _STORED = (
     "hh_k",
     "hh_v",
     "hh_pos",
-    "hh_score",
     "mid_pos",
     "mid_surprise",
-    "ring_score",
 )
 
 
@@ -181,7 +178,7 @@ def test_score_rank_full_identity(tiny_model: LlamaForCausalLM) -> None:
     [
         (0, {}),
         (RANK + 1, {}),
-        (2, {"retention": "attn", "hh_select": "attn", "hh_budget": 2}),
+        (2, {"hh_select": "attn", "hh_budget": 0}),
         (2, {"hh_budget": 0}),
     ],
     ids=["zero", "above_rank", "attn_select", "no_hh_tier"],
@@ -296,46 +293,3 @@ def test_score_rank_accounting_identity(tiny_model: LlamaForCausalLM) -> None:
     assert lc.u_k.shape == lu.u_k.shape  # storage rank untouched by the cap
     assert lc.stored_state_numel() == lu.stored_state_numel()
     assert capped.stored_state_numel() == uncapped.stored_state_numel()
-
-
-# ---------------------- 6. Week-15 T3 scoping: the latent seed_scores bug (xfail)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "LATENT BUG (Week-15 T3 characterization): seed_scores indexes ABSOLUTE "
-        "positions (cumulative_length, mid_pos) into a CHUNK-LENGTH seed from "
-        "_prompt_seed_scores, so under chunked ingest with attach() the ring seed "
-        "silently desyncs (out-of-range slice -> wrong length) and mid_pos >= "
-        "chunk raises IndexError. A fix must map chunk-local rows to absolute "
-        "positions; when it lands, this strict xfail trips and must be replaced "
-        "by real correctness pins."
-    ),
-)
-def test_seed_scores_chunked_ingest_latent_bug(tiny_model: LlamaForCausalLM) -> None:
-    """Pin the failing condition minimally: retention='attn' (score seeding
-    active) + attach() + chunked ingest. By chunk 3 the retained middle holds
-    absolute positions >= chunk length, so the hook's ``seed[self.mid_pos]``
-    is out of bounds; the ring slice ``seed[cumulative-rlen:cumulative]`` had
-    already desynced at chunk 2. Asserts the CORRECT behaviour (in-sync score
-    buffers after a crash-free ingest) so a silent half-fix XPASSes and trips."""
-    g = torch.Generator().manual_seed(3)
-    ids = torch.randint(0, 256, (1, 96), generator=g)
-    cache = BugStreamingCache(
-        tiny_model,
-        rank=RANK,
-        coord_budget=128,
-        recent_window=8,
-        absorb_block=4,
-        n_sink=4,
-        prefill_block_size=8,
-        retention="attn",
-    )
-    with torch.no_grad(), cache.attach(tiny_model):
-        _chunked_prefill(tiny_model, cache, ids, chunk=32)
-    layer = _bug_layer(cache)
-    assert layer.ring_score is not None
-    assert int(layer.ring_score.shape[0]) == layer._recent_len()
-    assert layer.mid_score is not None
-    assert int(layer.mid_score.shape[0]) == layer._f_len()

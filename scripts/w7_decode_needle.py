@@ -185,9 +185,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             hits = 0
             for pc in args.passcodes:
                 prefill = build_prompt(tokenizer, args.haystack_len, args.depth, pc, filler)
-                methods = build_methods(
-                    model, n, h_kv, tier, methods=[name_tmpl], score_decay=args.score_decay
-                )
+                methods = build_methods(model, n, h_kv, tier, methods=[name_tmpl])
                 cache = next(iter(methods.values()))
                 cache_obj: Cache = cache if cache is not None else DynamicCache()
                 ok = retrieve_after_stream(
@@ -256,7 +254,6 @@ def main() -> None:
     parser.add_argument("--recent-window", type=int, default=64)
     parser.add_argument("--absorb-block", type=int, default=32)
     parser.add_argument("--morph-recent", type=int, default=32)
-    parser.add_argument("--score-decay", type=float, default=0.97)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out-json", default="results/w7-decode-needle-1b.json")
     parser.add_argument("--fig", default="figures/week7/decode_needle_1b.png")

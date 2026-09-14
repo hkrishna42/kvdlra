@@ -270,7 +270,7 @@ def test_discard_requires_surprise_select(tiny_model: LlamaForCausalLM) -> None:
             tiny_model,
             rank=4,
             coord_budget=32,
-            retention="attn",
+            retention="lowrank_surprise",
             hh_budget=4,
             hh_select="attn",
             hh_retain=False,

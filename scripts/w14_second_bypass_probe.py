@@ -369,10 +369,9 @@ def _record_slash_offers() -> Iterator[list[int]]:
         grad_k: Tensor,
         grad_v: Tensor,
         grad_pos: Tensor,
-        grad_score: Tensor | None,
     ) -> None:
         seen.extend(int(p) for p in grad_pos.tolist())
-        orig(self, grad_k, grad_v, grad_pos, grad_score)
+        orig(self, grad_k, grad_v, grad_pos)
 
     BugStreamingLayer._absorb_block_slash = wrapper  # type: ignore[method-assign]
     try:

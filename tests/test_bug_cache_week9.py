@@ -2,24 +2,22 @@
 
 Low-rank surprise keeps the highest-residual (outlier) coordinate columns and
 evicts the ones the basis already reconstructs (redundant). The residual is the
-out-of-subspace half of ``||k||^2`` (Pythagoras; ``u_k`` orthonormal), so it is
-the orthogonal complement of ``retention="energy"`` (the in-subspace half). It is
-a *stored snapshot* at graduation -- not recomputable later (``U C`` has zero
-residual) -- so it costs one fp32 scalar per column, exactly like ``mid_score``.
+out-of-subspace half of ``||k||^2`` (Pythagoras; ``u_k`` orthonormal). It is a
+*stored snapshot* at graduation -- not recomputable later (``U C`` has zero
+residual) -- so it costs one fp32 scalar per column.
 
 The correctness ladder mirrors ``test_bug_cache_week7.py``:
-1. mode is valid; incompatible with SLASH (``hh_budget``);
+1. mode is valid; the SLASH exact tier must be surprise-selected;
 2. eviction keeps the highest-surprise columns (direct, hand-set scores);
 3. computed surprise is normalized in ``[0, 1]`` and populated on a real stream;
 4. with no eviction, the trajectory is **bitwise** identical to FIFO;
-5. memory is counted and equals the ``attn`` per-column cost;
-6. mask sizes stay consistent every decode step;
-7. the correlation probe records (score, surprise, energy) triples.
+5. the per-column position + snapshot are counted (above positionless FIFO);
+6. mask sizes stay consistent every decode step.
 """
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import cast
 
 import pytest
 import torch
@@ -78,23 +76,15 @@ def _kv(t: int, g: torch.Generator) -> tuple[torch.Tensor, torch.Tensor]:
 def test_surprise_mode_valid_and_slash_incompatible(tiny_model: LlamaForCausalLM) -> None:
     # A plain surprise cache constructs fine.
     BugStreamingCache(tiny_model, rank=8, coord_budget=16, retention="lowrank_surprise")
-    # SLASH exact heavy-hitters require retention="attn"; surprise is disallowed.
-    with pytest.raises(ValueError, match="requires retention='attn'"):
+    # The SLASH exact tier is surprise-selected; the retired attention-mass
+    # selector (the hh_select default) is rejected outright.
+    with pytest.raises(ValueError, match="requires hh_select='surprise'"):
         BugStreamingCache(
             tiny_model,
             rank=8,
             coord_budget=16,
             retention="lowrank_surprise",
             hh_budget=4,
-        )
-    # merge fuses columns without a single graduation residual -> incompatible.
-    with pytest.raises(ValueError, match="mutually exclusive"):
-        BugStreamingCache(
-            tiny_model,
-            rank=8,
-            coord_budget=16,
-            retention="lowrank_surprise",
-            merge=True,
         )
 
 
@@ -191,16 +181,14 @@ def test_surprise_without_evict_is_bitwise_fifo(tiny_model: LlamaForCausalLM) ->
 
 
 # --------------------------------------------------------------------------
-# Honest memory: surprise costs one fp32/column, == attn
+# Honest memory: surprise costs one fp32/column
 # --------------------------------------------------------------------------
 
 
-def test_surprise_memory_counted_between_fifo_and_attn(tiny_model: LlamaForCausalLM) -> None:
-    # Per column the surprise cache costs the SAME as attn (mid_pos + one fp32
-    # scalar = 2r+2), so both exceed positionless fifo. But surprise needs no
-    # ``ring_score`` high-water buffer (it reads its signal off the graduating K
-    # columns, not an EMA over the recent ring), so its *total* is strictly below
-    # attn by exactly that buffer -- an honest, tiny edge, not a cost.
+def test_surprise_memory_counted_above_fifo(tiny_model: LlamaForCausalLM) -> None:
+    # Honesty canary: per column the surprise cache costs mid_pos + one fp32
+    # scalar (2r+2), so it must report strictly MORE stored floats than
+    # positionless fifo at the same (rank, coord_budget) -- retention is not free.
     stream = _prompt(80, seed=5)
 
     def peak(retention: str) -> int:
@@ -220,8 +208,8 @@ def test_surprise_memory_counted_between_fifo_and_attn(tiny_model: LlamaForCausa
                 mems.append(cache.stored_state_numel())
         return max(mems)
 
-    fifo, attn, surprise = peak("fifo"), peak("attn"), peak("lowrank_surprise")
-    assert fifo < surprise < attn  # positions + surprise scalar counted; no ring buffer
+    fifo, surprise = peak("fifo"), peak("lowrank_surprise")
+    assert fifo < surprise  # positions + surprise scalar counted
 
 
 # --------------------------------------------------------------------------
@@ -250,120 +238,3 @@ def test_surprise_mask_consistency(tiny_model: LlamaForCausalLM) -> None:
             out = tiny_model(tok, past_key_values=cache, use_cache=True)
             assert kv_length == layer.attended_length()
             assert kv_offset + kv_length == layer.cumulative_length
-
-
-# --------------------------------------------------------------------------
-# Blend retention (attn mass + surprise on a common rank scale)
-# --------------------------------------------------------------------------
-
-
-def test_blend_validation_and_alpha1_matches_attn(tiny_model: LlamaForCausalLM) -> None:
-    # surprise_blend must be in [0, 1].
-    with pytest.raises(ValueError, match="surprise_blend"):
-        BugStreamingCache(
-            tiny_model, rank=8, coord_budget=16, retention="blend", surprise_blend=2.0
-        )
-    # alpha=1 => the blend key is exactly rank(attn), so eviction order equals the
-    # pure attn cache's; the whole teacher-forced trajectory must match bitwise.
-    tiny_model.config._attn_implementation = "sdpa"
-    stream = _prompt(80, seed=4)
-    outs = []
-    configs: tuple[tuple[str, dict[str, Any]], ...] = (
-        ("attn", {}),
-        ("blend", {"surprise_blend": 1.0}),
-    )
-    for retention, kw in configs:
-        cache = BugStreamingCache(
-            tiny_model,
-            rank=8,
-            coord_budget=12,
-            recent_window=8,
-            absorb_block=4,
-            retention=retention,
-            **kw,
-        )
-        logits = []
-        with torch.no_grad(), cache.attach(tiny_model):
-            out = tiny_model(stream[:, :30], past_key_values=cache, use_cache=True)
-            for t in range(30, 80):
-                out = tiny_model(stream[:, t : t + 1], past_key_values=cache, use_cache=True)
-                logits.append(out.logits)
-        outs.append(torch.cat(logits))
-    assert torch.equal(outs[0], outs[1])
-
-
-def test_blend_memory_counts_both_scalars(tiny_model: LlamaForCausalLM) -> None:
-    # Blend stores mid_pos + mid_score + mid_surprise (2r+3), strictly more than
-    # attn (2r+2). Both audited in stored_state_numel.
-    stream = _prompt(80, seed=6)
-
-    def peak(retention: str, **kw: Any) -> int:
-        cache = BugStreamingCache(
-            tiny_model,
-            rank=8,
-            coord_budget=16,
-            recent_window=8,
-            absorb_block=4,
-            retention=retention,
-            **kw,
-        )
-        mems = []
-        with torch.no_grad(), cache.attach(tiny_model):
-            tiny_model(stream[:, :30], past_key_values=cache, use_cache=True)
-            for t in range(30, 80):
-                tiny_model(stream[:, t : t + 1], past_key_values=cache, use_cache=True)
-                mems.append(cache.stored_state_numel())
-        return max(mems)
-
-    assert peak("blend", surprise_blend=0.5) > peak("attn")
-
-
-# --------------------------------------------------------------------------
-# Correlation probe (the GO/NO-GO gate machinery)
-# --------------------------------------------------------------------------
-
-
-def test_surprise_probe_records_triples(tiny_model: LlamaForCausalLM) -> None:
-    # An attn cache with the probe enabled must record (score, surprise, energy)
-    # arrays of equal length at each eviction event, without changing the deployed
-    # config's counted memory (the surprise buffer is instrumentation only).
-    cache = BugStreamingCache(
-        tiny_model,
-        rank=8,
-        coord_budget=12,
-        recent_window=8,
-        absorb_block=4,
-        retention="attn",
-    )
-    sink = cache.enable_surprise_probe()
-    mem_before = None
-    stream = _prompt(90, seed=11)
-    with torch.no_grad(), cache.attach(tiny_model):
-        tiny_model(stream[:, :30], past_key_values=cache, use_cache=True)
-        for t in range(30, 90):
-            tiny_model(stream[:, t : t + 1], past_key_values=cache, use_cache=True)
-            if mem_before is None:
-                mem_before = cache.stored_state_numel()
-    assert len(sink) > 0  # evictions happened and were recorded
-    for score, surprise, energy in sink:
-        assert score.shape == surprise.shape == energy.shape
-        assert score.ndim == 1 and score.numel() > 0
-        assert torch.all(surprise >= 0.0) and torch.all(surprise <= 1.0 + 1e-5)
-    # The probe's surprise buffer is NOT counted against the attn config's budget.
-    layer = cache.layers[0]
-    assert isinstance(layer, BugStreamingLayer)
-    assert layer._probe_surprise and not layer.track_surprise
-    assert layer.mid_surprise is not None  # tracked for the probe...
-    plain = BugStreamingCache(
-        tiny_model,
-        rank=8,
-        coord_budget=12,
-        recent_window=8,
-        absorb_block=4,
-        retention="attn",
-    )
-    with torch.no_grad(), plain.attach(tiny_model):
-        tiny_model(stream[:, :30], past_key_values=plain, use_cache=True)
-        for t in range(30, 90):
-            tiny_model(stream[:, t : t + 1], past_key_values=plain, use_cache=True)
-    assert cache.stored_state_numel() == plain.stored_state_numel()  # ...but not counted

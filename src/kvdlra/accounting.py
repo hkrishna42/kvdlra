@@ -46,8 +46,7 @@ N_SINK = 4
 # Retention modes that track per-coordinate positions / scores / surprise, and the
 # ring-score high-water buffer -- mirrors ``coord_for_config`` /
 # ``BugStreamingLayer.stored_state_numel``.
-_TRACK_SCORE = ("attn", "blend")
-_TRACK_SURPRISE = ("lowrank_surprise", "blend")
+_TRACK_SURPRISE = ("lowrank_surprise",)
 
 
 @dataclass(frozen=True)
@@ -139,8 +138,6 @@ def bug_footprint(
     n_sink: int = N_SINK,
     retention: str = "fifo",
     hh_count: int = 0,
-    hh_select: str = "attn",
-    merge: bool = False,
     u_present: bool = True,
     quant_count: int = 0,
     quant_bits: int | None = None,
@@ -150,18 +147,16 @@ def bug_footprint(
 
     ``coord_count`` fp32 coordinate columns (K+V, ``2*rank`` each), ``recent_len``
     verbatim recent-ring tokens (``2n``), ``n_sink`` verbatim sinks (``2n``),
-    ``hh_count`` verbatim SLASH heavy-hitters (``2n`` + 2 aux for ``hh_select=
-    "attn"``, ``2n`` + 1 aux for ``"surprise"``), the basis ``U``
-    (``2*n*rank``) and diagonal core (``2*rank``) when ``u_present``. Adaptive
-    retention adds 1 position and/or 1 score per column and a ``recent_len``
-    ring-score buffer (``retention in {attn, blend}``). ``quant_count`` columns
-    are stored as ``2*rank*quant_bits`` code bits + ``2`` fp32 norms each.
+    ``hh_count`` verbatim SLASH heavy-hitters (``2n`` + 1 aux for the position),
+    the basis ``U`` (``2*n*rank``) and diagonal core (``2*rank``) when
+    ``u_present``. Adaptive retention adds 1 position and 1 surprise snapshot per
+    column. ``quant_count`` columns are stored as ``2*rank*quant_bits`` code bits
+    + ``2`` fp32 norms each.
 
     Its ``float_equiv()`` equals the live cache's ``stored_state_numel()``; the
     anti-drift test (``tests/test_accounting.py``) pins this so the formula (used
     for SnapKV/ShadowKV) and the measured path cannot diverge."""
-    track_pos = retention != "fifo" or merge
-    track_score = retention in _TRACK_SCORE
+    track_pos = retention != "fifo"
     track_surprise = retention in _TRACK_SURPRISE
     n_cols = coord_count + quant_count  # all low-rank columns carry bookkeeping
 
@@ -175,13 +170,10 @@ def bug_footprint(
         verbatim += 2 * n * rank  # basis U (K + V)
         fp32_verbatim += 2 * n * rank  # ...also fp32 at rest
         aux += 2 * rank  # diagonal core (K + V)
-    aux += n_cols * (int(track_pos) + int(track_score) + int(merge) + int(track_surprise))
-    if track_score:
-        aux += recent_len  # ring-score buffer (high-water = recent_len)
-    # hh tier: always the int64 positions; the fp32 selection score only when the
-    # exact tier is attention-selected (Week-11 SurpriseSLASH recomputes surprise
-    # from the basis each absorb, so hh_select="surprise" stores no score).
-    aux += hh_count * (2 if hh_select == "attn" else 1)  # hh_pos (+ hh_score for attn)
+    aux += n_cols * (int(track_pos) + int(track_surprise))
+    # hh tier: the int64 positions. Week-11 SurpriseSLASH recomputes the selection
+    # score from the basis each absorb, so the exact tier stores no score.
+    aux += hh_count  # hh_pos
 
     code_bits = 0.0
     if quant_count and quant_bits is not None:

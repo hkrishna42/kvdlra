@@ -93,12 +93,9 @@ def solve_bug_variant(
     own bookkeeping *out of* the coordinate budget, never on top of it).
 
     Per-column float-equivalent costs (see ``BugStreamingLayer.stored_state_numel``):
-    fp32 coord column = ``2*rank`` (K+V); +1 position (int32) and +1 score (fp32)
-    each under adaptive retention; quantized column = ``2*rank*bits/32`` (codes,
-    bit-packable) + 2 fp32 norms (+ position/score under adaptive retention).
-    The ``retention="attn"`` ring score buffer (ring high-water floats) and the
-    shared PolarQuant side info (counted once per cache -> ceil-shared per
-    layer) come off the top.
+    fp32 coord column = ``2*rank`` (K+V); quantized column = ``2*rank*bits/32``
+    (codes, bit-packable) + 2 fp32 norms. The shared PolarQuant side info
+    (counted once per cache -> ceil-shared per layer) comes off the top.
     """
     ring = recent_window + absorb_block - 1
     fixed = 2 * n * N_SINK + 2 * n * ring + 2 * n * rank + 2 * rank
@@ -109,19 +106,10 @@ def solve_bug_variant(
     side_share = -(-side // n_layers)  # ceil: shared side info charged per layer
     if variant == "bug":
         return {"coord_budget": pool // per_f, "quant_budget": 0}
-    if variant == "bugE":  # +1 position per column
-        return {"coord_budget": pool // (per_f + 1), "quant_budget": 0}
-    if variant == "bugA":  # +1 position +1 score per column, + ring score buffer
-        return {"coord_budget": (pool - ring) // (per_f + 2), "quant_budget": 0}
     if variant == "bugD":  # FIFO fp32 tier + FIFO quant tier
         w_f = int(pool * quant_keep_frac) // per_f
         q_pool = pool - w_f * per_f - side_share
         w_q = int(q_pool // (per_q_codes + 2))
-    elif variant == "bugAD":  # both tiers position+score tracked, + ring scores
-        pool2 = pool - ring
-        w_f = int(pool2 * quant_keep_frac) // (per_f + 2)
-        q_pool = pool2 - w_f * (per_f + 2) - side_share
-        w_q = int(q_pool // (per_q_codes + 4))
     else:
         raise ValueError(f"unknown BUG variant {variant!r}")
     if w_q <= 0:
@@ -154,13 +142,11 @@ def build_methods(
     methods: list[str] | None = None,
     quant_bits: int = 4,
     quant_keep_frac: float = 0.5,
-    score_decay: float = 0.97,
 ) -> dict[str, Cache | None]:
     """Caches for one matched-memory tier (``None`` => full DynamicCache).
 
-    ``methods`` picks from: ``full``, ``bug`` (Week-6 baseline), ``bugA`` /
-    ``bugE`` (Week-7 A: attention / energy retention), ``bugD`` (Week-7 D:
-    quantized age tier), ``bugAD`` (A+D), ``morph``, ``snapkvD``, ``sllm``.
+    ``methods`` picks from: ``full``, ``bug`` (Week-6 baseline), ``bugD``
+    (Week-7 D: quantized age tier), ``morph``, ``snapkvD``, ``sllm``.
     Every BUG variant is solved to the SAME per-layer float budget as the
     baseline BUG configuration (:func:`solve_bug_variant`)."""
     if methods is None:
@@ -192,20 +178,6 @@ def build_methods(
             out["full"] = None
         elif m == "bug":
             out[f"bug-r{rank}"] = BugStreamingCache(model, **bug_common(tier))
-        elif m == "bugE":
-            v = solve_bug_variant(
-                budget, n, rank, recent, absorb, n_layers, m, quant_bits, quant_keep_frac
-            )
-            out[f"bugE-r{rank}-W{v['coord_budget']}"] = BugStreamingCache(
-                model, retention="energy", **bug_common(v)
-            )
-        elif m == "bugA":
-            v = solve_bug_variant(
-                budget, n, rank, recent, absorb, n_layers, m, quant_bits, quant_keep_frac
-            )
-            out[f"bugA-r{rank}-W{v['coord_budget']}"] = BugStreamingCache(
-                model, retention="attn", score_decay=score_decay, **bug_common(v)
-            )
         elif m == "bugD":
             v = solve_bug_variant(
                 budget, n, rank, recent, absorb, n_layers, m, quant_bits, quant_keep_frac
@@ -213,20 +185,6 @@ def build_methods(
             out[f"bugD-r{rank}-Wf{v['coord_budget']}-Wq{v['quant_budget']}b{quant_bits}"] = (
                 BugStreamingCache(
                     model,
-                    quant_bits=quant_bits,
-                    quant_budget=v["quant_budget"],
-                    **bug_common(v),
-                )
-            )
-        elif m == "bugAD":
-            v = solve_bug_variant(
-                budget, n, rank, recent, absorb, n_layers, m, quant_bits, quant_keep_frac
-            )
-            out[f"bugAD-r{rank}-Wf{v['coord_budget']}-Wq{v['quant_budget']}b{quant_bits}"] = (
-                BugStreamingCache(
-                    model,
-                    retention="attn",
-                    score_decay=score_decay,
                     quant_bits=quant_bits,
                     quant_budget=v["quant_budget"],
                     **bug_common(v),
@@ -368,7 +326,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "methods": methods_list,
         "quant_bits": args.quant_bits,
         "quant_keep_frac": args.quant_keep_frac,
-        "score_decay": args.score_decay,
         "variant_budgets": variant_budgets,
         "budget_floats_per_layer": budget,
         "budget_token_equivalents": budget / (2 * n),
@@ -390,7 +347,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             methods=methods_list,
             quant_bits=args.quant_bits,
             quant_keep_frac=args.quant_keep_frac,
-            score_decay=args.score_decay,
         )
         for name, cache in methods.items():
             cache_obj: Cache = cache if cache is not None else DynamicCache()
@@ -529,11 +485,10 @@ def main() -> None:
     parser.add_argument(
         "--methods",
         default="full,bug,morph,snapkvD,sllm",
-        help="comma list: full,bug,bugA,bugE,bugD,bugAD,morph,snapkvD,sllm",
+        help="comma list: full,bug,bugD,morph,snapkvD,sllm",
     )
     parser.add_argument("--quant-bits", type=int, default=4)
     parser.add_argument("--quant-keep-frac", type=float, default=0.5)
-    parser.add_argument("--score-decay", type=float, default=0.97)
     parser.add_argument("--seed", type=int, default=0)
     # Defaults point at Week-7 paths: a defaults rerun must never clobber the
     # archived Week-6 baseline (results/w5-streamppl-1b.json) -- reruns of the

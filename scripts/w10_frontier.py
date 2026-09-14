@@ -531,7 +531,6 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
             n_sink=N_SINK,
             retention=arm.get("retention", "fifo"),
             hh_count=layer._hh_len(),
-            hh_select=arm.get("hh_select", "attn"),
             u_present=layer.u_k is not None,
             quant_count=q_len,
             quant_bits=layer.quant_bits if q_len else None,

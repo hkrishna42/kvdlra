@@ -379,5 +379,14 @@ def test_parse_pplw_lines_fails_loud_on_a_missing_part() -> None:
 
 
 def test_parse_diag_lines_carries_the_payload_and_its_source() -> None:
-    rows = parse_diag_lines('[diag] {"layer": 0, "rank": 64}\n', model="M", source="f.txt")
-    assert rows == [{"model": "M", "layer": 0, "rank": 64, "source": "f.txt:1"}]
+    rows, skipped = parse_diag_lines('[diag] {"layer": 0, "rank": 64}\n', model="M", source="f.txt")
+    assert rows == [{"model": "M", "layer": 0, "rank": 64, "source": "f.txt:1"}] and skipped == 0
+
+
+def test_parse_diag_lines_counts_a_payload_it_cannot_parse() -> None:
+    """`vastai logs` cuts a long line in half. The halved payload cannot become a record
+    -- but the COUNT is what tells a harvest the log came back truncated, and dropping it
+    silently made a half-fetched log look like a pod that printed no diagnostics."""
+    text = '[diag] {"layer": 0, "rank": 64}\n[diag] {"layer": 1, "rank": 6\n'
+    rows, skipped = parse_diag_lines(text, model="M", source="f.txt")
+    assert [r["layer"] for r in rows] == [0] and skipped == 1

@@ -331,6 +331,16 @@ def _ppl_lines(*arms: str) -> list[str]:
     ]
 
 
+def _pplw_lines(*arms: str) -> list[str]:
+    """The per-window rows behind those sweeps: `n_samples` (4) windows per (arm, ctx).
+    A sweep leaves both artifacts, and `check` requires both."""
+    return [
+        f"[pplw] T={ctx} {arm} ntok=511 nlls=1.000000,2.000000,3.000000,4.000000"
+        for arm in arms
+        for ctx in CTXS
+    ]
+
+
 def _harvested(dry_pod: Path, tmp_path: Path, lines: list[str]) -> Path:
     """A dry-run directory plus a harvest of the log those lines make -- the whole path a
     real pod takes, so anything the parser does not recover is missing here too."""
@@ -371,7 +381,8 @@ def test_a_complete_harvest_of_a_v1_format_log_passes_check(dry_pod: Path, tmp_p
     includes the generator -- so a harvest that left it null keyed every cell "None" and
     `check` rejected a complete, correct run (8 CHECK FAIL cells per task). `harvest`
     fills it from the pod's own task configs."""
-    d = _harvested(dry_pod, tmp_path, [*_trial_lines(*ARMS), *_ppl_lines(*ARMS)])
+    lines = [*_trial_lines(*ARMS), *_ppl_lines(*ARMS), *_pplw_lines(*ARMS)]
+    d = _harvested(dry_pod, tmp_path, lines)
     assert {r["generator"] for r in _rows(d, "trials.jsonl")} == {"inhouse"}
     r = _run("check", str(d))
     assert r.returncode == 0, r.stdout + r.stderr
@@ -381,7 +392,7 @@ def test_a_complete_harvest_of_a_v1_format_log_passes_check(dry_pod: Path, tmp_p
 def test_a_harvest_keeps_the_generator_the_row_itself_names(dry_pod: Path, tmp_path: Path) -> None:
     """The runner prints it, so no inference is needed -- and the pod-config map is not
     consulted at all for a row that says which generator built it."""
-    lines = [*_trial_lines(*ARMS, generator="inhouse"), *_ppl_lines(*ARMS)]
+    lines = [*_trial_lines(*ARMS, generator="inhouse"), *_ppl_lines(*ARMS), *_pplw_lines(*ARMS)]
     d = _harvested(dry_pod, tmp_path, lines)
     assert {r["generator"] for r in _rows(d, "trials.jsonl")} == {"inhouse"}
     assert _run("check", str(d)).returncode == 0
@@ -442,21 +453,29 @@ def test_check_fails_a_ppl_task_that_produced_no_perplexity_record(
 ) -> None:
     """A `ppl` task contributes no Bernoulli cells, so the cell rule never looked at it
     and a pod whose whole perplexity sweep died still passed. One record per (arm, ctx)
-    is expected in ppl.jsonl -- w18_g1 names two ppl tasks, so 3 arms x 2 ctx = 6."""
+    is expected in ppl.jsonl -- w18_g1 names two ppl tasks, so 3 arms x 2 ctx = 6. The
+    per-window rows are the sweep's other artifact and fail on their own count."""
     r = _run("check", str(_harvested(dry_pod, tmp_path, _trial_lines(*ARMS))))
     assert r.returncode == 1
     out = r.stdout + r.stderr
-    assert out.count("CHECK FAIL ppl") == len(ARMS) * len(CTXS) == 6
+    assert out.count("CHECK FAIL ppl:") == len(ARMS) * len(CTXS) == 6
+    assert out.count("CHECK FAIL pplw:") == 6
     assert "CHECK FAIL ppl: bugSseed-r64-h256 ctx=32768 has no perplexity record" in out
+    assert "CHECK FAIL pplw: bugSseed-r64-h256 ctx=32768 has 0 of 4 window rows" in out
 
 
 def test_check_fails_when_one_arm_is_missing_from_the_ppl_sweep(
     dry_pod: Path, tmp_path: Path
 ) -> None:
-    lines = [*_trial_lines(*ARMS), *_ppl_lines("quant-2bit-kivi", "quant-4bit-kivi")]
+    lines = [
+        *_trial_lines(*ARMS),
+        *_ppl_lines("quant-2bit-kivi", "quant-4bit-kivi"),
+        *_pplw_lines("quant-2bit-kivi", "quant-4bit-kivi"),
+    ]
     r = _run("check", str(_harvested(dry_pod, tmp_path, lines)))
     assert r.returncode == 1
-    assert r.stdout.count("CHECK FAIL ppl") == 2  # the r64 arm's two contexts
+    assert r.stdout.count("CHECK FAIL ppl:") == 2  # the r64 arm's two contexts
+    assert r.stdout.count("CHECK FAIL pplw:") == 2  # and its two window sets
 
 
 def test_check_rejects_an_unresolvable_git_sha(dry_pod: Path, tmp_path: Path) -> None:
@@ -504,3 +523,37 @@ def test_prereg_commit_order_against_real_history() -> None:
     assert pod.prereg_error(REPO_ROOT / "Makefile", "HEAD") is None
     assert "itself" in (pod.prereg_error(readme, readme_first) or "")
     assert "not an ancestor" in (pod.prereg_error(readme, makefile_first) or "")
+
+
+def test_check_fails_a_sweep_whose_per_window_rows_came_back_short(
+    dry_pod: Path, tmp_path: Path
+) -> None:
+    """One sweep, two artifacts: the aggregate `ppl.jsonl` number can be there in full
+    while `pplw.jsonl` -- the only thing that can re-pool it or carry an interval -- is a
+    window short, which `_ppl_fails` alone never looked at."""
+    lines = [*_trial_lines(*ARMS), *_ppl_lines(*ARMS), *_pplw_lines(*ARMS)]
+    lines[-1] = lines[-1].replace(",4.000000", "")  # 3 windows for bugSseed... at 32K
+    r = _run("check", str(_harvested(dry_pod, tmp_path, lines)))
+    assert r.returncode == 1
+    out = r.stdout + r.stderr
+    assert "CHECK FAIL pplw: bugSseed-r64-h256 ctx=32768 has 3 of 4 window rows" in out
+    assert [x for x in out.splitlines() if x.startswith("CHECK FAIL pplw")] == [
+        "CHECK FAIL pplw: bugSseed-r64-h256 ctx=32768 has 3 of 4 window rows"
+    ]
+
+
+def test_harvest_counts_a_diag_line_the_fetch_cut_in_half(dry_pod: Path, tmp_path: Path) -> None:
+    """A truncated `[diag]` payload cannot become a record. Skipping it silently made a
+    half-fetched log look like a pod that printed no diagnostics, so the skip is counted
+    into the manifest, printed by the harvest, and failed by `check`."""
+    tmp_path = _copy(dry_pod, tmp_path)
+    log = tmp_path / "pod.log"
+    log.write_text(LOG.replace("[diag] {", '[diag] {"layer": 1, "ra\n[diag] {', 1))
+    r = _run("harvest", "--pod", "w18_g1", "--log", str(log), "--out", str(tmp_path))
+    assert r.returncode == 0, r.stderr
+    assert "harvest: 1 [diag] line(s) skipped" in r.stdout
+    m = json.loads((tmp_path / "manifest.json").read_text())
+    assert m["diag_skipped"] == 1 and m["records"]["diag.jsonl"] == 1  # the good one still lands
+    c = _run("check", str(tmp_path))
+    assert c.returncode == 1
+    assert "CHECK FAIL diag: 1 [diag] line(s) were unparseable" in c.stdout + c.stderr

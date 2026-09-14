@@ -157,3 +157,20 @@ def test_config_hash_covers_the_referenced_configs(
 def test_load_arm_rejects_an_unknown_name() -> None:
     with pytest.raises(FileNotFoundError):
         load_arm("no_such_arm")
+
+
+def test_a_task_config_that_can_produce_no_records_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``n_trials x len(seeds)`` is the count `pod.py check` demands of every cell and
+    ``n_samples`` the count it demands of every sweep, so a zero in either configures a
+    task that runs nothing AND a gate that asks for nothing. Refused at load, naming the
+    file -- which is the only place the operator can still fix it."""
+    (tmp_path / "tasks").mkdir()
+    (tmp_path / "tasks" / "broken.yaml").write_text(
+        "name: broken\ngenerator: ppl\nctx: 0\nn_trials: 0\nseeds: []\nn_samples: 0\n"
+    )
+    monkeypatch.setattr("kvdlra.eval.config.ROOT", tmp_path)
+    with pytest.raises(ValueError, match=r"broken\.yaml") as e:
+        load_task("broken")
+    assert all(k in str(e.value) for k in ("n_trials", "seeds", "ctx", "n_samples"))

@@ -10,13 +10,13 @@ per arm x ctx x batch), `diag.jsonl`. `check` is the gate every citable number p
 re-derives the config hash from `configs/pods/<pod>.yaml`, resolves the SHA, enforces the
 pre-registration commit order, and requires EVERY cell the config calls for -- arm x
 generator x sub-task x ctx -- to hold exactly `n_trials x len(seeds)` records, plus one
-perplexity record per (arm, ctx) for every `ppl` task and one decode record per (arm, ctx,
-batch) for every `latency` task. A trial that raised is recorded
-with `error` and still counted, so a cell can never silently shrink; a cell with no records
-at all is the loudest failure there is, which is what makes a pod that produced nothing
-impossible to pass off as a clean run. And because recording rather than skipping keeps every
-cell full, the error COUNT is its own rule: any recorded failure fails the pod (ruling R29),
-with no tolerance knob.
+perplexity record AND `n_samples` per-window records per (arm, ctx) for every `ppl` task,
+and one decode record per (arm, ctx, batch) for every `latency` task. A trial that raised
+is recorded with `error` and still counted, so a cell can never silently shrink; a cell
+with no records at all is the loudest failure there is, which is what makes a pod that
+produced nothing impossible to pass off as a clean run. And because recording rather than
+skipping keeps every cell full, the error COUNT is its own rule: any recorded failure
+fails the pod (ruling R29), with no tolerance knob.
 
 `run` writes the manifest and the environment, then hands the pod config to
 `kvdlra.eval.runner.run_pod`, which is the eval loop; `--dry-run` stops after the manifest,
@@ -444,7 +444,7 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     pplw = parse_pplw_lines(text, model, source)
     ppl = parse_ppl_lines(text, model, source)
     lat = parse_latency_lines(text, model, source)
-    diag = parse_diag_lines(text, model, source)
+    diag, diag_skipped = parse_diag_lines(text, model, source)
 
     tpath = out / "trials.jsonl"
     n_old = len(read_jsonl(tpath)) if tpath.is_file() else 0
@@ -479,8 +479,17 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     )
     m["wall_clock_s"] = _wall_clock_s(text) or m.get("wall_clock_s")
     m["status"] = _status(text)
+    # A `[diag]` line the fetch cut in half parses into nothing. Counted in the manifest
+    # (and failed by `check`) rather than dropped: the skip is evidence the log came back
+    # truncated, which is a harvest to redo, not a pod that printed no diagnostics.
+    m["diag_skipped"] = diag_skipped
     _write_manifest(out, m)
     print(f"{out}: " + ", ".join(f"{k}={v}" for k, v in records.items()))
+    if diag_skipped:
+        print(
+            f"harvest: {diag_skipped} [diag] line(s) skipped"
+            " (payload not JSON -- truncated by the log fetch?)"
+        )
     return 0
 
 
@@ -566,6 +575,27 @@ def _ppl_fails(pod: PodCfg, d: Path) -> list[str]:
     return [f"ppl: {arm} ctx={ctx} has no perplexity record" for arm, ctx in sorted(want - got)]
 
 
+def _pplw_fails(pod: PodCfg, d: Path) -> list[str]:
+    """Every `ppl` task holds `n_samples` per-window rows per (arm, ctx) in `pplw.jsonl`.
+
+    The sweep leaves two artifacts and `_ppl_fails` only looks at the aggregate one, so a
+    run whose per-window file came back short -- a truncated fetch, a `[pplw]` group whose
+    fragments never all arrived -- still passed with the pooled number intact and nothing
+    left to re-pool it from. The count is the protocol the config pre-registers, not
+    whatever came back.
+    """
+    p = d / "pplw.jsonl"
+    got = Counter((r["arm"], r["ctx"]) for r in read_jsonl(p)) if p.is_file() else Counter()
+    tasks = [t for t in (load_task(x) for x in pod.tasks) if t.generator == "ppl"]
+    arms = [a.legacy_name or a.name for a in (load_arm(x) for x in pod.arms)]
+    return [
+        f"pplw: {arm} ctx={t.ctx} has {got[(arm, t.ctx)]} of {t.n_samples} window rows"
+        for t in tasks
+        for arm in sorted(arms)
+        if got[(arm, t.ctx)] != t.n_samples
+    ]
+
+
 def _latency_fails(pod: PodCfg, d: Path) -> list[str]:
     """Every `latency` task holds one `LatencyRecord` per (arm, ctx, batch).
 
@@ -644,13 +674,29 @@ def check(d: Path) -> int:
     # pod whose every trial failed. So the count is its own rule, with no tolerance knob.
     if n_err:
         fails.append(f"errors: {n_err} trial(s) raised (see the error field in trials.jsonl)")
-    if m_err != n_err:
-        # The manifest counts BOTH axes; a perplexity arm that raised leaves an `[error]`
-        # log line and no record at all, so its failure can only surface here.
-        fails.append(f"errors: the manifest counts {m_err}, the trial records {n_err}")
+    # The manifest counts all three axes; a perplexity or decode point that raised leaves
+    # an `[error]` log line and no record at all, so the excess over the trial rows is the
+    # non-trial count, not a disagreement -- name it instead of reporting a mismatch.
+    # FEWER than the rows is a real one: the manifest cannot have counted what it has not
+    # seen. (There is no `[error]` line count to cross-check against here: the only log a
+    # results directory keeps is the watchdog's `<label>.log`, whose row filter drops
+    # `[error]` lines, so counting them there would read 0 for every pod.)
+    if m_err > n_err:
+        fails.append(
+            f"errors: {n_err} trial error(s) + {m_err - n_err} perplexity/latency error(s)"
+        )
+    elif m_err < n_err:
+        fails.append(
+            f"errors: manifest/rows mismatch -- the manifest counts {m_err},"
+            f" the trial records {n_err}"
+        )
+    n_diag_skipped = int(m.get("diag_skipped") or 0)
+    if n_diag_skipped:
+        fails.append(f"diag: {n_diag_skipped} [diag] line(s) were unparseable")
     if trials or not m.get("dry_run"):  # a dry run has no records to count
         fails += _cell_fails(pod, trials)
         fails += _ppl_fails(pod, d)
+        fails += _pplw_fails(pod, d)
         fails += _latency_fails(pod, d)
     fails += _env_fails(d)
 

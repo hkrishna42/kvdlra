@@ -90,7 +90,27 @@ def load_arm(name: str) -> ArmCfg:
 
 
 def load_task(name: str) -> TaskCfg:
-    return _load("tasks", name, TaskCfg)  # type: ignore[no-any-return]
+    """The task config, refusing a grid that cannot produce the records `check` counts.
+
+    A cell is ``n_trials x len(seeds)`` records and a perplexity sweep is ``n_samples``
+    windows, so a zero in either is a task that runs nothing AND a `scripts/pod.py check`
+    rule that asks for nothing -- the one shape in which an empty pod passes its own gate.
+    A non-positive context length is the same failure one step earlier: there is no prompt
+    to build. Refused at load time, where the file can still be named.
+    """
+    t: TaskCfg = _load("tasks", name, TaskCfg)
+    bad = []
+    if t.n_trials < 1:
+        bad.append(f"n_trials={t.n_trials} must be >= 1")
+    if not t.seeds:
+        bad.append("seeds is empty")
+    if min([t.ctx, *(t.ctxs or [])]) <= 0:
+        bad.append(f"ctx must be positive (ctx={t.ctx}, ctxs={t.ctxs})")
+    if t.generator == "ppl" and t.n_samples < 1:
+        bad.append(f"n_samples={t.n_samples} must be >= 1 for a ppl task")
+    if bad:
+        raise ValueError(f"{ROOT / 'tasks' / f'{name}.yaml'}: " + "; ".join(bad))
+    return t
 
 
 def load_pod(name: str) -> PodCfg:

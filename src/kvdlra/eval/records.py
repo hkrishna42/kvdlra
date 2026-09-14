@@ -73,7 +73,10 @@ LATENCY_RE = re.compile(
     r"spikes=(\d+) resident_gb=([0-9.]+) peak_gb=([0-9.]+) weights_gb=[0-9.]+"
     r" kv_peak_gb=([0-9.]+) batch=(\d+)"
 )
-DIAG_RE = re.compile(r"^\[diag\] (\{.*\})\s*$")
+# The payload is matched loosely and `json.loads` is the arbiter: a `\{.*\}` regex
+# could not see a row `vastai logs` cut in half at all, so a truncated diagnostic
+# was not even counted as skipped.
+DIAG_RE = re.compile(r"^\[diag\] (.+?)\s*$")
 
 
 class TrialRecord(TypedDict):
@@ -352,14 +355,25 @@ def parse_latency_lines(text: str, model: str, source: str) -> list[LatencyRecor
     return out
 
 
-def parse_diag_lines(text: str, model: str, source: str) -> list[dict[str, object]]:
-    """``[diag] {json}`` payloads, verbatim plus their ``model`` and ``source``. Nothing
-    reads them yet -- the diagnostics land in L1 -- so they are carried through unparsed
-    rather than dropped, but the model is stamped in like every other record type: a
-    rank or an orthogonality number means nothing without the family it came from. A
-    line whose payload is not JSON is skipped, not fatal: diagnostics are never evidence
-    for a number."""
+def parse_diag_lines(text: str, model: str, source: str) -> tuple[list[dict[str, object]], int]:
+    """``[diag] {json}`` payloads (verbatim plus their ``model`` and ``source``), and how
+    many ``[diag]`` lines were skipped because the payload is not a JSON object.
+
+    Nothing reads them yet -- the diagnostics land in L1 -- so they are carried through
+    unparsed rather than dropped, but the model is stamped in like every other record
+    type: a rank or an orthogonality number means nothing without the family it came
+    from. A line whose payload will not parse is skipped rather than fatal (diagnostics
+    are never evidence for a number) -- but it is COUNTED and returned, because the
+    usual cause is a log line cut in half by the fetch, and a silent skip made a
+    truncated harvest look like a pod that printed no diagnostics at all.
+
+    So an emitter (L1 writes these rows) keeps a ``[diag]`` row under ~400 chars, or
+    splits it across ``part=i/N`` fragments the way ``[pplw]`` does: `vastai logs`
+    truncates a line at ~500 chars, and the fragments of a split row reassemble where a
+    halved one is only ever a count.
+    """
     out: list[dict[str, object]] = []
+    skipped = 0
     for i, line in enumerate(text.splitlines(), 1):
         m = DIAG_RE.match(line)
         if not m:
@@ -367,9 +381,12 @@ def parse_diag_lines(text: str, model: str, source: str) -> list[dict[str, objec
         try:
             payload = json.loads(m.group(1))
         except json.JSONDecodeError:
+            payload = None
+        if not isinstance(payload, dict):
+            skipped += 1
             continue
         out.append({"model": model, **payload, "source": f"{source}:{i}"})
-    return out
+    return out, skipped
 
 
 def write_jsonl(

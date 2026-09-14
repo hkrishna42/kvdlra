@@ -139,6 +139,9 @@ def test_harvest_parses_a_log_into_records(dry_pod: Path, tmp_path: Path) -> Non
     trials = _rows(tmp_path, "trials.jsonl")
     assert [t["hit"] for t in trials] == [1, 0]
     assert trials[0]["model"] == load_pod("w18_g1").model
+    # No `generator=` in the line (no v1 log has one); `niah_single` belongs to exactly
+    # one generator in this pod's tasks, so the harvest fills it from the config.
+    assert {t["generator"] for t in trials} == {"inhouse"}
 
     pplw = _rows(tmp_path, "pplw.jsonl")
     assert [(w["arm"], w["ctx"], w["window_idx"]) for w in pplw] == [
@@ -295,55 +298,50 @@ def test_launch_dry_run_prints_the_vastai_command(tmp_path: Path) -> None:
 
 # w18_g1's expected cell set, spelled out rather than re-derived: three arms by their
 # `legacy_name` (the string a record carries), the four in-house RULER sub-tasks, two
-# context lengths, 6 trials x 2 seeds each. The two ppl tasks contribute no cells. A cell
-# is keyed by its GENERATOR too, so the synthetic rows carry `generator: "inhouse"` --
-# a row without it is an archived one, and is no cell of a live pod.
+# context lengths, 6 trials x 2 seeds each. The two ppl tasks contribute no cells.
+#
+# The rows go in as the LOG a pod prints and come back through `harvest`, never as
+# hand-written JSON: hand-writing `"generator": "inhouse"` is what hid the bug where the
+# real parser left it null and `check` then rejected a complete, correct run.
 ARMS = ("quant-2bit-kivi", "quant-4bit-kivi", "bugSseed-r64-h256")
 SUBTASKS = ("niah_single", "niah_multikey", "niah_multivalue", "vt")
 CTXS = (16384, 32768)
 
 
-def _trials(*arms: str) -> list[dict[str, object]]:
+def _trial_lines(*arms: str, generator: str = "") -> list[str]:
+    """`kvdlra.eval.runner`'s `[trial]` line, verbatim. `generator=""` is the v1 format,
+    which every archived pod log is in."""
+    gen = f" generator={generator}" if generator else ""
     return [
-        {
-            "model": "m", "arm": arm, "task": task, "ctx": ctx, "seed": seed, "trial": t,
-            "hit": 1, "frac": 1.0, "generator": "inhouse", "haystack_id": None,
-            "depth": None, "code_family": None, "prompt_sha256": None,
-            "error": None, "source": "x",
-        }
+        f"[trial] task={task} ctx={ctx} arm={arm} seed={seed} trial={t} hit=1 frac=1.000{gen}"
         for arm in arms
         for ctx in CTXS
         for task in SUBTASKS
         for seed in (0, 1)
         for t in range(6)
-    ]  # fmt: skip
+    ]
 
 
-def _ppl(*arms: str) -> list[dict[str, object]]:
-    """w18_g1's two `ppl` tasks: one perplexity record per (arm, ctx)."""
+def _ppl_lines(*arms: str) -> list[str]:
+    """w18_g1's two `ppl` tasks: one `ppl=` line per (arm, ctx)."""
     return [
-        {
-            "model": "m", "arm": arm, "ctx": ctx, "ppl": 5.4, "ratio": 0.163,
-            "sbits": 0.163, "tok_eq": None, "source": "x",
-        }
+        f"  {arm:14s} [T={ctx}] ppl=5.403 tok_eq/layer=1398.0 ratio=0.163 sbits=0.163"
         for arm in arms
         for ctx in CTXS
-    ]  # fmt: skip
+    ]
 
 
-def _harvested(
-    dry_pod: Path,
-    tmp_path: Path,
-    rows: list[dict[str, object]],
-    ppl: list[dict[str, object]] | None = None,
-) -> Path:
-    """A dry-run directory turned into what a real (non-dry) harvest leaves behind."""
+def _harvested(dry_pod: Path, tmp_path: Path, lines: list[str]) -> Path:
+    """A dry-run directory plus a harvest of the log those lines make -- the whole path a
+    real pod takes, so anything the parser does not recover is missing here too."""
     d = _copy(dry_pod, tmp_path)
     m = json.loads((d / "manifest.json").read_text())
     m["dry_run"] = False
     (d / "manifest.json").write_text(json.dumps(m))
-    (d / "trials.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
-    (d / "ppl.jsonl").write_text("".join(json.dumps(r) + "\n" for r in ppl or []))
+    log = d / "pod.log"
+    log.write_text("\n".join(lines) + "\n")
+    r = _run("harvest", "--pod", "w18_g1", "--log", str(log), "--out", str(d))
+    assert r.returncode == 0, r.stdout + r.stderr
     return d
 
 
@@ -360,7 +358,7 @@ def test_check_fails_a_non_dry_run_harvest_with_no_records(dry_pod: Path, tmp_pa
 
 def test_check_fails_when_only_one_arm_reported(dry_pod: Path, tmp_path: Path) -> None:
     """One arm of three at full n: 8 complete cells, 16 empty ones."""
-    r = _run("check", str(_harvested(dry_pod, tmp_path, _trials("bugSseed-r64-h256"))))
+    r = _run("check", str(_harvested(dry_pod, tmp_path, _trial_lines("bugSseed-r64-h256"))))
     assert r.returncode == 1
     out = r.stdout + r.stderr
     cells = [x for x in out.splitlines() if x.startswith("CHECK FAIL cells")]
@@ -368,10 +366,75 @@ def test_check_fails_when_only_one_arm_reported(dry_pod: Path, tmp_path: Path) -
     assert not [x for x in cells if "bugSseed-r64-h256" in x]  # the arm that ran is not flagged
 
 
-def test_check_passes_a_complete_synthetic_harvest(dry_pod: Path, tmp_path: Path) -> None:
-    r = _run("check", str(_harvested(dry_pod, tmp_path, _trials(*ARMS), _ppl(*ARMS))))
+def test_a_complete_harvest_of_a_v1_format_log_passes_check(dry_pod: Path, tmp_path: Path) -> None:
+    """The `[trial]` line carries no `generator=` in any v1 log, and a cell's identity
+    includes the generator -- so a harvest that left it null keyed every cell "None" and
+    `check` rejected a complete, correct run (8 CHECK FAIL cells per task). `harvest`
+    fills it from the pod's own task configs."""
+    d = _harvested(dry_pod, tmp_path, [*_trial_lines(*ARMS), *_ppl_lines(*ARMS)])
+    assert {r["generator"] for r in _rows(d, "trials.jsonl")} == {"inhouse"}
+    r = _run("check", str(d))
     assert r.returncode == 0, r.stdout + r.stderr
     assert "OK (288 trials, 0 errors)" in r.stdout
+
+
+def test_a_harvest_keeps_the_generator_the_row_itself_names(dry_pod: Path, tmp_path: Path) -> None:
+    """The runner prints it, so no inference is needed -- and the pod-config map is not
+    consulted at all for a row that says which generator built it."""
+    lines = [*_trial_lines(*ARMS, generator="inhouse"), *_ppl_lines(*ARMS)]
+    d = _harvested(dry_pod, tmp_path, lines)
+    assert {r["generator"] for r in _rows(d, "trials.jsonl")} == {"inhouse"}
+    assert _run("check", str(d)).returncode == 0
+
+
+def test_harvest_refuses_to_guess_a_generator_two_tasks_share(tmp_path: Path) -> None:
+    """w19_fork runs the in-house AND the official 16K task, which give `niah_multivalue`
+    and `vt` the same names at the same context. A v1 row could be either, and guessing
+    would pool two benchmarks into one cell -- so the harvest stops instead."""
+    log = tmp_path / "pod.log"
+    row = "[trial] task=vt ctx=16384 arm=ea-k0.1-q2-kivi seed=0 trial=0 hit=1 frac=1.000"
+    log.write_text(row + "\n")
+    r = _run("harvest", "--pod", "w19_fork", "--log", str(log), "--out", str(tmp_path))
+    assert r.returncode != 0
+    assert "sub-task vt belongs to more than one generator" in r.stdout + r.stderr
+
+    log.write_text(row + " generator=official_ruler\n")
+    r = _run("harvest", "--pod", "w19_fork", "--log", str(log), "--out", str(tmp_path))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _rows(tmp_path, "trials.jsonl")[0]["generator"] == "official_ruler"
+
+
+def test_harvest_counts_the_ppl_axis_error_lines(dry_pod: Path, tmp_path: Path) -> None:
+    """A perplexity arm that raises produces no record at all, only an `[error]` line, so
+    a harvest counting trial rows alone wrote `errors: 0` for a pod whose sweep died.
+    The run path counts both axes; the log path has to agree."""
+    d = _harvested(
+        dry_pod,
+        tmp_path,
+        [
+            *_trial_lines(*ARMS),
+            *_ppl_lines("quant-2bit-kivi", "quant-4bit-kivi"),
+            "[error] axis=ppl arm=bugSseed-r64-h256 ctx=16384 error=RuntimeError: boom",
+        ],
+    )
+    assert json.loads((d / "manifest.json").read_text())["errors"] == 1
+    r = _run("check", str(d))
+    assert r.returncode == 1 and "CHECK FAIL errors" in r.stdout + r.stderr
+
+
+def test_check_fails_any_pod_that_recorded_a_trial_error(dry_pod: Path, tmp_path: Path) -> None:
+    """Ruling R29: a complete pod whose every trial RAISED used to pass -- the cells all
+    held their full n, and the errors were only a number in the manifest. No tolerance
+    knob: one recorded failure is a pod to fix or to re-run, not one to cite."""
+    lines = [x.replace("hit=1 frac=1.000", "hit=0 frac=0.000 error=RuntimeError: boom")
+             for x in _trial_lines(*ARMS)]  # fmt: skip
+    d = _harvested(dry_pod, tmp_path, [*lines, *_ppl_lines(*ARMS)])
+    assert json.loads((d / "manifest.json").read_text())["errors"] == 288
+    r = _run("check", str(d))
+    out = r.stdout + r.stderr
+    assert r.returncode == 1
+    assert "CHECK FAIL errors: 288 trial(s) raised (see the error field in trials.jsonl)" in out
+    assert "CHECK FAIL cells" not in out  # every cell is full; the errors are the failure
 
 
 def test_check_fails_a_ppl_task_that_produced_no_perplexity_record(
@@ -380,7 +443,7 @@ def test_check_fails_a_ppl_task_that_produced_no_perplexity_record(
     """A `ppl` task contributes no Bernoulli cells, so the cell rule never looked at it
     and a pod whose whole perplexity sweep died still passed. One record per (arm, ctx)
     is expected in ppl.jsonl -- w18_g1 names two ppl tasks, so 3 arms x 2 ctx = 6."""
-    r = _run("check", str(_harvested(dry_pod, tmp_path, _trials(*ARMS))))
+    r = _run("check", str(_harvested(dry_pod, tmp_path, _trial_lines(*ARMS))))
     assert r.returncode == 1
     out = r.stdout + r.stderr
     assert out.count("CHECK FAIL ppl") == len(ARMS) * len(CTXS) == 6
@@ -390,8 +453,8 @@ def test_check_fails_a_ppl_task_that_produced_no_perplexity_record(
 def test_check_fails_when_one_arm_is_missing_from_the_ppl_sweep(
     dry_pod: Path, tmp_path: Path
 ) -> None:
-    d = _harvested(dry_pod, tmp_path, _trials(*ARMS), _ppl("quant-2bit-kivi", "quant-4bit-kivi"))
-    r = _run("check", str(d))
+    lines = [*_trial_lines(*ARMS), *_ppl_lines("quant-2bit-kivi", "quant-4bit-kivi")]
+    r = _run("check", str(_harvested(dry_pod, tmp_path, lines)))
     assert r.returncode == 1
     assert r.stdout.count("CHECK FAIL ppl") == 2  # the r64 arm's two contexts
 

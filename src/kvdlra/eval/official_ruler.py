@@ -118,10 +118,14 @@ def run_trial(
 ) -> tuple[int, float, dict[str, Any]]:
     """Retrieve the ``trial``-th official record of sub-task ``sub`` through ``arm``.
 
-    The record index IS the trial index: the generator wrote ``n_trials`` samples per
-    task at the pinned seed, in order. ``pool`` is unused -- the haystack comes from
-    RULER's own generator, not from ours -- and is accepted so every generator's
-    ``run_trial`` has one signature.
+    ``trial`` selects a record by POSITION: the generator wrote ``n_trials`` samples per
+    task at the pinned seed, in order. What the record is CALLED is RULER's business --
+    their ``index`` is a sparse id (11779, 76228 in the archived w19_a2 / w19_q4off
+    rows), and it is what the v1 records carry as their ``trial``, so the meta hands it
+    back for the runner to record in place of the loop counter.
+
+    ``pool`` is unused -- the haystack comes from RULER's own generator, not from ours --
+    and is accepted so every generator's ``run_trial`` has one signature.
     """
     rec = load_records(DATA_DIR, sub, None)[trial]
     body, question = split_input(rec["input"])
@@ -135,6 +139,7 @@ def run_trial(
         frac,
         {
             # RULER's own record id -- their haystack, not ours, so their index names it.
+            "trial": rec["index"],
             "haystack_id": f"{sub}:{rec['index']}",
             "depth": None,  # official needles sit wherever their generator put them
             "code_family": None,

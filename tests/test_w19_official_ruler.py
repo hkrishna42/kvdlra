@@ -111,17 +111,24 @@ def _tiny() -> LlamaForCausalLM:
 
 
 def test_run_trial_reads_the_indexed_official_record(tmp_path: Path, monkeypatch: Any) -> None:
-    """One trial IS one official record, at the trial index: the generator wrote the
+    """One trial IS one official record, at the trial POSITION: the generator wrote the
     samples in order at the pinned seed, so ``trial`` selects one without any
-    re-sampling of ours. The meta carries RULER's own record id."""
+    re-sampling of ours.
+
+    What the record is CALLED is RULER's business, though: their ``index`` is a sparse
+    id (11779, 76228 in the archived w19_a2 / w19_q4off rows), not the position, and it
+    is what the v1 records carry as their ``trial``. So the meta hands the runner that
+    index back, and the row a re-run writes joins to the archived one.
+    """
     from kvdlra.eval.config import ArmCfg, load_task
     from kvdlra.eval.frontier import build_arm
 
     data = tmp_path / "niah_single_2"
     data.mkdir()
+    # Indices that are NOT the positions -- the archive's own shape.
     recs = [
-        {"index": i, "input": NIAH, "outputs": ["7"], "length": 40, "answer_prefix": NIAH_PREFIX}
-        for i in range(2)
+        {"index": ix, "input": NIAH, "outputs": ["7"], "length": 40, "answer_prefix": NIAH_PREFIX}
+        for ix in (76228, 11779)
     ]
     (data / "validation.jsonl").write_text("\n".join(json.dumps(r) for r in recs) + "\n")
     monkeypatch.setattr(official, "DATA_DIR", tmp_path)
@@ -131,13 +138,14 @@ def test_run_trial_reads_the_indexed_official_record(tmp_path: Path, monkeypatch
     task = load_task("ruler_official_16k")
     task.ctx = 64
     arm = build_arm(ArmCfg(name="full", kind="full"), model, task.ctx)
-    for trial in (0, 1):
+    for trial, index in enumerate((76228, 11779)):
         hit, frac, meta = official.run_trial(
             arm, model, tok, task, "niah_single_2", 42, trial,
             device="cpu", chunk=0, n=64, h_kv=2,
         )  # fmt: skip
         assert hit in (0, 1) and 0.0 <= frac <= 1.0
-        assert meta["haystack_id"] == f"niah_single_2:{trial}"
+        assert meta["trial"] == index  # the record's own id, not its position
+        assert meta["haystack_id"] == f"niah_single_2:{index}"
         assert meta["depth"] is None and len(meta["prompt_sha256"]) == 64
         assert 0.0 < meta["ratio"] <= 1.0
 

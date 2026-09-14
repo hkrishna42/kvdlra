@@ -30,13 +30,22 @@ import re
 from pathlib import Path
 from typing import TypedDict
 
+# `generator=` and `error=` are appended by `kvdlra.eval.runner` (in that order); no v1
+# log has either, so both are optional -- the harvest fills the generator from the pod's
+# task configs when the line does not say, and a row with no `error=` did not raise.
 TRIAL_RE = re.compile(
     r"^\[trial\] task=(\S+) ctx=(\d+) arm=(\S+) seed=(\d+) trial=(\d+) hit=([01]) frac=([0-9.]+)"
+    r"(?: generator=(\S+))?(?: error=(.*))?"  # unanchored: a trailing field a v1 log
+    # carried but this format does not name must not stop the line from parsing
 )
+# `ratio=`/`sbits=` are absent from a cell whose every trial raised: there is no ratio to
+# average, and the `ratio=nan sbits=nan` that printed instead matched nothing at all, so
+# the cell vanished from a log harvest. Such a row carries `errors=` instead.
 CELL_RE = re.compile(
-    r"^\[([A-Za-z0-9_]+) ctx(\d+)\] (\S+)\s+acc=([0-9.]+) recall=([0-9.]+) ratio=([0-9.]+)"
-    r"(?: sbits=([0-9.]+))?(?: n=(\d+))?"
+    r"^\[([A-Za-z0-9_]+) ctx(\d+)\] (\S+)\s+acc=([0-9.]+) recall=([0-9.]+)(?: ratio=([0-9.]+))?"
+    r"(?: sbits=([0-9.]+))?(?: n=(\d+))?(?: errors=(\d+))?"
 )
+ERROR_RE = re.compile(r"^\[error\] axis=(\S+) arm=(\S+) ctx=(\d+) error=(.*)$")
 # Leading whitespace varies (0 or 2 spaces) across pods; tok_eq/layer and sbits are
 # each sometimes absent. Verified against every `ppl=` line in results/*-lines.txt
 # (175/175 match) -- see results/w11-table-ppl-lines.txt (no leading space, no sbits),
@@ -81,8 +90,9 @@ class CellRecord(TypedDict):
     acc: float
     n: int | None
     hits: int | None
-    ratio: float
+    ratio: float | None
     sbits: float | None
+    errors: int | None
     source: str
 
 
@@ -120,7 +130,7 @@ def parse_trial_lines(text: str, model: str, source: str) -> list[TrialRecord]:
         m = TRIAL_RE.match(line)
         if not m:
             continue
-        task, ctx, arm, seed, trial, hit, frac = m.groups()
+        task, ctx, arm, seed, trial, hit, frac, generator, error = m.groups()
         out.append(
             {
                 "model": model,
@@ -131,14 +141,14 @@ def parse_trial_lines(text: str, model: str, source: str) -> list[TrialRecord]:
                 "trial": int(trial),
                 "hit": int(hit),
                 "frac": float(frac),
-                # A harvested log row carries only what the line printed; the generator
-                # that produced it is not in the format, so it stays unknown here.
-                "generator": None,
+                # Only what the line printed: a v1 row does not name its generator, and
+                # `scripts/pod.py harvest` is where the pod config fills that gap.
+                "generator": generator,
                 "haystack_id": None,
                 "depth": None,
                 "code_family": None,
                 "prompt_sha256": None,
-                "error": None,
+                "error": error,
                 "source": f"{source}:{i}",
             }
         )
@@ -150,13 +160,14 @@ def parse_cell_lines(text: str, model: str, source: str) -> list[CellRecord]:
     ``None`` for pre-Week-18 rows, which printed no ``n=`` (no Bernoulli count to
     recover -- an interval cannot be computed from them); ``sbits`` (fp32-at-rest
     stored bits, the memory convention half the v1 tables print) is ``None`` for the
-    rows that printed no ``sbits=``."""
+    rows that printed no ``sbits=``; ``ratio`` is ``None`` and ``errors`` is the trial
+    count for a cell whose every trial raised, which has no footprint to report."""
     out: list[CellRecord] = []
     for i, line in enumerate(text.splitlines(), 1):
         m = CELL_RE.match(line)
         if not m:
             continue
-        task, ctx, arm, acc, _recall, ratio, sbits, n = m.groups()
+        task, ctx, arm, acc, _recall, ratio, sbits, n, errors = m.groups()
         n_i = int(n) if n is not None else None
         out.append(
             {
@@ -167,11 +178,31 @@ def parse_cell_lines(text: str, model: str, source: str) -> list[CellRecord]:
                 "acc": float(acc),
                 "n": n_i,
                 "hits": round(float(acc) * n_i) if n_i is not None else None,
-                "ratio": float(ratio),
+                "ratio": float(ratio) if ratio is not None else None,
                 "sbits": float(sbits) if sbits is not None else None,
+                "errors": int(errors) if errors is not None else None,
                 "source": f"{source}:{i}",
             }
         )
+    return out
+
+
+def parse_error_lines(text: str, source: str) -> list[dict[str, object]]:
+    """Every ``[error] axis=... arm=... ctx=... error=...`` line as a record.
+
+    The retrieval axis carries a failure inside the trial record it still writes; the
+    perplexity axis has no record to carry one -- an arm that raises produces no row at
+    all -- so its failures are their own log line. `scripts/pod.py harvest` counts them
+    into the manifest, which is how a harvest of the log agrees with the run that wrote
+    it. No ``model``: the line is a failure, not evidence about a model."""
+    out: list[dict[str, object]] = []
+    for i, line in enumerate(text.splitlines(), 1):
+        m = ERROR_RE.match(line)
+        if m:
+            axis, arm, ctx, err = m.groups()
+            out.append(
+                {"axis": axis, "arm": arm, "ctx": int(ctx), "error": err, "source": f"{source}:{i}"}
+            )
     return out
 
 

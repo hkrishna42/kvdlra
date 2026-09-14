@@ -12,7 +12,9 @@ for -- arm x generator x sub-task x ctx -- to hold exactly `n_trials x len(seeds
 plus one perplexity record per (arm, ctx) for every `ppl` task. A trial that raised is recorded
 with `error` and still counted, so a cell can never silently shrink; a cell with no records
 at all is the loudest failure there is, which is what makes a pod that produced nothing
-impossible to pass off as a clean run.
+impossible to pass off as a clean run. And because recording rather than skipping keeps every
+cell full, the error COUNT is its own rule: any recorded failure fails the pod (ruling R29),
+with no tolerance knob.
 
 `run` writes the manifest and the environment, then hands the pod config to
 `kvdlra.eval.runner.run_pod`, which is the eval loop; `--dry-run` stops after the manifest,
@@ -43,6 +45,7 @@ from kvdlra.eval.config import PodCfg, config_hash, load_arm, load_pod, load_tas
 from kvdlra.eval.records import (
     TrialRecord,
     parse_diag_lines,
+    parse_error_lines,
     parse_ppl_lines,
     parse_pplw_lines,
     parse_trial_lines,
@@ -384,6 +387,43 @@ def _status(text: str) -> str | None:
     return None
 
 
+def _generators_by_subtask(pod: PodCfg) -> dict[str, set[str]]:
+    """Sub-task name -> the generators that produce it in this pod (`ppl` has none)."""
+    out: dict[str, set[str]] = {}
+    for tname in pod.tasks:
+        t = load_task(tname)
+        if t.generator != "ppl":
+            for sub in t.tasks:
+                out.setdefault(sub, set()).add(t.generator)
+    return out
+
+
+def _fill_generators(name: str, trials: list[TrialRecord]) -> None:
+    """Name the generator behind every harvested row, from the pod's own task configs.
+
+    No v1 `[trial]` line carries `generator=`, and `check` keys a cell by the generator
+    -- so a harvest that left it null keyed every cell "None" and rejected a complete,
+    correct pod. A row that names its own generator (the runner prints it) is taken as
+    it stands; the configs only fill the gap.
+
+    When two of a pod's tasks own the same sub-task name -- w19_fork runs the in-house
+    and the official 16K tasks, which both call a sub-task `vt` -- a row that does not
+    name its generator is unattributable, and guessing would pool two benchmarks into
+    one cell and call the doubled count complete. So it stops.
+    """
+    gens = _generators_by_subtask(load_pod(name))
+    for r in trials:
+        if r["generator"] is not None:
+            continue
+        owners = gens.get(r["task"], set())
+        if len(owners) > 1:
+            raise SystemExit(
+                f"pod {name}: sub-task {r['task']} belongs to more than one generator;"
+                " the runner must emit generator= in the [trial] row"
+            )
+        r["generator"] = next(iter(owners), None)
+
+
 def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     model = load_pod(name).model
     out.mkdir(parents=True, exist_ok=True)
@@ -397,6 +437,7 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     # Two artifacts of one sweep, two schemas, two files -- parsed independently, never
     # one instead of the other.
     trials = parse_trial_lines(text, model, source)
+    _fill_generators(name, trials)
     pplw = parse_pplw_lines(text, model, source)
     ppl = parse_ppl_lines(text, model, source)
     diag = parse_diag_lines(text, model, source)
@@ -424,7 +465,11 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     m = _read_manifest(out) or manifest(name, _head(), source, False)
     m["harvested_at"] = _now()
     m["records"] = records
-    m["errors"] = sum(1 for t in trials if t["error"] is not None)
+    # Both axes: a perplexity arm that raised has no record to carry the failure, only
+    # the `[error]` line, so counting trial rows alone called such a pod clean.
+    m["errors"] = sum(1 for t in trials if t["error"] is not None) + len(
+        parse_error_lines(text, source)
+    )
     m["wall_clock_s"] = _wall_clock_s(text) or m.get("wall_clock_s")
     m["status"] = _status(text)
     _write_manifest(out, m)
@@ -560,8 +605,16 @@ def check(d: Path) -> int:
     tpath = d / "trials.jsonl"
     trials = [cast(TrialRecord, r) for r in read_jsonl(tpath)] if tpath.is_file() else []
     n_err = sum(1 for t in trials if t["error"] is not None)
-    if n_err != m.get("errors"):
-        fails.append(f"errors: manifest says {m.get('errors')}, records hold {n_err}")
+    m_err = int(m.get("errors") or 0)
+    # Ruling R29. Recording a raised trial rather than skipping it keeps the cell full,
+    # which is the point -- and which leaves the cell rule with nothing to say about a
+    # pod whose every trial failed. So the count is its own rule, with no tolerance knob.
+    if n_err:
+        fails.append(f"errors: {n_err} trial(s) raised (see the error field in trials.jsonl)")
+    if m_err != n_err:
+        # The manifest counts BOTH axes; a perplexity arm that raised leaves an `[error]`
+        # log line and no record at all, so its failure can only surface here.
+        fails.append(f"errors: the manifest counts {m_err}, the trial records {n_err}")
     if trials or not m.get("dry_run"):  # a dry run has no records to count
         fails += _cell_fails(pod, trials)
         fails += _ppl_fails(pod, d)

@@ -51,6 +51,10 @@ def run_pod(pod: PodCfg, out: Path, model: Any, dry_model: bool = False) -> None
     ``dry_model`` runs the loop without one: nothing is loaded and no dimensions are
     read off a config, which is how the error path is exercised on CPU with the
     generator substituted (``tests/test_pod_run_records_errors.py``).
+
+    A run always starts fresh -- ``trials.jsonl`` is truncated here -- and resume is not
+    supported; re-running a pod re-runs all of it. `scripts/pod.py harvest` is the path
+    that guards against a results directory shrinking.
     """
     t0 = time.perf_counter()
     out.mkdir(parents=True, exist_ok=True)
@@ -78,6 +82,7 @@ def run_pod(pod: PodCfg, out: Path, model: Any, dry_model: bool = False) -> None
             rows = _ppl_rows(arms, mdl, tok, task, device=device, n=n, h_kv=h_kv)
             ppl += [_ppl_record(pod, r) for r in rows if r["status"] == "ok"]
             pplw += [w for r in rows if r["status"] == "ok" for w in _pplw_records(pod, r)]
+            n_err += _log_ppl_errors([r for r in rows if r["status"] != "ok"])
             continue
         for arm in arms:
             for sub in task.tasks:
@@ -91,6 +96,22 @@ def run_pod(pod: PodCfg, out: Path, model: Any, dry_model: bool = False) -> None
         write_jsonl(out / "pplw.jsonl", pplw)
         records["pplw.jsonl"] = len(pplw)
     _finish(out, records, n_err, time.perf_counter() - t0)
+
+
+def _log_ppl_errors(rows: list[dict[str, Any]]) -> int:
+    """The failed arms of a perplexity sweep, one greppable line each.
+
+    This axis writes no per-trial record, so a failed arm used to leave nothing behind
+    but a filtered-out row: the manifest called the pod clean. The line is what
+    `records.parse_error_lines` counts, so a harvest of the log lands on the same count
+    the run did.
+    """
+    for r in rows:
+        print(
+            f"[error] axis=ppl arm={r['method']} ctx={r['T']} error={r.get('error', r['status'])}",
+            flush=True,
+        )
+    return len(rows)
 
 
 def _dims(cfg: Any) -> tuple[int, int]:
@@ -145,13 +166,16 @@ def _cell(
             if meta.get("ratio") is not None:
                 ratios.append(float(meta["ratio"]))
                 sbits.append(float(meta["sbits"]))
+            # The official generator's trial is RULER's own record id, not the loop
+            # counter -- which is what the archived v1 rows carry (11779, 76228).
+            tid = int(meta.get("trial", trial))
             row: TrialRecord = {
                 "model": pod.model,
                 "arm": arm["name"],
                 "task": sub,
                 "ctx": task.ctx,
                 "seed": seed,
-                "trial": trial,
+                "trial": tid,
                 "hit": hit,
                 "frac": frac,
                 "generator": task.generator,
@@ -167,22 +191,22 @@ def _cell(
                 f.flush()
             print(
                 f"[trial] task={sub} ctx={task.ctx} arm={arm['name']} seed={seed} "
-                f"trial={trial} hit={hit} frac={frac:.3f}" + (f" error={err}" if err else ""),
+                f"trial={tid} hit={hit} frac={frac:.3f} generator={task.generator}"
+                + (f" error={err}" if err else ""),
                 flush=True,
             )
     total = len(fracs)
-    # `n=` and `sbits=` come last so the archived-line regex keeps matching unchanged.
-    print(
+    head = (
         f"[{sub} ctx{task.ctx}] {arm['name']:14s} acc={hits / total:.2f} "
-        f"recall={sum(fracs) / total:.2f} ratio={_mean(ratios):.3f} "
-        f"sbits={_mean(sbits):.3f} n={total}",
-        flush=True,
+        f"recall={sum(fracs) / total:.2f}"
     )
+    # `n=` and `sbits=` come last so the archived-line regex keeps matching unchanged.
+    # With no surviving trial there is no footprint to average: printing `ratio=nan
+    # sbits=nan` matched no reader's regex, so the whole cell vanished from a harvest.
+    if ratios:
+        head += f" ratio={sum(ratios) / len(ratios):.3f} sbits={sum(sbits) / len(sbits):.3f}"
+    print(head + f" n={total}" + ("" if ratios else f" errors={errors}"), flush=True)
     return errors
-
-
-def _mean(xs: list[float]) -> float:
-    return sum(xs) / len(xs) if xs else float("nan")
 
 
 def _ppl_rows(

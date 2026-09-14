@@ -16,9 +16,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pod
 import pytest
 
 from kvdlra.eval.config import load_pod, load_task
+from kvdlra.eval.records import parse_cell_lines, parse_error_lines
 from kvdlra.eval.runner import run_pod
 
 
@@ -33,10 +35,10 @@ def test_raising_trial_is_recorded_not_skipped(tmp_path: Path, monkeypatch: Any)
                         "sbits": 0.15}  # fmt: skip
 
     monkeypatch.setattr("kvdlra.eval.ruler.run_trial", fake_trial)
-    pod = load_pod("w18_g1")
-    pod.arms = ["full"]
-    pod.tasks = ["ruler_inhouse_16k"]
-    run_pod(pod, out=tmp_path, model=None, dry_model=True)
+    cfg = load_pod("w18_g1")
+    cfg.arms = ["full"]
+    cfg.tasks = ["ruler_inhouse_16k"]
+    run_pod(cfg, out=tmp_path, model=None, dry_model=True)
 
     rows = [json.loads(x) for x in (tmp_path / "trials.jsonl").read_text().splitlines()]
     t = load_task("ruler_inhouse_16k")
@@ -47,11 +49,15 @@ def test_raising_trial_is_recorded_not_skipped(tmp_path: Path, monkeypatch: Any)
     assert json.loads((tmp_path / "manifest.json").read_text())["errors"] == 1
 
 
-def test_no_cell_loses_a_record_to_the_error(tmp_path: Path, monkeypatch: Any) -> None:
+def test_no_cell_loses_a_record_to_the_error(
+    tmp_path: Path, monkeypatch: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
     """The point of recording rather than skipping: every configured cell is still full.
 
     Keyed the way `pod.py check` keys them -- (arm, generator, sub-task, ctx) -- so the
-    failing cell is short only if the record was dropped.
+    failing cell is short only if the record was dropped. A cell with no surviving trial
+    has no ratio to average: it used to print `ratio=nan sbits=nan`, which `CELL_RE`
+    could not parse at all, so the whole cell vanished from a log harvest.
     """
     from collections import Counter
 
@@ -59,10 +65,10 @@ def test_no_cell_loses_a_record_to_the_error(tmp_path: Path, monkeypatch: Any) -
         raise RuntimeError("everything is on fire")
 
     monkeypatch.setattr("kvdlra.eval.ruler.run_trial", fake_trial)
-    pod = load_pod("w18_g1")
-    pod.arms = ["full"]
-    pod.tasks = ["ruler_inhouse_16k"]
-    run_pod(pod, out=tmp_path, model=None, dry_model=True)
+    cfg = load_pod("w18_g1")
+    cfg.arms = ["full"]
+    cfg.tasks = ["ruler_inhouse_16k"]
+    run_pod(cfg, out=tmp_path, model=None, dry_model=True)
 
     rows = [json.loads(x) for x in (tmp_path / "trials.jsonl").read_text().splitlines()]
     t = load_task("ruler_inhouse_16k")
@@ -71,6 +77,84 @@ def test_no_cell_loses_a_record_to_the_error(tmp_path: Path, monkeypatch: Any) -
     assert set(counts) == {("full", "inhouse", sub, t.ctx) for sub in t.tasks}
     assert all(r["error"] and r["hit"] == 0 for r in rows)
     assert json.loads((tmp_path / "manifest.json").read_text())["errors"] == len(rows)
+
+    cells = parse_cell_lines(capsys.readouterr().out, "m", "log")
+    assert len(cells) == len(t.tasks)
+    assert all(c["n"] == 12 and c["acc"] == 0.0 for c in cells)
+    assert all(c["ratio"] is None and c["sbits"] is None and c["errors"] == 12 for c in cells)
+
+
+def test_check_refuses_a_pod_whose_trials_raised(
+    tmp_path: Path, monkeypatch: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ruling R29. Recording rather than skipping keeps every cell full -- which is the
+    point, and which also means the cell rule has nothing left to complain about. The
+    error count is what fails the pod; there is no tolerance knob."""
+
+    def fake_trial(*a: Any, **k: Any) -> tuple[int, float, dict[str, Any]]:
+        raise RuntimeError("everything is on fire")
+
+    monkeypatch.setattr("kvdlra.eval.ruler.run_trial", fake_trial)
+    cfg = load_pod("w18_g1")
+    cfg.arms = ["full"]
+    cfg.tasks = ["ruler_inhouse_16k"]
+    # What `pod.py run` writes before handing over: the manifest `_finish` folds into.
+    (tmp_path / "env.txt").write_text("\n".join(pod.env_lines()) + "\n")
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(pod.manifest("w18_g1", pod._head(), "test", dry_run=False))
+    )
+    run_pod(cfg, out=tmp_path, model=None, dry_model=True)
+
+    assert pod.check(tmp_path) == 1
+    out = capsys.readouterr().out
+    assert "CHECK FAIL errors: 48 trial(s) raised (see the error field in trials.jsonl)" in out
+
+
+def test_a_generator_may_name_the_trial_itself(
+    tmp_path: Path, monkeypatch: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The official generator's trial is RULER's own record id (76228), not the loop
+    counter -- which is what the archived v1 rows carry, so a re-run joins to them."""
+
+    def fake_trial(*a: Any, **k: Any) -> tuple[int, float, dict[str, Any]]:
+        return 1, 1.0, {"trial": 76228, "ratio": 0.15, "sbits": 0.15}
+
+    monkeypatch.setattr("kvdlra.eval.ruler.run_trial", fake_trial)
+    cfg = load_pod("w18_g1")
+    cfg.arms = ["full"]
+    cfg.tasks = ["ruler_inhouse_16k"]
+    run_pod(cfg, out=tmp_path, model=None, dry_model=True)
+
+    rows = [json.loads(x) for x in (tmp_path / "trials.jsonl").read_text().splitlines()]
+    assert {r["trial"] for r in rows} == {76228}
+    assert "trial=76228" in capsys.readouterr().out
+
+
+def test_a_perplexity_arm_that_raises_is_logged_and_counted(
+    tmp_path: Path, monkeypatch: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The perplexity axis has no per-trial record to hang an error on, so a failed arm
+    used to vanish twice over: filtered out of the rows, and absent from the manifest's
+    count. It prints an `[error]` line and increments the count -- which is what lets a
+    harvest of the log alone rebuild the manifest the run wrote."""
+    from kvdlra.eval import frontier
+
+    failed = [{"method": "full", "T": 16384, "status": "error", "error": "RuntimeError: boom"}]
+    monkeypatch.setattr("kvdlra.eval.runner.load_corpus_ids", lambda *a, **k: "ids")
+    monkeypatch.setattr(frontier, "windows", lambda *a, **k: [("ctx", "win")])
+    monkeypatch.setattr(frontier, "run_ppl", lambda *a, **k: failed)
+    cfg = load_pod("w18_g1")
+    cfg.arms = ["full"]
+    cfg.tasks = ["ppl_16k"]
+    run_pod(cfg, out=tmp_path, model=None, dry_model=True)
+
+    out = capsys.readouterr().out
+    assert "[error] axis=ppl arm=full ctx=16384 error=RuntimeError: boom" in out
+    (err,) = parse_error_lines(out, "log")
+    assert err["axis"] == "ppl" and err["arm"] == "full" and err["ctx"] == 16384
+    assert err["error"] == "RuntimeError: boom" and str(err["source"]).startswith("log:")
+    assert json.loads((tmp_path / "manifest.json").read_text())["errors"] == 1
+    assert not (tmp_path / "ppl.jsonl").exists()  # a failed arm writes no record
 
 
 def test_trial_rows_stream_out_and_carry_the_generators_metadata(
@@ -89,17 +173,17 @@ def test_trial_rows_stream_out_and_carry_the_generators_metadata(
                         "prompt_sha256": "abc", "ratio": 0.15, "sbits": 0.14}  # fmt: skip
 
     monkeypatch.setattr("kvdlra.eval.ruler.run_trial", fake_trial)
-    pod = load_pod("w18_g1")
-    pod.arms = ["full"]
-    pod.tasks = ["ruler_inhouse_16k"]
-    run_pod(pod, out=tmp_path, model=None, dry_model=True)
+    cfg = load_pod("w18_g1")
+    cfg.arms = ["full"]
+    cfg.tasks = ["ruler_inhouse_16k"]
+    run_pod(cfg, out=tmp_path, model=None, dry_model=True)
 
     assert seen == list(range(len(seen)))  # one row on disk per completed trial
     rows = [json.loads(x) for x in (tmp_path / "trials.jsonl").read_text().splitlines()]
     assert all(r["generator"] == "inhouse" and r["error"] is None for r in rows)
     assert rows[0]["haystack_id"] == "h0" and rows[0]["code_family"] == "amber"
     assert rows[0]["depth"] == 0.5 and rows[0]["prompt_sha256"] == "abc"
-    assert rows[0]["model"] == pod.model and rows[0]["arm"] == "full"
+    assert rows[0]["model"] == cfg.model and rows[0]["arm"] == "full"
 
     out = capsys.readouterr().out
     from kvdlra.eval.records import parse_cell_lines, parse_trial_lines

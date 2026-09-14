@@ -181,12 +181,12 @@ def test_surprise_without_evict_is_bitwise_fifo(tiny_model: LlamaForCausalLM) ->
 
 
 # --------------------------------------------------------------------------
-# Honest memory: surprise costs one fp32/column
+# Stored memory: surprise costs one fp32/column
 # --------------------------------------------------------------------------
 
 
 def test_surprise_memory_counted_above_fifo(tiny_model: LlamaForCausalLM) -> None:
-    # Honesty canary: per column the surprise cache costs mid_pos + one fp32
+    # Memory canary: per column the surprise cache costs mid_pos + one fp32
     # scalar (2r+2), so it must report strictly MORE stored floats than
     # positionless fifo at the same (rank, coord_budget) -- retention is not free.
     stream = _prompt(80, seed=5)

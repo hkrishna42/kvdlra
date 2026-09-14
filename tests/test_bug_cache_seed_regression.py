@@ -10,7 +10,7 @@ being bypassed into the low-rank tail (the ~4-5K warm-up window). It ships
 ``tests/test_bug_cache_week11.py`` already pins the *mechanism* (capture at rank 4/8,
 disjointness, span, losslessness). This file is the **regression contract** for
 turning the knob on: a self-contained on/off proof-of-life, the bit-for-bit identity
-of the off path, honest non-interference with the other arm families, and the
+of the off path, non-interference with the other arm families, and the
 accounting neutrality (identical ``stored_state_numel``).
 
 Hermetic tiny Llama, mirroring ``tests/test_accounting.py``.
@@ -180,7 +180,7 @@ def test_seed_off_is_bit_identical_to_baseline(tiny_model: LlamaForCausalLM) -> 
     assert torch.equal(cast(torch.Tensor, ob.logits), cast(torch.Tensor, oo.logits))
 
 
-# ------------------------------------------- 3. non-interference (honest)
+# ------------------------------------------- 3. non-interference
 
 
 def test_seed_is_noop_on_non_hh_arm(tiny_model: LlamaForCausalLM) -> None:

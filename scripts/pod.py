@@ -4,11 +4,14 @@
 One directory per pod, `results/<pod>/`, holding `manifest.json` (git SHA, config hash,
 model, library versions, GPU, wall clock, command line), `env.txt` (the pinned set as
 `name==version`), and the records a harvest parsed out of the log: `trials.jsonl`,
-`ppl.jsonl`, `diag.jsonl`. `check` is the gate every citable number passes: it re-derives
-the config hash from `configs/pods/<pod>.yaml`, resolves the SHA, enforces the
-pre-registration commit order, and refuses a cell whose `n` is short of
-`n_trials x len(seeds)` -- a trial that raised is recorded with `error` and still counted,
-so a cell can never silently shrink.
+`ppl.jsonl` (aggregate perplexity), `pplw.jsonl` (the per-window NLLs behind it -- a
+different schema, hence a different file), `diag.jsonl`. `check` is the gate every citable
+number passes: it re-derives the config hash from `configs/pods/<pod>.yaml`, resolves the
+SHA, enforces the pre-registration commit order, and requires EVERY cell the config calls
+for -- arm x task x sub-task x ctx -- to hold exactly `n_trials x len(seeds)` records. A
+trial that raised is recorded with `error` and still counted, so a cell can never silently
+shrink; a cell with no records at all is the loudest failure there is, which is what makes
+a pod that produced nothing impossible to pass off as a clean run.
 
 `run`'s eval loop lands in Task 8; here `run` writes the manifest and the environment and
 `--dry-run` stops there, which is what the tests and `make check` exercise. Archived
@@ -34,10 +37,12 @@ from typing import Any, cast
 import _paths  # noqa: F401
 import tomllib
 
-from kvdlra.eval.config import PodCfg, config_hash, load_pod, load_task
+from kvdlra.eval.config import PodCfg, config_hash, load_arm, load_pod, load_task
 from kvdlra.eval.records import (
     TrialRecord,
+    parse_diag_lines,
     parse_ppl_lines,
+    parse_pplw_lines,
     parse_trial_lines,
     read_jsonl,
     write_jsonl,
@@ -57,8 +62,6 @@ ENV_PKGS = (
     "omegaconf",
 )
 PINNED = ("torch", "transformers", "kvpress", "hqq")  # checked against the pyproject pins
-PPLW_RE = re.compile(r"^\[pplw\] T=(\d+) (\S+) ntok=(\d+) nlls=([0-9eE.,+-]+)")
-DIAG_RE = re.compile(r"^\[diag\] (\{.*\})\s*$")
 TS_RE = re.compile(r"^\s*(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})")
 
 
@@ -128,6 +131,9 @@ def manifest(name: str, sha: str, command_line: str, dry_run: bool) -> dict[str,
         "command_line": command_line,
         "errors": 0,
         "records": {},
+        # ALL_DONE / RUN_FAILED, read off the log's end marker by `harvest`. The
+        # watchdog destroys the instance either way; this is where the failure shows.
+        "status": None,
         "dry_run": dry_run,
     }
 
@@ -137,13 +143,21 @@ def _write_manifest(out: Path, m: dict[str, Any]) -> None:
     (out / "manifest.json").write_text(json.dumps(m, indent=2, sort_keys=True) + "\n")
 
 
+def _read_manifest(out: Path) -> dict[str, Any] | None:
+    p = out / "manifest.json"
+    return cast(dict[str, Any], json.loads(p.read_text())) if p.is_file() else None
+
+
 # --- run ----------------------------------------------------------------------
 
 
 def run(name: str, out: Path, dry_run: bool) -> int:
+    # The manifest first: it is what loads the pod config, so an unknown pod name raises
+    # before a half-written directory exists on disk.
+    m = manifest(name, _head(), shlex.join(sys.argv), dry_run)
     out.mkdir(parents=True, exist_ok=True)
     (out / "env.txt").write_text("\n".join(env_lines()) + "\n")
-    _write_manifest(out, manifest(name, _head(), shlex.join(sys.argv), dry_run))
+    _write_manifest(out, m)
     if dry_run:
         (out / "trials.jsonl").write_text("")
         print(f"{out}: manifest.json, env.txt, empty trials.jsonl (dry run)")
@@ -251,38 +265,6 @@ def _jsonl(path: Path, rows: list[dict[str, Any]]) -> int:
     return len(rows)
 
 
-def _pplw_rows(text: str, source: str) -> list[dict[str, Any]]:
-    """Per-window NLLs, the un-pooled form of a perplexity sweep. One row per `[pplw]`
-    line; the aggregate `arm [T=ctx] ppl=` lines are the fallback when a pod printed
-    only those."""
-    rows = []
-    for i, line in enumerate(text.splitlines(), 1):
-        m = PPLW_RE.match(line)
-        if m:
-            rows.append(
-                {
-                    "arm": m.group(2),
-                    "ctx": int(m.group(1)),
-                    "ntok": int(m.group(3)),
-                    "nlls": [float(x) for x in m.group(4).split(",") if x],
-                    "source": f"{source}:{i}",
-                }
-            )
-    return rows
-
-
-def _diag_rows(text: str) -> list[dict[str, Any]]:
-    """`[diag]` payloads, verbatim. Nothing reads them yet -- the diagnostics land in
-    L1 -- so they are carried through unparsed rather than dropped."""
-    out = []
-    for line in text.splitlines():
-        m = DIAG_RE.match(line)
-        if m:
-            with contextlib.suppress(json.JSONDecodeError):
-                out.append(cast(dict[str, Any], json.loads(m.group(1))))
-    return out
-
-
 def _wall_clock_s(text: str) -> float | None:
     """Seconds from the environment header to ALL_DONE, when the log carries timestamps
     (`vastai logs` does not always), else None."""
@@ -321,28 +303,45 @@ def _fetch_log(out: Path, name: str) -> str:
     raise SystemExit(f"empty log fetch for instance {instance}")
 
 
+def _status(text: str) -> str | None:
+    """The end marker `boot.sh` printed. A run whose `pod.py run` exited non-zero prints
+    `===RUN_FAILED_` instead of `===ALL_DONE_`; the watchdog destroys the instance on
+    either (no idle billing), so the manifest is where the failure has to survive."""
+    for marker in ("RUN_FAILED", "ALL_DONE"):
+        if f"==={marker}_" in text:
+            return marker
+    return None
+
+
 def harvest(name: str, log: Path | None, out: Path) -> int:
+    model = load_pod(name).model
     out.mkdir(parents=True, exist_ok=True)
     text = log.read_text() if log else _fetch_log(out, name)
     source = str(log) if log else f"vastai logs ({_now()})"
-    trials = parse_trial_lines(text, load_pod(name).model, source)
+    trials = parse_trial_lines(text, model, source)
     write_jsonl(out / "trials.jsonl", trials)
     records = {"trials.jsonl": len(trials)}
 
-    pplw = _pplw_rows(text, source)
-    ppl = pplw or [dict(r) for r in parse_ppl_lines(text, load_pod(name).model, source)]
+    # Two artifacts of one sweep, two schemas, two files -- parsed independently, never
+    # one instead of the other.
+    pplw = parse_pplw_lines(text, model, source)
+    if pplw:
+        write_jsonl(out / "pplw.jsonl", pplw)
+        records["pplw.jsonl"] = len(pplw)
+    ppl = parse_ppl_lines(text, model, source)
     if ppl:
-        records["ppl.jsonl"] = _jsonl(out / "ppl.jsonl", ppl)
-    diag = _diag_rows(text)
+        write_jsonl(out / "ppl.jsonl", ppl)
+        records["ppl.jsonl"] = len(ppl)
+    diag = parse_diag_lines(text, source)
     if diag:
         records["diag.jsonl"] = _jsonl(out / "diag.jsonl", diag)
 
-    mpath = out / "manifest.json"
-    m = json.loads(mpath.read_text()) if mpath.is_file() else manifest(name, _head(), source, False)
+    m = _read_manifest(out) or manifest(name, _head(), source, False)
     m["harvested_at"] = _now()
     m["records"] = records
     m["errors"] = sum(1 for t in trials if t["error"] is not None)
     m["wall_clock_s"] = _wall_clock_s(text) or m.get("wall_clock_s")
+    m["status"] = _status(text)
     _write_manifest(out, m)
     print(f"{out}: " + ", ".join(f"{k}={v}" for k, v in records.items()))
     return 0
@@ -357,24 +356,44 @@ def _pyproject_pins() -> dict[str, str]:
     return {name: ver for name, ver in pins if name in PINNED}
 
 
-def _cell_fails(pod: PodCfg, trials: list[TrialRecord]) -> list[str]:
-    """`n == n_trials x len(seeds)` for every cell present, counting errors.
+def _expected_cells(pod: PodCfg) -> dict[tuple[str, str, int], tuple[int, str]]:
+    """Every cell the config calls for: arm x task x sub-task x ctx -> (n, task name).
 
-    The expected count comes from the task config the cell belongs to, matched on
-    (ctx, sub-task) -- a task YAML names one context length and the sub-tasks its
-    generator emits.
+    The arm key is the string a record carries, which is `legacy_name` where one is set
+    (the v1 arm names live on in the records) and the config name otherwise. `ppl` tasks
+    contribute no cells: a perplexity sweep is one number per (arm, ctx), not a set of
+    Bernoulli trials, and it is checked through `ppl.jsonl` rather than here.
     """
+    arms = [load_arm(a) for a in pod.arms]
     expect = {}
     for tname in pod.tasks:
         t = load_task(tname)
+        if t.generator == "ppl":
+            continue
         for sub in t.tasks:
-            expect[(t.ctx, sub)] = (t.n_trials * len(t.seeds), tname)
+            for arm in arms:
+                expect[(arm.legacy_name or arm.name, sub, t.ctx)] = (
+                    t.n_trials * len(t.seeds),
+                    tname,
+                )
+    return expect
+
+
+def _cell_fails(pod: PodCfg, trials: list[TrialRecord]) -> list[str]:
+    """Every configured cell holds exactly `n_trials x len(seeds)` records, errors
+    counted. Checking only the cells PRESENT is how a pod that produced nothing, or one
+    arm of three, used to pass -- so the expected set comes from the config, not from
+    the records, and a cell with no rows fails like a short one."""
+    expect = _expected_cells(pod)
     counts = Counter((r["arm"], r["task"], r["ctx"]) for r in trials)
     fails = []
-    for (arm, task, ctx), n in sorted(counts.items()):
-        want = expect.get((ctx, task))
+    for key in sorted(expect.keys() | counts.keys()):
+        arm, task, ctx = key
+        want, n = expect.get(key), counts.get(key, 0)
         if want is None:
             fails.append(f"cells: {arm} {task} ctx={ctx} is no cell of any task in {pod.name}")
+        elif n == 0:
+            fails.append(f"cells: {arm} {task} ctx={ctx} has 0 of {want[0]} records")
         elif n != want[0]:
             fails.append(
                 f"cells: {arm} {task} ctx={ctx} has n={n}, expected {want[0]}"
@@ -402,11 +421,10 @@ def _env_fails(d: Path) -> list[str]:
 
 
 def check(d: Path) -> int:
-    mpath = d / "manifest.json"
-    if not mpath.is_file():
-        print(f"CHECK FAIL manifest: {mpath} does not exist")
+    m = _read_manifest(d)
+    if m is None:
+        print(f"CHECK FAIL manifest: {d / 'manifest.json'} does not exist")
         return 1
-    m = json.loads(mpath.read_text())
     if "converted_by" in m:  # a paper-v1 archive directory: static evidence, not a run
         print(f"{d}: archive, skipped")
         return 0

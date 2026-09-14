@@ -18,7 +18,9 @@ import tables
 
 from kvdlra.eval.records import (
     parse_cell_lines,
+    parse_diag_lines,
     parse_ppl_lines,
+    parse_pplw_lines,
     parse_trial_lines,
     read_jsonl,
     write_jsonl,
@@ -31,6 +33,14 @@ CELL = (
     "[niah_single ctx16384] bugSseed-r64-h256 acc=1.000 recall=1.000 ratio=0.151 sbits=0.151 n=12\n"
 )
 PPL = "  bugSseed-r64-h256 [T=16384] ppl=5.308 tok_eq/layer=1377.7 ratio=0.085 sbits=0.150\n"
+PPLW = "[pplw] T=16384 bugSseed-r64-h256 ntok=511 nlls=1.573386,1.236791\n"
+# A >400-char line splits into part=i/N lines of 8 values (scripts/w10_frontier.py);
+# vast.ai truncates a log line at ~500 chars, so the parts ARE the artifact.
+PPLW_SPLIT = (
+    "[pplw] T=32768 quant-2bit-kivi ntok=255 part=1/3 nlls=1.000000,2.000000\n"
+    "[pplw] T=32768 quant-2bit-kivi ntok=255 part=2/3 nlls=3.000000,4.000000\n"
+    "[pplw] T=32768 quant-2bit-kivi ntok=255 part=3/3 nlls=5.000000\n"
+)
 
 
 def test_parse_trial_lines_schema() -> None:
@@ -239,3 +249,38 @@ def test_v1_archive_manifests_add_up_and_match_jsonl() -> None:
             assert entry["parsed"]["trials"] == n_trial_lines, pod_dir.name
         for name, n in manifest["records"].items():
             assert len(read_jsonl(pod_dir / name)) == n, (pod_dir.name, name)
+
+
+def test_parse_pplw_lines_schema() -> None:
+    """One row per window, carrying the window's NLL SUM: the printed value is a
+    per-token mean over `ntok` tokens, and a sum is what pools without re-weighting."""
+    rows = parse_pplw_lines(PPLW, model="M", source="f.txt")
+    assert rows == [
+        {
+            "model": "M", "arm": "bugSseed-r64-h256", "ctx": 16384, "window_idx": 0,
+            "ntok": 511, "nll_sum_nats": 1.573386 * 511, "source": "f.txt:1",
+        },
+        {
+            "model": "M", "arm": "bugSseed-r64-h256", "ctx": 16384, "window_idx": 1,
+            "ntok": 511, "nll_sum_nats": 1.236791 * 511, "source": "f.txt:1",
+        },
+    ]  # fmt: skip
+
+
+def test_parse_pplw_lines_reassembles_split_parts() -> None:
+    rows = parse_pplw_lines(PPLW_SPLIT, model="M", source="f.txt")
+    assert [r["window_idx"] for r in rows] == [0, 1, 2, 3, 4]
+    assert [r["nll_sum_nats"] for r in rows] == [v * 255 for v in (1.0, 2.0, 3.0, 4.0, 5.0)]
+    assert {r["source"] for r in rows} == {"f.txt:1"}  # the line the group started on
+
+
+def test_parse_pplw_lines_fails_loud_on_a_missing_part() -> None:
+    """A dropped fragment would silently shorten the window series -- the same
+    "never silently reduces n" rule the trial records live by."""
+    with pytest.raises(SystemExit, match="part"):
+        parse_pplw_lines(PPLW_SPLIT.splitlines(True)[0], model="M", source="f.txt")
+
+
+def test_parse_diag_lines_carries_the_payload_and_its_source() -> None:
+    rows = parse_diag_lines('[diag] {"layer": 0, "rank": 64}\n', source="f.txt")
+    assert rows == [{"layer": 0, "rank": 64, "source": "f.txt:1"}]

@@ -2,9 +2,15 @@
 
 ``[trial]`` lines are the Bernoulli outcomes the pods printed (one per task x ctx x arm
 x seed x trial); ``[task ctxN] arm acc= ... n=`` lines are pooled cells; ``arm [T=ctx]
-ppl=...`` lines are perplexity sweeps. All three regexes are the emitters' formats from
-Week 11/17/18/19 (previously duplicated in six reader scripts: w10_parse_logs,
-w11_merge, w17_intervals, w18_intervals, w19_a2_misses, w19_fork_report).
+ppl=...`` lines are perplexity sweeps; ``[pplw]`` lines are the un-pooled per-window
+NLLs behind one of those sweeps, and ``[diag]`` lines are JSON diagnostics. All the
+regexes are the emitters' formats from Week 11/17/18/19 (previously duplicated in six
+reader scripts: w10_parse_logs, w11_merge, w17_intervals, w18_intervals, w19_a2_misses,
+w19_fork_report -- and, until the L0.5 fix round, in ``scripts/pod.py``).
+
+A perplexity sweep leaves TWO artifacts, and they are different records in different
+files: the aggregate ``PplRecord`` (``ppl.jsonl``) and the per-window ``PplwRecord``
+(``pplw.jsonl``). Neither substitutes for the other.
 
 ``haystack_id``/``depth``/``prompt_sha256``/``error`` are carried in the schema but are
 ``None`` for the archived paper-v1 records: the v1 emitters never printed them.
@@ -33,6 +39,13 @@ PPL_RE = re.compile(
     r"^\s*(\S+)\s+\[T=(\d+)\] ppl=([0-9.]+)(?: tok_eq/layer=([0-9.]+))? .*?ratio=([0-9.]+)"
     r"(?: sbits=([0-9.]+))?"
 )
+# The emitter's own documented format (scripts/w10_frontier.py run(), pinned by
+# tests/test_w15_pplw.py): one line per (arm, T), except that a would-be >400-char line
+# splits into ``part=i/N`` fragments of 8 values, because `vastai logs` truncates a line
+# at ~500 chars. Dropping the fragments -- which is what the first harvest did -- loses
+# the whole sweep silently.
+PPLW_RE = re.compile(r"^\[pplw\] T=(\d+) (\S+) ntok=(\d+)(?: part=(\d+)/(\d+))? nlls=([0-9.,]+)$")
+DIAG_RE = re.compile(r"^\[diag\] (\{.*\})\s*$")
 
 
 class TrialRecord(TypedDict):
@@ -61,6 +74,22 @@ class CellRecord(TypedDict):
     hits: int | None
     ratio: float
     sbits: float | None
+    source: str
+
+
+class PplwRecord(TypedDict):
+    """One scored window of a perplexity sweep.
+
+    ``nll_sum_nats`` is the window's total NLL in nats: the emitter prints a per-token
+    MEAN over ``ntok`` tokens, and the sum is the quantity that pools without carrying
+    the weights around (``ppl == exp(sum(nll_sum_nats) / sum(ntok))``)."""
+
+    model: str
+    arm: str
+    ctx: int
+    window_idx: int
+    ntok: int
+    nll_sum_nats: float
     source: str
 
 
@@ -158,7 +187,77 @@ def parse_ppl_lines(text: str, model: str, source: str) -> list[PplRecord]:
     return out
 
 
-def write_jsonl(path: Path, rows: list[TrialRecord] | list[CellRecord] | list[PplRecord]) -> None:
+def parse_pplw_lines(text: str, model: str, source: str) -> list[PplwRecord]:
+    """Every ``[pplw]`` window as a record, split lines reassembled in part order.
+
+    Fragments are gathered per ``(arm, ctx)`` -- the emitter prints one group per
+    ``(arm, T)`` -- and only emitted once every part of the group has arrived. An
+    incomplete set raises ``SystemExit``: a truncated log is a harvest to redo, not a
+    sweep to publish short. Every window of a group cites the line the group started on.
+    """
+    out: list[PplwRecord] = []
+    pending: dict[tuple[str, int], tuple[int, int, int, dict[int, list[float]]]] = {}
+
+    def emit(arm: str, ctx: int, ntok: int, line: int, vals: list[float]) -> None:
+        out.extend(
+            {
+                "model": model,
+                "arm": arm,
+                "ctx": ctx,
+                "window_idx": j,
+                "ntok": ntok,
+                "nll_sum_nats": v * ntok,
+                "source": f"{source}:{line}",
+            }
+            for j, v in enumerate(vals)
+        )
+
+    for i, line in enumerate(text.splitlines(), 1):
+        m = PPLW_RE.match(line)
+        if not m:
+            continue
+        ctx, arm, ntok, part, n_parts, nlls = m.groups()
+        vals = [float(x) for x in nlls.split(",") if x]
+        if part is None:
+            emit(arm, int(ctx), int(ntok), i, vals)
+            continue
+        key = (arm, int(ctx))
+        n, tok, first, parts = pending.setdefault(key, (int(n_parts), int(ntok), i, {}))
+        parts[int(part)] = vals
+        if len(parts) == n:
+            emit(arm, key[1], tok, first, [v for j in sorted(parts) for v in parts[j]])
+            del pending[key]
+    if pending:
+        missing = {
+            f"{arm} T={ctx}": sorted(set(range(1, n + 1)) - set(parts))
+            for (arm, ctx), (n, _tok, _first, parts) in pending.items()
+        }
+        raise SystemExit(f"{source}: incomplete [pplw] part set, missing {missing}")
+    return out
+
+
+def parse_diag_lines(text: str, source: str) -> list[dict[str, object]]:
+    """``[diag] {json}`` payloads, verbatim plus their ``source``. Nothing reads them
+    yet -- the diagnostics land in L1 -- so they are carried through unparsed rather
+    than dropped. A line whose payload is not JSON is skipped, not fatal: diagnostics
+    are never evidence for a number."""
+    out: list[dict[str, object]] = []
+    for i, line in enumerate(text.splitlines(), 1):
+        m = DIAG_RE.match(line)
+        if not m:
+            continue
+        try:
+            payload = json.loads(m.group(1))
+        except json.JSONDecodeError:
+            continue
+        out.append({**payload, "source": f"{source}:{i}"})
+    return out
+
+
+def write_jsonl(
+    path: Path,
+    rows: list[TrialRecord] | list[CellRecord] | list[PplRecord] | list[PplwRecord],
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as f:
         for r in rows:

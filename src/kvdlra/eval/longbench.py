@@ -19,7 +19,7 @@ realistic-tasks story while RULER carries 64K.
 
 from __future__ import annotations
 
-import argparse
+import functools
 import gc
 import re
 import string
@@ -30,10 +30,12 @@ import torch
 from datasets import load_dataset
 from transformers.cache_utils import Cache, DynamicCache
 
-from kvdlra.baselines.compat import install_kvpress_prefill_compat
-from kvdlra.eval.data import load_model
-from kvdlra.eval.frontier import _footprint, _prefill_chunked, build_arms
-from kvdlra.eval.ruler import _decode
+from kvdlra.eval.config import TaskCfg
+from kvdlra.eval.frontier import _footprint, _prefill_chunked
+from kvdlra.eval.ruler import _decode, prompt_sha256
+
+# One templated example: (prompt ids, reference answers).
+Example = tuple[torch.Tensor, list[str]]
 
 QA_TASKS = ("qasper", "multifieldqa_en", "hotpotqa", "2wikimqa", "narrativeqa")
 _PROMPT = (
@@ -105,10 +107,10 @@ def generate(
     n: int,
     h_kv: int,
     max_new: int,
-) -> tuple[str, float]:
+) -> tuple[str, float, float]:
     """Prefill the whole prompt except its last token (chunked, OOM-safe), then
     greedy-generate the answer from the last token at TRUE positions. Returns
-    (answer_text, memory-ratio of the compressed prompt)."""
+    (answer_text, fp16 memory ratio, stored-bits ratio of the compressed prompt)."""
     prompt_ids = prompt_ids.to(device)
     pre, last = prompt_ids[:, :-1], prompt_ids[:, -1:]
     ctx_len = int(pre.shape[1])
@@ -142,80 +144,63 @@ def generate(
         text = _decode(model, tok, cache, last, ctx_len, device, block=True, max_new=max_new)
     del cache
     gc.collect()
-    return text, fp.ratio_fp16(ctx_len, n)
+    return text, fp.ratio_fp16(ctx_len, n), fp.ratio_stored_bits(ctx_len, n)
 
 
-# ------------------------------------------------------------- runner
+# ------------------------------------------------------------- one trial
+
+MAX_NEW = 48  # the v1 answer budget; LongBench QA answers are short
 
 
-def run(args: argparse.Namespace) -> dict[str, Any]:
-    install_kvpress_prefill_compat()
-    model, tokenizer = load_model(args.model, args.device, args.dtype)
-    model.config._attn_implementation = "sdpa"
-    cfg = model.config
-    head_dim = getattr(cfg, "head_dim", cfg.hidden_size // cfg.num_attention_heads)
-    n = int(head_dim * cfg.num_key_value_heads)
-    h_kv = int(cfg.num_key_value_heads)
-    print(f"model={args.model} n={n} tasks={args.tasks} max_len={args.max_len}", flush=True)
+@functools.lru_cache(maxsize=8)
+def load_examples(tok: Any, task: str, max_len: int, n: int) -> tuple[Example, ...]:
+    """The first ``n`` test examples of a LongBench QA subset, already templated and
+    middle-truncated to ``max_len``. Memoized: every arm of a cell rebuilds the same set,
+    and each rebuild re-reads the dataset."""
+    ds = load_dataset("THUDM/LongBench", task, split="test", trust_remote_code=True)
+    return tuple(build_example(tok, ds[i], max_len) for i in range(n))
 
-    results: list[dict[str, Any]] = []
-    for task in args.tasks:
-        try:
-            # Per-task load is isolated: one task's dataset load/build failing
-            # (network, HF schema drift, an empty split) must skip only that task,
-            # not abort the whole axis before a single arm runs (the lb:[] bug).
-            ds = load_dataset("THUDM/LongBench", task, split="test", trust_remote_code=True)
-            examples = [
-                build_example(tokenizer, ds[i], args.max_len) for i in range(args.n_examples)
-            ]
-            avg_len = sum(int(p.shape[1]) for p, _ in examples) / len(examples)
-        except Exception as exc:
-            print(f"[{task}] SKIP {type(exc).__name__}: {exc}", flush=True)
-            continue
-        for arm in build_arms(args, model, args.max_len):
-            arm_chunk = args.chunk if arm.get("chunkable", True) else 0
-            f1s, ratios = [], []
-            try:
-                for prompt_ids, answers in examples:
-                    text, ratio = generate(
-                        model,
-                        tokenizer,
-                        arm,
-                        prompt_ids,
-                        args.device,
-                        arm_chunk,
-                        n,
-                        h_kv,
-                        args.max_new,
-                    )
-                    f1s.append(qa_f1_max(text, answers))
-                    ratios.append(ratio)
-            except Exception as exc:
-                print(f"[{task}] {arm['name']:14s} SKIP {type(exc).__name__}: {exc}", flush=True)
-                if args.device.startswith("cuda"):
-                    torch.cuda.empty_cache()
-                continue
-            row = {
-                "task": task,
-                "avg_len": avg_len,
-                "method": arm["name"],
-                "kind": arm["kind"],
-                "rank": arm["rank"],
-                "f1": sum(f1s) / len(f1s),
-                "ratio_fp16": sum(ratios) / len(ratios),
-                "n": len(f1s),
-            }
-            results.append(row)
-            print(
-                f"[{task} len~{avg_len:.0f}] {arm['name']:14s} f1={row['f1']:.3f} "
-                f"ratio={row['ratio_fp16']:.3f}",
-                flush=True,
-            )
-    return {
-        "model": args.model,
-        "n_features": n,
-        "max_len": args.max_len,
-        "tasks": args.tasks,
-        "n_examples": args.n_examples,
-        "results": results,
-    }
+
+def run_trial(
+    arm: dict[str, Any],
+    model: Any,
+    tok: Any,
+    task: TaskCfg,
+    sub: str,
+    seed: int,
+    trial: int,
+    *,
+    device: str,
+    chunk: int,
+    n: int,
+    h_kv: int,
+    pool: list[str] | None = None,
+) -> tuple[int, float, dict[str, Any]]:
+    """Mean token-F1 over the subset's ``n_samples`` examples, as one trial record.
+
+    LongBench's unit is a mean over examples, not a Bernoulli draw, so a cell is one
+    record: ``frac`` is that mean F1 and ``hit`` is the exact-match case (F1 == 1), the
+    same frac>=1 rule the needle tasks use. ``seed`` and ``pool`` are unused -- the
+    examples are the dataset's own, in its own order -- and are accepted so every
+    generator's ``run_trial`` has one signature.
+    """
+    examples = load_examples(tok, sub, task.ctx, task.n_samples)
+    f1s, ratios, sbits = [], [], []
+    for prompt_ids, answers in examples:
+        text, ratio, sratio = generate(model, tok, arm, prompt_ids, device, chunk, n, h_kv, MAX_NEW)
+        f1s.append(qa_f1_max(text, answers))
+        ratios.append(ratio)
+        sbits.append(sratio)
+    f1 = sum(f1s) / len(f1s)
+    return (
+        int(f1 >= 1.0),
+        f1,
+        {
+            "haystack_id": f"{sub}:0-{task.n_samples - 1}",  # the dataset's own examples
+            "depth": None,
+            "code_family": None,
+            "prompt_sha256": prompt_sha256(*(p for p, _ in examples)),
+            "ratio": sum(ratios) / len(ratios),
+            "sbits": sum(sbits) / len(sbits),
+        },
+    )

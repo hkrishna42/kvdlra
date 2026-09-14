@@ -14,13 +14,12 @@ per-window values (no error bars). Week-15 keeps them. Pins:
 3. ``test_pplw_line_splits_when_long`` -- >400-char lines (vast logs truncate
    at ~500) split into ``part=i/N`` lines of 8 values that reassemble exactly.
 
-Hermetic: tiny random-weight Llama + random-token corpus, loaders monkeypatched
-so ``frontier.run`` executes its real eval loop with no downloads.
+Hermetic: tiny random-weight Llama + random-token corpus, so ``frontier.run_ppl``
+executes its real eval loop with no downloads.
 """
 
 from __future__ import annotations
 
-import argparse
 import math
 import re
 from typing import Any
@@ -30,13 +29,14 @@ import torch
 from transformers import LlamaConfig, LlamaForCausalLM
 
 from kvdlra.eval import frontier, records
+from kvdlra.eval.config import ArmCfg
 
 # records.PPL_RE anchors on ^ but is not compiled MULTILINE (it is applied line by
 # line by the harvest); scanning a captured stdout block needs the same pattern with
 # re.M, so the byte-compatibility claim is about the pattern, not a second copy.
 PPL_RE = re.compile(records.PPL_RE.pattern, re.M)
 
-# The documented [pplw] harvest regex (scripts/frontier.py, run()):
+# The documented [pplw] harvest regex (frontier._log_pplw):
 #   [pplw] T=<T> <method> ntok=<per-window scored tokens> [part=<i>/<N>]
 #   nlls=<comma-joined per-window mean NLLs, 6 decimals>
 PPLW_RE = re.compile(
@@ -63,48 +63,45 @@ def _tiny_model() -> LlamaForCausalLM:
     return model
 
 
+ARMS = {
+    "full": ArmCfg(name="full", kind="full"),
+    "bug-r8": ArmCfg(
+        name="bug-r8",
+        kind="bug",
+        cache={
+            "rank": 8,
+            "coord_budget": None,
+            "recent_window": 8,
+            "absorb_block": 4,
+            "n_sink": 4,
+            "retention": "fifo",
+        },
+    ),
+}
+
+
 def _run(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    methods: list[str],
-    t: int = 64,
-    window: int = 16,
-    n_samples: int = 3,
-) -> dict[str, Any]:
-    """Drive the REAL ``frontier.run`` eval loop hermetically (cpu, no I/O)."""
+    *, methods: list[str], t: int = 64, window: int = 16, n_samples: int = 3
+) -> list[dict[str, Any]]:
+    """Drive the REAL ``frontier.run_ppl`` eval loop hermetically (cpu, no I/O)."""
     model = _tiny_model()
     n_ids = (t + window) * (n_samples + 1)  # enough exact windows for n_samples
     ids = torch.randint(0, 256, (n_ids,))
-    monkeypatch.setattr(frontier, "load_model", lambda *a, **k: (model, None))
-    monkeypatch.setattr(frontier, "load_corpus_ids", lambda *a, **k: ids)
-    monkeypatch.setattr(frontier, "install_kvpress_prefill_compat", lambda: None)
-    args = argparse.Namespace(
-        model="tiny-hermetic",
-        device="cpu",
-        dtype="float32",
-        T=[t],
-        window=window,
-        n_samples=n_samples,
-        ranks=[8],
-        recent_window=8,
-        absorb_block=4,
-        chunk=0,
-        corpus="wikitext-103",
-        methods=methods,
-    )
-    return frontier.run(args)
+    arms = [frontier.build_arm(ARMS[m], model, t) for m in methods]
+    samples = frontier.windows(ids, t, window, n_samples)
+    assert len(samples) == n_samples
+    return frontier.run_ppl(arms, model, samples, t, chunk=0, n=32, h_kv=2, device="cpu")
 
 
-def _ok_rows(blob: dict[str, Any], t: int) -> list[dict[str, Any]]:
-    rows = [r for r in blob["per_T"][str(t)] if r["status"] == "ok"]
-    assert rows, "hermetic run produced no ok rows"
-    return rows
+def _ok_rows(rows: list[dict[str, Any]], t: int) -> list[dict[str, Any]]:
+    ok = [r for r in rows if r["status"] == "ok" and r["T"] == t]
+    assert ok, "hermetic run produced no ok rows"
+    return ok
 
 
-def test_window_nll_consistency(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_window_nll_consistency() -> None:
     # full exercises score_press(None); bug (rank 8) exercises score_streaming.
-    blob = _run(monkeypatch, methods=["full", "bug"], n_samples=3)
-    rows = _ok_rows(blob, 64)
+    rows = _ok_rows(_run(methods=["full", "bug-r8"], n_samples=3), 64)
     assert {r["method"] for r in rows} == {"full", "bug-r8"}
     for row in rows:
         nlls, toks = row["window_nlls"], row["window_toks"]
@@ -118,12 +115,9 @@ def test_window_nll_consistency(monkeypatch: pytest.MonkeyPatch) -> None:
         assert row["ppl"] == pytest.approx(pooled, rel=1e-5)
 
 
-def test_pplw_line_format(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    blob = _run(monkeypatch, methods=["full", "bug"], n_samples=3)
+def test_pplw_line_format(capsys: pytest.CaptureFixture[str]) -> None:
+    rows = _ok_rows(_run(methods=["full", "bug-r8"], n_samples=3), 64)
     out = capsys.readouterr().out
-    rows = _ok_rows(blob, 64)
 
     pplw = {m.group(2): m for m in PPLW_RE.finditer(out)}
     pooled = {m.group(1): m for m in PPL_RE.finditer(out)}
@@ -147,13 +141,10 @@ def test_pplw_line_format(
             assert PPL_RE.match(line) is None
 
 
-def test_pplw_line_splits_when_long(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_pplw_line_splits_when_long(capsys: pytest.CaptureFixture[str]) -> None:
     # 48 windows -> single line would be ~460 chars > 400 -> 6 part-lines of 8.
-    blob = _run(monkeypatch, methods=["full"], t=32, window=8, n_samples=48)
+    (row,) = _ok_rows(_run(methods=["full"], t=32, window=8, n_samples=48), 32)
     out = capsys.readouterr().out
-    (row,) = _ok_rows(blob, 32)
     assert len(row["window_nlls"]) == 48
 
     parts = [m for m in PPLW_RE.finditer(out) if m.group(2) == "full"]

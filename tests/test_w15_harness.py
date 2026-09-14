@@ -23,7 +23,6 @@ a tiny hermetic random-weight Llama (mirroring ``tests/test_shadow_cache.py``):
 
 from __future__ import annotations
 
-import argparse
 from typing import Any
 
 import pytest
@@ -31,6 +30,7 @@ import torch
 from transformers import LlamaConfig, LlamaForCausalLM
 
 from kvdlra.eval import frontier, ruler
+from kvdlra.eval.config import ArmCfg
 
 H, D = 2, 16
 N_FEATURES = H * D
@@ -76,27 +76,33 @@ class _StubTok:
         return " ".join(str(i) for i in ids)
 
 
-def _build_arm(
-    model: LlamaForCausalLM, methods: list[str], t: int, **over: object
-) -> dict[str, Any]:
-    """One arm via the REAL ``frontier.build_arms`` (not a hand-rolled dict),
-    so the test exercises the exact factory the harness runs."""
-    ns = argparse.Namespace(
-        methods=methods,
-        recent_window=8,
-        absorb_block=4,
-        ranks=[8],
-        hh_budgets=[4],
-        hh_neighbor=0,
-        chunk=0,
-        shadow_ranks=[8],
-        shadow_topk=2,
-    )
-    for k, v in over.items():
-        setattr(ns, k, v)
-    arms = frontier.build_arms(ns, model, t)
-    assert len(arms) == 1
-    return arms[0]
+SHADOW = ArmCfg(
+    name="shadow-r8",
+    kind="shadow",
+    chunkable=False,
+    cache={"rank_s": 8, "top_k": 2, "chunk": 8, "recent_window": 8, "n_sink": 4},
+)
+BUGS = ArmCfg(
+    name="bugS-r8-h4",
+    kind="bug",
+    cache={
+        "rank": 8,
+        "coord_budget": None,
+        "recent_window": 8,
+        "absorb_block": 4,
+        "n_sink": 4,
+        "retention": "lowrank_surprise",
+        "hh_budget": 4,
+        "hh_select": "surprise",
+        "hh_neighbor": 0,
+    },
+)
+
+
+def _build_arm(model: LlamaForCausalLM, cfg: ArmCfg, t: int) -> dict[str, Any]:
+    """One arm via the REAL ``frontier.build_arm`` (not a hand-rolled dict), so the
+    test exercises the exact factory the harness runs."""
+    return frontier.build_arm(cfg, model, t)
 
 
 def test_ruler_decode_inside_attach_shadow(tiny_model: LlamaForCausalLM) -> None:
@@ -108,7 +114,7 @@ def test_ruler_decode_inside_attach_shadow(tiny_model: LlamaForCausalLM) -> None
     tokens -> 10 middle chunks, top_k=2) and that ``retrieve()``'s success below
     is attributable to the widened attach scope, not to a degenerate config."""
     t = 96
-    arm = _build_arm(tiny_model, ["shadow"], t=t)
+    arm = _build_arm(tiny_model, SHADOW, t=t)
     hay, query = _prompt(t), _prompt(4, seed=2)
 
     # Control: the pre-fix harness shape must now fail loudly, not silently.
@@ -147,7 +153,7 @@ def test_ruler_decode_attach_scope_bugs_identity(tiny_model: LlamaForCausalLM) -
     generate`` to shadow arms only (``arm["kind"] == "shadow"``), and document
     the mechanism here."""
     t, chunk, max_new = 96, 16, 4
-    arm = _build_arm(tiny_model, ["bugslash"], t=t, chunk=chunk)
+    arm = _build_arm(tiny_model, BUGS, t=t)
     assert arm["name"].startswith("bugS-")
     hay, query = _prompt(t), _prompt(4, seed=2)
 

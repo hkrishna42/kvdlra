@@ -27,17 +27,20 @@ The pod prepares the prompts first::
 
 from __future__ import annotations
 
-import gc
+import functools
 import json
+import os
 from pathlib import Path
 from typing import Any, cast
 
 import torch
 
-from kvdlra.baselines.compat import install_kvpress_prefill_compat
-from kvdlra.eval.data import load_model
-from kvdlra.eval.frontier import build_arms
-from kvdlra.eval.ruler import _tail_len, retrieve
+from kvdlra.eval.config import TaskCfg
+from kvdlra.eval.ruler import _tail_len, prompt_sha256, retrieve
+
+# Where the pod left the prompts the RULER generator built (scripts/pod/w19.sh clones
+# NVIDIA/RULER at a pinned commit and runs its prepare.py into this directory).
+DATA_DIR = Path(os.environ.get("RULER_DATA", "/root/ruler_data"))
 
 # RULER synthetic.yaml tokens_to_generate (the official generation budgets).
 TOKENS_TO_GENERATE = {"niah": 128, "vt": 30, "cwe": 120, "fwe": 50, "qa": 32}
@@ -89,75 +92,54 @@ def templated_official(
     return pre, query
 
 
+@functools.lru_cache(maxsize=16)
 def load_records(data_dir: Path, task: str, n: int | None) -> list[dict[str, Any]]:
-    """The first ``n`` records of ``<data_dir>/<task>/validation.jsonl``."""
+    """The first ``n`` records of ``<data_dir>/<task>/validation.jsonl`` (all of them for
+    ``n=None``). Memoized: every arm of a cell re-reads the same file."""
     path = data_dir / task / "validation.jsonl"
     rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
     return rows[:n] if n else rows
 
 
-def run(args: Any) -> dict[str, Any]:
-    install_kvpress_prefill_compat()
-    model, tok = load_model(args.model, args.device, args.dtype)
-    model.config._attn_implementation = "sdpa"
-    cfg = model.config
-    head_dim = getattr(cfg, "head_dim", cfg.hidden_size // cfg.num_attention_heads)
-    n_feat = int(head_dim * cfg.num_key_value_heads)
-    h_kv = int(cfg.num_key_value_heads)
-    ctx = int(args.context_len)
-    print(f"model={args.model} n={n_feat} tasks={args.tasks} ctx={ctx} data={args.data_dir}")
-    results: list[dict[str, Any]] = []
-    for task in args.tasks:
-        records = load_records(Path(args.data_dir), task, args.n_examples)
-        max_new = TOKENS_TO_GENERATE[task.split("_")[0]]
-        for arm in build_arms(args, model, ctx):
-            arm_chunk = args.chunk if arm.get("chunkable", True) else 0
-            hits, ratios, fracs, sbits = 0, [], [], []
-            for rec in records:
-                try:
-                    body, question = split_input(rec["input"])
-                    prefix = rec.get("answer_prefix", "")
-                    hay, query = templated_official(tok, body, question, prefix)
-                    hit, ratio, frac, sratio = retrieve(
-                        model, tok, arm, hay, query, list(rec["outputs"]), args.device,
-                        arm_chunk, n_feat, h_kv, max_new,
-                    )  # fmt: skip
-                except Exception as exc:  # one bad example is skipped, logged; arm survives
-                    print(f"[{task} ctx{ctx}] {arm['name']:14s} SKIP {type(exc).__name__}: {exc}")
-                    if args.device.startswith("cuda"):
-                        torch.cuda.empty_cache()
-                    continue
-                hits += int(hit)
-                ratios.append(ratio)
-                fracs.append(frac)
-                sbits.append(sratio)
-                print(
-                    f"[trial] task={task} ctx={ctx} arm={arm['name']} seed=0 "
-                    f"trial={rec['index']} hit={int(hit)} frac={frac:.3f}",
-                    flush=True,
-                )
-                gc.collect()
-            if not ratios:
-                continue
-            total = len(ratios)
-            row = {
-                "task": task,
-                "ctx": ctx,
-                "method": arm["name"],
-                "kind": arm["kind"],
-                "rank": arm["rank"],
-                "accuracy": hits / total,
-                "recall_frac": sum(fracs) / total,
-                "ratio_fp16": sum(ratios) / total,
-                "ratio_stored_bits": sum(sbits) / total,
-                "hits": hits,
-                "total": total,
-            }
-            results.append(row)
-            print(
-                f"[{task} ctx{ctx}] {arm['name']:14s} acc={row['accuracy']:.2f} "
-                f"recall={row['recall_frac']:.2f} ratio={row['ratio_fp16']:.3f} "
-                f"sbits={row['ratio_stored_bits']:.3f} n={total}",
-                flush=True,
-            )
-    return {"model": args.model, "benchmark": "ruler-official", "ctx": ctx, "results": results}
+def run_trial(
+    arm: dict[str, Any],
+    model: Any,
+    tok: Any,
+    task: TaskCfg,
+    sub: str,
+    seed: int,
+    trial: int,
+    *,
+    device: str,
+    chunk: int,
+    n: int,
+    h_kv: int,
+    pool: list[str] | None = None,
+) -> tuple[int, float, dict[str, Any]]:
+    """Retrieve the ``trial``-th official record of sub-task ``sub`` through ``arm``.
+
+    The record index IS the trial index: the generator wrote ``n_trials`` samples per
+    task at the pinned seed, in order. ``pool`` is unused -- the haystack comes from
+    RULER's own generator, not from ours -- and is accepted so every generator's
+    ``run_trial`` has one signature.
+    """
+    rec = load_records(DATA_DIR, sub, None)[trial]
+    body, question = split_input(rec["input"])
+    hay, query = templated_official(tok, body, question, rec.get("answer_prefix", ""))
+    max_new = TOKENS_TO_GENERATE[sub.split("_")[0]]
+    hit, ratio, frac, sbits = retrieve(
+        model, tok, arm, hay, query, list(rec["outputs"]), device, chunk, n, h_kv, max_new
+    )
+    return (
+        int(hit),
+        frac,
+        {
+            # RULER's own record id -- their haystack, not ours, so their index names it.
+            "haystack_id": f"{sub}:{rec['index']}",
+            "depth": None,  # official needles sit wherever their generator put them
+            "code_family": None,
+            "prompt_sha256": prompt_sha256(hay, query),
+            "ratio": ratio,
+            "sbits": sbits,
+        },
+    )

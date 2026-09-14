@@ -22,31 +22,13 @@ constant-memory state) against full KV (``2*t*n`` per layer), and reports:
 
 from __future__ import annotations
 
-import argparse
+from collections.abc import Callable
 from typing import Any
 
 import torch
 
 from kvdlra.accounting import measure_peak_gpu
-from kvdlra.eval.data import load_model
-from kvdlra.eval.frontier import _footprint, _prefill_chunked, build_arms, build_parser
-
-
-def _smoke_args(args: argparse.Namespace) -> argparse.Namespace:
-    """A COMPLETE build_arms namespace, built from the real frontier parser so a new
-    build_arms flag can never silently go missing here (Week-18 drift root-cause fix:
-    the old hand-listed namespace was already stale, missing min_sv_frac). We start
-    from every default, then override only the knobs this storage smoke varies."""
-    ns = build_parser().parse_args([])
-    ns.methods = args.methods
-    ns.ranks = args.ranks
-    ns.hh_budgets = args.hh_budgets
-    ns.chunk = args.chunk
-    ns.warmup_seed = args.warmup_seed
-    ns.hh_neighbor = 1
-    ns.recent_window = 32
-    ns.absorb_block = 16
-    return ns
+from kvdlra.eval.frontier import _footprint, _prefill_chunked
 
 
 @torch.no_grad()
@@ -110,8 +92,18 @@ def _measure(
     }
 
 
-def run(args: argparse.Namespace) -> dict[str, Any]:
-    model, _tok = load_model(args.model, args.device, args.dtype)
+def run(
+    model: Any,
+    build: Callable[[int], list[dict[str, Any]]],
+    context_lens: list[int],
+    device: str,
+    chunk: int,
+) -> dict[str, Any]:
+    """Measure every arm ``build(ctx)`` returns at each context length.
+
+    ``build`` is a callable rather than a list because a cache arm's budgets resolve
+    against the context length, so the arms have to be rebuilt per ``ctx``.
+    """
     model.config._attn_implementation = "sdpa"
     cfg = model.config
     head_dim = getattr(cfg, "head_dim", cfg.hidden_size // cfg.num_attention_heads)
@@ -121,10 +113,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     g = torch.Generator().manual_seed(0)
     rows: list[dict[str, Any]] = []
     worst_integrity = 0.0
-    for ctx in args.context_lens:
-        hay = torch.randint(0, int(cfg.vocab_size), (1, ctx), generator=g).to(args.device)
-        for arm in build_arms(_smoke_args(args), model, ctx):
-            m = _measure(model, arm, hay, ctx, n, h_kv, args.chunk, n_layers)
+    for ctx in context_lens:
+        hay = torch.randint(0, int(cfg.vocab_size), (1, ctx), generator=g).to(device)
+        for arm in build(ctx):
+            m = _measure(model, arm, hay, ctx, n, h_kv, chunk, n_layers)
             worst_integrity = max(worst_integrity, float(m["integrity_rel_err"]))
             row = {"ctx": ctx, "method": arm["name"], "kind": arm["kind"], **m}
             rows.append(row)
@@ -142,10 +134,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         f"verdict: {'PASS' if ok else 'FAIL'} (worst={worst_integrity:.2e})"
     )
     blob = {
-        "model": args.model,
+        "model": str(getattr(cfg, "name_or_path", "?")),
         "n_features": n,
         "n_layers": n_layers,
-        "context_lens": args.context_lens,
+        "context_lens": context_lens,
         "worst_integrity_rel_err": worst_integrity,
         "integrity_ok": ok,
         "results": rows,

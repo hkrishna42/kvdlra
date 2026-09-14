@@ -29,7 +29,7 @@ from typing import Any
 import torch
 from transformers.cache_utils import DynamicCache
 
-from kvdlra.eval.frontier import _prefill_chunked, _prefill_plain, build_arms
+from kvdlra.eval.frontier import _prefill_chunked, _prefill_plain
 from kvdlra.quant.kivi_cache import _PerChannel
 
 # The streaming layer's stored state (mirrors BugStreamingLayer.stored_state_numel): tiers,
@@ -143,13 +143,19 @@ def attend_ready_seconds(kind: str, cache: Any, device: str, repeats: int) -> fl
 
 @torch.no_grad()
 def run_persist(
-    model: Any, args: Any, ctx: int, device: str, tmp: Path, repeats: int = 3
+    model: Any,
+    arms: list[dict[str, Any]],
+    ctx: int,
+    device: str,
+    tmp: Path,
+    chunk: int,
+    repeats: int = 3,
 ) -> list[dict[str, Any]]:
     torch.manual_seed(0)
     hay = torch.randint(0, int(model.config.vocab_size), (1, ctx), device=device)
     rows: list[dict[str, Any]] = []
     full_bytes: float | None = None
-    for arm in build_arms(args, model, ctx):
+    for arm in arms:
         kind = arm["kind"]
         if kind == "full":
             cache: Any = DynamicCache()
@@ -157,10 +163,10 @@ def run_persist(
         elif kind == "bug":
             cache = arm["make"]()
             with cache.attach(model):
-                _prefill_chunked(model, cache, hay, args.chunk if args.chunk > 0 else ctx)
+                _prefill_chunked(model, cache, hay, chunk if chunk > 0 else ctx)
         elif kind == "quant":
             cache = arm["make"]()
-            _prefill_plain(model, cache, hay, args.chunk)
+            _prefill_plain(model, cache, hay, chunk)
         else:
             raise ValueError(f"persist covers full/bug/quant arms, not {kind!r}")
         state = state_tensors(kind, cache)

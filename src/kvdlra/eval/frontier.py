@@ -19,7 +19,6 @@ frozen (``tests/test_w15_pplw.py``).
 
 from __future__ import annotations
 
-import argparse
 import gc
 from contextlib import nullcontext
 from typing import Any, cast
@@ -29,12 +28,13 @@ from torch.nn.functional import cross_entropy
 from transformers.cache_utils import Cache, DynamicCache
 
 from kvdlra import accounting as acc
-from kvdlra.baselines.compat import install_kvpress_prefill_compat
 from kvdlra.cache import BugStreamingCache, MorphKVCache, ShadowKVCache
-from kvdlra.eval.data import load_corpus_ids, load_model
+from kvdlra.eval.config import ArmCfg, arm_kwargs
 from kvdlra.quant.kivi_cache import aux_words, flush, make_quant_cache
 
 N_SINK = 4
+# One scored window: (context ids, continuation ids), both 1-D.
+Sample = tuple[torch.Tensor, torch.Tensor]
 
 
 # --------------------------------------------------------------------- scoring
@@ -163,335 +163,130 @@ def score_quant(
 
 # ------------------------------------------------------------------- the arms
 
+# The YAML `kind` a config declares -> the dispatch key an arm dict carries, which is
+# what `retrieve`, `generate` and `_footprint` branch on. They differ in one place:
+# `composite` reads better in a config, `press_quant` says what the dispatch does.
+KIND = {"composite": "press_quant"}
 
-def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, Any]]:
-    """Each arm: name, kind ("bug"|"morph"|"press"|"full"), and a zero-arg factory
-    for a fresh cache/press (stateful -> rebuilt per sample), for context length ``t``."""
-    rw, ab = args.recent_window, args.absorb_block
-    msf = float(getattr(args, "min_sv_frac", 0.0))  # Week-17 integrator floor (0.0 = off)
-    fsuf = f"-f{msf:g}" if msf > 0.0 else ""
-    trk = str(getattr(args, "tracker", "bug"))  # Week-20 tracker-swap ablation (bug = as-is)
-    tsuf = f"-{trk}" if trk != "bug" else ""
-    arms: list[dict[str, Any]] = []
-    want = set(args.methods)
 
-    # Load-bearing invariant: single-shot _prefill bypasses the SLASH exact tier
-    # (it only populates via chunked ingest), so a SurpriseSLASH arm run without
-    # --chunk would silently retrieve nothing -- a wrong-reason zero. Fail loud.
-    if want & {"bugslash", "bugevict"} and not getattr(args, "chunk", 0):
-        raise ValueError(
-            "bugslash/bugevict require chunked prefill (--chunk > 0): single-shot "
-            "prefill bypasses the SLASH exact tier and the needle would be smeared."
-        )
+def build_arm(cfg: ArmCfg, model: Any, t: int) -> dict[str, Any]:
+    """One arm of ``configs/arms/<name>.yaml``, resolved for context length ``t``.
 
-    if "full" in want:
-        arms.append({"name": "full", "kind": "full", "rank": None, "make": lambda: None})
+    The dict is the harness's unit of work: a ``name`` (the string every record and log
+    row carries -- ``legacy_name`` where the config sets one, so a re-run is comparable
+    with the archive key for key), a dispatch ``kind``, whatever identifying parameters
+    ``_footprint`` needs to bill it, and a zero-argument factory. Caches and presses are
+    stateful, so the factory is called once per sample rather than shared.
 
-    if "bug" in want:
-        # coord_budget >= mid so the whole middle is retained as rank-r coords
-        # (BUG-as-prefill-compressor: memory ~ rank/n, one point per rank).
-        cb = t + rw + ab
-        for r in args.ranks:
-            # The kwargs are named once and both stored and applied, so configs/arms/*.yaml
-            # can be checked against them without constructing a cache (Task 4 parity test).
-            # `make` closes over a COPY (dict(kwargs)): mutating the stored "kwargs" dict must
-            # not change what a later make() call constructs.
-            kwargs: dict[str, Any] = {
-                "rank": r,
-                "coord_budget": cb,
-                "recent_window": rw,
-                "absorb_block": ab,
-                "n_sink": N_SINK,
-                "retention": "fifo",
-                "min_sv_frac": msf,
-            }
-            arms.append(
-                {
-                    "name": f"bug-r{r}{fsuf}",
-                    "kind": "bug",
-                    "rank": r,
-                    "kwargs": kwargs,
-                    "make": lambda kw=dict(kwargs): BugStreamingCache(model, **kw),
-                }
-            )
+    ``kwargs`` is the cache constructor's keyword set verbatim (``config.arm_kwargs``);
+    ``make`` closes over a COPY of it, so mutating the stored dict cannot change what a
+    later ``make()`` builds. ``model`` is only captured, never touched, so an arm can be
+    built without one -- which is what ``tests/test_config_parity.py`` does.
+    """
+    kind = KIND.get(cfg.kind, cfg.kind)
+    arm: dict[str, Any] = {
+        "name": cfg.legacy_name or cfg.name,
+        "kind": kind,
+        "rank": None,
+        "chunkable": cfg.chunkable,
+    }
+    if kind == "full":
+        return {**arm, "make": lambda: None}
+    if kind == "bug":
+        kw = arm_kwargs(cfg, t)
+        arm["rank"] = int(kw["rank"])
+        arm["kwargs"] = kw
+        # The surprise tier's three knobs are lifted out of the kwargs because
+        # `_footprint` bills the position/surprise buffers off them; a fifo arm carries
+        # retention="fifo" and no tier, exactly as the legacy dict did by omission.
+        for key in ("retention", "hh_select", "hh_budget"):
+            if key in kw:
+                arm[key] = kw[key]
+        return {**arm, "make": lambda kw=dict(kw): BugStreamingCache(model, **kw)}
+    if kind == "shadow":
+        kw = arm_kwargs(cfg, t)
+        arm["rank_s"] = int(kw["rank_s"])
+        arm["kwargs"] = kw
+        return {**arm, "make": lambda kw=dict(kw): ShadowKVCache(model, **kw)}
+    if kind == "quant":
+        return {**arm, **_quant_fields(cfg), "make": _quant_factory(cfg, model)}
+    if kind == "press_quant":
+        # Eviction x quantization (MiniKV-style): the press prunes to the keep fraction
+        # during single-shot prefill and the kvpress forward_hook's QuantizedCache branch
+        # re-quantizes the survivors, so the two compression axes multiply.
+        return {
+            **arm,
+            "keep": float(cfg.press["keep"]),
+            **_quant_fields(cfg),
+            "make_press": _evict_factory(cfg),
+            "make_cache": _quant_factory(cfg, model),
+        }
+    if kind == "press":
+        return {**arm, **_press(cfg)}
+    if kind == "quant_faithful":
+        raise NotImplementedError("L2")  # faithful KIVI (G=32, R=128, fp prefill)
+    raise ValueError(f"unknown arm kind {cfg.kind!r} in configs/arms/{cfg.name}.yaml")
 
-    if "bugslash" in want:
-        # Week-11 SurpriseSLASH: BUG low-rank gist + a surprise-selected EXACT
-        # outlier tier (hh_budget tokens kept verbatim). The needle is a
-        # low-attention high-residual outlier the low-rank basis fits worst, so a
-        # surprise-scored exact tier catches it where plain BUG (0% at 32K) can't.
-        # MUST prefill via chunked ingest (--chunk > 0) -- single-shot bypasses the
-        # exact tier. coord_budget >= mid keeps the whole (non-hh) bulk low-rank.
-        cb = t + rw + ab
-        # Week-12 H1 ablation: --hh-discard keeps selection + withholding
-        # identical but hides the pool from attention (hh_retain=False). The
-        # name prefix is deliberately NOT a superstring/substring of "bugS-"
-        # so ad-hoc greps over mixed logs cannot pool the two arm families.
-        retain = not getattr(args, "hh_discard", False)
-        # Week-13 T-B: --warmup-seed seeds the exact tier from the first ingest
-        # chunk's outliers -> arm name gains a "seed" suffix (bugS vs bugSseed A/B).
-        warmup = bool(getattr(args, "warmup_seed", False))
-        # Week-15 T2: --score-rank caps the SLASH surprise-scoring basis at a
-        # leading-column subview (selection-rank decoupled from storage-rank) ->
-        # arm name gains a "-s{k}" SUFFIX after -h{hh} (suffix, not prefix, so the
-        # bugS-* prefix-grep discipline over mixed logs stays intact).
-        score_rank = getattr(args, "score_rank", None)
-        prefix = "bugS" if retain else "bugSdrop"
-        if warmup:
-            prefix += "seed"
-        suffix = f"-s{score_rank}" if score_rank is not None else ""
-        # Week-18 compose: --bug-quant-bits quantizes the coordinate tier (PolarQuant
-        # variant D) -> "-q{bits}" name suffix + a ~0.04-0.05x sub-cliff arm. The
-        # seed+quant combo is fenced by a cache guard (seed_hh_warmup operates on the
-        # fp32 tail) whose relaxation needs GPU retrieval validation -> fail loud here.
-        qbits = getattr(args, "bug_quant_bits", None)
-        qbudget = int(getattr(args, "bug_quant_budget", 0) or 0)
-        # Week-19: seed + quant tier is wired (bugSseed-...-q{bits}, the sub-cliff
-        # candidate): the seed only routes the first chunk through _absorb_block_slash,
-        # the graduation path the unseeded q arm already runs with its quant tier.
-        # Budget semantics (Week-19 fix): --bug-quant-budget is the number of fp32
-        # coordinate columns KEPT; everything demoted from it is quantized, never
-        # dropped (quant tier = the whole middle). The Week-18 arm had these swapped
-        # (coord_budget = whole context, quant tier 512) so its tier never filled: its
-        # rows bill byte-identically to the unseeded flagship (results/w18-*-lines.txt).
-        q_coord_budget = qbudget if qbits is not None else cb
-        q_quant_budget = cb if qbits is not None else 0
-        qsuf = f"-q{qbits}" if qbits is not None else ""
-        for r in args.ranks:
-            for hh in args.hh_budgets:
-                kwargs = {
-                    "rank": r,
-                    "coord_budget": q_coord_budget,
-                    "recent_window": rw,
-                    "absorb_block": ab,
-                    "n_sink": N_SINK,
-                    "retention": "lowrank_surprise",
-                    "hh_budget": hh,
-                    "hh_select": "surprise",
-                    "hh_neighbor": args.hh_neighbor,
-                    "hh_retain": retain,
-                    "seed_hh_warmup": warmup,
-                    "score_rank": score_rank,
-                    "min_sv_frac": msf,
-                    "tracker": trk,
-                    "quant_bits": qbits,
-                    "quant_budget": q_quant_budget,
-                }
-                arms.append(
-                    {
-                        "name": f"{prefix}-r{r}-h{hh}{suffix}{qsuf}{fsuf}{tsuf}",
-                        "kind": "bug",
-                        "rank": r,
-                        "retention": "lowrank_surprise",
-                        "hh_select": "surprise",
-                        "hh_budget": hh,
-                        "kwargs": kwargs,
-                        "make": lambda kw=dict(kwargs): BugStreamingCache(model, **kw),
-                    }
-                )
 
-    if "bugevict" in want:
-        # Attribution control: a degenerate rank-1 BUG (negligible gist) with a
-        # surprise-selected exact tier == ~pure surprise-selected verbatim
-        # eviction. If bugslash retrieves at the SAME hh_budget as this, the win
-        # is the SELECTION RULE, not BUG's gist (the honesty crux, Week-7/8 wall).
-        for hh in args.hh_budgets:
-            kwargs = {
-                "rank": 1,
-                "coord_budget": 1,
-                "recent_window": rw,
-                "absorb_block": ab,
-                "n_sink": N_SINK,
-                "retention": "lowrank_surprise",
-                "hh_budget": hh,
-                "hh_select": "surprise",
-                "hh_neighbor": args.hh_neighbor,
-            }
-            arms.append(
-                {
-                    "name": f"bugEVICT-h{hh}",
-                    "kind": "bug",
-                    "rank": 1,
-                    "retention": "lowrank_surprise",
-                    "hh_select": "surprise",
-                    "hh_budget": hh,
-                    "kwargs": kwargs,
-                    "make": lambda kw=dict(kwargs): BugStreamingCache(model, **kw),
-                }
-            )
+def _quant_fields(cfg: ArmCfg) -> dict[str, Any]:
+    """The quantized tier's identifying parameters, as `_footprint` reads them."""
+    q = cfg.quant
+    return {
+        "nbits": int(q["nbits"]),
+        "quant_group": int(q["group"]),
+        "quant_residual": int(q["residual"]),
+        "quant_scheme": str(q["scheme"]),
+        "quant_backend": str(q["backend"]),
+    }
 
-    if "morph" in want:
-        for keep in args.morph_keeps:
-            arms.append(
-                {
-                    "name": f"morph-k{keep}",
-                    "kind": "morph",
-                    "rank": None,
-                    "keep": keep,
-                    "make": (
-                        lambda keep=keep: MorphKVCache(
-                            model,
-                            capacity=max(1, int(keep * t) - rw),
-                            recent_window=rw,
-                        )
-                    ),
-                }
-            )
 
-    if want & {"snapkv", "ea"}:
-        from kvpress import ExpectedAttentionPress, SnapKVPress
+def _quant_factory(cfg: ArmCfg, model: Any) -> Any:
+    q = cfg.quant
+    return lambda: make_quant_cache(
+        model.config,
+        nbits=int(q["nbits"]),
+        scheme=str(q["scheme"]),
+        backend=str(q["backend"]),
+        group=int(q["group"]),
+        residual=int(q["residual"]),
+    )
 
-        for keep in args.evict_keeps:
-            cr = 1.0 - keep
-            if "snapkv" in want:
-                arms.append(
-                    {
-                        "name": f"snapkv-k{keep}",
-                        "kind": "press",
-                        "rank": None,
-                        "keep": keep,
-                        "make": lambda cr=cr: SnapKVPress(compression_ratio=cr),
-                    }
-                )
-            if "ea" in want:
-                arms.append(
-                    {
-                        "name": f"ea-k{keep}",
-                        "kind": "press",
-                        "rank": None,
-                        "keep": keep,
-                        "make": lambda cr=cr: ExpectedAttentionPress(compression_ratio=cr),
-                    }
-                )
 
-    if "composite" in want:  # Week-20: eviction x quantization composite (MiniKV-style).
-        # The eviction press prunes to keep-fraction k; the survivors are stored
-        # QUANTIZED -- the kvpress forward_hook's QuantizedCache branch (compat.py)
-        # re-quantizes the pruned K/V. Stored bytes = k*(nbits/16) + aux, so the two
-        # compression axes multiply: this is the composite competitor the sub-cliff
-        # cell (bugSseed-r64-h256-q4, ~0.03-0.05x) is measured against on RULER.
-        from kvpress import ExpectedAttentionPress
+def _evict_factory(cfg: ArmCfg) -> Any:
+    """SnapKV for a config named ``snapkv*``, ExpectedAttention otherwise -- the two
+    scorer presses take the same single parameter, so the name is what separates them."""
+    from kvpress import ExpectedAttentionPress, SnapKVPress
 
-        cscheme = str(getattr(args, "quant_scheme", "kivi"))
-        cbackend = str(getattr(args, "quant_backend", "quanto"))
-        csuf = ("-kivi" if cscheme == "kivi" else "") + ("-hqq" if cbackend == "hqq" else "")
-        for keep in args.evict_keeps:
-            cr = 1.0 - keep
-            for nbits in args.quant_nbits:
-                arms.append(
-                    {
-                        "name": f"ea-k{keep}-q{nbits}{csuf}",
-                        "kind": "press_quant",
-                        "rank": None,
-                        "keep": keep,
-                        "nbits": nbits,
-                        "quant_group": args.quant_group,
-                        "quant_residual": args.quant_residual,
-                        "quant_scheme": cscheme,
-                        "quant_backend": cbackend,
-                        "chunkable": False,  # the press runs single-shot, like other presses
-                        "make_press": lambda cr=cr: ExpectedAttentionPress(compression_ratio=cr),
-                        "make_cache": (
-                            lambda nbits=nbits: make_quant_cache(
-                                model.config,
-                                nbits=nbits,
-                                scheme=cscheme,
-                                backend=cbackend,
-                                group=args.quant_group,
-                                residual=args.quant_residual,
-                            )
-                        ),
-                    }
-                )
+    cls = SnapKVPress if cfg.name.startswith("snapkv") else ExpectedAttentionPress
+    return lambda: cls(compression_ratio=1.0 - float(cfg.press["keep"]))
 
-    if "think" in want:  # ThinK: channel-wise KEY low-rank (kvpress drop-in)
+
+def _press(cfg: ArmCfg) -> dict[str, Any]:
+    """A prefill press, dispatched on which parameter its ``press:`` block carries:
+    ``ratio`` is ThinK's channel-wise key pruning, ``rank`` the per-sequence SVD oracle
+    (the rows published as ``palu-*``), ``keep`` an eviction press's kept fraction.
+    ``press_type`` is what `_footprint` branches on for the two analytic footprints."""
+    p = cfg.press
+    if "ratio" in p:
         from kvpress import ThinKPress
 
-        for cr in args.think_ratios:
-            arms.append(
-                {
-                    "name": f"think-c{cr}",
-                    "kind": "press",
-                    "press_type": "think",
-                    "rank": None,
-                    "think_ratio": cr,
-                    "chunkable": False,  # ThinKPress is not a ScorerPress -> no ChunkPress
-                    "make": lambda cr=cr: ThinKPress(key_channel_compression_ratio=cr),
-                }
-            )
-
-    if "palu" in want:  # Palu: low-rank projection of K+V (reconstruct-then-attend)
+        ratio = float(p["ratio"])
+        return {
+            "press_type": "think",
+            "think_ratio": ratio,
+            "make": lambda: ThinKPress(key_channel_compression_ratio=ratio),
+        }
+    if "rank" in p:
         from kvdlra.baselines.svd_oracle import SVDOraclePress
 
-        for rr in args.palu_ranks:
-            arms.append(
-                {
-                    "name": f"palu-r{rr}",
-                    "kind": "press",
-                    "press_type": "palu",
-                    "rank": None,
-                    "palu_rank_ratio": rr,
-                    "palu_group": args.palu_group,
-                    "chunkable": False,  # single-shot prefill only (SVD over the whole T)
-                    "make": lambda rr=rr: SVDOraclePress(rank_ratio=rr, group=args.palu_group),
-                }
-            )
-
-    if "shadow" in want:  # ShadowKV: low-rank K on GPU + V offloaded to CPU + sparse decode
-        from kvdlra.cache import ShadowKVCache
-
-        for rs in args.shadow_ranks:
-            kwargs = {
-                "rank_s": rs,
-                "top_k": args.shadow_topk,
-                "chunk": 8,
-                "recent_window": rw,
-                "n_sink": N_SINK,
-            }
-            arms.append(
-                {
-                    "name": f"shadow-r{rs}",
-                    "kind": "shadow",
-                    "rank": None,
-                    "rank_s": rs,
-                    "chunkable": False,  # single-shot prefill only (port scope guard)
-                    "kwargs": kwargs,
-                    "make": lambda kw=dict(kwargs): ShadowKVCache(model, **kw),
-                }
-            )
-    if "quant" in want:  # Week-18/19: KIVI-style 2/4-bit (+8-bit control) KV baseline
-        # scheme "token" = transformers' default axes (per-token groups for K AND V; the
-        # W18 arms, bit-identical); "kivi" = per-channel keys + per-token values (the
-        # faithful KIVI config -- see kvdlra.quant.kivi_cache). Backend "quanto" (2/4-bit,
-        # needs its CUDA kernel) or "hqq" (1-8 bit; the 8-bit decode-path control).
-        scheme = str(getattr(args, "quant_scheme", "token"))
-        backend = str(getattr(args, "quant_backend", "quanto"))
-        suffix = ("-kivi" if scheme == "kivi" else "") + ("-hqq" if backend == "hqq" else "")
-        for nbits in args.quant_nbits:
-            arms.append(
-                {
-                    "name": f"quant-{nbits}bit{suffix}",
-                    "kind": "quant",
-                    "rank": None,
-                    "nbits": nbits,
-                    "quant_group": args.quant_group,
-                    "quant_residual": args.quant_residual,
-                    "quant_scheme": scheme,
-                    "quant_backend": backend,
-                    "chunkable": True,  # Week-19: _prefill_plain chunks + flushes
-                    "make": (
-                        lambda nbits=nbits: make_quant_cache(
-                            model.config,
-                            nbits=nbits,
-                            scheme=scheme,
-                            backend=backend,
-                            group=args.quant_group,
-                            residual=args.quant_residual,
-                        )
-                    ),
-                }
-            )
-    return arms
+        ratio, group = float(p["rank"]), int(p["group"])
+        return {
+            "press_type": "palu",
+            "palu_rank_ratio": ratio,
+            "palu_group": group,
+            "make": lambda: SVDOraclePress(rank_ratio=ratio, group=group),
+        }
+    return {"keep": float(p["keep"]), "make": _evict_factory(cfg)}
 
 
 def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> acc.Footprint:
@@ -584,287 +379,141 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
 # -------------------------------------------------------------------- runner
 
 
-def run(args: argparse.Namespace) -> dict[str, Any]:
-    install_kvpress_prefill_compat()
-    model, tokenizer = load_model(args.model, args.device, args.dtype)
-    # Memory-efficient attention (never eager at long T -- eager materializes
-    # O(T^2); the OOM discipline for the 32K/64K GPU run, harmless on CPU).
-    model.config._attn_implementation = "sdpa"
-    cfg = model.config
-    head_dim = getattr(cfg, "head_dim", cfg.hidden_size // cfg.num_attention_heads)
-    n = int(head_dim * cfg.num_key_value_heads)
-    h_kv = int(cfg.num_key_value_heads)
-    n_layers = int(cfg.num_hidden_layers)
-    ids = load_corpus_ids(tokenizer, args.device, corpus=args.corpus)
-    print(
-        f"model={args.model} n={n} h_kv={h_kv} layers={n_layers} corpus={args.corpus}", flush=True
-    )
+def windows(ids: torch.Tensor, t: int, window: int, n_samples: int) -> list[Sample]:
+    """Up to ``n_samples`` non-overlapping (context, continuation) slices of ``ids``."""
+    span = t + window
+    return [(ids[s : s + t], ids[s + t : s + span]) for s in range(0, ids.shape[0] - span, span)][
+        :n_samples
+    ]
 
-    per_t: dict[int, list[dict[str, Any]]] = {}
-    for t in args.T:
-        window = t + args.window
-        samples = [
-            (ids[s : s + t], ids[s + t : s + window])
-            for s in range(0, ids.shape[0] - window, window)
-        ][: args.n_samples]
-        if not samples:
-            print(f"[T={t}] corpus too short for {args.n_samples} windows; skipping", flush=True)
-            continue
-        print(f"[T={t}] {len(samples)} window(s) of {t}+{args.window}", flush=True)
-        rows: list[dict[str, Any]] = []
-        for arm in build_arms(args, model, t):
-            peak_ctx = acc.measure_peak_gpu(args.device)
-            try:
-                with peak_ctx as peak_get:
-                    total_nll, total_tok = 0.0, 0
-                    window_nlls: list[float] = []  # per-window MEAN nll (nats/token)
-                    window_toks: list[int] = []  # per-window scored-token counts
-                    fp: acc.Footprint | None = None
-                    arm_chunk = args.chunk if arm.get("chunkable", True) else 0
-                    for ctx_ids, win_ids in samples:
-                        if arm["kind"] == "press" or arm["kind"] == "full":
-                            press = arm["make"]()
-                            nll, ntok, cache = score_press(
-                                model, press, ctx_ids, win_ids, arm_chunk
-                            )
-                        elif arm["kind"] == "quant":
-                            cache = arm["make"]()
-                            nll, ntok = score_quant(model, cache, ctx_ids, win_ids, arm_chunk)
-                        else:
-                            cache = arm["make"]()
-                            nll, ntok = score_streaming(model, cache, ctx_ids, win_ids, arm_chunk)
-                        total_nll += nll
-                        total_tok += ntok
-                        window_nlls.append(nll / ntok)
-                        window_toks.append(ntok)
-                        if fp is None:
-                            fp = _footprint(arm, cache, t, n, h_kv)
-                        del cache
-                        gc.collect()
-                    peak = peak_get()
-                assert fp is not None
-                # Pooled ppl: BYTE-IDENTICAL to the pre-Week-15 computation (summed
-                # nats / summed tokens, then exp). window_nlls/window_toks are a pure
-                # ADDITION so error bars exist (docs/week15-significance.md); the
-                # pin: ppl == exp(sum(nll_i*tok_i)/sum(tok_i)) recomputed from them.
-                ppl = float(torch.tensor(total_nll / total_tok).exp())
-                # [pplw] per-window mean NLLs -- one line per (arm, T), greppable
-                # ^\[pplw (the ^\[niah harvest discipline). vast logs truncate at
-                # ~500 chars, so a would-be >400-char line splits into part=i/N
-                # lines of 8 values each. Windows are uniform-length by
-                # construction (exact slices); ntok is that per-window count, and
-                # the JSON row stays authoritative for exact per-window weights.
-                # Format (harvest regex):
-                #   ^\[pplw\] T=(\d+) (\S+) ntok=(\d+)
-                #     (?: part=(\d+)/(\d+))? nlls=([0-9.,]+)$
-                vals = [f"{v:.6f}" for v in window_nlls]
-                head = f"[pplw] T={t} {arm['name']} ntok={window_toks[0]}"
-                line = f"{head} nlls={','.join(vals)}"
-                if len(line) <= 400:
-                    print(line, flush=True)
-                else:
-                    groups = [vals[i : i + 8] for i in range(0, len(vals), 8)]
-                    for pi, grp in enumerate(groups, 1):
-                        part = f"{head} part={pi}/{len(groups)} nlls={','.join(grp)}"
-                        print(part, flush=True)
-                row = {
-                    "method": arm["name"],
-                    "kind": arm["kind"],
-                    "rank": arm["rank"],
-                    "T": t,
-                    "ppl": ppl,
-                    "window_nlls": window_nlls,
-                    "window_toks": window_toks,
-                    "float_equiv_per_layer": fp.float_equiv(),
-                    "tok_equiv_per_layer": fp.tok_equiv(n),
-                    "ratio_fp16": fp.ratio_fp16(t, n),
-                    "ratio_stored_bits": fp.ratio_stored_bits(t, n),
-                    "gpu_ratio_fp16": fp.gpu_ratio_fp16(t, n),
-                    "cpu_ratio_fp16": fp.cpu_ratio_fp16(t, n),
-                    "peak_gpu_bytes": peak,
-                    "status": "ok",
-                }
-            except Exception as exc:
-                oom = isinstance(exc, torch.cuda.OutOfMemoryError)
-                row = {
-                    "method": arm["name"],
-                    "kind": arm["kind"],
-                    "T": t,
-                    "status": "OOM" if oom else "error",
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
-                if args.device.startswith("cuda"):
-                    # Week-19: say WHERE the memory went (allocated vs peak) so an OOM
-                    # in the pod log is diagnosable without a re-run.
-                    row["mem_alloc_gb"] = torch.cuda.memory_allocated() / 2**30
-                    row["mem_peak_gb"] = torch.cuda.max_memory_allocated() / 2**30
-                    torch.cuda.empty_cache()
-                    print(
-                        f"  {arm['name']:14s} [T={t}] mem alloc={row['mem_alloc_gb']:.1f}GB "
-                        f"peak={row['mem_peak_gb']:.1f}GB",
-                        flush=True,
-                    )
-                print(f"  {arm['name']:14s} [T={t}] {row['status']}: {row['error'][:110]}")
-            rows.append(row)
-            _log_row(row)
-        per_t[t] = rows
-    return {
-        "model": args.model,
-        "n_features": n,
-        "n_layers": n_layers,
-        "window": args.window,
-        "corpus": args.corpus,
-        "per_T": {str(t): rows for t, rows in per_t.items()},
-    }
+
+def run_ppl(
+    arms: list[dict[str, Any]],
+    model: Any,
+    samples: list[Sample],
+    t: int,
+    *,
+    chunk: int,
+    n: int,
+    h_kv: int,
+    device: str,
+) -> list[dict[str, Any]]:
+    """Score every arm on the same windows at context length ``t``; one row per arm.
+
+    An arm that raises does not take the sweep down with it: its row carries
+    ``status`` OOM/error and the loop moves on, which is the same rule the trial runner
+    applies (a failure is recorded, never silently dropped).
+    """
+    rows: list[dict[str, Any]] = []
+    for arm in arms:
+        peak_ctx = acc.measure_peak_gpu(device)
+        try:
+            with peak_ctx as peak_get:
+                total_nll, total_tok = 0.0, 0
+                window_nlls: list[float] = []  # per-window MEAN nll (nats/token)
+                window_toks: list[int] = []  # per-window scored-token counts
+                fp: acc.Footprint | None = None
+                arm_chunk = chunk if arm.get("chunkable", True) else 0
+                for ctx_ids, win_ids in samples:
+                    if arm["kind"] == "press" or arm["kind"] == "full":
+                        press = arm["make"]()
+                        nll, ntok, cache = score_press(model, press, ctx_ids, win_ids, arm_chunk)
+                    elif arm["kind"] == "quant":
+                        cache = arm["make"]()
+                        nll, ntok = score_quant(model, cache, ctx_ids, win_ids, arm_chunk)
+                    else:
+                        cache = arm["make"]()
+                        nll, ntok = score_streaming(model, cache, ctx_ids, win_ids, arm_chunk)
+                    total_nll += nll
+                    total_tok += ntok
+                    window_nlls.append(nll / ntok)
+                    window_toks.append(ntok)
+                    if fp is None:
+                        fp = _footprint(arm, cache, t, n, h_kv)
+                    del cache
+                    gc.collect()
+                peak = peak_get()
+            assert fp is not None
+            # Pooled ppl: BYTE-IDENTICAL to the pre-Week-15 computation (summed
+            # nats / summed tokens, then exp). window_nlls/window_toks are a pure
+            # ADDITION so error bars exist (docs/week15-significance.md); the
+            # pin: ppl == exp(sum(nll_i*tok_i)/sum(tok_i)) recomputed from them.
+            ppl = float(torch.tensor(total_nll / total_tok).exp())
+            _log_pplw(t, arm["name"], window_nlls, window_toks[0])
+            row = {
+                "method": arm["name"],
+                "kind": arm["kind"],
+                "rank": arm["rank"],
+                "T": t,
+                "ppl": ppl,
+                "window_nlls": window_nlls,
+                "window_toks": window_toks,
+                "float_equiv_per_layer": fp.float_equiv(),
+                "tok_equiv_per_layer": fp.tok_equiv(n),
+                "ratio_fp16": fp.ratio_fp16(t, n),
+                "ratio_stored_bits": fp.ratio_stored_bits(t, n),
+                "gpu_ratio_fp16": fp.gpu_ratio_fp16(t, n),
+                "cpu_ratio_fp16": fp.cpu_ratio_fp16(t, n),
+                "peak_gpu_bytes": peak,
+                "status": "ok",
+            }
+        except Exception as exc:
+            oom = isinstance(exc, torch.cuda.OutOfMemoryError)
+            row = {
+                "method": arm["name"],
+                "kind": arm["kind"],
+                "T": t,
+                "status": "OOM" if oom else "error",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+            if device.startswith("cuda"):
+                # Week-19: say WHERE the memory went (allocated vs peak) so an OOM
+                # in the pod log is diagnosable without a re-run.
+                row["mem_alloc_gb"] = torch.cuda.memory_allocated() / 2**30
+                row["mem_peak_gb"] = torch.cuda.max_memory_allocated() / 2**30
+                torch.cuda.empty_cache()
+                print(
+                    f"  {arm['name']:14s} [T={t}] mem alloc={row['mem_alloc_gb']:.1f}GB "
+                    f"peak={row['mem_peak_gb']:.1f}GB",
+                    flush=True,
+                )
+            print(f"  {arm['name']:14s} [T={t}] {row['status']}: {row['error'][:110]}")
+        rows.append(row)
+        _log_row(row)
+    return rows
+
+
+def _log_pplw(t: int, name: str, window_nlls: list[float], ntok: int) -> None:
+    """The ``[pplw]`` per-window NLL line -- one per (arm, T), greppable ``^\\[pplw``.
+
+    `vastai logs` truncates a line at ~500 chars, so a would-be >400-char line splits
+    into ``part=i/N`` lines of 8 values each; dropping the fragments loses the whole
+    sweep silently, so `records.parse_pplw_lines` reassembles them and raises on a gap.
+    Windows are uniform-length by construction (exact slices), so one ``ntok`` covers
+    the group. Format (the harvest regex, `records.PPLW_RE`)::
+
+        ^\\[pplw\\] T=(\\d+) (\\S+) ntok=(\\d+)(?: part=(\\d+)/(\\d+))? nlls=([0-9.,]+)$
+    """
+    vals = [f"{v:.6f}" for v in window_nlls]
+    head = f"[pplw] T={t} {name} ntok={ntok}"
+    line = f"{head} nlls={','.join(vals)}"
+    if len(line) <= 400:
+        print(line, flush=True)
+        return
+    groups = [vals[i : i + 8] for i in range(0, len(vals), 8)]
+    for pi, grp in enumerate(groups, 1):
+        print(f"{head} part={pi}/{len(groups)} nlls={','.join(grp)}", flush=True)
 
 
 def _log_row(row: dict[str, Any]) -> None:
     if row["status"] != "ok":
         print(f"  {row['method']:14s} [T={row['T']}] {row['status']}", flush=True)
         return
-    # `sbits=` appended after `ratio=` -- PPL_RE (w11_merge) captures ratio= and
-    # ignores the tail, so archived ppl lines keep parsing unchanged.
+    # `sbits=` appended after `ratio=` -- records.PPL_RE captures ratio= and ignores the
+    # tail, so archived ppl lines keep parsing unchanged.
     print(
         f"  {row['method']:14s} [T={row['T']}] ppl={row['ppl']:.3f} "
         f"tok_eq/layer={row['tok_equiv_per_layer']:.1f} ratio={row['ratio_fp16']:.3f} "
         f"sbits={row.get('ratio_stored_bits', float('nan')):.3f}",
         flush=True,
     )
-
-
-# --------------------------------------------------------- the legacy CLI builder
-
-
-def build_parser() -> argparse.ArgumentParser:
-    """The full frontier argparse. Exposed so other harnesses (storage.py) can build a
-    COMPLETE build_arms namespace via ``build_parser().parse_args([])`` instead of a
-    hand-listed one that silently goes stale when a new flag lands (Week-18 drift fix)."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", default="unsloth/Llama-3.2-1B-Instruct")
-    parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
-    parser.add_argument("--dtype", default="float32", choices=["float32", "bfloat16", "float16"])
-    parser.add_argument("--T", type=int, nargs="+", default=[2048])
-    parser.add_argument("--window", type=int, default=512, help="continuation scoring window W")
-    parser.add_argument("--ranks", type=int, nargs="+", default=[32, 64, 128, 256])
-    parser.add_argument("--morph-keeps", type=float, nargs="+", default=[0.1, 0.25, 0.5])
-    parser.add_argument("--evict-keeps", type=float, nargs="+", default=[0.1, 0.25, 0.5])
-    parser.add_argument("--think-ratios", type=float, nargs="+", default=[0.3, 0.5, 0.7])
-    parser.add_argument("--palu-ranks", type=float, nargs="+", default=[0.25, 0.5])
-    parser.add_argument("--palu-group", type=int, default=1)
-    parser.add_argument(
-        "--quant-nbits",
-        type=int,
-        nargs="+",
-        default=[2, 4],
-        help="Week-18 KIVI-style quantized-KV baseline bit widths -> quant-{n}bit arms "
-        "(transformers QuantizedCache, quanto backend)",
-    )
-    parser.add_argument("--quant-group", type=int, default=64, help="quant per-group size")
-    parser.add_argument(
-        "--quant-residual", type=int, default=128, help="quant fp16 residual window length"
-    )
-    parser.add_argument(
-        "--quant-scheme",
-        default="token",
-        choices=["token", "kivi"],
-        help="quant baseline grouping: 'token' = transformers default (per-token K and V; "
-        "the W18 arms) or 'kivi' = per-channel keys + per-token values (KIVI-faithful) "
-        "-> '-kivi' arm suffix",
-    )
-    parser.add_argument(
-        "--quant-backend",
-        default="quanto",
-        choices=["quanto", "hqq"],
-        help="quant baseline backend: quanto (2/4-bit) or hqq (1-8 bit; 8-bit control) "
-        "-> '-hqq' arm suffix",
-    )
-    parser.add_argument(
-        "--bug-quant-bits",
-        type=int,
-        default=None,
-        help="Week-18 compose: quantize the BUG coordinate tier to this many bits "
-        "(PolarQuant variant D) -> bugS-...-q{bits} sub-cliff arm (~0.04-0.05x). NOT "
-        "combined with --warmup-seed yet (the seed+quant guard needs GPU validation).",
-    )
-    parser.add_argument(
-        "--bug-quant-budget",
-        type=int,
-        default=0,
-        help="fp32 coordinate columns kept before demotion to the quant tier",
-    )
-    parser.add_argument("--shadow-ranks", type=int, nargs="+", default=[64, 128])
-    parser.add_argument("--shadow-topk", type=int, default=256)
-    parser.add_argument("--recent-window", type=int, default=32)
-    parser.add_argument("--absorb-block", type=int, default=16)
-    parser.add_argument(
-        "--hh-budgets",
-        type=int,
-        nargs="+",
-        default=[256, 1024, 2048],
-        help="Week-11 SurpriseSLASH exact-tier sizes (bugslash/bugevict verbatim tokens)",
-    )
-    parser.add_argument(
-        "--hh-neighbor", type=int, default=0, help="SurpriseSLASH span-expansion window (0=off)"
-    )
-    parser.add_argument(
-        "--hh-discard",
-        action="store_true",
-        help="Week-12 H1 ablation: bugslash arms select-and-DISCARD (hh_retain=False; "
-        "pool invisible to attention) -> bugSdrop-* arm names",
-    )
-    parser.add_argument(
-        "--warmup-seed",
-        action="store_true",
-        help="Week-13 T-B: seed the exact tier from the first ingest chunk's outliers "
-        "-> bugSseed-* arms (fixes the warm-up window; requires --chunk>0)",
-    )
-    parser.add_argument(
-        "--score-rank",
-        type=int,
-        default=None,
-        help="Week-15 T2: cap the SLASH surprise-scoring basis at this many leading "
-        "columns (selection-rank decoupled from storage-rank) -> '-s{k}' arm suffix; "
-        "storage/footprint unchanged; requires 1 <= k <= rank",
-    )
-    parser.add_argument(
-        "--tracker",
-        default="bug",
-        choices=["bug", "oja", "fd"],
-        help="Week-20 tracker-swap ablation: gist tracker for the bug arms (bug = the "
-        "rank-adaptive BUG step, = fixed-rank incremental SVD at the flagship defaults; "
-        "oja = Oja's rule; fd = Frequent Directions)",
-    )
-    parser.add_argument(
-        "--min-sv-frac",
-        type=float,
-        default=0.0,
-        help="Week-17: relative singular-value floor for the streaming integrator "
-        "(0.0=off; e.g. 1e-2 caps the tracked rank at the block's numerical rank to "
-        "stop high-rank divergence) -> '-f{v}' arm suffix; storage/footprint unchanged",
-    )
-    parser.add_argument(
-        "--chunk", type=int, default=0, help="chunked-prefill block size (0=single-shot)"
-    )
-    parser.add_argument("--n-samples", type=int, default=2)
-    parser.add_argument(
-        "--corpus", default="wikitext-103", choices=["wikitext-2", "wikitext-103", "pg19"]
-    )
-    parser.add_argument(
-        "--methods",
-        nargs="+",
-        default=[
-            "full",
-            "bug",
-            "morph",
-            "snapkv",
-            "ea",
-            "think",
-            "palu",
-            "shadow",
-        ],
-    )
-    parser.add_argument("--no-ruler", action="store_true", help="skip RULER (Phase 4)")
-    parser.add_argument("--out-json", default="results/w10-frontier-1b.json")
-    parser.add_argument("--out-fig", default="figures/week10/frontier_longctx")
-    parser.add_argument("--plot-only", action="store_true")
-    return parser

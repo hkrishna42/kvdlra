@@ -16,7 +16,6 @@ values) on either backend ("quanto" 2/4-bit; "hqq" 1-8 bit, the 8-bit control).
 
 from __future__ import annotations
 
-import argparse
 from typing import Any, cast
 
 import pytest
@@ -160,34 +159,32 @@ def _model() -> LlamaForCausalLM:
     return m
 
 
-def _args(**kw: Any) -> argparse.Namespace:
-    from kvdlra.eval.frontier import build_parser
+def _quant_arm(model: Any, name: str = "kivi4_streaming") -> dict[str, Any]:
+    from kvdlra.eval.config import load_arm
+    from kvdlra.eval.frontier import build_arm
 
-    ns = build_parser().parse_args([])
-    ns.methods = ["quant"]
-    ns.chunk = 0
-    for key, val in kw.items():
-        setattr(ns, key, val)
-    return ns
+    return build_arm(load_arm(name), model, 200)
 
 
-def test_build_arms_names_encode_scheme_and_backend() -> None:
-    from kvdlra.eval.frontier import build_arms
-
+def test_the_quant_arm_configs_carry_their_scheme_and_backend() -> None:
     m = _model()
-    assert [a["name"] for a in build_arms(_args(), m, 200)] == ["quant-2bit", "quant-4bit"]
-    kivi = build_arms(_args(quant_scheme="kivi"), m, 200)
-    assert [a["name"] for a in kivi] == ["quant-2bit-kivi", "quant-4bit-kivi"]
-    hqq8 = build_arms(_args(quant_scheme="kivi", quant_backend="hqq", quant_nbits=[8]), m, 200)
-    assert [a["name"] for a in hqq8] == ["quant-8bit-kivi-hqq"]
-    assert all(a["chunkable"] is True for a in kivi + hqq8)  # quant now honors --chunk
+    for name, legacy, nbits, backend in (
+        ("kivi2_streaming", "quant-2bit-kivi", 2, "quanto"),
+        ("kivi4_streaming", "quant-4bit-kivi", 4, "quanto"),
+        ("kivi8_hqq", "quant-8bit-kivi-hqq", 8, "hqq"),
+    ):
+        arm = _quant_arm(m, name)
+        assert (arm["name"], arm["nbits"], arm["quant_backend"]) == (legacy, nbits, backend)
+        assert arm["quant_scheme"] == "kivi" and arm["chunkable"] is True
+    # The ss2 control is the same 2-bit cache pinned to single-shot prefill.
+    ss = _quant_arm(m, "kivi2_singleshot")
+    assert ss["chunkable"] is False and ss["nbits"] == 2
 
 
 def test_quant_arm_retrieves_with_chunked_prefill() -> None:
     """retrieve() with --chunk > 0 must run the quant arm through the chunked prefill
     (+ flush) and still return a measurement; single-shot (chunk=0) too."""
     from kvdlra.baselines.compat import install_kvpress_prefill_compat
-    from kvdlra.eval.frontier import build_arms
     from kvdlra.eval.ruler import retrieve
 
     install_kvpress_prefill_compat()
@@ -195,23 +192,22 @@ def test_quant_arm_retrieves_with_chunked_prefill() -> None:
     hay = torch.randint(0, 256, (1, 200))
     query = torch.randint(0, 256, (1, 8))
     for chunk in (64, 0):
-        for arm in build_arms(_args(quant_scheme="kivi", quant_nbits=[4]), m, 200):
-            hit, ratio, _frac, sratio = retrieve(
-                m, _StubTok(), arm, hay, query, ["1"], "cpu", chunk, H * D, H, 4
-            )
-            assert isinstance(hit, bool)
-            assert 0.0 < ratio <= 1.0 and ratio == sratio
+        arm = _quant_arm(m)
+        hit, ratio, _frac, sratio = retrieve(
+            m, _StubTok(), arm, hay, query, ["1"], "cpu", chunk, H * D, H, 4
+        )
+        assert isinstance(hit, bool)
+        assert 0.0 < ratio <= 1.0 and ratio == sratio
 
 
 def test_score_quant_runs_without_autograd() -> None:
     """The ppl path must not retain the prefill graph: the W18/W19 quant-ppl OOMs (38 GB
     allocated during a 4K chunk on Qwen-7B) were an undecorated score_quant building
     autograd history across the whole prefill. Dequantized state must carry no grad."""
-    from kvdlra.eval.frontier import build_arms, score_quant
+    from kvdlra.eval.frontier import score_quant
 
     m = _model()
-    arm = build_arms(_args(quant_scheme="kivi", quant_nbits=[4]), m, 256)[0]
-    cache = arm["make"]()
+    cache = _quant_arm(m)["make"]()
     ctx = torch.randint(0, 256, (256,))
     win = torch.randint(0, 256, (16,))
     nll, ntok = score_quant(m, cache, ctx, win, chunk=64)
@@ -226,20 +222,12 @@ def test_composite_arm_composes_eviction_and_quant() -> None:
     the survivors are stored quantized -- billed kept-fraction x nbits by _footprint's
     press_quant branch). End-to-end composition is validated by the Llama-3.2-1B CPU
     probe and the GPU run; this guards the arm wiring."""
-    from kvdlra.eval.frontier import build_arms
+    from kvdlra.eval.config import load_arm
+    from kvdlra.eval.frontier import build_arm
 
     m = _model()
-    arms = build_arms(
-        _args(
-            methods=["composite"],
-            quant_scheme="kivi",
-            quant_backend="quanto",
-            evict_keeps=[0.25, 0.1],
-            quant_nbits=[2, 4],
-        ),
-        m,
-        200,
-    )
+    names = ["ea_k0.25_kivi2", "ea_k0.25_kivi4", "ea_k0.1_kivi2", "ea_k0.1_kivi4"]
+    arms = [build_arm(load_arm(x), m, 200) for x in names]
     assert [a["name"] for a in arms] == [
         "ea-k0.25-q2-kivi",
         "ea-k0.25-q4-kivi",

@@ -1,7 +1,8 @@
-"""Week-19 A2: official NVIDIA-RULER prompts through our arms (``official_ruler``).
+"""The external anchor: official NVIDIA-RULER prompts through our arms.
 
 Hermetic: a whitespace fake tokenizer with a chat template + the tiny-Llama model; the
-real generator/tokenizer path runs on the pod (MODE a2).
+real generator/tokenizer path runs on the pod, which writes the prompts into
+``official_ruler.DATA_DIR`` before ``pod.py run`` reads them.
 """
 
 from __future__ import annotations
@@ -15,7 +16,6 @@ import torch
 from transformers import LlamaConfig, LlamaForCausalLM
 
 from kvdlra.eval import official_ruler as official
-from kvdlra.eval.frontier import build_parser
 
 # Shaped like RULER c3f5e3b records: the answer prefix is its own field, not in `input`.
 NIAH = (
@@ -110,8 +110,12 @@ def _tiny() -> LlamaForCausalLM:
     return m
 
 
-def test_run_emits_intervals_compatible_rows(tmp_path: Path, monkeypatch: Any, capsys: Any) -> None:
-    from w18_intervals import ROW
+def test_run_trial_reads_the_indexed_official_record(tmp_path: Path, monkeypatch: Any) -> None:
+    """One trial IS one official record, at the trial index: the generator wrote the
+    samples in order at the pinned seed, so ``trial`` selects one without any
+    re-sampling of ours. The meta carries RULER's own record id."""
+    from kvdlra.eval.config import ArmCfg, load_task
+    from kvdlra.eval.frontier import build_arm
 
     data = tmp_path / "niah_single_2"
     data.mkdir()
@@ -120,33 +124,29 @@ def test_run_emits_intervals_compatible_rows(tmp_path: Path, monkeypatch: Any, c
         for i in range(2)
     ]
     (data / "validation.jsonl").write_text("\n".join(json.dumps(r) for r in recs) + "\n")
-    monkeypatch.setattr(official, "load_model", lambda *a, **k: (_tiny(), _FakeTok()))
-    args = build_parser().parse_args(
-        [
-            "--methods",
-            "full",
-            "quant",
-            "--quant-nbits",
-            "4",
-            "--quant-scheme",
-            "kivi",
-            "--chunk",
-            "0",
-        ]
-    )
-    args.data_dir, args.tasks, args.context_len, args.n_examples = (
-        str(tmp_path),
-        ["niah_single_2"],
-        64,
-        None,
-    )
-    blob = official.run(args)
-    names = [r["method"] for r in blob["results"]]
-    assert names == ["full", "quant-4bit-kivi"]
-    assert all(
-        r["total"] == 2 and r["task"] == "niah_single_2" and r["ctx"] == 64 for r in blob["results"]
-    )
-    out = capsys.readouterr().out
-    rows = [ln for ln in out.splitlines() if ln.startswith("[niah_single_2 ctx64]")]
-    assert len(rows) == 2 and all(ROW.search(ln) for ln in rows), rows
-    assert sum(ln.startswith("[trial] task=niah_single_2") for ln in out.splitlines()) == 4
+    monkeypatch.setattr(official, "DATA_DIR", tmp_path)
+    official.load_records.cache_clear()
+
+    model, tok = _tiny(), _FakeTok()
+    task = load_task("ruler_official_16k")
+    task.ctx = 64
+    arm = build_arm(ArmCfg(name="full", kind="full"), model, task.ctx)
+    for trial in (0, 1):
+        hit, frac, meta = official.run_trial(
+            arm, model, tok, task, "niah_single_2", 42, trial,
+            device="cpu", chunk=0, n=64, h_kv=2,
+        )  # fmt: skip
+        assert hit in (0, 1) and 0.0 <= frac <= 1.0
+        assert meta["haystack_id"] == f"niah_single_2:{trial}"
+        assert meta["depth"] is None and len(meta["prompt_sha256"]) == 64
+        assert 0.0 < meta["ratio"] <= 1.0
+
+
+def test_load_records_reads_the_generators_validation_file(tmp_path: Path) -> None:
+    data = tmp_path / "vt"
+    data.mkdir()
+    rows = [{"index": i, "input": VT, "outputs": ["12345"]} for i in range(3)]
+    (data / "validation.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    official.load_records.cache_clear()
+    assert [r["index"] for r in official.load_records(tmp_path, "vt", None)] == [0, 1, 2]
+    assert [r["index"] for r in official.load_records(tmp_path, "vt", 2)] == [0, 1]

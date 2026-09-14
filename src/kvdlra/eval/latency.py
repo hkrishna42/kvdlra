@@ -29,7 +29,7 @@ from typing import Any
 import torch
 from transformers.cache_utils import DynamicCache
 
-from kvdlra.eval.frontier import _prefill_chunked, _prefill_plain, build_arms
+from kvdlra.eval.frontier import _prefill_chunked, _prefill_plain
 
 GB = 1024**3
 
@@ -48,13 +48,19 @@ def _mem(device: str) -> tuple[float, float]:
 
 @torch.no_grad()
 def run_latency(
-    model: Any, args: Any, ctx: int, device: str, n_steps: int, warmup: int
+    model: Any,
+    arms: list[dict[str, Any]],
+    ctx: int,
+    device: str,
+    chunk: int,
+    n_steps: int,
+    warmup: int,
 ) -> list[dict[str, Any]]:
     torch.manual_seed(0)
     hay = torch.randint(0, int(model.config.vocab_size), (1, ctx), device=device)
     weights_gb = sum(p.numel() * p.element_size() for p in model.parameters()) / GB
     rows: list[dict[str, Any]] = []
-    for arm in build_arms(args, model, ctx):
+    for arm in arms:
         kind = arm["kind"]
         if kind == "full":
             cache: Any = DynamicCache()
@@ -62,10 +68,10 @@ def run_latency(
         elif kind == "bug":
             cache = arm["make"]()
             with cache.attach(model):
-                _prefill_chunked(model, cache, hay, args.chunk if args.chunk > 0 else ctx)
+                _prefill_chunked(model, cache, hay, chunk if chunk > 0 else ctx)
         elif kind == "quant":
             cache = arm["make"]()
-            _prefill_plain(model, cache, hay, args.chunk)
+            _prefill_plain(model, cache, hay, chunk)
         else:
             raise ValueError(f"latency covers full/bug/quant arms, not {kind!r}")
         _sync(device)

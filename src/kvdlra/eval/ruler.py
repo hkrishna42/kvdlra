@@ -21,9 +21,9 @@ produced every archived cell, so a change here moves the numbers. Generator v2 i
 
 from __future__ import annotations
 
-import argparse
 import functools
 import gc
+import hashlib
 import random
 from collections.abc import Sequence
 from contextlib import nullcontext
@@ -32,9 +32,9 @@ from typing import Any, cast
 import torch
 from transformers.cache_utils import Cache, DynamicCache
 
-from kvdlra.baselines.compat import install_kvpress_prefill_compat
-from kvdlra.eval.data import FILLER, LABELS, load_corpus_sentences, load_model
-from kvdlra.eval.frontier import _footprint, _prefill_chunked, _prefill_plain, build_arms
+from kvdlra.eval.config import TaskCfg
+from kvdlra.eval.data import FILLER, LABELS
+from kvdlra.eval.frontier import _footprint, _prefill_chunked, _prefill_plain
 
 _TAIL_K = 48  # FLOOR for the decoded query tail (question + assistant header, as in
 # w4/w5); the actual tail is template-derived per family (see _templated) and never
@@ -351,117 +351,86 @@ def retrieve(
     return hit, fp.ratio_fp16(ctx_len, n), frac, fp.ratio_stored_bits(ctx_len, n)
 
 
-# ------------------------------------------------------------- runner
+# ------------------------------------------------------------- one trial
+
+# The generator's shape parameters. Every v1 pod ran the defaults, and a task config
+# has no field for them, so they are constants rather than a knob nobody turned.
+N_KEYS, N_VALUES, N_HOPS = 8, 4, 3
 
 
-def run(args: argparse.Namespace) -> dict[str, Any]:
-    install_kvpress_prefill_compat()  # transformers 5.8: presses need the cache_position shim
-    model, tokenizer = load_model(args.model, args.device, args.dtype)
-    model.config._attn_implementation = "sdpa"
-    cfg = model.config
-    head_dim = getattr(cfg, "head_dim", cfg.hidden_size // cfg.num_attention_heads)
-    n = int(head_dim * cfg.num_key_value_heads)
-    h_kv = int(cfg.num_key_value_heads)
-    max_new = 12 if args.tasks == ["niah_single"] else 40  # multi-value needs room
-    # Realistic-filler pool loaded ONCE (not per trial); None for the cycle default.
-    filler = getattr(args, "filler", "cycle")
-    depths = getattr(args, "depths", None)
-    pool = None if filler == "cycle" else load_corpus_sentences(filler)
-    print(
-        f"model={args.model} n={n} tasks={args.tasks} ctxs={args.context_lens} "
-        f"filler={filler} depths={depths}",
-        flush=True,
+def code_family(sub: str, trial: int) -> str | None:
+    """The needle label ``build_task`` uses for this trial, or None for the tasks that
+    have no label (``niah_single``, ``vt``). It mirrors the two index expressions in
+    ``build_task``; ``tests/test_w10_ruler_filler.py`` pins it against the real prompt,
+    so the two cannot drift apart silently."""
+    if sub == "niah_multikey":
+        return LABELS[:N_KEYS][trial % N_KEYS]
+    if sub == "niah_multivalue":
+        return LABELS[trial % len(LABELS)]
+    return None
+
+
+def run_trial(
+    arm: dict[str, Any],
+    model: Any,
+    tok: Any,
+    task: TaskCfg,
+    sub: str,
+    seed: int,
+    trial: int,
+    *,
+    device: str,
+    chunk: int,
+    n: int,
+    h_kv: int,
+    pool: list[str] | None = None,
+) -> tuple[int, float, dict[str, Any]]:
+    """Build one prompt and retrieve through ``arm``. Returns (hit, frac, meta).
+
+    ``meta`` is what the trial record carries beyond the outcome: the haystack the
+    generator drew (its ``(filler, ctx, seed, trial)`` key -- those four determine it),
+    the needle depth when the task pins a grid, the needle label, a sha256 over the
+    exact token ids that were fed, and the two memory ratios the aggregate row averages.
+    """
+    hay, query, targets = build_task(
+        tok,
+        sub,
+        task.ctx,
+        trial,
+        seed,
+        N_KEYS,
+        N_VALUES,
+        N_HOPS,
+        filler=task.filler,
+        pool=pool,
+        depths=task.depths,
+    )
+    # 12 tokens is enough for one number; every other task answers with several.
+    max_new = 12 if task.tasks == ["niah_single"] else 40
+    hit, ratio, frac, sbits = retrieve(
+        model, tok, arm, hay, query, targets, device, chunk, n, h_kv, max_new
+    )
+    depth = None
+    if task.depths and sub == "niah_single":
+        depth = float(task.depths[trial % len(task.depths)])
+    return (
+        int(hit),
+        frac,
+        {
+            "haystack_id": f"{task.filler}:{task.ctx}:{seed}:{trial}",
+            "depth": depth,
+            "code_family": code_family(sub, trial),
+            "prompt_sha256": prompt_sha256(hay, query),
+            "ratio": ratio,
+            "sbits": sbits,
+        },
     )
 
-    results: list[dict[str, Any]] = []
-    for ctx in args.context_lens:
-        for task in args.tasks:
-            for arm in build_arms(args, model, ctx):
-                arm_chunk = args.chunk if arm.get("chunkable", True) else 0
-                hits, ratios, fracs, sbits = 0, [], [], []
-                for seed in args.seeds:
-                    for trial in range(args.n_trials):
-                        try:
-                            hay, query, targets = build_task(
-                                tokenizer,
-                                task,
-                                ctx,
-                                trial,
-                                seed,
-                                args.n_keys,
-                                args.n_values,
-                                args.n_hops,
-                                filler=filler,
-                                pool=pool,
-                                depths=depths,
-                            )
-                            hit, ratio, frac, sratio = retrieve(
-                                model,
-                                tokenizer,
-                                arm,
-                                hay,
-                                query,
-                                targets,
-                                args.device,
-                                arm_chunk,
-                                n,
-                                h_kv,
-                                max_new,
-                            )
-                        except Exception as exc:
-                            # One bad trial is skipped (logged); the arm survives, so a
-                            # single OOM/edge trial no longer kills every seed of the arm.
-                            print(
-                                f"[{task} ctx{ctx}] {arm['name']:14s} "
-                                f"SKIP {type(exc).__name__}: {exc}",
-                                flush=True,
-                            )
-                            if args.device.startswith("cuda"):
-                                torch.cuda.empty_cache()
-                            continue
-                        hits += int(hit)
-                        ratios.append(ratio)
-                        fracs.append(frac)
-                        sbits.append(sratio)
-                        # Per-trial evidentiary line (Week-18): one row per trial so
-                        # the exact per-cell n and hit/miss chain survives the pod log
-                        # (recovered by the w18 intervals builder without a hand table).
-                        print(
-                            f"[trial] task={task} ctx={ctx} arm={arm['name']} "
-                            f"seed={seed} trial={trial} hit={int(hit)} frac={frac:.3f}",
-                            flush=True,
-                        )
-                if not ratios:  # every trial failed -> arm produced no measurement
-                    continue
-                total = len(ratios)
-                row = {
-                    "task": task,
-                    "ctx": ctx,
-                    "method": arm["name"],
-                    "kind": arm["kind"],
-                    "rank": arm["rank"],
-                    "accuracy": hits / total,
-                    "recall_frac": sum(fracs) / len(fracs),
-                    "ratio_fp16": sum(ratios) / len(ratios),
-                    "ratio_stored_bits": sum(sbits) / len(sbits),
-                    "hits": hits,
-                    "total": total,
-                }
-                results.append(row)
-                # `n=` and `sbits=` are appended last so the archived-line regexes
-                # (w17_intervals.ROW, w11_merge.ROW_RE) keep matching unchanged.
-                print(
-                    f"[{task} ctx{ctx}] {arm['name']:14s} acc={row['accuracy']:.2f} "
-                    f"recall={row['recall_frac']:.2f} ratio={row['ratio_fp16']:.3f} "
-                    f"sbits={row['ratio_stored_bits']:.3f} n={total}",
-                    flush=True,
-                )
-    return {
-        "model": args.model,
-        "n_features": n,
-        "context_lens": args.context_lens,
-        "tasks": args.tasks,
-        "n_trials": args.n_trials,
-        "seeds": args.seeds,
-        "results": results,
-    }
+
+def prompt_sha256(*ids: torch.Tensor) -> str:
+    """sha256 over the exact token ids of a prompt, so two pods' cells can be compared
+    without trusting that they built the same text."""
+    h = hashlib.sha256()
+    for t in ids:
+        h.update(t.detach().cpu().to(torch.int64).numpy().tobytes())
+    return h.hexdigest()

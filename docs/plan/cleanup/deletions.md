@@ -488,3 +488,81 @@ is unchanged, so the pin still fails if `accounting` drifts.
 `pyproject.toml`'s `pythonpath` comment, which justified `scripts` on the path
 by exactly those two imports, is re-worded to the real remaining reason
 (`import pod` / `import tables` in the entrypoint tests).
+
+## Task 9b --- `results/` legacy files
+
+Rules applied: R17 (narrative reports move), R18 (JSON dumps and harvest scratch
+are deleted unless a `% source:` comment cites them), R19 (the source map).
+
+Everything the paper cites survives: `docs/plan/cleanup/paper-source-map.md` maps
+every cited path to where its bytes are now, and nothing was removed until a
+`cmp` against its archive copy returned equal. `results/` afterwards holds
+exactly `.gitkeep` and `paper-v1/`.
+
+### Moved --- narrative reports (R17)
+
+`git mv results/*.md docs/plan/reports/` --- 23 files, names kept:
+`w11-final-tables`, `w12-qbug-summary`, `w13-phase1-summary`, `w13-trackb-design`,
+`w13-trackb-summary`, `w14-c1-summary`, `w14-c2-summary`,
+`w14-second-bypass-summary`, `w15-complete-summary`, `w15-confirm-summary`,
+`w15-ruler-intervals`, `w16-ruler-intervals`, `w17-ruler-intervals`,
+`w18-g1-llama-ruler-intervals`, `w18-g1-mistral-ruler-intervals`,
+`w18-g1-qwen-ruler-intervals`, `w18-g1-report`, `w18-g1-ruler-intervals`,
+`w19-a1-report`, `w19-a2-flagship-misses`, `w20-close-report`, `w20-fork-report`,
+`w3-parity`. Plus `results/w18_harvest/quant-findings.md` →
+`docs/plan/reports/quant-findings.md` (same reason: it is the Week-18 quant
+narrative, and `paper/main.tex:845` cites it as the mechanism behind a table).
+
+These are prose about runs, not run records; `results/<pod>/` is for records
+(`manifest.json`, `trials.jsonl`, …) and everything under `docs/plan/` is the
+planning trail. Four of them are cited by `paper/main.tex` (`w18-g1-report`,
+`w19-a1-report`, `w19-a2-flagship-misses`, `w20-fork-report`) --- see the source
+map.
+
+### Archived, then deleted --- the 11 cited files with no archive copy yet
+
+Byte-copied into the archive (each verified with `cmp` before removal):
+
+| from | to | cited at |
+|---|---|---|
+| `results/w18-g4-marquee-contrasts.json` | `results/paper-v1/w18-g4-llama/raw/` | `main.tex:559` (the McNemar contrasts behind `tab:vt`) |
+| `results/w19_intervals/a1-{llama,mistral,qwen}-ruler-intervals.{json,md}` | `results/paper-v1/w19-a1-{llama,mistral,qwen}/raw/` | `main.tex:845` (`results/w19_intervals/*.json`) |
+| `results/w19_intervals/a2-llama-ruler-intervals.{json,md}` | `results/paper-v1/w19-a2-llama/raw/` | `main.tex:845`, `:938` |
+| `results/w18-env-provenance.txt`, `results/w19-env-provenance.txt` | `results/paper-v1/_cited-extras/raw/` | `main.tex:405`, `:406`, `:1198` --- the body's reproducibility paragraph, not a `% source:` comment |
+
+`results/paper-v1/_cited-extras/` is new: the two provenance files are evidence
+`main.tex` points at but no `convert-v1` conversion produced, so no pod owns
+them. It carries a `README.md` instead of a `manifest.json`, and
+`scripts/pod.py check` skips archive directories, so `make check` is unaffected.
+
+### Deleted --- already byte-archived (109 files)
+
+Every `results/*-lines.txt`, `results/w18_pertrial/*-trials.txt` and
+`results/w19_pertrial/*-trials.txt`: `scripts/tables.py convert-v1` already
+copied each one verbatim to `results/paper-v1/<pod>/raw/<basename>` and recorded
+it in that pod's `manifest.json` (`source_files[].raw`). Re-verified file by file
+with `cmp` immediately before `git rm`; 109/109 identical, 0 differing, 0
+missing. The tables and figures read the converted records
+(`trials.jsonl` / `cells.jsonl` / `ppl.jsonl`), never the line files, so
+`make tables` stays diff-clean.
+
+### Deleted --- cited by nothing (91 files)
+
+R18: no `% source:` comment in `paper/main.tex` names them, neither
+`scripts/tables.py` nor `scripts/figures.py` reads them (both open only
+`results/paper-v1/`), and no `\texttt{results/...}` in the body names them
+either. Recoverable at the tag `paper-v1-archive` (ee8c0ab).
+
+| group | count | what |
+|---|---|---|
+| `results/w{3,4,5,7,8,9}-*.json` + `w8-codebook.pt` | 47 | Week-3 to Week-9 probe/sweep dumps, written by `scripts/w{4,5,7,8,9}_*.py` --- all deleted in 9a |
+| `results/w1{0,1,2}-*.json` | 15 | Week-10/11/12 frontier and probe dumps, and the `w11-decision-table*.json` / `w16-decision-table.json` / `w17-decision-table.json` merges that `scripts/tables.py build` replaces |
+| `results/w1{3,4,5}-*.json` | 9 | the Week-13 track probes, the Week-14 second-bypass facts, the Week-15 e2e/score-rank probes |
+| `results/w1{5,6,7,8}-*-ruler-intervals.json` | 7 | the interval JSONs the deleted `w1*_intervals.py` emitted; `kvdlra.eval.stats` recomputes them from the archived records, and the `.md` renderings moved to `docs/plan/reports/` |
+| `results/w18_checkpoint/` | 6 | mid-run harvest snapshots (3 partial `*-ruler-lines.txt` + 3 `*.raw.log`), superseded by the completed `results/w18-{llama,mistral,qwen}-lines.txt` that **are** archived |
+| `results/w18_harvest/{DONE,G4DONE,SUMMARY}.txt` | 3 | watchdog completion markers and a derived extract of the g1 cells |
+| `results/w19_harvest/` | 3 | `done.txt` / `pods.txt` (the watchdog's instance list, already gitignored by `results/*/pods.txt`) and `a3-llama.raw.superseded`, a raw log the a3 re-run replaced |
+| `results/w8-codebook.pt` | (in the first row) | an 11 KB torch tensor from the Week-8 codebook probe; the CodeBUG fork was closed as bounded and nothing loads it |
+
+Kept: `results/.gitkeep` (the directory is where a new pod writes) and all of
+`results/paper-v1/`.

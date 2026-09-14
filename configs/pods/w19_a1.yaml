@@ -1,0 +1,15 @@
+name: w19_a1
+model: "unsloth/Meta-Llama-3.1-8B-Instruct"
+dtype: bfloat16
+doc: >-
+  Week-19 A1: the fair KIVI grouping (per-channel keys, per-token values) at 2 and 4 bits,
+  RULER{single,multikey,multivalue,vt} + perplexity at 16K and 32K, plus the 8-bit decode-path
+  control at 16K. As archived that control DIVERGES from the cell set below: it ran 4 records
+  at 16K only and produced no 32K rows; the 2- and 4-bit arms hold the full 12. Needs the -devel image: quanto JIT-builds its CUDA kernel. v1 had no
+  pre-registration: `prereg: null` records that, and it is the one field a re-run of this pod
+  must fill before launch (scripts/pod.py check enforces the commit order from L0 on).
+prereg: null
+arms: ["kivi2_streaming", "kivi4_streaming", "kivi8_hqq"]
+tasks: ["ruler_inhouse_16k", "ruler_inhouse_32k", "ppl_16k", "ppl_32k"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+gpu_budget_h: 0.0

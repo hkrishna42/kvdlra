@@ -1,0 +1,13 @@
+[niah_multikey ctx16384] ea-k0.1        acc=0.00 recall=0.00 ratio=0.100 sbits=0.100 n=12
+[niah_multikey ctx16384] palu-r0.5      acc=1.00 recall=1.00 ratio=0.504 sbits=0.504 n=12
+[niah_multikey ctx16384] think-c0.5     acc=1.00 recall=1.00 ratio=0.750 sbits=0.750 n=12
+[niah_multivalue ctx16384] ea-k0.1        acc=0.00 recall=0.00 ratio=0.100 sbits=0.100 n=12
+[niah_multivalue ctx16384] palu-r0.5      acc=0.83 recall=0.94 ratio=0.504 sbits=0.504 n=12
+[niah_multivalue ctx16384] think-c0.5     acc=0.67 recall=0.92 ratio=0.750 sbits=0.750 n=12
+[niah_single ctx16384] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.149 sbits=0.275 n=12
+[niah_single ctx16384] ea-k0.1        acc=0.00 recall=0.00 ratio=0.100 sbits=0.100 n=12
+[niah_single ctx16384] palu-r0.5      acc=1.00 recall=1.00 ratio=0.504 sbits=0.504 n=12
+[niah_single ctx16384] think-c0.5     acc=1.00 recall=1.00 ratio=0.750 sbits=0.750 n=12
+[vt ctx16384] ea-k0.1        acc=0.00 recall=0.00 ratio=0.100 sbits=0.100 n=12
+[vt ctx16384] palu-r0.5      acc=0.08 recall=0.08 ratio=0.504 sbits=0.504 n=12
+[vt ctx16384] think-c0.5     acc=0.33 recall=0.33 ratio=0.750 sbits=0.750 n=12

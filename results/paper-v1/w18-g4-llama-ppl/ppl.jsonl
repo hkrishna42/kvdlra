@@ -1,0 +1,4 @@
+{"arm": "bugSseed-r128-h1024-s32", "ctx": 32768, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 7.353, "ratio": 0.159, "sbits": 0.284, "source": "results/w18-g4-llama-ppl-lines.txt:1", "tok_eq": 5183.1}
+{"arm": "full", "ctx": 32768, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 6.975, "ratio": 1.0, "sbits": 1.0, "source": "results/w18-g4-llama-ppl-lines.txt:2", "tok_eq": 32768.0}
+{"arm": "palu-r0.5", "ctx": 32768, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 7.232, "ratio": 0.502, "sbits": 0.502, "source": "results/w18-g4-llama-ppl-lines.txt:3", "tok_eq": 16450.0}
+{"arm": "think-c0.5", "ctx": 32768, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 7.196, "ratio": 0.75, "sbits": 0.75, "source": "results/w18-g4-llama-ppl-lines.txt:4", "tok_eq": 24576.2}

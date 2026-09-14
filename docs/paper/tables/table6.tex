@@ -1,0 +1,16 @@
+% Table 6 -- eviction at 0.100x stored state, arm `ea-k0.1`
+% paper-v1: paper/main.tex @ee8c0ab, table `tab:evict` (renders as Table 7 in the PDF)
+% source: results/paper-v1/w18-g3-{llama,qwen,mistral}/trials.jsonl (cells), and their cells.jsonl (the budget in the title)
+% cell: acc [Wilson 95% lo,hi] (hits/n)
+% rows are the model x ctx cells v1 showed; the pods also hold Qwen/Mistral 32K, which v1 did not print
+% v1's table has no memory column: its budget is stated once in the caption, and is regenerated in the title above from the `ratio=` rows of all 4 cells
+\begin{tabular}{lccccc}
+\toprule
+model & ctx & single & multi-key & multi-value & var-track \\
+\midrule
+Llama-3.1-8B & 16384 & 1.00 [0.76,1.00] (12/12) & 0.92 [0.65,0.99] (11/12) & 1.00 [0.76,1.00] (12/12) & 0.08 [0.01,0.35] (1/12) \\
+Llama-3.1-8B & 32768 & 1.00 [0.76,1.00] (12/12) & 0.92 [0.65,0.99] (11/12) & 0.92 [0.65,0.99] (11/12) & 0.58 [0.32,0.81] (7/12) \\
+Qwen2.5-7B & 16384 & 0.17 [0.05,0.45] (2/12) & 0.00 [0.00,0.24] (0/12) & 0.00 [0.00,0.24] (0/12) & 0.00 [0.00,0.24] (0/12) \\
+Mistral-7B-v0.3 & 16384 & 0.50 [0.25,0.75] (6/12) & 0.08 [0.01,0.35] (1/12) & 0.00 [0.00,0.24] (0/12) & 0.00 [0.00,0.24] (0/12) \\
+\bottomrule
+\end{tabular}

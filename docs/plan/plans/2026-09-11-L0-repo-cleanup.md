@@ -427,7 +427,7 @@ def test_mcnemar_no_shared_trials_is_none() -> None:
 
 def test_holm_and_bh_known_vectors() -> None:
     assert holm([0.01, 0.04, 0.03]) == pytest.approx([0.03, 0.06, 0.06])
-    assert bh([0.01, 0.04, 0.03]) == pytest.approx([0.03, 0.04, 0.045])
+    assert bh([0.01, 0.04, 0.03]) == pytest.approx([0.03, 0.04, 0.04])  # adjusted (cummin) values; R5 corrected the plan
 
 
 def test_paired_bootstrap_symmetric_contains_zero() -> None:

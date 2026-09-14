@@ -1,0 +1,12 @@
+# w16-llama8b-sweep-lines.txt  n_by_ctx={'16384': 4}  sources=['w16-llama8b-sweep-raw.log']
+[niah_single ctx16384] bugSseed-r16-h256 acc=1.00 recall=1.00 ratio=0.036
+[niah_single ctx16384] bugSseed-r32-h256 acc=1.00 recall=1.00 ratio=0.052
+[niah_single ctx16384] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.085
+[niah_single ctx16384] bugSseed-r128-h256 acc=1.00 recall=1.00 ratio=0.150
+[niah_multivalue ctx16384] bugSseed-r16-h256 acc=1.00 recall=1.00 ratio=0.036
+[niah_multivalue ctx16384] bugSseed-r32-h256 acc=1.00 recall=1.00 ratio=0.053
+[niah_multivalue ctx16384] bugSseed-r64-h256 acc=1.00 recall=1.00 ratio=0.085
+[niah_multivalue ctx16384] bugSseed-r128-h256 acc=0.00 recall=0.06 ratio=0.151
+[vt ctx16384] bugSseed-r16-h256 acc=0.75 recall=0.75 ratio=0.036
+[vt ctx16384] bugSseed-r32-h256 acc=1.00 recall=1.00 ratio=0.053
+[vt ctx16384] bugSseed-r64-h256 acc=0.75 recall=0.75 ratio=0.085

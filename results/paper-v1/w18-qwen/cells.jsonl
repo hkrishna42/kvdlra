@@ -1,0 +1,16 @@
+{"acc": 0.67, "arm": "bugS-r64-h256-q4", "ctx": 16384, "hits": 8, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.149, "sbits": 0.275, "source": "results/w18-qwen-lines.txt:1", "task": "niah_multikey"}
+{"acc": 1.0, "arm": "bugSseed-r64-h256", "ctx": 16384, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.149, "sbits": 0.275, "source": "results/w18-qwen-lines.txt:2", "task": "niah_multikey"}
+{"acc": 0.83, "arm": "bugS-r64-h256-q4", "ctx": 32768, "hits": 10, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.139, "sbits": 0.265, "source": "results/w18-qwen-lines.txt:3", "task": "niah_multikey"}
+{"acc": 1.0, "arm": "bugSseed-r64-h256", "ctx": 32768, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.139, "sbits": 0.265, "source": "results/w18-qwen-lines.txt:4", "task": "niah_multikey"}
+{"acc": 0.0, "arm": "bugS-r64-h256-q4", "ctx": 16384, "hits": 0, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.149, "sbits": 0.275, "source": "results/w18-qwen-lines.txt:5", "task": "niah_multivalue"}
+{"acc": 1.0, "arm": "bugSseed-r64-h256", "ctx": 16384, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.149, "sbits": 0.275, "source": "results/w18-qwen-lines.txt:6", "task": "niah_multivalue"}
+{"acc": 1.0, "arm": "bugS-r64-h256-q4", "ctx": 32768, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.139, "sbits": 0.265, "source": "results/w18-qwen-lines.txt:7", "task": "niah_multivalue"}
+{"acc": 1.0, "arm": "bugSseed-r64-h256", "ctx": 32768, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.139, "sbits": 0.265, "source": "results/w18-qwen-lines.txt:8", "task": "niah_multivalue"}
+{"acc": 1.0, "arm": "bugS-r64-h256-q4", "ctx": 16384, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.149, "sbits": 0.276, "source": "results/w18-qwen-lines.txt:9", "task": "niah_single"}
+{"acc": 1.0, "arm": "bugSseed-r64-h256", "ctx": 16384, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.149, "sbits": 0.276, "source": "results/w18-qwen-lines.txt:10", "task": "niah_single"}
+{"acc": 1.0, "arm": "bugS-r64-h256-q4", "ctx": 32768, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.139, "sbits": 0.265, "source": "results/w18-qwen-lines.txt:11", "task": "niah_single"}
+{"acc": 1.0, "arm": "bugSseed-r64-h256", "ctx": 32768, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.139, "sbits": 0.265, "source": "results/w18-qwen-lines.txt:12", "task": "niah_single"}
+{"acc": 0.0, "arm": "bugS-r64-h256-q4", "ctx": 16384, "hits": 0, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.149, "sbits": 0.275, "source": "results/w18-qwen-lines.txt:13", "task": "vt"}
+{"acc": 1.0, "arm": "bugSseed-r64-h256", "ctx": 16384, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.149, "sbits": 0.275, "source": "results/w18-qwen-lines.txt:14", "task": "vt"}
+{"acc": 1.0, "arm": "bugS-r64-h256-q4", "ctx": 32768, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.139, "sbits": 0.265, "source": "results/w18-qwen-lines.txt:15", "task": "vt"}
+{"acc": 1.0, "arm": "bugSseed-r64-h256", "ctx": 32768, "hits": 12, "model": "Qwen/Qwen2.5-7B-Instruct", "n": 12, "ratio": 0.139, "sbits": 0.265, "source": "results/w18-qwen-lines.txt:16", "task": "vt"}

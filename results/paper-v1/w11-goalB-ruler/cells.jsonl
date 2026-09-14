@@ -1,0 +1,13 @@
+{"acc": 0.83, "arm": "bugS-r32-h256", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.043, "sbits": null, "source": "results/w11-goalB-ruler-lines.txt:1", "task": "niah_multikey"}
+{"acc": 0.83, "arm": "bugS-r32-h512", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.05, "sbits": null, "source": "results/w11-goalB-ruler-lines.txt:2", "task": "niah_multikey"}
+{"acc": 1.0, "arm": "full", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 1.0, "sbits": null, "source": "results/w11-goalB-ruler-lines.txt:3", "task": "niah_multikey"}
+{"acc": 1.0, "arm": "bugEVICT-h1024", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.033, "sbits": null, "source": "results/w11-goalB-ruler-lines.txt:4", "task": "niah_single"}
+{"acc": 1.0, "arm": "bugEVICT-h2048", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.064, "sbits": null, "source": "results/w11-goalB-ruler-lines.txt:5", "task": "niah_single"}
+{"acc": 1.0, "arm": "bugEVICT-h256", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.009, "sbits": null, "source": "results/w11-goalB-ruler-lines.txt:6", "task": "niah_single"}
+{"acc": 1.0, "arm": "bugEVICT-h512", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.017, "sbits": null, "source": "results/w11-goalB-ruler-lines.txt:7", "task": "niah_single"}
+{"acc": 1.0, "arm": "bugS-r32-h1024", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.066, "sbits": null, "source": "results/w11-goalB-ruler-lines.txt:8", "task": "niah_single"}
+{"acc": 1.0, "arm": "bugS-r32-h2048", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.096, "sbits": null, "source": "results/w11-goalB-ruler-lines.txt:9", "task": "niah_single"}
+{"acc": 1.0, "arm": "bugS-r32-h256", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.043, "sbits": null, "source": "results/w11-goalB-ruler-lines.txt:10", "task": "niah_single"}
+{"acc": 1.0, "arm": "bugS-r32-h512", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.051, "sbits": null, "source": "results/w11-goalB-ruler-lines.txt:11", "task": "niah_single"}
+{"acc": 1.0, "arm": "ea-k0.1", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.1, "sbits": null, "source": "results/w11-goalB-ruler-lines.txt:12", "task": "niah_single"}
+{"acc": 1.0, "arm": "full", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 1.0, "sbits": null, "source": "results/w11-goalB-ruler-lines.txt:13", "task": "niah_single"}

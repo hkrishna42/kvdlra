@@ -1,0 +1,4 @@
+  bugSseed-r128-h1024-s32 [T=32768] ppl=7.353 tok_eq/layer=5183.1 ratio=0.159 sbits=0.284
+  full           [T=32768] ppl=6.975 tok_eq/layer=32768.0 ratio=1.000 sbits=1.000
+  palu-r0.5      [T=32768] ppl=7.232 tok_eq/layer=16450.0 ratio=0.502 sbits=0.502
+  think-c0.5     [T=32768] ppl=7.196 tok_eq/layer=24576.2 ratio=0.750 sbits=0.750

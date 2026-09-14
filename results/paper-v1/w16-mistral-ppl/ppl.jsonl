@@ -1,0 +1,14 @@
+{"arm": "bug-r16", "ctx": 16384, "model": "mistralai/Mistral-7B-Instruct-v0.3", "ppl": 7.375, "ratio": 0.019, "sbits": null, "source": "results/w16-mistral-ppl-lines.txt:2", "tok_eq": 0.0}
+{"arm": "bug-r32", "ctx": 16384, "model": "mistralai/Mistral-7B-Instruct-v0.3", "ppl": 6.995, "ratio": 0.035, "sbits": null, "source": "results/w16-mistral-ppl-lines.txt:3", "tok_eq": 0.0}
+{"arm": "bug-r64", "ctx": 16384, "model": "mistralai/Mistral-7B-Instruct-v0.3", "ppl": 6.22, "ratio": 0.068, "sbits": null, "source": "results/w16-mistral-ppl-lines.txt:4", "tok_eq": 0.0}
+{"arm": "bug-r128", "ctx": 16384, "model": "mistralai/Mistral-7B-Instruct-v0.3", "ppl": 138.317, "ratio": 0.135, "sbits": null, "source": "results/w16-mistral-ppl-lines.txt:5", "tok_eq": 0.0}
+{"arm": "bug-r256", "ctx": 16384, "model": "mistralai/Mistral-7B-Instruct-v0.3", "ppl": 37.205, "ratio": 0.267, "sbits": null, "source": "results/w16-mistral-ppl-lines.txt:6", "tok_eq": 0.0}
+{"arm": "bugSseed-r16-h256", "ctx": 16384, "model": "mistralai/Mistral-7B-Instruct-v0.3", "ppl": 5.888, "ratio": 0.036, "sbits": null, "source": "results/w16-mistral-ppl-lines.txt:7", "tok_eq": 0.0}
+{"arm": "bugSseed-r32-h256", "ctx": 16384, "model": "mistralai/Mistral-7B-Instruct-v0.3", "ppl": 5.946, "ratio": 0.052, "sbits": null, "source": "results/w16-mistral-ppl-lines.txt:8", "tok_eq": 0.0}
+{"arm": "bugSseed-r64-h256", "ctx": 16384, "model": "mistralai/Mistral-7B-Instruct-v0.3", "ppl": 5.499, "ratio": 0.085, "sbits": null, "source": "results/w16-mistral-ppl-lines.txt:9", "tok_eq": 0.0}
+{"arm": "bugSseed-r128-h256", "ctx": 16384, "model": "mistralai/Mistral-7B-Instruct-v0.3", "ppl": 43.938, "ratio": 0.15, "sbits": null, "source": "results/w16-mistral-ppl-lines.txt:10", "tok_eq": 0.0}
+{"arm": "full", "ctx": 16384, "model": "mistralai/Mistral-7B-Instruct-v0.3", "ppl": 4.866, "ratio": 1.0, "sbits": null, "source": "results/w16-mistral-ppl-lines.txt:11", "tok_eq": 0.0}
+{"arm": "think-c0.5", "ctx": 16384, "model": "mistralai/Mistral-7B-Instruct-v0.3", "ppl": 4.933, "ratio": 0.75, "sbits": null, "source": "results/w16-mistral-ppl-lines.txt:12", "tok_eq": 0.0}
+{"arm": "palu-r0.5", "ctx": 16384, "model": "mistralai/Mistral-7B-Instruct-v0.3", "ppl": 5.09, "ratio": 0.504, "sbits": null, "source": "results/w16-mistral-ppl-lines.txt:13", "tok_eq": 0.0}
+{"arm": "bugSseed-r128-h1024", "ctx": 16384, "model": "mistralai/Mistral-7B-Instruct-v0.3", "ppl": 47.33, "ratio": 0.191, "sbits": null, "source": "results/w16-mistral-ppl-lines.txt:14", "tok_eq": 0.0}
+{"arm": "bugSseed-r128-h1024-s32", "ctx": 16384, "model": "mistralai/Mistral-7B-Instruct-v0.3", "ppl": 12.731, "ratio": 0.191, "sbits": null, "source": "results/w16-mistral-ppl-lines.txt:15", "tok_eq": 0.0}

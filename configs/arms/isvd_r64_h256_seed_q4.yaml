@@ -1,0 +1,27 @@
+name: isvd_r64_h256_seed_q4
+legacy_name: "bugSseed-r64-h256-q4"
+kind: bug
+chunkable: true
+doc: >-
+  The r64 arm with the coordinate tier composed with 4-bit coding: 512 fp32 columns kept,
+  everything demoted from them coded at 4 bits (never dropped). The sub-cliff cell. Week-18's
+  rows had the two budgets swapped so the coded tier never filled; Week-19 (w19_a1q) is the
+  first real measurement.
+cache:
+  rank: 64
+  coord_budget: 512
+  recent_window: 32
+  absorb_block: 16
+  n_sink: 4
+  retention: "lowrank_surprise"
+  hh_budget: 256
+  hh_select: "surprise"
+  hh_neighbor: 1
+  hh_retain: true
+  seed_hh_warmup: true
+  w_key: null
+  score_rank: null
+  min_sv_frac: 0.0
+  tracker: "isvd"
+  quant_bits: 4
+  quant_budget: null

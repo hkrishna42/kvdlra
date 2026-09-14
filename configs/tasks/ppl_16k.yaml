@@ -1,0 +1,9 @@
+name: ppl_16k
+generator: ppl
+ctx: 16384
+doc: >-
+  Teacher-forced perplexity at 16K: prefill the context with the arm's compression active, then
+  score a frozen 512-token continuation window against the compressed cache, averaged over 4
+  sampled windows. v1 read WikiText-103 TRAIN (a known defect recorded in CODE_AUDIT).
+n_trials: 1
+seeds: [0]

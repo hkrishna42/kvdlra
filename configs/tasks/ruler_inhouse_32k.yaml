@@ -1,0 +1,9 @@
+name: ruler_inhouse_32k
+generator: inhouse
+ctx: 32768
+doc: >-
+  In-repo RULER-style needle generator at 32K: four tasks, 6 trials x 2 seeds = 12 records per
+  cell, chunked prefill. The filler is ten cycled sentences, which is suspected of flattering a
+  low-rank gist -- see ruler_inhouse_16k_wikitext for the realistic-filler control. Depths are
+  drawn by the generator rather than pinned.
+tasks: ["niah_single", "niah_multikey", "niah_multivalue", "vt"]

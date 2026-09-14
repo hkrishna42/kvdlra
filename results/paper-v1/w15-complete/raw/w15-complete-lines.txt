@@ -1,0 +1,16 @@
+[niah_single ctx32768] bugSseed-r128-h1024 acc=1.00 recall=1.00 ratio=0.159
+[niah_multivalue ctx32768] bugSseed-r128-h1024 acc=0.00 recall=0.25 ratio=0.159
+[niah_single ctx32768] bugSseed-r128-h1024-s32 acc=1.00 recall=1.00 ratio=0.159
+[niah_multivalue ctx32768] bugSseed-r128-h1024-s32 acc=1.00 recall=1.00 ratio=0.159
+[niah_single ctx16384] bugSseed-r128-h1024 acc=0.00 recall=0.00 ratio=0.191
+[niah_single ctx16384] bugSseed-r128-h1024-s32 acc=1.00 recall=1.00 ratio=0.191
+[pplw] T=16384 full ntok=511 nlls=1.573386,1.236791,1.722114,1.831703,1.432485,1.956947,1.495108,2.050881
+  full           [T=16384] ppl=5.272 tok_eq/layer=16384.0 ratio=1.000
+[pplw] T=16384 think-c0.5 ntok=511 nlls=1.596869,1.268102,1.761252,1.855186,1.432485,1.988258,1.526419,2.082192
+  think-c0.5     [T=16384] ppl=5.413 tok_eq/layer=12288.2 ratio=0.750
+[pplw] T=16384 palu-r0.5 ntok=511 nlls=1.581213,1.260274,1.745597,1.855186,1.455969,2.003914,1.518591,2.097847
+  palu-r0.5      [T=16384] ppl=5.419 tok_eq/layer=8258.0 ratio=0.504
+[pplw] T=16384 bugSseed-r128-h1024 ntok=511 nlls=1.596869,1.252446,1.769080,1.847358,1.424658,2.019569,1.526419,2.097847
+  bugSseed-r128-h1024 [T=16384] ppl=5.429 tok_eq/layer=3119.1 ratio=0.191
+[pplw] T=16384 bugSseed-r128-h1024-s32 ntok=511 nlls=1.596869,1.252446,1.769080,1.847358,1.432485,2.019569,1.526419,2.097847
+  bugSseed-r128-h1024-s32 [T=16384] ppl=5.434 tok_eq/layer=3119.1 ratio=0.191

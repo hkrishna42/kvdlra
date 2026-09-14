@@ -1,0 +1,13 @@
+[ctx16400 r32] hh=   64  needle_in_hh=3/3  captured=True  nbr(w1/2/4)=1/1/1  ratio~=0.0039
+[ctx16400 r32] hh=  128  needle_in_hh=3/3  captured=True  nbr(w1/2/4)=1/1/1  ratio~=0.0078
+[ctx16400 r32] hh=  256  needle_in_hh=3/3  captured=True  nbr(w1/2/4)=1/1/1  ratio~=0.0156
+[ctx16400 r32] hh=  512  needle_in_hh=3/3  captured=True  nbr(w1/2/4)=1/1/1  ratio~=0.0312
+[ctx16400 r32] hh= 1024  needle_in_hh=3/3  captured=True  nbr(w1/2/4)=1/1/1  ratio~=0.0624
+[ctx16400 r32] hh= 2048  needle_in_hh=3/3  captured=True  nbr(w1/2/4)=1/1/1  ratio~=0.1249
+[ctx32778 r32] hh=   64  needle_in_hh=3/3  captured=True  nbr(w1/2/4)=1/1/1  ratio~=0.0020
+[ctx32778 r32] hh=  128  needle_in_hh=3/3  captured=True  nbr(w1/2/4)=1/1/1  ratio~=0.0039
+[ctx32778 r32] hh=  256  needle_in_hh=3/3  captured=True  nbr(w1/2/4)=1/1/1  ratio~=0.0078
+[ctx32778 r32] hh=  512  needle_in_hh=2/3  captured=False  nbr(w1/2/4)=1/1/1  ratio~=0.0156
+[ctx32778 r32] hh=  512  needle_in_hh=3/3  captured=True  nbr(w1/2/4)=1/1/1  ratio~=0.0156
+[ctx32778 r32] hh= 1024  needle_in_hh=3/3  captured=True  nbr(w1/2/4)=1/1/1  ratio~=0.0312
+[ctx32778 r32] hh= 2048  needle_in_hh=3/3  captured=True  nbr(w1/2/4)=1/1/1  ratio~=0.0625

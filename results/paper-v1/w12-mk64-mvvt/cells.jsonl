@@ -1,0 +1,4 @@
+{"acc": 0.5, "arm": "bugS-r32-h256", "ctx": 65536, "hits": null, "model": "unknown", "n": null, "ratio": 0.038, "sbits": null, "source": "results/w12-mk64-mvvt-lines.txt:1", "task": "niah_multivalue"}
+{"acc": 1.0, "arm": "ea-k0.1", "ctx": 65536, "hits": null, "model": "unknown", "n": null, "ratio": 0.1, "sbits": null, "source": "results/w12-mk64-mvvt-lines.txt:2", "task": "niah_multivalue"}
+{"acc": 1.0, "arm": "bugS-r32-h256", "ctx": 65536, "hits": null, "model": "unknown", "n": null, "ratio": 0.038, "sbits": null, "source": "results/w12-mk64-mvvt-lines.txt:3", "task": "vt"}
+{"acc": 1.0, "arm": "ea-k0.1", "ctx": 65536, "hits": null, "model": "unknown", "n": null, "ratio": 0.1, "sbits": null, "source": "results/w12-mk64-mvvt-lines.txt:4", "task": "vt"}

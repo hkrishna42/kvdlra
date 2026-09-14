@@ -1,0 +1,8 @@
+name: ea_k0.25
+legacy_name: "ea-k0.25"
+kind: press
+chunkable: true
+doc: >-
+  ExpectedAttention eviction keeping 25% of tokens at prefill.
+press:
+  keep: 0.25

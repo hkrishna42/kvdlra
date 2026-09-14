@@ -1,0 +1,35 @@
+{
+  "pod": "w19-a1q-qwen",
+  "git_sha": "ee8c0ab",
+  "source_files": [
+    {
+      "path": "results/w19-a1q-qwen-lines.txt",
+      "lines": 5,
+      "parsed": {
+        "trials": 0,
+        "cells": 4,
+        "ppl": 1
+      },
+      "unconverted": 0,
+      "raw": "raw/w19-a1q-qwen-lines.txt"
+    },
+    {
+      "path": "results/w19_pertrial/a1q-qwen-trials.txt",
+      "lines": 48,
+      "parsed": {
+        "trials": 48,
+        "cells": 0,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/a1q-qwen-trials.txt"
+    }
+  ],
+  "converted_by": "scripts/tables.py convert-v1",
+  "records": {
+    "trials.jsonl": 48,
+    "cells.jsonl": 4,
+    "ppl.jsonl": 1
+  },
+  "note": "paper-v1 archive; haystack_id/depth/prompt_sha256 were not recorded and are null"
+}

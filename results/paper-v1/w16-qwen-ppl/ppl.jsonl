@@ -1,0 +1,14 @@
+{"arm": "bug-r16", "ctx": 16384, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 9.345, "ratio": 0.034, "sbits": null, "source": "results/w16-qwen-ppl-lines.txt:2", "tok_eq": 0.0}
+{"arm": "bug-r32", "ctx": 16384, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 8.326, "ratio": 0.067, "sbits": null, "source": "results/w16-qwen-ppl-lines.txt:3", "tok_eq": 0.0}
+{"arm": "bug-r64", "ctx": 16384, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 7.867, "ratio": 0.131, "sbits": null, "source": "results/w16-qwen-ppl-lines.txt:4", "tok_eq": 0.0}
+{"arm": "bug-r128", "ctx": 16384, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 7.317, "ratio": 0.259, "sbits": null, "source": "results/w16-qwen-ppl-lines.txt:5", "tok_eq": 0.0}
+{"arm": "bug-r256", "ctx": 16384, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 27531.666, "ratio": 0.517, "sbits": null, "source": "results/w16-qwen-ppl-lines.txt:6", "tok_eq": 0.0}
+{"arm": "bugSseed-r16-h256", "ctx": 16384, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 8.149, "ratio": 0.053, "sbits": null, "source": "results/w16-qwen-ppl-lines.txt:7", "tok_eq": 0.0}
+{"arm": "bugSseed-r32-h256", "ctx": 16384, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 7.913, "ratio": 0.085, "sbits": null, "source": "results/w16-qwen-ppl-lines.txt:8", "tok_eq": 0.0}
+{"arm": "bugSseed-r64-h256", "ctx": 16384, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 8.181, "ratio": 0.148, "sbits": null, "source": "results/w16-qwen-ppl-lines.txt:9", "tok_eq": 0.0}
+{"arm": "bugSseed-r128-h256", "ctx": 16384, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 7.805, "ratio": 0.275, "sbits": null, "source": "results/w16-qwen-ppl-lines.txt:10", "tok_eq": 0.0}
+{"arm": "full", "ctx": 16384, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 6.217, "ratio": 1.0, "sbits": null, "source": "results/w16-qwen-ppl-lines.txt:11", "tok_eq": 0.0}
+{"arm": "think-c0.5", "ctx": 16384, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 6.424, "ratio": 0.75, "sbits": null, "source": "results/w16-qwen-ppl-lines.txt:12", "tok_eq": 0.0}
+{"arm": "palu-r0.5", "ctx": 16384, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 6.384, "ratio": 0.504, "sbits": null, "source": "results/w16-qwen-ppl-lines.txt:13", "tok_eq": 0.0}
+{"arm": "bugSseed-r128-h1024", "ctx": 16384, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 466.978, "ratio": 0.31, "sbits": null, "source": "results/w16-qwen-ppl-lines.txt:14", "tok_eq": 0.0}
+{"arm": "bugSseed-r128-h1024-s32", "ctx": 16384, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 47.516, "ratio": 0.31, "sbits": null, "source": "results/w16-qwen-ppl-lines.txt:15", "tok_eq": 0.0}

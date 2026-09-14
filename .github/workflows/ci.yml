@@ -18,6 +18,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: tests/test_pod_manifest.py walks it to enforce the rule that a
+          # pre-registration is committed BEFORE the pod it registers. A shallow clone
+          # has no ancestors to walk (the test skips itself there, which would retire
+          # the rule in the one place it is checked automatically).
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5

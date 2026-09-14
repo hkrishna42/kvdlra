@@ -1,0 +1,2 @@
+{"arm": "bugSseed-r64-h256-q4", "ctx": 16384, "model": "mistralai/Mistral-7B-Instruct-v0.3", "ppl": 6.558, "ratio": 0.042, "sbits": 0.048, "source": "results/w19-a1q-mistral-lines.txt:1", "tok_eq": 540.8}
+{"arm": "bugSseed-r64-h256-q4", "ctx": 32768, "model": "mistralai/Mistral-7B-Instruct-v0.3", "ppl": 4.28, "ratio": 0.031, "sbits": 0.034, "source": "results/w19-a1q-mistral-lines.txt:2", "tok_eq": 700.8}

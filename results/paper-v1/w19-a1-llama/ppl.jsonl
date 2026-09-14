@@ -1,0 +1,4 @@
+{"arm": "quant-2bit-kivi", "ctx": 16384, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 5.403, "ratio": 0.163, "sbits": 0.163, "source": "results/w19-a1-llama-lines.txt:1", "tok_eq": 1398.0}
+{"arm": "quant-2bit-kivi", "ctx": 32768, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 8.277, "ratio": 0.16, "sbits": 0.16, "source": "results/w19-a1-llama-lines.txt:2", "tok_eq": 2678.0}
+{"arm": "quant-4bit-kivi", "ctx": 16384, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 4.899, "ratio": 0.287, "sbits": 0.287, "source": "results/w19-a1-llama-lines.txt:3", "tok_eq": 2414.0}
+{"arm": "quant-4bit-kivi", "ctx": 32768, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 7.535, "ratio": 0.284, "sbits": 0.284, "source": "results/w19-a1-llama-lines.txt:4", "tok_eq": 4718.0}

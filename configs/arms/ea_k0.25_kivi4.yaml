@@ -1,0 +1,16 @@
+name: ea_k0.25_kivi4
+legacy_name: "ea-k0.25-q4-kivi"
+kind: composite
+chunkable: false
+doc: >-
+  MiniKV-style composite: ExpectedAttention prunes to 0.25 of the tokens and the survivors are
+  stored at 4 bits (KIVI grouping). The two compression axes multiply, so this is the
+  byte-matched competitor for the sub-cliff cell. The press runs single-shot.
+press:
+  keep: 0.25
+quant:
+  nbits: 4
+  scheme: "kivi"
+  backend: "quanto"
+  group: 64
+  residual: 128

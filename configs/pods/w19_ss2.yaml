@@ -1,0 +1,15 @@
+name: w19_ss2
+model: "unsloth/Meta-Llama-3.1-8B-Instruct"
+dtype: bfloat16
+doc: >-
+  Week-19 sysfix, second half: the single-shot 2-bit prefill control. Is the chunked-prefill
+  multivalue edge protocol-bound? Same cache as w19_a1's 2-bit arm, chunk 0. Its rows are archived under
+  results/paper-v1/w19-sysfix-llama (the sysfix pod's second half) keyed `quant-2bit-kivi`, not
+  the `#chunk0` legacy name this config carries to keep the two arms apart. v1 had no
+  pre-registration: `prereg: null` records that, and it is the one field a re-run of this pod
+  must fill before launch (scripts/pod.py check enforces the commit order from L0 on).
+prereg: null
+arms: ["kivi2_singleshot"]
+tasks: ["ruler_inhouse_16k"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+gpu_budget_h: 0.0

@@ -1,0 +1,15 @@
+name: w17_floor
+model: "Qwen/Qwen2.5-7B-Instruct"
+dtype: bfloat16
+doc: >-
+  Week-17 FLOOR: the pure-gist rank sweep with the relative singular-value floor off and then at
+  1e-2, 4 windows, 16K. Only the rank-256 config is given a separate floor-on arm here (it is
+  the divergent cell, ppl 27531); the same run applied the floor at ranks 64 and 128 too, where
+  the off and on cells agree. v1 had no pre-registration: `prereg: null` records that, and it is
+  the one field a re-run of this pod must fill before launch (scripts/pod.py check enforces the
+  commit order from L0 on).
+prereg: null
+arms: ["isvd_r64", "isvd_r128", "isvd_r256", "isvd_r256_f0.01"]
+tasks: ["ppl_16k"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-runtime"
+gpu_budget_h: 0.0

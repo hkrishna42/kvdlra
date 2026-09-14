@@ -1,0 +1,9 @@
+name: ruler_inhouse_16k_wikitext
+generator: inhouse
+ctx: 16384
+doc: >-
+  The realistic-filler control for ruler_inhouse_16k: same generator, same trial count, haystack
+  drawn from WikiText instead of ten cycled sentences. v1 also ran a pinned depth grid (0.1 0.3
+  0.5 0.7 0.9) on niah_single alone under this protocol.
+tasks: ["niah_single", "niah_multikey", "niah_multivalue", "vt"]
+filler: "wikitext"

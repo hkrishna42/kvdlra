@@ -1,0 +1,22 @@
+{
+  "pod": "w18-g4-llama-ppl",
+  "git_sha": "ee8c0ab",
+  "source_files": [
+    {
+      "path": "results/w18-g4-llama-ppl-lines.txt",
+      "lines": 4,
+      "parsed": {
+        "trials": 0,
+        "cells": 0,
+        "ppl": 4
+      },
+      "unconverted": 0,
+      "raw": "raw/w18-g4-llama-ppl-lines.txt"
+    }
+  ],
+  "converted_by": "scripts/tables.py convert-v1",
+  "records": {
+    "ppl.jsonl": 4
+  },
+  "note": "paper-v1 archive; haystack_id/depth/prompt_sha256 were not recorded and are null"
+}

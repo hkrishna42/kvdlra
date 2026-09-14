@@ -1,0 +1,14 @@
+name: kivi8_hqq
+legacy_name: "quant-8bit-kivi-hqq"
+kind: quant
+chunkable: true
+doc: >-
+  The near-lossless 8-bit decode-path control (hqq backend, which covers 1-8 bits). If this
+  scores zero on a single needle, the quantized decode path is broken rather than the bit width.
+quant:
+  nbits: 8
+  scheme: "kivi"
+  backend: "hqq"
+  group: 64
+  residual: 128
+  chunk: 4096

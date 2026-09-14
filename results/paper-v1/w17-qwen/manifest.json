@@ -1,0 +1,23 @@
+{
+  "pod": "w17-qwen",
+  "git_sha": "ee8c0ab",
+  "source_files": [
+    {
+      "path": "results/w17-qwen-lines.txt",
+      "lines": 42,
+      "parsed": {
+        "trials": 0,
+        "cells": 21,
+        "ppl": 17
+      },
+      "unconverted": 4,
+      "raw": "raw/w17-qwen-lines.txt"
+    }
+  ],
+  "converted_by": "scripts/tables.py convert-v1",
+  "records": {
+    "cells.jsonl": 21,
+    "ppl.jsonl": 17
+  },
+  "note": "paper-v1 archive; haystack_id/depth/prompt_sha256 were not recorded and are null"
+}

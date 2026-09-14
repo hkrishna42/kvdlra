@@ -1,0 +1,34 @@
+{
+  "pod": "w19-fork-mistral",
+  "git_sha": "ee8c0ab",
+  "source_files": [
+    {
+      "path": "results/w19-fork-mistral-lines.txt",
+      "lines": 32,
+      "parsed": {
+        "trials": 0,
+        "cells": 32,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/w19-fork-mistral-lines.txt"
+    },
+    {
+      "path": "results/w19_pertrial/fork-mistral-trials.txt",
+      "lines": 384,
+      "parsed": {
+        "trials": 384,
+        "cells": 0,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/fork-mistral-trials.txt"
+    }
+  ],
+  "converted_by": "scripts/tables.py convert-v1",
+  "records": {
+    "trials.jsonl": 384,
+    "cells.jsonl": 32
+  },
+  "note": "paper-v1 archive; haystack_id/depth/prompt_sha256 were not recorded and are null"
+}

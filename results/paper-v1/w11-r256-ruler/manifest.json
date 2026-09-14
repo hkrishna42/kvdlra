@@ -1,0 +1,22 @@
+{
+  "pod": "w11-r256-ruler",
+  "git_sha": "ee8c0ab",
+  "source_files": [
+    {
+      "path": "results/w11-r256-ruler-lines.txt",
+      "lines": 12,
+      "parsed": {
+        "trials": 0,
+        "cells": 12,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/w11-r256-ruler-lines.txt"
+    }
+  ],
+  "converted_by": "scripts/tables.py convert-v1",
+  "records": {
+    "cells.jsonl": 12
+  },
+  "note": "paper-v1 archive; haystack_id/depth/prompt_sha256 were not recorded and are null"
+}

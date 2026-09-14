@@ -1,0 +1,34 @@
+{
+  "pod": "w19-fork-llama",
+  "git_sha": "ee8c0ab",
+  "source_files": [
+    {
+      "path": "results/w19-fork-llama-lines.txt",
+      "lines": 68,
+      "parsed": {
+        "trials": 0,
+        "cells": 68,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/w19-fork-llama-lines.txt"
+    },
+    {
+      "path": "results/w19_pertrial/fork-llama-trials.txt",
+      "lines": 808,
+      "parsed": {
+        "trials": 808,
+        "cells": 0,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/fork-llama-trials.txt"
+    }
+  ],
+  "converted_by": "scripts/tables.py convert-v1",
+  "records": {
+    "trials.jsonl": 808,
+    "cells.jsonl": 68
+  },
+  "note": "paper-v1 archive; haystack_id/depth/prompt_sha256 were not recorded and are null"
+}

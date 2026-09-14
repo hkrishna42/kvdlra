@@ -1,0 +1,1 @@
+{"arm": "bugSseed-r64-h256-q4", "ctx": 16384, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 14489.985, "ratio": 0.063, "sbits": 0.071, "source": "results/w19-a1q-qwen-lines.txt:1", "tok_eq": 725.7}

@@ -1,0 +1,22 @@
+{
+  "pod": "w11-goalA-ruler",
+  "git_sha": "ee8c0ab",
+  "source_files": [
+    {
+      "path": "results/w11-goalA-ruler-lines.txt",
+      "lines": 84,
+      "parsed": {
+        "trials": 0,
+        "cells": 84,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/w11-goalA-ruler-lines.txt"
+    }
+  ],
+  "converted_by": "scripts/tables.py convert-v1",
+  "records": {
+    "cells.jsonl": 84
+  },
+  "note": "paper-v1 archive; haystack_id/depth/prompt_sha256 were not recorded and are null"
+}

@@ -219,23 +219,26 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
         # (BUG-as-prefill-compressor: memory ~ rank/n, one point per rank).
         cb = t + rw + ab
         for r in args.ranks:
+            # The kwargs are named once and both stored and applied, so configs/arms/*.yaml
+            # can be checked against them without constructing a cache (Task 4 parity test).
+            # `make` closes over a COPY (dict(kwargs)): mutating the stored "kwargs" dict must
+            # not change what a later make() call constructs.
+            kwargs: dict[str, Any] = {
+                "rank": r,
+                "coord_budget": cb,
+                "recent_window": rw,
+                "absorb_block": ab,
+                "n_sink": N_SINK,
+                "retention": "fifo",
+                "min_sv_frac": msf,
+            }
             arms.append(
                 {
                     "name": f"bug-r{r}{fsuf}",
                     "kind": "bug",
                     "rank": r,
-                    "make": (
-                        lambda r=r, cb=cb: BugStreamingCache(
-                            model,
-                            rank=r,
-                            coord_budget=cb,
-                            recent_window=rw,
-                            absorb_block=ab,
-                            n_sink=N_SINK,
-                            retention="fifo",
-                            min_sv_frac=msf,
-                        )
-                    ),
+                    "kwargs": kwargs,
+                    "make": lambda kw=dict(kwargs): BugStreamingCache(model, **kw),
                 }
             )
 
@@ -290,6 +293,25 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
         qsuf = f"-q{qbits}" if qbits is not None else ""
         for r in args.ranks:
             for hh in args.hh_budgets:
+                kwargs = {
+                    "rank": r,
+                    "coord_budget": q_coord_budget,
+                    "recent_window": rw,
+                    "absorb_block": ab,
+                    "n_sink": N_SINK,
+                    "retention": "lowrank_surprise",
+                    "hh_budget": hh,
+                    "hh_select": "surprise",
+                    "hh_neighbor": args.hh_neighbor,
+                    "hh_retain": retain,
+                    "seed_hh_warmup": warmup,
+                    "w_key": w_key,
+                    "score_rank": score_rank,
+                    "min_sv_frac": msf,
+                    "tracker": trk,
+                    "quant_bits": qbits,
+                    "quant_budget": q_quant_budget,
+                }
                 arms.append(
                     {
                         "name": f"{prefix}-r{r}-h{hh}{suffix}{qsuf}{fsuf}{tsuf}",
@@ -298,28 +320,8 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                         "retention": "lowrank_surprise",
                         "hh_select": "surprise",
                         "hh_budget": hh,
-                        "make": (
-                            lambda r=r, cb=cb, hh=hh: BugStreamingCache(
-                                model,
-                                rank=r,
-                                coord_budget=q_coord_budget,
-                                recent_window=rw,
-                                absorb_block=ab,
-                                n_sink=N_SINK,
-                                retention="lowrank_surprise",
-                                hh_budget=hh,
-                                hh_select="surprise",
-                                hh_neighbor=args.hh_neighbor,
-                                hh_retain=retain,
-                                seed_hh_warmup=warmup,
-                                w_key=w_key,
-                                score_rank=score_rank,
-                                min_sv_frac=msf,
-                                tracker=trk,
-                                quant_bits=qbits,
-                                quant_budget=q_quant_budget,
-                            )
-                        ),
+                        "kwargs": kwargs,
+                        "make": lambda kw=dict(kwargs): BugStreamingCache(model, **kw),
                     }
                 )
 
@@ -329,6 +331,17 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
         # eviction. If bugslash retrieves at the SAME hh_budget as this, the win
         # is the SELECTION RULE, not BUG's gist (the honesty crux, Week-7/8 wall).
         for hh in args.hh_budgets:
+            kwargs = {
+                "rank": 1,
+                "coord_budget": 1,
+                "recent_window": rw,
+                "absorb_block": ab,
+                "n_sink": N_SINK,
+                "retention": "lowrank_surprise",
+                "hh_budget": hh,
+                "hh_select": "surprise",
+                "hh_neighbor": args.hh_neighbor,
+            }
             arms.append(
                 {
                     "name": f"bugEVICT-h{hh}",
@@ -337,20 +350,8 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                     "retention": "lowrank_surprise",
                     "hh_select": "surprise",
                     "hh_budget": hh,
-                    "make": (
-                        lambda hh=hh: BugStreamingCache(
-                            model,
-                            rank=1,
-                            coord_budget=1,
-                            recent_window=rw,
-                            absorb_block=ab,
-                            n_sink=N_SINK,
-                            retention="lowrank_surprise",
-                            hh_budget=hh,
-                            hh_select="surprise",
-                            hh_neighbor=args.hh_neighbor,
-                        )
-                    ),
+                    "kwargs": kwargs,
+                    "make": lambda kw=dict(kwargs): BugStreamingCache(model, **kw),
                 }
             )
 
@@ -475,6 +476,13 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
         from kvdlra.cache import ShadowKVCache
 
         for rs in args.shadow_ranks:
+            kwargs = {
+                "rank_s": rs,
+                "top_k": args.shadow_topk,
+                "chunk": 8,
+                "recent_window": rw,
+                "n_sink": N_SINK,
+            }
             arms.append(
                 {
                     "name": f"shadow-r{rs}",
@@ -482,16 +490,8 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                     "rank": None,
                     "rank_s": rs,
                     "chunkable": False,  # single-shot prefill only (port scope guard)
-                    "make": (
-                        lambda rs=rs: ShadowKVCache(
-                            model,
-                            rank_s=rs,
-                            top_k=args.shadow_topk,
-                            chunk=8,
-                            recent_window=rw,
-                            n_sink=N_SINK,
-                        )
-                    ),
+                    "kwargs": kwargs,
+                    "make": lambda kw=dict(kwargs): ShadowKVCache(model, **kw),
                 }
             )
     if "quant" in want:  # Week-18/19: KIVI-style 2/4-bit (+8-bit control) KV baseline

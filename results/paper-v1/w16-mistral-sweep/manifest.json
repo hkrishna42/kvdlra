@@ -1,0 +1,22 @@
+{
+  "pod": "w16-mistral-sweep",
+  "git_sha": "ee8c0ab",
+  "source_files": [
+    {
+      "path": "results/w16-mistral-sweep-lines.txt",
+      "lines": 13,
+      "parsed": {
+        "trials": 0,
+        "cells": 12,
+        "ppl": 0
+      },
+      "unconverted": 1,
+      "raw": "raw/w16-mistral-sweep-lines.txt"
+    }
+  ],
+  "converted_by": "scripts/tables.py convert-v1",
+  "records": {
+    "cells.jsonl": 12
+  },
+  "note": "paper-v1 archive; haystack_id/depth/prompt_sha256 were not recorded and are null"
+}

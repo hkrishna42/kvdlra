@@ -1,0 +1,25 @@
+name: isvd_r256_h1024_seed
+legacy_name: "bugSseed-r256-h1024"
+kind: bug
+chunkable: true
+doc: >-
+  The r/n = 0.25 control for the rank-vs-context wall: same exact tier as the r128 arm, storage
+  rank raised to 256.
+cache:
+  rank: 256
+  coord_budget: null
+  recent_window: 32
+  absorb_block: 16
+  n_sink: 4
+  retention: "lowrank_surprise"
+  hh_budget: 1024
+  hh_select: "surprise"
+  hh_neighbor: 1
+  hh_retain: true
+  seed_hh_warmup: true
+  w_key: null
+  score_rank: null
+  min_sv_frac: 0.0
+  tracker: "isvd"
+  quant_bits: null
+  quant_budget: 0

@@ -1,0 +1,6 @@
+{"acc": 0.5, "arm": "bugSQ-r32-h256", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.043, "sbits": null, "source": "results/w12-qbug-ruler-lines.txt:1", "task": "niah_multikey"}
+{"acc": 1.0, "arm": "bugSQ-r32-h256", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.043, "sbits": null, "source": "results/w12-qbug-ruler-lines.txt:2", "task": "niah_multivalue"}
+{"acc": 0.75, "arm": "bugSQ-r32-h256", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.043, "sbits": null, "source": "results/w12-qbug-ruler-lines.txt:3", "task": "vt"}
+{"acc": 0.5, "arm": "bugSQ-r128-h1024", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.159, "sbits": null, "source": "results/w12-qbug-ruler-lines.txt:4", "task": "niah_multikey"}
+{"acc": 1.0, "arm": "bugSQ-r128-h1024", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.159, "sbits": null, "source": "results/w12-qbug-ruler-lines.txt:5", "task": "niah_multivalue"}
+{"acc": 0.75, "arm": "bugSQ-r128-h1024", "ctx": 32768, "hits": null, "model": "unknown", "n": null, "ratio": 0.16, "sbits": null, "source": "results/w12-qbug-ruler-lines.txt:6", "task": "vt"}

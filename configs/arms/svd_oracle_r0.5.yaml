@@ -1,0 +1,12 @@
+name: svd_oracle_r0.5
+legacy_name: "palu-r0.5"
+kind: press
+chunkable: false
+doc: >-
+  Per-sequence, per-head truncated SVD of the prefill K and V at rank ratio 0.5, reconstructed
+  before attention -- an UPPER BOUND for static low-rank projection, not Palu (Palu learns one
+  offline projection per head group; this one is fitted to the sequence it is scored on).
+  Single-shot only: the SVD is taken over the whole context.
+press:
+  rank: 0.5
+  group: 1

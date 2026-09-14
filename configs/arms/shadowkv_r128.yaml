@@ -1,0 +1,12 @@
+name: shadowkv_r128
+legacy_name: "shadow-r128"
+kind: shadow
+chunkable: false
+doc: >-
+  ShadowKV at rank 128. Single-shot prefill only.
+cache:
+  rank_s: 128
+  top_k: 256
+  chunk: 8
+  recent_window: 32
+  n_sink: 4

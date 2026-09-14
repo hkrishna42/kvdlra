@@ -1,0 +1,628 @@
+"""Tables entrypoint. `convert-v1` archives the paper-v1 line files as JSONL records;
+`build` (Task 3) regenerates every paper-v1 table from results/paper-v1/.
+
+The archive is the evidence behind the v1 tables: one directory per pod holding a
+verbatim `raw/` copy of every source file that named it, the parsed records
+(`trials.jsonl` / `cells.jsonl` / `ppl.jsonl`, whichever formats that pod's sources
+contain) and a `manifest.json` self-describing every source's line/parsed/unconverted
+counts. A pod directory exists for every source file the converter reads -- even one
+whose lines match no known format -- because completeness lives in the raw/ copy, not
+in whether a row was parsed. It is written once, from the line files at tag
+`paper-v1-archive`, and read from then on.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import shutil
+import subprocess
+from collections.abc import Callable, Sequence
+from functools import cache
+from pathlib import Path
+from typing import Literal, cast
+
+import _paths  # noqa: F401
+
+from kvdlra.eval.records import (
+    CellRecord,
+    PplRecord,
+    TrialRecord,
+    parse_cell_lines,
+    parse_ppl_lines,
+    parse_trial_lines,
+    read_jsonl,
+    write_jsonl,
+)
+from kvdlra.eval.stats import Key, McNemar, mcnemar_exact, wilson
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+MODEL_BY_TAG = {  # the exact HF ids the Week-18/19 pods ran (docs/week18-kickoff.md)
+    "llama": "unsloth/Meta-Llama-3.1-8B-Instruct",
+    "mistral": "mistralai/Mistral-7B-Instruct-v0.3",
+    "qwen": "Qwen/Qwen2.5-7B-Instruct",
+}
+NOTE = "paper-v1 archive; haystack_id/depth/prompt_sha256 were not recorded and are null"
+
+
+def _tag(stem: str) -> str:
+    for t in MODEL_BY_TAG:
+        if t in stem:
+            return t
+    raise SystemExit(f"no model tag in {stem}")
+
+
+def convert_v1(out_root: Path) -> None:
+    """Archive every paper-v1 line file under ``out_root/<pod>/``.
+
+    Per-trial sources first, then the aggregate ones. Globs are resolved from
+    ``REPO_ROOT``, not the process cwd, so this runs the same from any directory.
+    24 pod names carry both kinds of source file and 20 of them end up with a
+    trials.jsonl AND a cells.jsonl under one merged manifest (the other 4 per-trial
+    files hold storage tables, not [trial] lines -- they still get an archived raw/
+    copy and a manifest, just no trials.jsonl).
+    """
+    sha = subprocess.check_output(
+        ["git", "rev-parse", "--short", "paper-v1-archive^{commit}"], text=True
+    ).strip()
+    for src in sorted((REPO_ROOT / "results" / "w18_pertrial").glob("*-trials.txt")):
+        stem = src.name.removesuffix("-trials.txt")
+        pod = f"w18-g1-{stem}" if stem in MODEL_BY_TAG else f"w18-{stem}"
+        _emit(out_root / pod, src, sha, per_trial=True)
+    for src in sorted((REPO_ROOT / "results" / "w19_pertrial").glob("*-trials.txt")):
+        _emit(out_root / f"w19-{src.name.removesuffix('-trials.txt')}", src, sha, per_trial=True)
+    for src in sorted((REPO_ROOT / "results").glob("*-lines.txt")):
+        _emit(out_root / src.name.removesuffix("-lines.txt"), src, sha, per_trial=False)
+
+
+def _emit(pod_dir: Path, src: Path, sha: str, per_trial: bool) -> None:
+    """Archive one source file into ``pod_dir``: a verbatim ``raw/`` copy always, plus
+    whichever of trials/cells/ppl its lines parse as, and a manifest entry recording
+    that source's line/parsed/unconverted counts (merged with any sibling source's).
+
+    Every (pod, artifact) pair in the real archive has exactly one contributing
+    source (checked across all 98 source files); if a source ever collided with an
+    existing artifact this raises rather than silently dropping the earlier rows.
+    """
+    pod_dir.mkdir(parents=True, exist_ok=True)
+    (pod_dir / "raw").mkdir(exist_ok=True)
+    shutil.copyfile(src, pod_dir / "raw" / src.name)
+
+    try:
+        cite = str(src.relative_to(REPO_ROOT))
+    except ValueError:
+        cite = str(src)  # e.g. a test's tmp_path source, outside the repo
+    text = src.read_text()
+    model = _model(src, per_trial)
+    rows_by_artifact: dict[str, list[TrialRecord] | list[CellRecord] | list[PplRecord]] = {
+        "trials.jsonl": parse_trial_lines(text, model, cite),
+        "cells.jsonl": parse_cell_lines(text, model, cite),
+        "ppl.jsonl": parse_ppl_lines(text, model, cite),
+    }
+
+    manifest_path = pod_dir / "manifest.json"
+    old = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
+    records: dict[str, int] = dict(old.get("records", {}))
+    for name, rows in rows_by_artifact.items():
+        if not rows:
+            continue
+        path = pod_dir / name
+        if path.exists():
+            raise SystemExit(f"{pod_dir.name}/{name}: {cite} would clobber existing rows")
+        write_jsonl(path, rows)
+        records[name] = len(rows)
+
+    n_lines = sum(1 for line in text.splitlines() if line.strip())
+    parsed = {name.removesuffix(".jsonl"): len(rows) for name, rows in rows_by_artifact.items()}
+    source_files = [e for e in old.get("source_files", []) if e["path"] != cite]
+    source_files.append(
+        {
+            "path": cite,
+            "lines": n_lines,
+            "parsed": parsed,
+            "unconverted": n_lines - sum(parsed.values()),
+            "raw": f"raw/{src.name}",
+        }
+    )
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "pod": pod_dir.name,
+                "git_sha": sha,
+                "source_files": sorted(source_files, key=lambda e: e["path"]),
+                "converted_by": "scripts/tables.py convert-v1",
+                "records": records,
+                "note": NOTE,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+
+def _model(src: Path, per_trial: bool) -> str:
+    """The HF id the pod ran. Per-trial evidence must be attributable, so ``_tag``
+    raises for it; aggregate rows may be "unknown" (the pre-Week-16 files pool
+    several pods and never named a model)."""
+    if not per_trial and not any(t in src.stem for t in MODEL_BY_TAG):
+        return "unknown"
+    return MODEL_BY_TAG[_tag(src.stem)]
+
+
+# --- build: regenerate the paper-v1 tables ------------------------------------
+#
+# Every cell is counted from per-trial records, never from a pooled `acc=` line: some
+# pods printed the same (task, ctx, arm) cell twice, and the same (model, arm, task,
+# ctx) key exists in several pods under different generators (e.g. Llama 16K vt for
+# `bugSseed-r64-h256` in both w18-g1-llama and w19-a2-llama). Selection is therefore
+# pod-scoped -- a pod is the provenance unit and identifies the model.
+#
+# The memory columns are the exception: stored state is a property of the run, not of
+# a needle, so they come from the pods' archived aggregate rows -- see `memory()`.
+
+ARCHIVE = REPO_ROOT / "results" / "paper-v1"
+DISPLAY = {"qwen": "Qwen2.5-7B", "mistral": "Mistral-7B-v0.3", "llama": "Llama-3.1-8B"}
+N_FEATURES = {  # num_key_value_heads x head_dim -- an architecture constant, not a result
+    "unsloth/Meta-Llama-3.1-8B-Instruct": 1024,  # 8 kv heads x 128
+    "mistralai/Mistral-7B-Instruct-v0.3": 1024,  # 8 kv heads x 128
+    "Qwen/Qwen2.5-7B-Instruct": 512,  # 4 kv heads x 128
+}
+MEMORY_SOURCE = {
+    # The w18-g1-* pods printed [trial] lines only; the `[task ctxN] ... ratio= sbits=`
+    # rows of the same run went to results/w18-<model>-lines.txt, which the archive
+    # holds under a pod name of its own. Every other pod these tables read carries its
+    # own cells.jsonl, so `memory()` falls back to the pod itself.
+    "w18-g1-llama": "w18-llama",
+    "w18-g1-mistral": "w18-mistral",
+    "w18-g1-qwen": "w18-qwen",
+}
+TASKS = ("niah_single", "niah_multikey", "niah_multivalue", "vt")
+OFFICIAL = (
+    "niah_single_1",
+    "niah_single_2",
+    "niah_single_3",
+    "niah_multikey_1",
+    "niah_multikey_2",
+    "niah_multikey_3",
+    "niah_multivalue",
+    "niah_multiquery",
+    "vt",
+)
+K16, K32 = 16384, 32768
+ALPHA = 0.05
+R64, R128 = "bugSseed-r64-h256", "bugSseed-r128-h1024-s32"
+KIVI = ("quant-2bit-kivi", "quant-4bit-kivi")
+FP16_MEM = (
+    "stored state = the arm's float-equivalent ratio (`ratio=`), the convention v1's"
+    " caption states for this table"
+)
+BITS_MEM = (
+    "stored = the arm's fp32-at-rest stored bits (`sbits=`), the convention v1's"
+    " caption states for this table"
+)
+MEM_RULE = (
+    "a memory value is the mean of the arm's archived cell rows, which agree to within"
+    " one 0.001 print unit (stored state is a property of the run, not of a needle)"
+)
+
+
+def _read(pod: str, name: str) -> list[dict[str, object]]:
+    path = ARCHIVE / pod / name
+    if not path.is_file():
+        raise SystemExit(f"no such archived artifact: {path}")
+    return read_jsonl(path)
+
+
+@cache
+def _pod(pod: str) -> tuple[TrialRecord, ...]:
+    """Every per-trial record of one pod (cached: each pod is read once per build)."""
+    return tuple(cast(TrialRecord, r) for r in _read(pod, "trials.jsonl"))
+
+
+@cache
+def _cells(pod: str) -> tuple[CellRecord, ...]:
+    """Every archived aggregate row of one pod -- the only source of memory columns."""
+    return tuple(cast(CellRecord, r) for r in _read(pod, "cells.jsonl"))
+
+
+def _keyed(pod: str, arm: str, task: str, ctx: int) -> dict[Key, int]:
+    """One cell's Bernoulli outcomes, keyed by (seed, trial) so cells can be paired."""
+    rows = [r for r in _pod(pod) if r["arm"] == arm and r["task"] == task and r["ctx"] == ctx]
+    hits = {(r["seed"], r["trial"]): r["hit"] for r in rows}
+    if not hits:
+        raise SystemExit(f"no records: {pod} {arm} {task} ctx={ctx}")
+    if len(hits) != len(rows):  # w19-fork-llama repeats needles; keying would silently drop them
+        raise SystemExit(f"duplicate (seed,trial): {pod} {arm} {task} ctx={ctx}")
+    return hits
+
+
+def _count(pod: str, arm: str, task: str, ctx: int) -> tuple[int, int]:
+    d = _keyed(pod, arm, task, ctx)
+    return sum(d.values()), len(d)
+
+
+def memory(pod: str, arm: str, ctx: int, kind: Literal["ratio", "sbits"]) -> float:
+    """One arm's stored state, from the archived aggregate rows of ``MEMORY_SOURCE[pod]``.
+
+    ``kind`` is the convention the table's v1 caption names: ``ratio`` is
+    float-equivalent, ``sbits`` is fp32-at-rest stored bits. The pods printed one row
+    per task, each a 3-decimal print of the same run-level quantity (they differ by at
+    most one print unit, from prompt-length jitter), so the arm's value is their mean
+    and a wider spread is a selection bug -- fail loud. Because the rows come from a
+    *different* pod name for the w18-g1-* tables, every row is also checked against the
+    per-trial records it claims to summarise.
+    """
+    src = MEMORY_SOURCE.get(pod, pod)
+    rows = [r for r in _cells(src) if r["arm"] == arm and r["ctx"] == ctx]
+    vals = [r["ratio"] if kind == "ratio" else r["sbits"] for r in rows]
+    if not rows or None in vals:
+        raise SystemExit(f"no {kind}= aggregate row: {src} {arm} ctx={ctx}")
+    v = cast(list[float], vals)
+    if max(v) - min(v) > 1e-3 + 1e-9:
+        raise SystemExit(f"{kind} spans {min(v)}..{max(v)} across tasks: {src} {arm} ctx={ctx}")
+    for r in rows:
+        h, n = _count_or_none(pod, arm, r["task"], ctx)
+        if n and abs(h / n - r["acc"]) > 0.005:
+            raise SystemExit(
+                f"{src} aggregate row is not {pod}'s run: {arm} {r['task']} ctx={ctx}"
+                f" acc={r['acc']} but per-trial {h}/{n}"
+            )
+    return sum(v) / len(v)
+
+
+def _count_or_none(pod: str, arm: str, task: str, ctx: int) -> tuple[int, int]:
+    """``(hits, n)`` from the per-trial pod, or ``(0, 0)`` when it holds no such cell
+    (the aggregate sources carry rows for arms and tasks the tables never print)."""
+    rows = [r for r in _pod(pod) if r["arm"] == arm and r["task"] == task and r["ctx"] == ctx]
+    return sum(r["hit"] for r in rows), len(rows)
+
+
+def cell(pod: str, arm: str, task: str, ctx: int) -> str:
+    """`acc [Wilson 95% lo,hi] (hits/n)`."""
+    h, n = _count(pod, arm, task, ctx)
+    lo, hi = wilson(h, n)
+    return f"{h / n:.2f} [{lo:.2f},{hi:.2f}] ({h}/{n})"
+
+
+def acc(pod: str, arm: str, task: str, ctx: int) -> str:
+    """`acc (hits/n)` -- the tables v1 printed without intervals."""
+    h, n = _count(pod, arm, task, ctx)
+    return f"{h / n:.2f} ({h}/{n})"
+
+
+def paired(pod_a: str, arm_a: str, pod_b: str, arm_b: str, task: str, ctx: int) -> McNemar:
+    """Exact paired McNemar over the (seed, trial) keys the two arms share."""
+    m = mcnemar_exact(_keyed(pod_a, arm_a, task, ctx), _keyed(pod_b, arm_b, task, ctx))
+    if m is None:
+        raise SystemExit(f"no shared needles: {arm_a} vs {arm_b} {task} ctx={ctx}")
+    return m
+
+
+def _favors_a(m: McNemar) -> bool:
+    return m["a_favored"] > m["b_favored"] and m["p_value"] < ALPHA
+
+
+def _favors_b(m: McNemar) -> bool:
+    return m["b_favored"] > m["a_favored"] and m["p_value"] < ALPHA
+
+
+# Tables 3 and 7 pair arms that ran on DIFFERENT pods. Pairing on (seed, trial) is only
+# valid if both pods built the same prompt for a given key; the generator is
+# deterministic and decoding is greedy, so they should have -- but the v1 records carry
+# no prompt_sha256, so nothing in the archive proves it. Said once, cited twice.
+CROSS_POD = (
+    "pairing on (seed,trial) assumes both pods built the same prompt for a given key --"
+    " which a deterministic generator under greedy decode does, but prompt_sha256 is null"
+    " in the v1 records, so the archive cannot verify it"
+)
+
+
+def _tex(s: str) -> str:
+    return re.sub(r"\*\*(.+?)\*\*", r"\\textbf{\1}", s.replace("_", r"\_"))
+
+
+def _table(
+    n: int, title: str, notes: Sequence[str], header: Sequence[str], rows: Sequence[Sequence[str]]
+) -> tuple[str, str]:
+    """One table as (markdown, latex). The markdown is the contract the golden pins;
+    the .tex mirrors it. No blank line closes a file: the next table's `##` heading
+    follows the last row directly, so `cat table*.md` is valid markdown."""
+    md = [f"## Table {n} — {title}"]
+    md += [f"<!-- {x} -->" for x in notes]
+    md += ["", "| " + " | ".join(header) + " |", "|" + " --- |" * len(header)]
+    md += ["| " + " | ".join(r) + " |" for r in rows]
+    tex = [f"% Table {n} -- {title}"] + [f"% {x}" for x in notes]
+    tex += [
+        "\\begin{tabular}{" + "l" + "c" * (len(header) - 1) + "}",
+        "\\toprule",
+        " & ".join(_tex(h) for h in header) + " \\\\",
+        "\\midrule",
+    ]
+    tex += [" & ".join(_tex(c) for c in r) + " \\\\" for r in rows]
+    tex += ["\\bottomrule", "\\end{tabular}"]
+    return "\n".join(md) + "\n", "\n".join(tex) + "\n"
+
+
+def _xmodel(
+    n: int, ctx: int, label: str, pdf_n: int, mk: str, trunc: str, feat: bool = False
+) -> tuple[str, str]:
+    """Tables 1 and 2: the same three families under `bugSseed-r64-h256`, 16K and 32K."""
+    notes = [
+        f"paper-v1: paper/main.tex @ee8c0ab, table `{label}` (renders as Table {pdf_n} in the PDF)",
+        "source: results/paper-v1/w18-g1-{qwen,mistral,llama}/trials.jsonl (cells),"
+        " results/paper-v1/w18-{qwen,mistral,llama}/cells.jsonl (stored state)",
+        "cell: acc [Wilson 95% lo,hi] (hits/n)",
+        trunc,
+        FP16_MEM,
+        MEM_RULE,
+    ]
+    if feat:
+        notes.append(
+            "feat. n = num_key_value_heads x head_dim, a model constant, not a measurement"
+        )
+    rows = []
+    for t in ("qwen", "mistral", "llama"):
+        pod = f"w18-g1-{t}"
+        row = [DISPLAY[t]]
+        if feat:
+            row.append(str(N_FEATURES[MODEL_BY_TAG[t]]))
+        row += [cell(pod, R64, task, ctx) for task in TASKS]
+        row.append(f"{memory(pod, R64, ctx, 'ratio'):.3f}x")
+        rows.append(row)
+    head = ["model"] + (["feat. n"] if feat else [])
+    head += ["single", mk, "multi-value", "var-track", "stored state"]
+    title = f"cross-model {ctx // 1024}K retrieval, config `{R64}`"
+    return _table(n, title, notes, head, rows)
+
+
+def table_1() -> tuple[str, str]:
+    return _xmodel(
+        1,
+        K16,
+        "tab:xmodel",
+        2,
+        "multi-key (not in v1)",
+        "v1 printed the Llama var-track upper bound as 0.80 (truncated); correct rounding 0.81",
+        feat=True,
+    )
+
+
+def table_2() -> tuple[str, str]:
+    return _xmodel(
+        2,
+        K32,
+        "tab:xmodel32",
+        3,
+        "multi-key",
+        "v1 printed the Llama var-track upper bound as 0.98 (truncated); correct rounding 0.99",
+    )
+
+
+def table_3() -> tuple[str, str]:
+    """32K variable-tracking on Llama: the r128 config against the three baselines it
+    was contrasted with, plus the r/n=0.25 control column v1 discussed only in prose."""
+    g4, a1, r256 = "w18-g4-llama", "w19-a1-llama", "bugSseed-r256-h1024"
+    q4 = paired(g4, R128, a1, "quant-4bit-kivi", "vt", K32)
+    notes = [
+        "paper-v1: paper/main.tex @ee8c0ab, the 32K Llama variable-tracking table (its LaTeX"
+        " label carries a word CLAUDE.md bans from new files, so it is not quoted here; it"
+        " renders as Table 4 in the PDF)",
+        f"source: results/paper-v1/{g4}/trials.jsonl (the n={_count(g4, R128, 'vt', K32)[1]} arms"
+        f" and the n={_count(g4, r256, 'vt', K32)[1]} r256 control),"
+        f" results/paper-v1/{a1}/trials.jsonl (quant-4bit-kivi,"
+        f" n={_count(a1, 'quant-4bit-kivi', 'vt', K32)[1]}); stored state from each pod's"
+        " own cells.jsonl",
+        "cell: acc [Wilson 95% lo,hi] (hits/n); p = exact paired McNemar vs"
+        f" {R128} on the shared (seed,trial) keys, 2 significant figures",
+        f"discordant = pairs won by {R128} / pairs won by the row's arm",
+        "v1 printed no McNemar p for the 4-bit row; it is computed here on the"
+        f" {q4['n_paired']} shared keys",
+        f"the quant-4bit-kivi row is a different pod ({a1}) from every other row ({g4}):"
+        f" {CROSS_POD}",
+        BITS_MEM.replace("stored =", "stored state ="),
+        MEM_RULE,
+        "v1 printed think-c0.5/palu-r0.5 to 2 decimals (0.75x/0.50x); the archived rows are"
+        " printed here at the 3 decimals the other rows need",
+        "the verdict column of v1 is omitted: it is an editorial reading, not a statistic",
+    ]
+    rows = [
+        [
+            R128,
+            cell(g4, R128, "vt", K32),
+            f"{memory(g4, R128, K32, 'sbits'):.3f}x",
+            "---",
+            "---",
+            "---",
+        ]
+    ]
+    for label, pod, arm in (
+        ("think-c0.5", g4, "think-c0.5"),
+        ("palu-r0.5", g4, "palu-r0.5"),
+        ("quant-4bit-kivi", a1, "quant-4bit-kivi"),
+        (f"{r256} (not in v1)", g4, r256),
+    ):
+        m = paired(g4, R128, pod, arm, "vt", K32)
+        rows.append(
+            [
+                label,
+                cell(pod, arm, "vt", K32),
+                f"{memory(pod, arm, K32, 'sbits'):.3f}x",
+                f"{m['p_value']:.1e}",
+                f"{m['a_favored']}/{m['b_favored']}",
+                str(m["n_paired"]),
+            ]
+        )
+    return _table(
+        3,
+        f"32K variable-tracking on Llama-3.1-8B, config `{R128}` vs baselines",
+        notes,
+        ["config", "var-track", "stored state", "McNemar p", "discordant", "n paired"],
+        rows,
+    )
+
+
+def table_6() -> tuple[str, str]:
+    """Eviction (`ea-k0.1`) on the model x ctx cells v1 printed."""
+    cells = (("llama", K16), ("llama", K32), ("qwen", K16), ("mistral", K16))
+    budgets = {f"{memory(f'w18-g3-{t}', 'ea-k0.1', ctx, 'ratio'):.3f}x" for t, ctx in cells}
+    if len(budgets) != 1:  # v1's caption states one budget for the whole table
+        raise SystemExit(f"ea-k0.1 stored state differs across rows: {sorted(budgets)}")
+    (budget,) = budgets
+    notes = [
+        "paper-v1: paper/main.tex @ee8c0ab, table `tab:evict` (renders as Table 7 in the PDF)",
+        "source: results/paper-v1/w18-g3-{llama,qwen,mistral}/trials.jsonl (cells),"
+        " and their cells.jsonl (the budget in the title)",
+        "cell: acc [Wilson 95% lo,hi] (hits/n)",
+        "rows are the model x ctx cells v1 showed; the pods also hold Qwen/Mistral 32K,"
+        " which v1 did not print",
+        "v1's table has no memory column: its budget is stated once in the caption, and is"
+        f" regenerated in the title above from the `ratio=` rows of all {len(cells)} cells",
+    ]
+    rows = [
+        [DISPLAY[t], str(ctx), *(cell(f"w18-g3-{t}", "ea-k0.1", task, ctx) for task in TASKS)]
+        for t, ctx in cells
+    ]
+    return _table(
+        6,
+        f"eviction at {budget} stored state, arm `ea-k0.1`",
+        notes,
+        ["model", "ctx", "single", "multi-key", "multi-value", "var-track"],
+        rows,
+    )
+
+
+def table_7() -> tuple[str, str]:
+    """The r64 config against the 2-bit and 4-bit KIVI arms at matched stored bytes."""
+    notes = [
+        "paper-v1: paper/main.tex @ee8c0ab, table `tab:fairquant` (renders as Table 8 in the PDF)",
+        "source: results/paper-v1/w18-g1-{llama,mistral,qwen}/trials.jsonl (r64 rows),"
+        " results/paper-v1/w19-a1-{llama,mistral,qwen}/trials.jsonl (KIVI rows);"
+        " stored bits from results/paper-v1/w18-{llama,mistral,qwen}/cells.jsonl (r64)"
+        " and each w19-a1 pod's own cells.jsonl (KIVI)",
+        "cell: acc (hits/n)",
+        "bold = exact paired McNemar p<0.05 in the r64 arm's favour against a KIVI arm of the"
+        " same model x ctx x task, paired on (seed,trial); no cell is significant in a KIVI"
+        " arm's favour",
+        f"the r64 rows and the KIVI rows are different pods (w18-g1-<model> vs"
+        f" w19-a1-<model>): {CROSS_POD}",
+        BITS_MEM,
+        MEM_RULE,
+    ]
+    rows: list[list[str]] = []
+    kivi_wins: list[str] = []  # the note above is a claim; this is what checks it
+    for t in ("llama", "mistral", "qwen"):
+        g1, a1 = f"w18-g1-{t}", f"w19-a1-{t}"
+        for ctx in (K16, K32):
+            base: list[str] = []
+            for task in TASKS:
+                c = acc(g1, R64, task, ctx)
+                ms = [paired(g1, R64, a1, q, task, ctx) for q in KIVI]
+                kivi_wins += [
+                    f"{t} ctx={ctx} {task} {q}"
+                    for q, m in zip(KIVI, ms, strict=True)
+                    if _favors_b(m)
+                ]
+                base.append(f"**{c}**" if any(_favors_a(m) for m in ms) else c)
+            rows.append([DISPLAY[t], str(ctx), R64, f"{memory(g1, R64, ctx, 'sbits'):.3f}x", *base])
+            rows += [
+                [
+                    DISPLAY[t],
+                    str(ctx),
+                    q,
+                    f"{memory(a1, q, ctx, 'sbits'):.3f}x",
+                    *(acc(a1, q, task, ctx) for task in TASKS),
+                ]
+                for q in KIVI
+            ]
+    if kivi_wins:  # never let the note above become a claim the records stopped backing
+        raise SystemExit(f"a KIVI arm significantly beats {R64} in: {kivi_wins}")
+    return _table(
+        7,
+        "the 2-bit/4-bit KIVI baseline at matched stored bytes",
+        notes,
+        ["model", "ctx", "arm", "stored", "single", "multi-key", "multi-value", "var-track"],
+        rows,
+    )
+
+
+def table_8() -> tuple[str, str]:
+    """Official NVIDIA RULER at 16K on Llama: nine tasks, eight arms, 12 records each."""
+    a2, q4 = "w19-a2-llama", "w19-q4off-llama"
+    pooled = [_count(a2, R64, task, K16) for task in OFFICIAL]
+    notes = [
+        "paper-v1: paper/main.tex @ee8c0ab, table `tab:official` (renders as Table 9 in the PDF)",
+        f"source: results/paper-v1/{a2}/trials.jsonl (7 arms),"
+        f" results/paper-v1/{q4}/trials.jsonl (the q4 cell arm); stored bits from the same"
+        " two pods' cells.jsonl",
+        "cell: acc (hits/n); mean = mean of the nine printed 2-dp accuracies, as in v1"
+        f" (pooling the records instead gives"
+        f" {sum(h for h, _ in pooled) / sum(n for _, n in pooled):.2f} for {R64})",
+        BITS_MEM,
+        MEM_RULE,
+    ]
+    rows: list[list[str]] = []
+    for arm, pod in (
+        ("full", a2),
+        ("think-c0.5", a2),
+        ("palu-r0.5", a2),
+        ("quant-4bit-kivi", a2),
+        ("quant-2bit-kivi", a2),
+        (R64, a2),
+        (f"{R64}-q4", q4),
+        ("ea-k0.1", a2),
+    ):
+        counts = [_count(pod, arm, task, K16) for task in OFFICIAL]
+        mean = sum(round(h / n, 2) for h, n in counts) / len(counts)
+        rows.append(
+            [
+                arm,
+                f"{memory(pod, arm, K16, 'sbits'):.2f}x",
+                *(f"{h / n:.2f} ({h}/{n})" for h, n in counts),
+                f"{mean:.2f}",
+            ]
+        )
+    head = ["arm", "stored", "s1", "s2", "s3", "mk1", "mk2", "mk3", "mv", "mq", "vt", "mean"]
+    return _table(8, "official NVIDIA RULER at 16K on Llama-3.1-8B", notes, head, rows)
+
+
+TABLES: dict[int, Callable[[], tuple[str, str]]] = {
+    1: table_1,
+    2: table_2,
+    3: table_3,
+    6: table_6,
+    7: table_7,
+    8: table_8,
+}
+
+
+def build(out: Path) -> None:
+    out.mkdir(parents=True, exist_ok=True)
+    for n, fn in TABLES.items():
+        md, tex = fn()
+        (out / f"table{n}.md").write_text(md)
+        (out / f"table{n}.tex").write_text(tex)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    c = sub.add_parser(
+        "convert-v1",
+        help="archive the paper-v1 line files as JSONL; write-once -- re-running it over an"
+        " existing archive raises rather than clobber rows, so a re-run means"
+        " `rm -rf results/paper-v1` first",
+    )
+    c.add_argument("--out", default=None, help="default: <repo_root>/results/paper-v1")
+    b = sub.add_parser("build", help="regenerate the paper-v1 tables from results/paper-v1")
+    b.add_argument("--out", default="docs/paper/tables")
+    a = ap.parse_args()
+    if a.cmd == "convert-v1":
+        out = Path(a.out) if a.out else REPO_ROOT / "results" / "paper-v1"
+        convert_v1(out)
+    else:
+        build(Path(a.out))
+
+
+if __name__ == "__main__":
+    main()

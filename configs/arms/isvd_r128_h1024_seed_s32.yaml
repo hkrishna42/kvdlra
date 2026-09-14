@@ -1,0 +1,25 @@
+name: isvd_r128_h1024_seed_s32
+legacy_name: "bugSseed-r128-h1024-s32"
+kind: bug
+chunkable: true
+doc: >-
+  Rank-128 gist, 1024-token exact tier, selection scored on the leading 32 basis columns only
+  (score rank decoupled from storage rank). Storage and accounting are those of r128.
+cache:
+  rank: 128
+  coord_budget: null
+  recent_window: 32
+  absorb_block: 16
+  n_sink: 4
+  retention: "lowrank_surprise"
+  hh_budget: 1024
+  hh_select: "surprise"
+  hh_neighbor: 1
+  hh_retain: true
+  seed_hh_warmup: true
+  w_key: null
+  score_rank: 32
+  min_sv_frac: 0.0
+  tracker: "isvd"
+  quant_bits: null
+  quant_budget: 0

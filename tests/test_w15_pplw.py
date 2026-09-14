@@ -31,6 +31,8 @@ import w10_frontier
 from transformers import LlamaConfig, LlamaForCausalLM
 from w11_merge import PPL_RE
 
+from kvdlra.eval import records
+
 # The documented [pplw] harvest regex (scripts/w10_frontier.py, run()):
 #   [pplw] T=<T> <method> ntok=<per-window scored tokens> [part=<i>/<N>]
 #   nlls=<comma-joined per-window mean NLLs, 6 decimals>
@@ -160,6 +162,14 @@ def test_pplw_line_splits_when_long(
         assert len(vals) <= 8
         joined += vals
     assert joined == [f"{v:.6f}" for v in row["window_nlls"]]
+    # The harvest reads exactly these fragments, through kvdlra.eval.records.PPLW_RE --
+    # `scripts/pod.py` dropped them until the L0.5 fix round. Reassembled, they are the
+    # row's own per-window NLLs again (nll_sum_nats / ntok undoes the sum).
+    assert all(records.PPLW_RE.match(m.group(0)) for m in parts)
+    back = records.parse_pplw_lines(out, model="M", source="log")
+    assert [r["nll_sum_nats"] / r["ntok"] for r in back] == pytest.approx(
+        row["window_nlls"], rel=1e-5
+    )
     # Equal-weight recompute from the PRINTED values (uniform windows) matches.
     printed_pooled = math.exp(sum(float(v) for v in joined) / len(joined))
     assert row["ppl"] == pytest.approx(printed_pooled, rel=1e-4)

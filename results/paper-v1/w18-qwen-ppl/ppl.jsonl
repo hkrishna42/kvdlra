@@ -1,0 +1,2 @@
+{"arm": "bugSseed-r64-h256", "ctx": 16384, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 8.181, "ratio": 0.148, "sbits": 0.275, "source": "results/w18-qwen-ppl-lines.txt:1", "tok_eq": 2399.3}
+{"arm": "bugSseed-r64-h256", "ctx": 32768, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 35.083, "ratio": 0.139, "sbits": 0.264, "source": "results/w18-qwen-ppl-lines.txt:2", "tok_eq": 4479.3}

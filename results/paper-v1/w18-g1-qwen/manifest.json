@@ -1,0 +1,22 @@
+{
+  "pod": "w18-g1-qwen",
+  "git_sha": "ee8c0ab",
+  "source_files": [
+    {
+      "path": "results/w18_pertrial/qwen-trials.txt",
+      "lines": 192,
+      "parsed": {
+        "trials": 192,
+        "cells": 0,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/qwen-trials.txt"
+    }
+  ],
+  "converted_by": "scripts/tables.py convert-v1",
+  "records": {
+    "trials.jsonl": 192
+  },
+  "note": "paper-v1 archive; haystack_id/depth/prompt_sha256 were not recorded and are null"
+}

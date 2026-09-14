@@ -1,0 +1,35 @@
+{
+  "pod": "w19-a4-llama",
+  "git_sha": "ee8c0ab",
+  "source_files": [
+    {
+      "path": "results/w19-a4-llama-lines.txt",
+      "lines": 21,
+      "parsed": {
+        "trials": 0,
+        "cells": 16,
+        "ppl": 5
+      },
+      "unconverted": 0,
+      "raw": "raw/w19-a4-llama-lines.txt"
+    },
+    {
+      "path": "results/w19_pertrial/a4-llama-trials.txt",
+      "lines": 176,
+      "parsed": {
+        "trials": 176,
+        "cells": 0,
+        "ppl": 0
+      },
+      "unconverted": 0,
+      "raw": "raw/a4-llama-trials.txt"
+    }
+  ],
+  "converted_by": "scripts/tables.py convert-v1",
+  "records": {
+    "trials.jsonl": 176,
+    "cells.jsonl": 16,
+    "ppl.jsonl": 5
+  },
+  "note": "paper-v1 archive; haystack_id/depth/prompt_sha256 were not recorded and are null"
+}

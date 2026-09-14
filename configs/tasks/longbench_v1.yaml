@@ -1,0 +1,10 @@
+name: longbench_v1
+generator: longbench
+ctx: 16384
+doc: >-
+  LongBench token-F1 on four QA subsets with the query in the prompt, 20 examples each, 16K
+  prompt budget. The Week-10/11 secondary axis.
+n_trials: 1
+seeds: [0]
+n_samples: 20
+tasks: ["qasper", "multifieldqa_en", "hotpotqa", "2wikimqa"]

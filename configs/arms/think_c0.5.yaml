@@ -1,0 +1,9 @@
+name: think_c0.5
+legacy_name: "think-c0.5"
+kind: press
+chunkable: false
+doc: >-
+  ThinK: channel-wise low-rank pruning of the KEY cache at compression ratio 0.5. Not a
+  ScorerPress, so it runs single-shot.
+press:
+  ratio: 0.5

@@ -1,0 +1,17 @@
+name: kivi2_singleshot
+legacy_name: "quant-2bit-kivi#chunk0"
+kind: quant
+chunkable: false
+doc: >-
+  The ss2 protocol control (Week-19 sysfix): the 2-bit arm above under SINGLE-SHOT prefill, to
+  test whether its multivalue edge is protocol-bound. Identical cache, chunk 0. v1 records key
+  it by pod, not by arm name -- the legacy name carries a #chunk0 note so the two configs stay
+  distinguishable here. chunkable is false so the arm is single-shot whichever knob a
+  harness reads -- the legacy path forced it with --chunk 0 at the pod level.
+quant:
+  nbits: 2
+  scheme: "kivi"
+  backend: "quanto"
+  group: 64
+  residual: 128
+  chunk: 0

@@ -1,0 +1,8 @@
+{"arm": "full", "ctx": 16384, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 4.909, "ratio": 1.0, "sbits": null, "source": "results/w17-llama8b-lines.txt:37", "tok_eq": 16384.0}
+{"arm": "think-c0.5", "ctx": 16384, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 5.055, "ratio": 0.75, "sbits": null, "source": "results/w17-llama8b-lines.txt:38", "tok_eq": 12288.2}
+{"arm": "palu-r0.5", "ctx": 16384, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 5.006, "ratio": 0.504, "sbits": null, "source": "results/w17-llama8b-lines.txt:39", "tok_eq": 8258.0}
+{"arm": "bugSseed-r64-h256", "ctx": 16384, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 5.308, "ratio": 0.085, "sbits": null, "source": "results/w17-llama8b-lines.txt:40", "tok_eq": 1377.7}
+{"arm": "full", "ctx": 32768, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 7.52, "ratio": 1.0, "sbits": null, "source": "results/w17-llama8b-lines.txt:41", "tok_eq": 32768.0}
+{"arm": "think-c0.5", "ctx": 32768, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 7.79, "ratio": 0.75, "sbits": null, "source": "results/w17-llama8b-lines.txt:42", "tok_eq": 24576.2}
+{"arm": "palu-r0.5", "ctx": 32768, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 7.699, "ratio": 0.502, "sbits": null, "source": "results/w17-llama8b-lines.txt:43", "tok_eq": 16450.0}
+{"arm": "bugSseed-r64-h256", "ctx": 32768, "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "ppl": 8.326, "ratio": 0.075, "sbits": null, "source": "results/w17-llama8b-lines.txt:44", "tok_eq": 2417.7}

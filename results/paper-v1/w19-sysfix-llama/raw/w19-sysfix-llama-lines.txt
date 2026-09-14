@@ -1,0 +1,13 @@
+[latency ctx16384] bugSseed-r64-h256      ms/tok=103.25 mean=117.57 max=309.70 spikes=4 resident_gb=15.79 peak_gb=18.20 weights_gb=14.96 kv_peak_gb=3.25
+[latency ctx16384] full                   ms/tok=25.89 mean=26.22 max=33.44 spikes=0 resident_gb=16.97 peak_gb=17.01 weights_gb=14.96 kv_peak_gb=2.05
+[latency ctx16384] quant-2bit-kivi        ms/tok=43.70 mean=43.92 max=52.53 spikes=0 resident_gb=15.28 peak_gb=15.41 weights_gb=14.96 kv_peak_gb=0.45
+[latency ctx32768] bugSseed-r64-h256      ms/tok=188.27 mean=205.02 max=428.03 spikes=4 resident_gb=16.03 peak_gb=21.40 weights_gb=14.96 kv_peak_gb=6.45
+[latency ctx32768] full                   ms/tok=27.49 mean=27.52 max=28.01 spikes=0 resident_gb=18.97 peak_gb=19.04 weights_gb=14.96 kv_peak_gb=4.08
+[latency ctx32768] quant-2bit-kivi        ms/tok=67.86 mean=67.86 max=67.93 spikes=0 resident_gb=15.59 peak_gb=15.85 weights_gb=14.96 kv_peak_gb=0.89
+[latency ctx65536] bugSseed-r64-h256      ms/tok=507.94 mean=530.25 max=850.36 spikes=0 resident_gb=16.55 peak_gb=27.79 weights_gb=14.96 kv_peak_gb=12.83
+[latency ctx65536] full                   ms/tok=36.97 mean=36.97 max=37.02 spikes=0 resident_gb=22.97 peak_gb=23.10 weights_gb=14.96 kv_peak_gb=8.14
+[latency ctx65536] quant-2bit-kivi        ms/tok=118.92 mean=119.08 max=127.74 spikes=0 resident_gb=16.23 peak_gb=16.74 weights_gb=14.96 kv_peak_gb=1.78
+[niah_multikey ctx16384] quant-2bit-kivi acc=1.00 recall=1.00 ratio=0.163 sbits=0.163 n=12
+[niah_multivalue ctx16384] quant-2bit-kivi acc=0.83 recall=0.94 ratio=0.163 sbits=0.163 n=12
+[niah_single ctx16384] quant-2bit-kivi acc=1.00 recall=1.00 ratio=0.163 sbits=0.163 n=12
+[vt ctx16384] quant-2bit-kivi acc=0.67 recall=0.67 ratio=0.163 sbits=0.163 n=12

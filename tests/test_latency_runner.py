@@ -66,6 +66,25 @@ def _launch(tmp_path: Path) -> None:
     )
 
 
+def _check_fails_when_a_point_is_dropped(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Drop the last decode row and demand the exact failure. The axis writes no trial,
+    so this row is the only thing that CAN fail -- exactly the hole that let a pod with a
+    dead 64K arm look clean -- and the rule has to hold for a `run_pod`-written file and a
+    harvested one alike, which is why both tests below end here."""
+    lat = tmp_path / "latency.jsonl"
+    kept = lat.read_text().splitlines()
+    lat.write_text("\n".join(kept[:-1]) + "\n")
+    capsys.readouterr()
+    assert pod.check(tmp_path) == 1
+    dropped = json.loads(kept[-1])
+    assert (
+        f"CHECK FAIL latency: {dropped['arm']} ctx={dropped['ctx']}"
+        f" batch={dropped['batch']} has no decode record" in capsys.readouterr().out
+    )
+
+
 def test_the_loop_writes_one_row_per_arm_ctx_batch(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.setattr("kvdlra.eval.latency.run_latency", _fake_run_latency)
     cfg = load_pod(POD)
@@ -93,19 +112,7 @@ def test_check_passes_on_the_full_grid_and_fails_without_it(
     _launch(tmp_path)
     run_pod(load_pod(POD), out=tmp_path, model=None, dry_model=True)
     assert pod.check(tmp_path) == 0
-
-    # Drop one point: the axis writes no trial, so this row is the only thing that can
-    # fail -- exactly the hole that let a pod with a dead 64K arm look clean.
-    lat = tmp_path / "latency.jsonl"
-    kept = lat.read_text().splitlines()
-    lat.write_text("\n".join(kept[:-1]) + "\n")
-    capsys.readouterr()
-    assert pod.check(tmp_path) == 1
-    dropped = json.loads(kept[-1])
-    assert (
-        f"CHECK FAIL latency: {dropped['arm']} ctx={dropped['ctx']}"
-        f" batch={dropped['batch']} has no decode record" in capsys.readouterr().out
-    )
+    _check_fails_when_a_point_is_dropped(tmp_path, capsys)
 
 
 def test_a_point_that_raises_is_logged_and_counted(
@@ -163,17 +170,4 @@ def test_harvest_rebuilds_latency_jsonl_from_the_log(
 
     capsys.readouterr()
     assert pod.check(tmp_path) == 0
-
-    # Drop one row: the axis writes no trial, so this row is the only thing that can
-    # fail -- exactly what test_check_passes_on_the_full_grid... exercises for a
-    # run_pod-written file, now for a harvested one.
-    lat = tmp_path / "latency.jsonl"
-    kept = lat.read_text().splitlines()
-    lat.write_text("\n".join(kept[:-1]) + "\n")
-    capsys.readouterr()
-    assert pod.check(tmp_path) == 1
-    dropped = json.loads(kept[-1])
-    assert (
-        f"CHECK FAIL latency: {dropped['arm']} ctx={dropped['ctx']}"
-        f" batch={dropped['batch']} has no decode record" in capsys.readouterr().out
-    )
+    _check_fails_when_a_point_is_dropped(tmp_path, capsys)

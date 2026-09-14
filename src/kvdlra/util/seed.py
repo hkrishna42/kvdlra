@@ -14,22 +14,17 @@ import numpy as np
 import torch
 
 
-def seed_everything(seed: int = 0, deterministic: bool = False) -> None:
+def seed_everything(seed: int = 0) -> None:
     """Seed Python, NumPy, and PyTorch RNGs.
 
-    Args:
-        seed: The seed value applied to all RNGs.
-        deterministic: If True, force deterministic algorithms and set the
-            cuBLAS workspace config. This trades speed for bit-reproducibility
-            and should be used when exact reproducibility matters.
+    The one caller (`scripts/dump_kv.py`) passes a seed and nothing else. The
+    bit-reproducibility switch that used to sit here -- deterministic algorithms plus
+    the cuBLAS workspace config -- was never passed by anything in three weeks of runs,
+    so it is not a knob, it is an untested branch; a lane that needs it adds it back
+    with the caller that wants it.
     """
     os.environ["PYTHONHASHSEED"] = str(seed)
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    if deterministic:
-        torch.use_deterministic_algorithms(True, warn_only=True)
-        os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False

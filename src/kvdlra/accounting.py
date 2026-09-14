@@ -374,14 +374,6 @@ def shadow_footprint(
     return Footprint(verbatim_elems=gpu + cpu, gpu_verbatim_elems=gpu, cpu_verbatim_elems=cpu)
 
 
-def shadow_bandwidth_per_token(n: int, sparse_budget: int, chunk: int) -> float:
-    """Elements fetched CPU->GPU per decode step for ShadowKV's sparse-V read
-    (``sparse_budget`` selected tokens x ``n`` features). The PCIe traffic the
-    offload pays back every step -- reported as an explicit line so the offload's
-    cost is never hidden behind its GPU-memory saving."""
-    return float(sparse_budget * n)
-
-
 # ---------------------------------------------------------------- full cache
 
 
@@ -492,15 +484,6 @@ def report(
 
 
 # --------------------------------------------------------- matched-memory audit
-
-
-def audit_matched(
-    mem_max_per_layer: float, budget_per_layer: float, arm: str, *, tol: float = 0.0
-) -> dict[str, Any]:
-    """Audit one arm's high-water per-layer footprint against a matched budget."""
-    within = mem_max_per_layer <= budget_per_layer + tol
-    over = mem_max_per_layer / budget_per_layer if budget_per_layer else math.inf
-    return {"arm": arm, "mem_max": mem_max_per_layer, "over_budget": over, "within": within}
 
 
 def assert_all_within(

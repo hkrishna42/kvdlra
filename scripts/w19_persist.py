@@ -40,11 +40,11 @@ JSON_BEGIN = "===W19_PERSIST_JSON_BEGIN==="
 JSON_END = "===W19_PERSIST_JSON_END==="
 
 # The BUG layer's stored state (mirrors BugStreamingLayer.stored_state_numel): tiers,
-# bases, coordinates, quantized tier + norms, retention bookkeeping.
+# bases, coordinates, quantized tier + norms, retention positions. The diagonal cores
+# and the surprise snapshots are added below (they need their own handling).
 _BUG_ATTRS = (
     "sink_k", "sink_v", "recent_k", "recent_v", "u_k", "c_k", "u_v", "c_v", "hh_k", "hh_v",
-    "u_ref_k", "u_ref_v", "qk_codes", "qv_codes", "qk_norm", "qv_norm", "mid_pos", "q_pos",
-    "mid_score", "q_score", "ring_score", "hh_pos", "hh_score", "mid_weight",
+    "qk_codes", "qv_codes", "qk_norm", "qv_norm", "mid_pos", "q_pos", "hh_pos",
 )  # fmt: skip
 
 

@@ -119,7 +119,6 @@ Zandieh et al., arXiv:2504.19874 (TurboQuant/PolarQuant; the quantized tier).
 
 from __future__ import annotations
 
-import logging
 import math
 from collections import OrderedDict
 from collections.abc import Iterator
@@ -134,8 +133,6 @@ from transformers.models.llama.modeling_llama import rotate_half
 
 from kvdlra.quant import PolarQuant
 from kvdlra.tracker.isvd import augmented_bug_step, fd_step, oja_step
-
-logger = logging.getLogger(__name__)
 
 __all__ = ["BugStreamingCache", "BugStreamingLayer"]
 

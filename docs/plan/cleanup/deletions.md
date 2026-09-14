@@ -274,6 +274,7 @@ deleted"), and it is not.
 | after Task 7a (`9bed011`) | 30,125 |
 | after Task 7b (`f64ced4`) | 29,734 |
 | after Task 7c (`e9fa697`) | 27,226 |
+| after the 7 self-review pass | 27,224 |
 | **delta, Task 6** | **-5,011** |
-| **delta, Task 7** | **-4,670** |
-| **delta, cumulative** | **-9,681** |
+| **delta, Task 7** | **-4,672** |
+| **delta, cumulative** | **-9,683** |

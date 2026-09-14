@@ -8,7 +8,7 @@ G0  cleanup + reproducibility
     [ ] `make tables` regenerates v1 Tables 1,2,3,6,7,8 from results/paper-v1/ and diffs
         clean against docs/plan/paper-v1-tables.md
     [ ] every v1 arm/task/pod is a YAML under configs/; w10_ruler/w10_frontier flag soup gone
-    [ ] Dockerfile + uv.lock; scripts/pod.py --check passes on a synthetic manifest;
+    [ ] Dockerfile + pyproject exact pins (R13 2026-09-14: uv.lock stays gitignored — platform-specific; `pod.py check` diffs env.txt against the pins); scripts/pod.py --check passes on a synthetic manifest;
         pod launch/watchdog path reused, not rewritten
     [ ] forbidden-word grep clean; README ≤ 120 lines; ponytail after-report committed
 

@@ -19,6 +19,8 @@ import tables
 from kvdlra.eval.records import (
     parse_cell_lines,
     parse_diag_lines,
+    parse_error_lines,
+    parse_latency_lines,
     parse_ppl_lines,
     parse_pplw_lines,
     parse_trial_lines,
@@ -34,12 +36,18 @@ CELL = (
 )
 PPL = "  bugSseed-r64-h256 [T=16384] ppl=5.308 tok_eq/layer=1377.7 ratio=0.085 sbits=0.150\n"
 PPLW = "[pplw] T=16384 bugSseed-r64-h256 ntok=511 nlls=1.573386,1.236791\n"
-# A >400-char line splits into part=i/N lines of 8 values (scripts/w10_frontier.py);
+# A >400-char line splits into part=i/N lines of 8 values (kvdlra.eval.frontier._log_pplw);
 # vast.ai truncates a log line at ~500 chars, so the parts ARE the artifact.
 PPLW_SPLIT = (
     "[pplw] T=32768 quant-2bit-kivi ntok=255 part=1/3 nlls=1.000000,2.000000\n"
     "[pplw] T=32768 quant-2bit-kivi ntok=255 part=2/3 nlls=3.000000,4.000000\n"
     "[pplw] T=32768 quant-2bit-kivi ntok=255 part=3/3 nlls=5.000000\n"
+)
+# kvdlra.eval.latency.run_latency's own print (weights_gb= between peak_gb= and
+# kv_peak_gb=, batch= last).
+LATENCY = (
+    "[latency ctx16384] bugSseed-r64-h256      ms/tok=103.25 mean=117.57 max=309.70 "
+    "spikes=4 resident_gb=15.79 peak_gb=18.20 weights_gb=14.96 kv_peak_gb=3.25 batch=1\n"
 )
 
 
@@ -55,8 +63,10 @@ def test_parse_trial_lines_schema() -> None:
             "trial": 3,
             "hit": 1,
             "frac": 1.0,
+            "generator": None,
             "haystack_id": None,
             "depth": None,
+            "code_family": None,
             "prompt_sha256": None,
             "error": None,
             "source": "f.txt:1",
@@ -89,6 +99,7 @@ def test_parse_cell_lines_schema() -> None:
             "hits": 12,
             "ratio": 0.151,
             "sbits": 0.151,
+            "errors": None,
             "source": "f.txt:1",
         }
     ]
@@ -101,6 +112,63 @@ def test_parse_cell_lines_without_n_or_sbits() -> None:
     (row,) = parse_cell_lines(old, model="M", source="f")
     assert row["n"] is None and row["hits"] is None and row["acc"] == 0.5
     assert row["sbits"] is None and row["ratio"] == 0.068
+
+
+def test_parse_trial_lines_reads_the_generator_the_row_carries() -> None:
+    """The runner prints ``generator=`` after ``frac=``; a row that has it is not
+    guesswork, and a pre-Week-21 row that does not stays ``None`` (`pod.py harvest`
+    fills those from the pod's task configs)."""
+    (row,) = parse_trial_lines(TRIAL.rstrip("\n") + " generator=official_ruler\n", "M", "f")
+    assert row["generator"] == "official_ruler" and row["error"] is None
+    assert parse_trial_lines(TRIAL, "M", "f")[0]["generator"] is None
+
+
+def test_parse_trial_lines_reads_the_error_a_raised_trial_printed() -> None:
+    """A raised trial is recorded, not skipped -- and `error=` is the last field on the
+    line, so a harvest of the log counts the same failures the run's records hold."""
+    raised = (
+        "[trial] task=vt ctx=16384 arm=bug-r64 seed=0 trial=2 hit=0 frac=0.000"
+        " generator=inhouse error=RuntimeError: CUDA out of memory\n"
+    )
+    (row,) = parse_trial_lines(raised, "M", "f")
+    assert row["error"] == "RuntimeError: CUDA out of memory"
+    assert row["hit"] == 0 and row["generator"] == "inhouse"
+
+
+def test_parse_cell_lines_of_a_wholly_failed_cell() -> None:
+    """A cell whose every trial raised has no ratio to average, so the emitter prints
+    none (it used to print ``ratio=nan sbits=nan``, which no reader could parse) and
+    appends ``errors=``. The row still carries acc/n -- the cell kept its full n."""
+    dead = "[niah_single ctx16384] bug-r64 acc=0.00 recall=0.00 n=12 errors=12\n"
+    (row,) = parse_cell_lines(dead, model="M", source="f")
+    assert row["ratio"] is None and row["sbits"] is None
+    assert row["n"] == 12 and row["hits"] == 0 and row["errors"] == 12
+    assert parse_cell_lines(CELL, "M", "f")[0]["errors"] is None  # the ok form
+
+
+def test_parse_error_lines_schema() -> None:
+    """The perplexity axis has no per-trial record to hang an error on -- an arm that
+    raises produces no row at all -- so the failure is its own log line, and that line
+    is what makes the harvested manifest's error count match the run's. The ppl axis
+    has no batch sweep, so its line carries no `batch=` and the field reads None."""
+    text = "noise\n[error] axis=ppl arm=bugSseed-r64-h256 ctx=32768 error=RuntimeError: boom\n"
+    assert parse_error_lines(text, source="f.txt") == [
+        {
+            "axis": "ppl", "arm": "bugSseed-r64-h256", "ctx": 32768, "batch": None,
+            "error": "RuntimeError: boom", "source": "f.txt:2",
+        }
+    ]  # fmt: skip
+    assert parse_error_lines(TRIAL + CELL, source="f") == []
+
+
+def test_parse_error_lines_reads_the_batch_a_latency_point_carries() -> None:
+    """`batch=` sits between `ctx=` and `error=` on a `latency`-axis line (the decode
+    axis sweeps batch sizes); `error=` must stay last so the exception message is never
+    truncated by the added group."""
+    text = "[error] axis=latency arm=full ctx=16384 batch=1 error=RuntimeError: CUDA out of mem\n"
+    (row,) = parse_error_lines(text, source="f")
+    assert row["axis"] == "latency" and row["batch"] == 1
+    assert row["error"] == "RuntimeError: CUDA out of mem"
 
 
 def test_parse_ppl_lines_schema() -> None:
@@ -129,6 +197,35 @@ def test_parse_ppl_lines_no_leading_space_and_no_sbits() -> None:
 def test_parse_ppl_lines_ignores_trial_and_cell_lines() -> None:
     assert parse_ppl_lines(TRIAL, model="M", source="f") == []
     assert parse_ppl_lines(CELL, model="M", source="f") == []
+
+
+def test_parse_latency_lines_schema() -> None:
+    """The harvest-side counterpart to `latency.run_latency`'s print -- without this a
+    results directory that never made it off the instance had no way back to a
+    checkable `latency.jsonl`. `weights_gb=` prints between `peak_gb=` and
+    `kv_peak_gb=` but is not a field of `LatencyRecord`, so it is matched, not kept."""
+    rows = parse_latency_lines(LATENCY, model="M", source="f.txt")
+    assert rows == [
+        {
+            "model": "M",
+            "arm": "bugSseed-r64-h256",
+            "ctx": 16384,
+            "batch": 1,
+            "ms_per_token_p50": 103.25,
+            "ms_mean": 117.57,
+            "ms_max": 309.70,
+            "spikes": 4,
+            "resident_gb": 15.79,
+            "peak_gb": 18.20,
+            "kv_peak_gb": 3.25,
+            "source": "f.txt:1",
+        }
+    ]
+
+
+def test_parse_latency_lines_ignores_trial_and_ppl_lines() -> None:
+    assert parse_latency_lines(TRIAL, model="M", source="f") == []
+    assert parse_latency_lines(PPL, model="M", source="f") == []
 
 
 def test_jsonl_roundtrip(tmp_path: Path) -> None:
@@ -282,5 +379,14 @@ def test_parse_pplw_lines_fails_loud_on_a_missing_part() -> None:
 
 
 def test_parse_diag_lines_carries_the_payload_and_its_source() -> None:
-    rows = parse_diag_lines('[diag] {"layer": 0, "rank": 64}\n', model="M", source="f.txt")
-    assert rows == [{"model": "M", "layer": 0, "rank": 64, "source": "f.txt:1"}]
+    rows, skipped = parse_diag_lines('[diag] {"layer": 0, "rank": 64}\n', model="M", source="f.txt")
+    assert rows == [{"model": "M", "layer": 0, "rank": 64, "source": "f.txt:1"}] and skipped == 0
+
+
+def test_parse_diag_lines_counts_a_payload_it_cannot_parse() -> None:
+    """`vastai logs` cuts a long line in half. The halved payload cannot become a record
+    -- but the COUNT is what tells a harvest the log came back truncated, and dropping it
+    silently made a half-fetched log look like a pod that printed no diagnostics."""
+    text = '[diag] {"layer": 0, "rank": 64}\n[diag] {"layer": 1, "rank": 6\n'
+    rows, skipped = parse_diag_lines(text, model="M", source="f.txt")
+    assert [r["layer"] for r in rows] == [0] and skipped == 1

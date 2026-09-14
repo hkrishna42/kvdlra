@@ -1,7 +1,8 @@
-"""Week-19 A2: official NVIDIA-RULER prompts through our arms (``w19_official_ruler``).
+"""The external anchor: official NVIDIA-RULER prompts through our arms.
 
 Hermetic: a whitespace fake tokenizer with a chat template + the tiny-Llama model; the
-real generator/tokenizer path runs on the pod (MODE a2).
+real generator/tokenizer path runs on the pod, which writes the prompts into
+``official_ruler.DATA_DIR`` before ``pod.py run`` reads them.
 """
 
 from __future__ import annotations
@@ -12,9 +13,9 @@ from typing import Any
 
 import pytest
 import torch
-import w19_official_ruler as official
 from transformers import LlamaConfig, LlamaForCausalLM
-from w10_frontier import build_parser
+
+from kvdlra.eval import official_ruler as official
 
 # Shaped like RULER c3f5e3b records: the answer prefix is its own field, not in `input`.
 NIAH = (
@@ -109,51 +110,51 @@ def _tiny() -> LlamaForCausalLM:
     return m
 
 
-def test_run_emits_intervals_compatible_rows(tmp_path: Path, monkeypatch: Any, capsys: Any) -> None:
-    from w18_intervals import ROW
+def test_run_trial_reads_the_indexed_official_record(tmp_path: Path, monkeypatch: Any) -> None:
+    """One trial IS one official record, at the trial POSITION: the generator wrote the
+    samples in order at the pinned seed, so ``trial`` selects one without any
+    re-sampling of ours.
+
+    What the record is CALLED is RULER's business, though: their ``index`` is a sparse
+    id (11779, 76228 in the archived w19_a2 / w19_q4off rows), not the position, and it
+    is what the v1 records carry as their ``trial``. So the meta hands the runner that
+    index back, and the row a re-run writes joins to the archived one.
+    """
+    from kvdlra.eval.config import ArmCfg, load_task
+    from kvdlra.eval.frontier import build_arm
 
     data = tmp_path / "niah_single_2"
     data.mkdir()
+    # Indices that are NOT the positions -- the archive's own shape.
     recs = [
-        {"index": i, "input": NIAH, "outputs": ["7"], "length": 40, "answer_prefix": NIAH_PREFIX}
-        for i in range(2)
+        {"index": ix, "input": NIAH, "outputs": ["7"], "length": 40, "answer_prefix": NIAH_PREFIX}
+        for ix in (76228, 11779)
     ]
     (data / "validation.jsonl").write_text("\n".join(json.dumps(r) for r in recs) + "\n")
-    monkeypatch.setattr(official, "load_model", lambda *a, **k: (_tiny(), _FakeTok()))
-    args = build_parser().parse_args(
-        [
-            "--methods",
-            "full",
-            "quant",
-            "--quant-nbits",
-            "4",
-            "--quant-scheme",
-            "kivi",
-            "--chunk",
-            "0",
-        ]
-    )
-    args.data_dir, args.tasks, args.context_len, args.n_examples = (
-        str(tmp_path),
-        ["niah_single_2"],
-        64,
-        None,
-    )
-    blob = official.run(args)
-    names = [r["method"] for r in blob["results"]]
-    assert names == ["full", "quant-4bit-kivi"]
-    assert all(
-        r["total"] == 2 and r["task"] == "niah_single_2" and r["ctx"] == 64 for r in blob["results"]
-    )
-    out = capsys.readouterr().out
-    rows = [ln for ln in out.splitlines() if ln.startswith("[niah_single_2 ctx64]")]
-    assert len(rows) == 2 and all(ROW.search(ln) for ln in rows), rows
-    assert sum(ln.startswith("[trial] task=niah_single_2") for ln in out.splitlines()) == 4
+    monkeypatch.setattr(official, "DATA_DIR", tmp_path)
+    official.load_records.cache_clear()
+
+    model, tok = _tiny(), _FakeTok()
+    task = load_task("ruler_official_16k")
+    task.ctx = 64
+    arm = build_arm(ArmCfg(name="full", kind="full"), model, task.ctx)
+    for trial, index in enumerate((76228, 11779)):
+        hit, frac, meta = official.run_trial(
+            arm, model, tok, task, "niah_single_2", 42, trial,
+            device="cpu", chunk=0, n=64, h_kv=2,
+        )  # fmt: skip
+        assert hit in (0, 1) and 0.0 <= frac <= 1.0
+        assert meta["trial"] == index  # the record's own id, not its position
+        assert meta["haystack_id"] == f"niah_single_2:{index}"
+        assert meta["depth"] is None and len(meta["prompt_sha256"]) == 64
+        assert 0.0 < meta["ratio"] <= 1.0
 
 
-def test_parse_args_composes_with_the_frontier_parser() -> None:
-    """The anchor CLI extends build_parser(); a duplicated option (e.g. --out-json) raises
-    at construction, which the CPU smoke hit and the run() test cannot see."""
-    args = official.parse_args(["--data-dir", "d", "--tasks", "vt", "--methods", "full"])
-    assert args.data_dir == "d" and args.tasks == ["vt"] and args.methods == ["full"]
-    assert args.out_json == "results/w19-official-ruler.json" and args.context_len == 16384
+def test_load_records_reads_the_generators_validation_file(tmp_path: Path) -> None:
+    data = tmp_path / "vt"
+    data.mkdir()
+    rows = [{"index": i, "input": VT, "outputs": ["12345"]} for i in range(3)]
+    (data / "validation.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    official.load_records.cache_clear()
+    assert [r["index"] for r in official.load_records(tmp_path, "vt", None)] == [0, 1, 2]
+    assert [r["index"] for r in official.load_records(tmp_path, "vt", 2)] == [0, 1]

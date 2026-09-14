@@ -1,136 +1,102 @@
 """Every v1 arm built from YAML must produce exactly what the legacy CLI path produced.
 
-``configs/arms/*.yaml`` replaces the flag soup of ``scripts/w10_frontier.py`` (Task 8
-deletes the builder). Until then that builder is the oracle, and parity is checked two
-ways: a cache arm's YAML must reproduce the exact keyword set its ``make`` lambda
-passes to ``BugStreamingCache`` / ``ShadowKVCache``, key for key; a press/quant arm's
-YAML must reproduce every identifying field of the legacy arm dict. ``make`` is never
-called -- the kwargs are the contract, and a real model is not needed to compare them.
+``configs/arms/*.yaml`` + ``frontier.build_arm`` replace the flag soup of the argparse
+builder that produced every archived number. That builder was the oracle while both
+existed; L0.8a froze its output to ``tests/golden/legacy_arm_kwargs.json`` and L0.8c
+deleted it, so the golden is the oracle now and parity is checked two ways: a cache
+arm's YAML must resolve to the exact keyword set the legacy ``make`` lambda passed to
+``BugStreamingCache`` / ``ShadowKVCache``, key for key and at both context lengths; a
+press/quant arm must carry every identifying field the legacy arm dict did, and no
+others. ``make`` is never called -- the kwargs are the contract, and comparing them
+needs no model.
 """
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from kvdlra.eval.config import ROOT, arm_kwargs, config_hash, load_arm, load_pod, load_task
+from kvdlra.eval.frontier import build_arm
 
-T = 16384  # the context the v1 16K cells ran at; the budgets resolve against it
+GOLDEN = json.loads((Path(__file__).parent / "golden" / "legacy_arm_kwargs.json").read_text())
 
-RH = "--ranks 64 --hh-budgets 256 --hh-neighbor 1 --warmup-seed"  # scripts/pod/w18.sh
-QC = f"{RH} --bug-quant-bits 4 --bug-quant-budget 512"  # scripts/pod/w19.sh (a1q)
+# Structure, not parameters: the name, the dispatch kind, the factories, the captured
+# kwargs, and the analytic-footprint tag. Everything else in an arm dict is a parameter
+# the legacy dict also carried, and the golden holds it.
+IGNORED = {"name", "kind", "rank", "rank_s", "chunkable", "kwargs", "press_type",
+           "make", "make_press", "make_cache", "retention", "hh_select", "hh_budget"}  # fmt: skip
 
-CACHE = {  # legacy arm name -> the CLI flags that produced it (scripts/pod/w18.sh, w19.sh)
-    "bug-r64": "--methods bug --ranks 64",
-    "bug-r128": "--methods bug --ranks 128",
-    "bug-r256": "--methods bug --ranks 256",
-    "bug-r256-f0.01": "--methods bug --ranks 256 --min-sv-frac 0.01",
-    "bugSseed-r64-h256": f"--methods bugslash {RH}",
-    "bugSseed-r64-h256-q4": f"--methods bugslash {QC}",
-    "bugSseed-r64-h256-oja": f"--methods bugslash {RH} --tracker oja",
-    "bugSseed-r64-h256-fd": f"--methods bugslash {RH} --tracker fd",
-    "bugSseed-r128-h1024-s32": "--methods bugslash --ranks 128 --hh-budgets 1024 "
-    "--hh-neighbor 1 --warmup-seed --score-rank 32",
-    "bugSseed-r256-h1024": "--methods bugslash --ranks 256 --hh-budgets 1024 "
-    "--hh-neighbor 1 --warmup-seed",
-    "bugEVICT-h256": "--methods bugevict --hh-budgets 256",
-    "shadow-r64": "--methods shadow --shadow-ranks 64",
-    "shadow-r128": "--methods shadow --shadow-ranks 128",
-}
-
-KIVI = {  # the quant arms' identifying fields, shared by the quant and composite arms
-    "nbits": "nbits",
-    "quant_scheme": "scheme",
-    "quant_backend": "backend",
-    "quant_group": "group",
-    "quant_residual": "residual",
-}
-PARAMS: dict[str, tuple[str, dict[str, str]]] = {  # legacy arm -> (flags, legacy field -> YAML key)
-    "full": ("--methods full", {}),
-    "quant-2bit-kivi": ("--methods quant --quant-scheme kivi --quant-nbits 2", KIVI),
-    "quant-4bit-kivi": ("--methods quant --quant-scheme kivi --quant-nbits 4", KIVI),
-    "quant-8bit-kivi-hqq": (
-        "--methods quant --quant-scheme kivi --quant-backend hqq --quant-nbits 8",
-        KIVI,
-    ),
-    "think-c0.5": ("--methods think --think-ratios 0.5", {"think_ratio": "ratio"}),
-    "palu-r0.5": (
-        "--methods palu --palu-ranks 0.5",
-        {"palu_rank_ratio": "rank", "palu_group": "group"},
-    ),
-    "ea-k0.1": ("--methods ea --evict-keeps 0.1", {"keep": "keep"}),
-    "ea-k0.25": ("--methods ea --evict-keeps 0.25", {"keep": "keep"}),
-    "ea-k0.5": ("--methods ea --evict-keeps 0.5", {"keep": "keep"}),
-    "snapkv-k0.1": ("--methods snapkv --evict-keeps 0.1", {"keep": "keep"}),
-    **{
-        f"ea-k{k}-q{b}-kivi": (
-            f"--methods composite --evict-keeps {k} --quant-nbits {b} --quant-scheme kivi",
-            {"keep": "keep", **KIVI},
-        )
-        for k in (0.1, 0.25)
-        for b in (2, 4)
-    },
-}
-
-# Legacy arm-dict fields that are structure, not parameters: the name, the dispatch kind,
-# the factories, the captured kwargs, and the flags that only steer the harness. `chunkable`
-# used to sit in this set too, which let YAML<->legacy drift on the single-shot guard pass
-# silently; it is compared explicitly below instead, since it lives at the top of ArmCfg
-# rather than inside press:/quant: (so it cannot go through the `fields`/`blocks` mapping).
-IGNORED = {"name", "kind", "rank", "press_type", "make", "make_press", "make_cache"}
-KIND = {"composite": "press_quant"}  # the legacy dispatch key for the YAML `composite` kind
-
-
-def _legacy(flags: str, name: str, t: int = T) -> dict[str, Any]:
-    """The legacy arm dict named ``name``, built by the CLI path ``flags`` produced."""
-    import w10_frontier  # scripts/ is on pythonpath; deleted in Task 8 with this import
-
-    ns = w10_frontier.build_parser().parse_args([*flags.split(), "--chunk", "4096"])
-    arms = w10_frontier.build_arms(ns, model=None, t=t)
-    return next(a for a in arms if a["name"] == name)
-
-
-def _yaml_name(legacy: str) -> str:
-    """The config whose ``legacy_name`` is ``legacy`` (exactly one, or the test lies)."""
-    files = sorted((ROOT / "arms").glob("*.yaml"))
-    hits = [p.stem for p in files if load_arm(p.stem).legacy_name == legacy]
-    assert len(hits) == 1, f"{legacy}: expected exactly one config, got {hits}"
-    return hits[0]
+CACHE = sorted(k for k, v in GOLDEN.items() if "kwargs" in v)
+PARAMS = sorted(k for k, v in GOLDEN.items() if "params" in v)
 
 
 @pytest.mark.parametrize("t", [16384, 32768], ids=["16k", "32k"])
-@pytest.mark.parametrize("legacy", sorted(CACHE))
-def test_yaml_cache_arm_matches_legacy_build_arms(legacy: str, t: int) -> None:
+@pytest.mark.parametrize("legacy", CACHE)
+def test_yaml_cache_arm_matches_the_frozen_legacy_kwargs(legacy: str, t: int) -> None:
     """The YAML resolves to the legacy lambda's keyword set, key for key, at 16K and 32K.
 
     Both lengths matter: a budget pinned to the 16K value (e.g. hand-typed instead of left
-    ``null`` for ``arm_kwargs`` to resolve) would still pass at ``t=T`` and only show up once
-    the context length actually moves the derived ``coord_budget``/``quant_budget``.
+    ``null`` for ``arm_kwargs`` to resolve) would still pass at one length and only show up
+    once the context actually moves the derived ``coord_budget``/``quant_budget``.
     """
-    got = arm_kwargs(load_arm(_yaml_name(legacy)), t=t)
-    want = _legacy(CACHE[legacy], legacy, t=t)["kwargs"]
-    assert got == want
+    want = GOLDEN[legacy]
+    cfg = load_arm(want["config"])
+    arm = build_arm(cfg, model=None, t=t)
+    assert arm["kwargs"] == want["kwargs"][str(t)]
+    assert arm["kwargs"] == arm_kwargs(cfg, t)  # build_arm resolves, it does not re-derive
+    assert arm["name"] == legacy and arm["kind"] == want["kind"]
+    assert arm["chunkable"] == want["chunkable"]
 
 
-@pytest.mark.parametrize("legacy", sorted(PARAMS))
-def test_yaml_press_arm_matches_legacy_build_arms(legacy: str) -> None:
-    """The press/quant/composite YAMLs carry every identifying field of the legacy dict."""
-    flags, fields = PARAMS[legacy]
-    arm, cfg = _legacy(flags, legacy), load_arm(_yaml_name(legacy))
-    assert KIND.get(cfg.kind, cfg.kind) == arm["kind"]
-    # The single-shot guard: not routed through `fields`/`blocks` (see IGNORED above), so it
-    # needs its own line, with the legacy dict's implicit default (True, ArmCfg's own default)
-    # where a branch never sets the key at all (e.g. ea-k*/snapkv-k*). kivi2_singleshot is NOT
-    # covered here: it isn't in PARAMS, because its chunkable=false (chunk=0, single-shot) is a
-    # deliberate config-level choice with no legacy build_arms counterpart -- the legacy "quant"
-    # branch always sets chunkable=True regardless of the pod-level --chunk value. See
-    # test_kivi2_singleshot_differs_from_the_streaming_arm_only_in_chunk below.
-    assert cfg.chunkable == arm.get("chunkable", True), f"{legacy}: chunkable drifted from legacy"
-    assert set(fields) == set(arm) - IGNORED - {"chunkable"}, "a legacy field is unaccounted for"
-    blocks = {**cfg.press, **cfg.quant}
-    assert set(blocks) - set(fields.values()) <= {"chunk"}, "an unidentified YAML field"
-    assert {k: blocks[k] for k in fields.values()} == {v: arm[k] for k, v in fields.items()}
+@pytest.mark.parametrize("legacy", PARAMS)
+def test_yaml_press_arm_matches_the_frozen_legacy_params(legacy: str) -> None:
+    """The press/quant/composite YAMLs carry every identifying field of the legacy dict,
+    and no field the legacy dict did not have."""
+    want = GOLDEN[legacy]
+    arm = build_arm(load_arm(want["config"]), model=None, t=16384)
+    assert arm["name"] == legacy and arm["kind"] == want["kind"]
+    assert arm["chunkable"] == want["chunkable"], f"{legacy}: chunkable drifted from legacy"
+    assert {k: v for k, v in arm.items() if k not in IGNORED} == want["params"]
+
+
+def test_the_golden_covers_every_arm_config_with_a_legacy_name() -> None:
+    """One exception, and it is a real one: the ss2 control has no legacy counterpart --
+    the legacy quant branch always set chunkable=True and the pod forced single-shot with
+    --chunk 0, so there is no legacy dict to freeze. It is pinned against its streaming
+    twin instead (below)."""
+    named = {load_arm(p.stem).legacy_name for p in (ROOT / "arms").glob("*.yaml")} - {None}
+    assert named - set(GOLDEN) == {"quant-2bit-kivi#chunk0"}
+    assert {v["config"] for v in GOLDEN.values()} | {"kivi2_singleshot"} == {
+        p.stem for p in (ROOT / "arms").glob("*.yaml")
+    }
+
+
+def test_build_arm_copies_the_kwargs_into_the_factory() -> None:
+    """The stored ``kwargs`` and the factory's must not be the same dict: a caller that
+    inspects and edits one would silently change what the next ``make()`` constructs."""
+    arm = build_arm(load_arm("isvd_r64"), model=None, t=1024)
+    arm["kwargs"]["rank"] = 999
+    assert arm["make"].__defaults__[0]["rank"] == 64  # the factory's copy is untouched
+
+
+def test_build_arm_rejects_an_unknown_kind() -> None:
+    cfg = load_arm("full")
+    cfg.kind = "telepathy"
+    with pytest.raises(ValueError, match="unknown arm kind"):
+        build_arm(cfg, model=None, t=1024)
+
+
+def test_faithful_quant_is_reserved_not_silently_wrong() -> None:
+    """A faithful KIVI (G=32, R=128, full-precision prefill) is a different arm from the
+    QuantizedCache mixin, and L2 owns it. Until then it must refuse, not approximate."""
+    cfg = load_arm("kivi2_streaming")
+    cfg.kind = "quant_faithful"
+    with pytest.raises(NotImplementedError, match="L2"):
+        build_arm(cfg, model=None, t=1024)
 
 
 def test_every_arm_yaml_loads_and_names_match() -> None:
@@ -191,3 +157,20 @@ def test_config_hash_covers_the_referenced_configs(
 def test_load_arm_rejects_an_unknown_name() -> None:
     with pytest.raises(FileNotFoundError):
         load_arm("no_such_arm")
+
+
+def test_a_task_config_that_can_produce_no_records_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``n_trials x len(seeds)`` is the count `pod.py check` demands of every cell and
+    ``n_samples`` the count it demands of every sweep, so a zero in either configures a
+    task that runs nothing AND a gate that asks for nothing. Refused at load, naming the
+    file -- which is the only place the operator can still fix it."""
+    (tmp_path / "tasks").mkdir()
+    (tmp_path / "tasks" / "broken.yaml").write_text(
+        "name: broken\ngenerator: ppl\nctx: 0\nn_trials: 0\nseeds: []\nn_samples: 0\n"
+    )
+    monkeypatch.setattr("kvdlra.eval.config.ROOT", tmp_path)
+    with pytest.raises(ValueError, match=r"broken\.yaml") as e:
+        load_task("broken")
+    assert all(k in str(e.value) for k in ("n_trials", "seeds", "ctx", "n_samples"))

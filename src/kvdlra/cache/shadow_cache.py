@@ -7,7 +7,7 @@ value cache to CPU**, and at every decode step reconstructs and attends to only 
 current query against one *landmark* (mean key) per chunk. The paper's headline is
 a GPU-memory win from the value offload; under this repo's device-agnostic
 float-equivalent accounting (``kvdlra.accounting``: a CPU float costs the same as a
-GPU float) that offload buys *nothing* on the honest memory axis, so this port's
+GPU float) that offload buys *nothing* on the stored-state axis, so this port's
 only fair savings are (a) the low-rank keys and (b) sparse decode. Counting the
 offloaded values as "free" is the forbidden misreport; :meth:`stored_state_numel`
 counts them at 1 float/elem, identical to a GPU float.
@@ -48,7 +48,7 @@ top-k chunk ids); the returned ``(1, H_kv, L, D)`` tensor already carries per-he
 keys, and because every returned slot is strictly-past the shared causal mask marks
 them all visible, so per-head chunk sets need no per-head mask.
 
-Faithful-core deviations, documented (an honest labelled gap beats a hand-wavy
+Faithful-core deviations, documented (a labelled gap beats a hand-wavy
 match):
 
 1. **No outlier-chunk tier.** ShadowKV keeps a small fraction of high-variance
@@ -414,8 +414,8 @@ class ShadowKVLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self._reset_state()
 
     def stored_state_numel(self) -> int:
-        """Float-equivalents of the *stored* per-layer state (the honest memory):
-        verbatim sink/recent keys, the low-rank key coefficients + basis, the
+        """Float-equivalents of the *stored* per-layer state (what the accounting
+        bills): verbatim sink/recent keys, the low-rank key coefficients + basis, the
         per-chunk landmarks, and the **CPU-offloaded value cache** -- every element
         at 1 each, a CPU float identical to a GPU float (``kvdlra.accounting``). A
         zeroed CPU-value term would fail the anti-drift pin loudly."""
@@ -524,9 +524,8 @@ class ShadowKVCache(Cache):
     def attach(self, model: PreTrainedModel) -> Iterator[None]:
         """Register the pre-attention selection hooks for a decode forward/generate
         (harmless during pre-fill, where the hook sees ``cumulative_length == 0`` and
-        skips). Symmetric with :meth:`MorphKVCache.attach`, but ShadowKV's hook is a
-        *pre*-hook (query-aware, before attention) rather than an observe-only
-        post-hook."""
+        skips). ShadowKV's hook is a *pre*-hook (query-aware, before attention) rather
+        than the observe-only post-hook an eviction cache uses."""
         handles = self._install_hooks(model)
         try:
             yield

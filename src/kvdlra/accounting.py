@@ -1,21 +1,19 @@
-"""Cross-method KV-cache memory accounting -- the single honest source of truth.
+"""Cross-method KV-cache memory accounting -- one unit for every method.
 
 Every Week-10 frontier arm stores something different (BUG low-rank factors,
 eviction survivors, ShadowKV low-rank keys + CPU-offloaded values). This module
-counts each **honestly, in the same unit**, reusing the repo's existing
+counts each **in the same unit**, reusing the repo's existing
 conventions so the *measured* caches
-(:meth:`kvdlra.cache.BugStreamingCache.stored_state_numel`,
-:meth:`kvdlra.cache.MorphKVCache.stored_state_numel`) and the *formula-only*
-presses (SnapKV / ExpectedAttention via kvpress, ShadowKV) land on ONE axis. See
-``docs/week10-plan.md`` (the "Memory accounting -- the core deliverable" section)
-and ``docs/week10-kickoff.md``.
+(:meth:`kvdlra.cache.BugStreamingCache.stored_state_numel`) and the
+*formula-only* presses (SnapKV / ExpectedAttention via kvpress, ShadowKV) land on
+ONE axis.
 
 Conventions (identical to ``stored_state_numel`` / ``kv_memory_ratio`` /
 ``evict_quant_memory``):
 
 * fp / verbatim elements count as **1 float-equivalent** each -- *regardless of
   device*, so a CPU-offloaded float counts the same as a GPU float (this is what
-  neutralises ShadowKV's value-offload on the honest memory axis);
+  neutralises ShadowKV's value-offload on the stored-state axis);
 * quantized codes count at ``bits/32`` float-equivalents (bit-packable), ``ceil``
   over all codes, plus one fp32 norm per quantised column;
 * the diagonal BUG core costs ``r`` per stream, not ``r**2``;
@@ -46,8 +44,7 @@ N_SINK = 4
 # Retention modes that track per-coordinate positions / scores / surprise, and the
 # ring-score high-water buffer -- mirrors ``coord_for_config`` /
 # ``BugStreamingLayer.stored_state_numel``.
-_TRACK_SCORE = ("attn", "blend")
-_TRACK_SURPRISE = ("lowrank_surprise", "blend")
+_TRACK_SURPRISE = ("lowrank_surprise",)
 
 
 @dataclass(frozen=True)
@@ -70,7 +67,7 @@ class Footprint:
     def float_equiv(self) -> float:
         """Float-equivalents / layer (fp32-word unit), byte-identical to
         ``stored_state_numel``: verbatim at 1 each, codes ``ceil(bits/32)``, aux at
-        1 each. Integer-valued for measured (BUG/MorphKV) configs."""
+        1 each. Integer-valued for measured (BUG) configs."""
         codes = math.ceil(self.quant_code_bits / 32) if self.quant_code_bits else 0
         return self.verbatim_elems + codes + self.aux_words
 
@@ -80,7 +77,7 @@ class Footprint:
         return self.verbatim_elems * store_bits + self.quant_code_bits + self.aux_words * FP32_BITS
 
     def stored_bits(self) -> float:
-        """Honest at-rest bits / layer: the ``fp32_verbatim_elems`` subset of
+        """At-rest bits / layer: the ``fp32_verbatim_elems`` subset of
         ``verbatim_elems`` billed at its actual 32 bits, the remainder at 16, codes
         native, aux at 32. Equals ``bits(16)`` for any method with no fp32-at-rest
         state (ThinK/Palu/eviction/full/ShadowKV, ``fp32_verbatim_elems == 0``);
@@ -99,11 +96,11 @@ class Footprint:
         bits/layer) -- byte-identical to ``kv_memory_ratio`` for the BUG prefill
         model, and ``keep_frac`` for pure-fp16 eviction. This is the *fp16-equivalent*
         headline (BUG's fp32 state billed as if fp16); see :meth:`ratio_stored_bits`
-        for the honest at-rest number."""
+        for the at-rest number."""
         return self.bits(FP16_BITS) / (2 * t * n * FP16_BITS)
 
     def ratio_stored_bits(self, t: int, n: int) -> float:
-        """Honest at-rest stored-bits ratio (:meth:`stored_bits` / full-fp16-cache
+        """At-rest stored-bits ratio (:meth:`stored_bits` / full-fp16-cache
         bits). Equals :meth:`ratio_fp16` for every method with no fp32-at-rest state;
         for BUG r64 it is ~0.15x/0.27x vs the 0.085x/0.149x fp16-equivalent number."""
         return self.stored_bits() / (2 * t * n * FP16_BITS)
@@ -116,7 +113,7 @@ class Footprint:
     def gpu_ratio_fp16(self, t: int, n: int) -> float:
         """GPU-resident stored bits / full-fp16-cache bits. Equals
         :meth:`ratio_fp16` for every all-GPU method; for ShadowKV it is the
-        (flattering) GPU-only number, reported *beside* the honest total."""
+        (flattering) GPU-only number, reported *beside* the device-agnostic total."""
         gpu = self.verbatim_elems if self.gpu_verbatim_elems is None else self.gpu_verbatim_elems
         gpu_bits = gpu * FP16_BITS + self.quant_code_bits + self.aux_words * FP32_BITS
         return gpu_bits / (2 * t * n * FP16_BITS)
@@ -139,30 +136,25 @@ def bug_footprint(
     n_sink: int = N_SINK,
     retention: str = "fifo",
     hh_count: int = 0,
-    hh_select: str = "attn",
-    merge: bool = False,
     u_present: bool = True,
     quant_count: int = 0,
     quant_bits: int | None = None,
-    w_key: bool = False,
 ) -> Footprint:
     """Per-layer footprint of one ``BugStreamingCache`` layer state, mirroring
     :meth:`BugStreamingLayer.stored_state_numel` to the float.
 
     ``coord_count`` fp32 coordinate columns (K+V, ``2*rank`` each), ``recent_len``
     verbatim recent-ring tokens (``2n``), ``n_sink`` verbatim sinks (``2n``),
-    ``hh_count`` verbatim SLASH heavy-hitters (``2n`` + 2 aux for ``hh_select=
-    "attn"``, ``2n`` + 1 aux for ``"surprise"``), the basis ``U``
-    (``2*n*rank``) and diagonal core (``2*rank``) when ``u_present``. Adaptive
-    retention adds 1 position and/or 1 score per column and a ``recent_len``
-    ring-score buffer (``retention in {attn, blend}``). ``quant_count`` columns
-    are stored as ``2*rank*quant_bits`` code bits + ``2`` fp32 norms each.
+    ``hh_count`` verbatim SLASH heavy-hitters (``2n`` + 1 aux for the position),
+    the basis ``U`` (``2*n*rank``) and diagonal core (``2*rank``) when
+    ``u_present``. Adaptive retention adds 1 position and 1 surprise snapshot per
+    column. ``quant_count`` columns are stored as ``2*rank*quant_bits`` code bits
+    + ``2`` fp32 norms each.
 
     Its ``float_equiv()`` equals the live cache's ``stored_state_numel()``; the
     anti-drift test (``tests/test_accounting.py``) pins this so the formula (used
     for SnapKV/ShadowKV) and the measured path cannot diverge."""
-    track_pos = retention != "fifo" or merge
-    track_score = retention in _TRACK_SCORE
+    track_pos = retention != "fifo"
     track_surprise = retention in _TRACK_SURPRISE
     n_cols = coord_count + quant_count  # all low-rank columns carry bookkeeping
 
@@ -176,20 +168,15 @@ def bug_footprint(
         verbatim += 2 * n * rank  # basis U (K + V)
         fp32_verbatim += 2 * n * rank  # ...also fp32 at rest
         aux += 2 * rank  # diagonal core (K + V)
-    aux += n_cols * (int(track_pos) + int(track_score) + int(merge) + int(track_surprise))
-    if track_score:
-        aux += recent_len  # ring-score buffer (high-water = recent_len)
-    # hh tier: always the int64 positions; the fp32 selection score only when the
-    # exact tier is attention-selected (Week-11 SurpriseSLASH recomputes surprise
-    # from the basis each absorb, so hh_select="surprise" stores no score).
-    aux += hh_count * (2 if hh_select == "attn" else 1)  # hh_pos (+ hh_score for attn)
+    aux += n_cols * (int(track_pos) + int(track_surprise))
+    # hh tier: the int64 positions. Week-11 SurpriseSLASH recomputes the selection
+    # score from the basis each absorb, so the exact tier stores no score.
+    aux += hh_count  # hh_pos
 
     code_bits = 0.0
     if quant_count and quant_bits is not None:
         code_bits = 2 * rank * quant_count * quant_bits  # K + V codes
         aux += 2 * quant_count  # one fp32 norm per K,V quantised column
-    if w_key:
-        aux += n  # Week-12 Q-BUG: frozen per-feature key-whitening diagonal (fp32)
     return Footprint(
         verbatim_elems=verbatim,
         quant_code_bits=code_bits,
@@ -231,7 +218,8 @@ def bug_prefill_footprint(
     """The Week-4 ``BUGPress`` *prefill* model (distinct from the streaming
     :func:`bug_footprint`): every non-sink token kept as a coordinate, basis ``U``,
     exact sinks -- **no** recent ring or diagonal core. Its ``ratio_fp16`` is
-    byte-identical to ``scripts/w4_hybrid_sweep.kv_memory_ratio`` for the fp case.
+    byte-identical to ``scripts/w4_hybrid_sweep.kv_memory_ratio`` @ ``paper-v1-archive``
+    for the fp case.
     Kept for the Phase-7 delegator consolidation / continuity, not the frontier
     (the Week-10 frontier stores the streaming cache, so it uses
     :func:`bug_footprint`)."""
@@ -265,26 +253,15 @@ def evict_footprint(
     column. Pure-fp16 ``ratio_fp16`` == ``keep_frac`` exactly.
 
     Note: this is the corrected convention (no spurious ``+FP16`` norm term for the
-    pure-fp16 case that ``scripts/w4_fair.evict_quant_memory`` carries); the
-    published scripts keep their number until the Phase-7 delegator consolidation
-    (see ``docs/week10-plan.md``)."""
+    pure-fp16 case that ``scripts/w4_fair.evict_quant_memory`` @ ``paper-v1-archive``
+    carries); the published scripts keep their number until the Phase-7 delegator
+    consolidation."""
     kept = keep_frac * t
     if quant_bits is None:
         return Footprint(verbatim_elems=2 * n * kept)
     return Footprint(
         verbatim_elems=0.0, quant_code_bits=2 * n * kept * quant_bits, aux_words=2 * kept
     )
-
-
-# ------------------------------------------------------------------- MorphKV
-
-
-def morph_footprint(n: int, h_kv: int, kept_len: int, recent_window: int) -> Footprint:
-    """Per-layer footprint of a MorphKV layer, mirroring
-    :meth:`MorphKVLayer.stored_state_numel`: kept K/V (``2n`` each over ``kept_len``
-    tokens) + the score buffer ``(H_kv, R, kept_len)``. ``kept_len`` should include
-    any ``evict_interval-1`` overshoot when auditing the measured high-water."""
-    return Footprint(verbatim_elems=2 * n * kept_len, aux_words=h_kv * recent_window * kept_len)
 
 
 # ------------------------------------------------------------------ ThinK
@@ -300,7 +277,7 @@ def think_footprint(
 
     Note: the kvpress ``ThinKPress`` *zeros* pruned channels (same tensor shape, no
     measured gain), so this analytic footprint -- not the DynamicCache numel -- is
-    the honest deployable memory."""
+    the deployable memory."""
     kept_ch = max(1, round((1.0 - key_channel_ratio) * head_dim))
     verbatim = t * kept_ch * h_kv + t * n  # pruned K + full V
     aux = h_kv * kept_ch  # kept-channel indices, per head (one-time)
@@ -323,7 +300,7 @@ def palu_footprint(
     """Per-layer footprint of Palu (arXiv:2407.21118): low-rank projection of K AND
     V into a rank-``r`` latent per head-group, ``r = rank_ratio * head_dim * group``.
     Stores the ``n_sink`` leading token columns **verbatim** (the sink exemption
-    :class:`kvdlra.press.PaluPress` applies since the Week-15 audit fix -- only
+    :class:`kvdlra.baselines.svd_oracle.SVDOraclePress` applies since the Week-15 audit fix -- only
     columns ``n_sink:`` are low-ranked, K+V), the per-token latent ``H``
     (``(t-n_sink)*r``) for K and V, plus the reconstruction basis ``B``
     (``r*head_dim*group``) per group -- all counted. ``group`` = KV heads sharing
@@ -376,7 +353,7 @@ def shadow_footprint(
     **CPU-offloaded:** the FULL value cache (``t*n``), fetched sparsely each step.
     Under this repo's device-agnostic float rule the offloaded V counts at 1
     float/elem in the total (``cpu_ratio_fp16 -> 0.5``), so the offload buys ZERO on
-    the honest memory axis -- its only fair savings are low-rank K and sparse decode.
+    the stored-state axis -- its only fair savings are low-rank K and sparse decode.
     Reporting V-offload as "free" is forbidden.
 
     With the defaults ``n_sink = recent_len = 0`` the whole context is the middle,
@@ -395,14 +372,6 @@ def shadow_footprint(
     gpu = lowrank_k + landmarks + sink_recent_k + outliers
     cpu = float(t * n)  # full value cache, offloaded -- counted, never hidden
     return Footprint(verbatim_elems=gpu + cpu, gpu_verbatim_elems=gpu, cpu_verbatim_elems=cpu)
-
-
-def shadow_bandwidth_per_token(n: int, sparse_budget: int, chunk: int) -> float:
-    """Elements fetched CPU->GPU per decode step for ShadowKV's sparse-V read
-    (``sparse_budget`` selected tokens x ``n`` features). The PCIe traffic the
-    offload pays back every step -- reported as an explicit line so the offload's
-    cost is never hidden behind its GPU-memory saving."""
-    return float(sparse_budget * n)
 
 
 # ---------------------------------------------------------------- full cache
@@ -429,13 +398,13 @@ def quant_footprint(
     """KIVI-style 2/4-bit KV baseline (transformers ``QuantizedCache`` / quanto backend,
     arm ``quant-{nbits}bit``). The ``residual_length`` most-recent tokens stay verbatim
     in the model dtype; older tokens are quantized to ``nbits`` with a per-``group``
-    scale+shift. Billed honestly to match what quanto actually stores (verified via the
+    scale+shift. Billed to match what quanto actually stores (verified via the
     Week-18 probe: ``_data`` uint8 codes at ``nbits``, ``_scale``+``_shift`` fp32, one
     pair per group, no zeropoint): code bits at ``nbits``, ``scale_words`` fp32 aux words
     per group, residual as fp16 verbatim. Asymptote ``(nbits + scale_words*32/group)/16``
     -> 2-bit/g64 = 0.1875x, 4-bit/g64 = 0.3125x (the KIVI/KVQuant 0.125-0.19x band).
 
-    ``fp32_verbatim_elems`` is 0 (the residual is model-dtype), so its honest
+    ``fp32_verbatim_elems`` is 0 (the residual is model-dtype), so its
     ``ratio_stored_bits`` equals ``ratio_fp16`` -- billed on the same footing as ThinK/
     Palu, unlike BUG whose fp32 state splits the two."""
     resid = min(residual_length, t)
@@ -453,7 +422,7 @@ def quant_footprint(
 @contextmanager
 def measure_peak_gpu(device: str) -> Iterator[Callable[[], int | None]]:
     """Yield a getter for ``torch.cuda.max_memory_allocated`` over the block, or a
-    getter returning ``None`` on CPU (honestly unmeasured, not faked). The peak
+    getter returning ``None`` on CPU (unmeasured, not faked). The peak
     includes activations/workspace, so it is reported *beside* the analytic
     footprint, never as the deployable-cache claim."""
     import torch
@@ -471,7 +440,7 @@ def measure_peak_gpu(device: str) -> Iterator[Callable[[], int | None]]:
 
 @dataclass(frozen=True)
 class MemoryReport:
-    """One arm's three memory numbers + the honest ShadowKV split."""
+    """One arm's three memory numbers + the ShadowKV device split."""
 
     arm: str
     t: int
@@ -515,15 +484,6 @@ def report(
 
 
 # --------------------------------------------------------- matched-memory audit
-
-
-def audit_matched(
-    mem_max_per_layer: float, budget_per_layer: float, arm: str, *, tol: float = 0.0
-) -> dict[str, Any]:
-    """Audit one arm's high-water per-layer footprint against a matched budget."""
-    within = mem_max_per_layer <= budget_per_layer + tol
-    over = mem_max_per_layer / budget_per_layer if budget_per_layer else math.inf
-    return {"arm": arm, "mem_max": mem_max_per_layer, "over_budget": over, "within": within}
 
 
 def assert_all_within(

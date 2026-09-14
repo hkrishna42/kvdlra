@@ -1,17 +1,17 @@
 """Week-15 A1 harness regression: the RULER attach() scope covers decode.
 
 The Week-15 audit found the published ShadowKV RULER rows (0/0/0/0 at 16K/8B)
-were a HARNESS defect, not a method result: ``w10_ruler.retrieve()`` wrapped
+were a HARNESS defect, not a method result: ``ruler.retrieve()`` wrapped
 only the *prefill* in ``cache.attach(model)``, so ShadowKV's pre-attention
 selection hook never ran at decode and ``_selected_chunks`` silently fell back
 to the most-recent chunks -- excluding the mid-context needle by construction
 (the fall-back warning fired 6,944x in ``results/gpu_logs/w11_goalA.acc.log``).
-The fix (a) widens the attach scope in ``w10_ruler.retrieve`` /
-``w10_longbench.generate`` to cover ``_decode`` for ALL streaming arms and (b)
+The fix (a) widens the attach scope in ``ruler.retrieve`` /
+``longbench.generate`` to cover ``_decode`` for ALL streaming arms and (b)
 promotes the silent fall-back (``shadow_cache._selected_chunks``) to a
 RuntimeError whenever selection matters (``k_eff < n_chunks``).
 
-These tests pin both directions on the REAL ``w10_ruler.retrieve()`` path with
+These tests pin both directions on the REAL ``ruler.retrieve()`` path with
 a tiny hermetic random-weight Llama (mirroring ``tests/test_shadow_cache.py``):
 
 * ``test_ruler_decode_inside_attach_shadow`` -- retrieve() completes for a
@@ -23,14 +23,14 @@ a tiny hermetic random-weight Llama (mirroring ``tests/test_shadow_cache.py``):
 
 from __future__ import annotations
 
-import argparse
 from typing import Any
 
 import pytest
 import torch
-import w10_frontier
-import w10_ruler
 from transformers import LlamaConfig, LlamaForCausalLM
+
+from kvdlra.eval import frontier, ruler
+from kvdlra.eval.config import ArmCfg
 
 H, D = 2, 16
 N_FEATURES = H * D
@@ -76,27 +76,33 @@ class _StubTok:
         return " ".join(str(i) for i in ids)
 
 
-def _build_arm(
-    model: LlamaForCausalLM, methods: list[str], t: int, **over: object
-) -> dict[str, Any]:
-    """One arm via the REAL ``w10_frontier.build_arms`` (not a hand-rolled dict),
-    so the test exercises the exact factory the harness runs."""
-    ns = argparse.Namespace(
-        methods=methods,
-        recent_window=8,
-        absorb_block=4,
-        ranks=[8],
-        hh_budgets=[4],
-        hh_neighbor=0,
-        chunk=0,
-        shadow_ranks=[8],
-        shadow_topk=2,
-    )
-    for k, v in over.items():
-        setattr(ns, k, v)
-    arms = w10_frontier.build_arms(ns, model, t)
-    assert len(arms) == 1
-    return arms[0]
+SHADOW = ArmCfg(
+    name="shadow-r8",
+    kind="shadow",
+    chunkable=False,
+    cache={"rank_s": 8, "top_k": 2, "chunk": 8, "recent_window": 8, "n_sink": 4},
+)
+BUGS = ArmCfg(
+    name="bugS-r8-h4",
+    kind="bug",
+    cache={
+        "rank": 8,
+        "coord_budget": None,
+        "recent_window": 8,
+        "absorb_block": 4,
+        "n_sink": 4,
+        "retention": "lowrank_surprise",
+        "hh_budget": 4,
+        "hh_select": "surprise",
+        "hh_neighbor": 0,
+    },
+)
+
+
+def _build_arm(model: LlamaForCausalLM, cfg: ArmCfg, t: int) -> dict[str, Any]:
+    """One arm via the REAL ``frontier.build_arm`` (not a hand-rolled dict), so the
+    test exercises the exact factory the harness runs."""
+    return frontier.build_arm(cfg, model, t)
 
 
 def test_ruler_decode_inside_attach_shadow(tiny_model: LlamaForCausalLM) -> None:
@@ -108,7 +114,7 @@ def test_ruler_decode_inside_attach_shadow(tiny_model: LlamaForCausalLM) -> None
     tokens -> 10 middle chunks, top_k=2) and that ``retrieve()``'s success below
     is attributable to the widened attach scope, not to a degenerate config."""
     t = 96
-    arm = _build_arm(tiny_model, ["shadow"], t=t)
+    arm = _build_arm(tiny_model, SHADOW, t=t)
     hay, query = _prompt(t), _prompt(4, seed=2)
 
     # Control: the pre-fix harness shape must now fail loudly, not silently.
@@ -117,13 +123,11 @@ def test_ruler_decode_inside_attach_shadow(tiny_model: LlamaForCausalLM) -> None
         with cache.attach(tiny_model):
             tiny_model(hay, past_key_values=cache, use_cache=True, logits_to_keep=1)
         with pytest.raises(RuntimeError, match="attach"):
-            w10_ruler._decode(
-                tiny_model, _StubTok(), cache, query, t, "cpu", block=False, max_new=2
-            )
+            ruler._decode(tiny_model, _StubTok(), cache, query, t, "cpu", block=False, max_new=2)
 
     # The real, fixed retrieve(): decode inside attach -> completes cleanly.
     stub = _StubTok()
-    hit, ratio, frac, _sbits = w10_ruler.retrieve(
+    hit, ratio, frac, _sbits = ruler.retrieve(
         tiny_model, stub, arm, hay, query, ["999999"], "cpu", 0, N_FEATURES, H, 2
     )
     assert stub.decoded  # decode actually ran to completion
@@ -136,25 +140,25 @@ def test_ruler_decode_attach_scope_bugs_identity(tiny_model: LlamaForCausalLM) -
     """TRIPWIRE (pre-registered): widening the attach() scope must be a
     bit-for-bit no-op for bugS (SurpriseSLASH) arms.
 
-    ``BugStreamingCache.attach`` installs hooks ONLY for retention "attn"/
-    "blend" (otherwise it yields without registering anything), and bugS arms
-    run retention="lowrank_surprise" with hh_select="surprise" -- attach-free by
-    construction. So the fixed ``retrieve()`` (prefill AND decode attached) must
-    generate EXACTLY the tokens of a direct manual chunked-prefill + decode with
-    NO attach anywhere (the simplest honest identity: it brackets both the
-    pre-change and post-change scopes).
+    ``BugStreamingCache.attach`` registers no hook at all -- it yields, and the
+    retention rule that needed one (``retention="attn"``) is retired -- and bugS
+    arms run retention="lowrank_surprise" with hh_select="surprise", which reads
+    its signal off the stored keys. So the fixed ``retrieve()`` (prefill AND
+    decode attached) must generate EXACTLY the tokens of a direct manual
+    chunked-prefill + decode with NO attach anywhere (the simplest identity: it
+    brackets both the pre-change and post-change scopes).
 
     If this test ever fails, the attach widening changed bugS decode behaviour:
-    STOP, scope the widening in ``w10_ruler.retrieve`` / ``w10_longbench.
+    STOP, scope the widening in ``ruler.retrieve`` / ``longbench.
     generate`` to shadow arms only (``arm["kind"] == "shadow"``), and document
     the mechanism here."""
     t, chunk, max_new = 96, 16, 4
-    arm = _build_arm(tiny_model, ["bugslash"], t=t, chunk=chunk)
+    arm = _build_arm(tiny_model, BUGS, t=t)
     assert arm["name"].startswith("bugS-")
     hay, query = _prompt(t), _prompt(4, seed=2)
 
     tok_a = _StubTok()
-    w10_ruler.retrieve(
+    ruler.retrieve(
         tiny_model, tok_a, arm, hay, query, ["999999"], "cpu", chunk, N_FEATURES, H, max_new
     )
 
@@ -162,8 +166,8 @@ def test_ruler_decode_attach_scope_bugs_identity(tiny_model: LlamaForCausalLM) -
     cache = arm["make"]()
     tok_b = _StubTok()
     with torch.no_grad():
-        w10_frontier._prefill_chunked(tiny_model, cache, hay, chunk)
-    w10_ruler._decode(tiny_model, tok_b, cache, query, t, "cpu", block=False, max_new=max_new)
+        frontier._prefill_chunked(tiny_model, cache, hay, chunk)
+    ruler._decode(tiny_model, tok_b, cache, query, t, "cpu", block=False, max_new=max_new)
 
     assert tok_a.decoded and tok_b.decoded
     assert tok_a.decoded[-1] == tok_b.decoded[-1]  # bit-identical generated ids

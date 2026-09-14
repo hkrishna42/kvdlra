@@ -42,7 +42,7 @@ class TaskCfg:
     """One evaluation protocol at one context length."""
 
     name: str
-    generator: str  # inhouse | official_ruler | longbench | ppl
+    generator: str  # inhouse | official_ruler | longbench | ppl | latency
     ctx: int
     doc: str = ""
     tasks: list[str] = field(default_factory=list)
@@ -53,6 +53,14 @@ class TaskCfg:
     chunk: int = 4096
     window: int = 512
     n_samples: int = 4
+    # `latency` only. That axis is one measurement per (arm, context, batch) rather than
+    # a set of trials, and it sweeps context lengths WITHIN one task -- each one rebuilds
+    # the arms, because a cache arm's budgets resolve against the context length. `ctx`
+    # stays the scalar every other generator reads; `ctxs` is the sweep when it is set.
+    ctxs: list[int] | None = None
+    batch_sizes: list[int] = field(default_factory=lambda: [1])
+    n_steps: int = 64  # timed decode forwards per point
+    warmup: int = 8  # of which the first this many are discarded before the p50
 
 
 @dataclass
@@ -82,7 +90,27 @@ def load_arm(name: str) -> ArmCfg:
 
 
 def load_task(name: str) -> TaskCfg:
-    return _load("tasks", name, TaskCfg)  # type: ignore[no-any-return]
+    """The task config, refusing a grid that cannot produce the records `check` counts.
+
+    A cell is ``n_trials x len(seeds)`` records and a perplexity sweep is ``n_samples``
+    windows, so a zero in either is a task that runs nothing AND a `scripts/pod.py check`
+    rule that asks for nothing -- the one shape in which an empty pod passes its own gate.
+    A non-positive context length is the same failure one step earlier: there is no prompt
+    to build. Refused at load time, where the file can still be named.
+    """
+    t: TaskCfg = _load("tasks", name, TaskCfg)
+    bad = []
+    if t.n_trials < 1:
+        bad.append(f"n_trials={t.n_trials} must be >= 1")
+    if not t.seeds:
+        bad.append("seeds is empty")
+    if min([t.ctx, *(t.ctxs or [])]) <= 0:
+        bad.append(f"ctx must be positive (ctx={t.ctx}, ctxs={t.ctxs})")
+    if t.generator == "ppl" and t.n_samples < 1:
+        bad.append(f"n_samples={t.n_samples} must be >= 1 for a ppl task")
+    if bad:
+        raise ValueError(f"{ROOT / 'tasks' / f'{name}.yaml'}: " + "; ".join(bad))
+    return t
 
 
 def load_pod(name: str) -> PodCfg:

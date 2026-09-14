@@ -1,9 +1,8 @@
 """``BugStreamingCache`` -- a constant-memory decode-time streaming BUG KV cache.
 
-Week-5 Axis B (``docs/week5-plan.md`` §"New capability to build",
-``docs/notes/streaming-decode-design.md``): the first use of BUG *as a streaming
-integrator during generation*. Everywhere else in this project BUG compresses
-the pre-fill and is static during decode (:class:`kvdlra.press.BUGPress`); this
+Week-5 Axis B: the first use of the tracked basis *during generation* rather than
+over a finished prefill. Everywhere else in this project BUG compresses
+the pre-fill and is static during decode (:class:`kvdlra.baselines.lowrank_press.BUGPress`); this
 cache advances the tracked subspace **per generated token** at a fixed rank cap,
 so the stored cache size is *bounded* -- independent of how many tokens have
 been generated -- while attention keeps seeing a running low-rank reconstruction
@@ -20,7 +19,7 @@ What is stored per layer (all bounded; see the design note §4)
   core ``B`` (``r x r``, steers the basis; attention never sees it), and up to
   ``coord_budget`` per-token **coordinate** columns ``C`` (``r`` floats per
   token instead of ``n``). When the coordinate buffer is full, columns are
-  *evicted* (see "Week-7 retention" below) -- that is the honest memory bound:
+  *evicted* (see "Week-7 retention" below) -- that is the memory bound:
   softmax attention needs per-token information for every attendable token, so
   "constant memory" can only mean bounding the attended set. At matched memory
   the BUG cache retains a ~``n/r`` x longer (but only approximately represented)
@@ -33,11 +32,13 @@ passes no kwargs to the cache) and pushes it verbatim into the recent ring.
 When the ring overflows, the oldest ``absorb_block`` tokens *graduate*: their
 keys are exactly un-rotated to pre-RoPE (the model's own rotary embedding, so
 angles are bit-identical; the inverse divides by ``attention_scaling**2``), one
-augmented rank-adaptive BUG step (:func:`kvdlra.integrators.streaming_torch.
-augmented_bug_step` -- the validated integrator math, fp32 core per PLAN §8
+augmented rank-truncating step (:func:`kvdlra.tracker.isvd.
+augmented_bug_step` -- block incremental SVD, fp32 core per PLAN §8
 pitfall #4) advances ``(U, B)``, existing coordinates are re-expressed in the
 new basis (``C <- rot @ C`` -- each truncation projects old tokens onto the new
-subspace; the graceful-degradation mechanism the DLRA robustness bound governs),
+subspace, which is where repeated projection erodes them; no error bound is
+claimed for it, the rank-adaptive robustness results are for an ODE flow, not a
+column stream),
 and the graduating coordinates are appended. Attention then sees ``[sinks |
 RoPE(U C, true positions) | recent]``; the middle reconstruction only changes on
 absorb events and is cached in between, so the steady-state per-step cost is a
@@ -45,8 +46,8 @@ concat plus attention over a constant-length cache. Amortized per-token update
 cost: ``O(n r + (r+b)^3 / b + r^2 W / b)`` -- bounded, independent of generated
 length.
 
-Week-7 retention (``docs/week7-plan.md`` tier 1)
-------------------------------------------------
+Week-7 retention (tier 1)
+-------------------------
 Week 6 measured the deep-horizon loss mechanisms: FIFO coordinate eviction
 (adaptive *subspace*, non-adaptive *retention*), erosion by repeated
 projection, and the fixed-rank squeeze. Two independent knobs on the same
@@ -55,45 +56,23 @@ coordinate buffer attack the first two:
 * **(A) adaptive coordinate retention** -- ``retention``:
 
   - ``"fifo"`` (default): drop the oldest column (the Week-6 behaviour; note
-    the Week-7 integrator robustness fix makes reruns *fp-equivalent*, not
+    the Week-7 tracker robustness fix makes reruns *fp-equivalent*, not
     bit-identical, to the archived Week-6 numbers -- rerun baselines in-sweep);
-  - ``"attn"``: drop the column with the lowest **EMA-accumulated attention
-    mass** (decay ``score_decay`` per decode step -- the O(1)-per-column
-    analogue of MorphKV's sum-fusion over its recent window). Scores are
-    observed by the :meth:`BugStreamingCache.attach` hook, which recomputes the
-    step's aggregated attention row over this cache's returned K with exactly
-    MorphKV's machinery; tokens accumulate score while still in the recent
-    ring and carry it into the middle at graduation; prompt scores are seeded
-    from the last ``recent_window`` prompt queries' causal rows, ``score_decay``
-    -collapsed. Without :meth:`~BugStreamingCache.attach` all scores stay zero
-    and the stable-sort tiebreak reduces to FIFO (a warning is logged once).
-  - ``"energy"``: drop the column with the smallest coordinate norm
-    ``||c_s||_2`` (K stream; quantized columns use their stored norm) -- a
-    zero-extra-memory proxy: erosion shrinks exactly the columns whose
-    out-of-subspace mass the basis has drifted away from.
   - ``"lowrank_surprise"`` (Week-9 D3): drop the column with the smallest
     **low-rank reconstruction residual** ``||k - U U^T k|| / ||k||`` -- i.e. keep
     the *outliers* the low-rank summary cannot reproduce and evict the columns it
     already predicts (redundant). By Pythagoras (``U`` orthonormal) this residual
-    is the out-of-subspace half of ``||k||^2`` and ``"energy"`` keeps the
-    in-subspace half, so the two are near-anti-correlated -- surprise is the
-    *orthogonal complement* of energy, not a variant of it. Unlike ``"energy"``
-    the residual is NOT recomputable after absorption (``U C`` lies in the
-    subspace, residual == 0), so it is *stored* per column as one fp32 scalar
-    (``mid_surprise``/``q_surprise``), a snapshot at graduation -- exactly the
-    per-column cost of an ``"attn"`` score.
-  - ``"blend"`` (Week-9 D3): combine attention mass and surprise on a common
-    **rank** scale (their raw units are incomparable), ``score = surprise_blend *
-    rank(attn) + (1 - surprise_blend) * rank(surprise)``. ``surprise_blend=1`` is
-    pure ``"attn"``, ``0`` is pure surprise. Needs :meth:`attach` (for the attn
-    mass) and stores both a score and a surprise scalar per column (``2r+3``).
+    is the out-of-subspace half of ``||k||^2``. It is NOT recomputable after
+    absorption (``U C`` lies in the subspace, residual == 0), so it is *stored*
+    per column as one fp32 scalar (``mid_surprise``/``q_surprise``), a snapshot
+    at graduation.
 
   Non-FIFO retention makes the retained middle **non-contiguous in position**,
   so true per-column positions are tracked (``mid_pos``/``q_pos``) and the
   reconstruction is re-rotated at those positions (gathered cos/sin from the
-  model's own rotary module). The position arrays and (for ``"attn"``) the
-  score buffers are **counted** in ``stored_state_numel`` -- one float
-  equivalent per int32 position, one per fp32 score.
+  model's own rotary module). The position arrays and the surprise snapshots are
+  **counted** in ``stored_state_numel`` -- one float equivalent per int32
+  position, one per fp32 scalar.
 
 * **(D) quantize-instead-of-drop (age-tiered precision)** -- ``quant_bits`` +
   ``quant_budget``: columns evicted from the fp32 coordinate buffer are
@@ -107,7 +86,7 @@ coordinate buffer attack the first two:
   re-coded per absorb with error bounded by the one-shot PolarQuant distortion
   per event -- whether that per-event jitter compounds visibly over deep
   horizons is exactly what the Week-7 bin curves falsify.
-  Accounting (the Week-4 fairness convention, ``scripts/w4_fair.py``): codes
+  Accounting (the Week-4 fairness convention): codes
   count ``quant_bits/32`` float-equivalents each (bit-packable), plus one fp32
   norm per column per K/V stream, plus the shared rotation/codebook side
   information counted **once** per cache (:class:`_QuantBank`).
@@ -136,18 +115,16 @@ References
 ----------
 G. Ceruti, J. Kusch, C. Lubich, arXiv:2104.05247 (rank-adaptive BUG).
 Xiao et al., arXiv:2309.17453 (StreamingLLM; sinks + recent window).
-Ghadia et al., arXiv:2503.00979 (MorphKV; the attention-scored retention rule).
 Zandieh et al., arXiv:2504.19874 (TurboQuant/PolarQuant; the quantized tier).
 """
 
 from __future__ import annotations
 
-import logging
 import math
 from collections import OrderedDict
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, cast
+from typing import cast
 
 import torch
 from torch import Tensor, nn
@@ -155,15 +132,12 @@ from transformers import PreTrainedModel
 from transformers.cache_utils import Cache, CacheLayerMixin, LinearAttentionCacheLayerMixin
 from transformers.models.llama.modeling_llama import rotate_half
 
-from kvdlra.cache.morph_cache import _aggregated_attention_row, _window_attention_rows
-from kvdlra.integrators.streaming_torch import augmented_bug_step, fd_step, oja_step
-from kvdlra.quant import PolarQuant, ProductQuantizer
-
-logger = logging.getLogger(__name__)
+from kvdlra.quant import PolarQuant
+from kvdlra.tracker.isvd import augmented_bug_step, fd_step, oja_step
 
 __all__ = ["BugStreamingCache", "BugStreamingLayer"]
 
-RETENTION_MODES = ("fifo", "attn", "energy", "lowrank_surprise", "blend")
+RETENTION_MODES = ("fifo", "lowrank_surprise")
 
 
 class _RopeAngles:
@@ -220,7 +194,7 @@ class _QuantBank:
     The rotation ``Pi`` and Lloyd--Max codebook are *data-oblivious* side
     information shared by every layer and both K/V coordinate streams;
     :meth:`side_info_numel` reports their float cost **once** so the matched-
-    memory budget can count it honestly (Week-7 guardrail: every variant counts
+    memory budget can count it in the same unit (Week-7 guardrail: every variant counts
     ALL its memory).
     """
 
@@ -249,17 +223,6 @@ class _QuantBank:
         return total
 
 
-def _rank_normalize(x: Tensor) -> Tensor:
-    """Percentile ranks of ``x`` in ``[0, 1]`` (ascending; ties by position via the
-    stable double-argsort). Used to blend scores whose raw units are incomparable
-    (Week-9 D3 blend retention)."""
-    m = int(x.numel())
-    if m <= 1:
-        return torch.zeros_like(x, dtype=torch.float32)
-    ranks = torch.argsort(torch.argsort(x, stable=True), stable=True)
-    return ranks.to(torch.float32) / (m - 1)
-
-
 def _rope_apply(x_htd: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
     """Apply RoPE to ``(H, T, D)`` given ``(T, D)`` cos/sin (broadcast over heads)."""
     rot: Tensor = rotate_half(x_htd)  # type: ignore[no-untyped-call]
@@ -272,37 +235,11 @@ def _rope_unapply(x_htd: Tensor, cos: Tensor, sin: Tensor, scale_sq: float) -> T
     return (x_htd * cos - rot * sin) / scale_sq
 
 
-def _prompt_seed_scores(
-    module: nn.Module,
-    hidden_states: Tensor,
-    position_embeddings: tuple[Tensor, Tensor],
-    window: int,
-    decay: float,
-) -> Tensor:
-    """``(T,)`` score seed over prompt positions: the last ``window`` prompt
-    queries' causal attention rows (recomputed exactly, GQA-aggregated, summed
-    over KV heads), collapsed with ``decay``-weights so the seed equals what the
-    per-step EMA would have accumulated had it run over those steps."""
-    cos, sin = position_embeddings
-    k_proj = cast(nn.Linear, module.k_proj)
-    head_dim = int(cast(int, module.head_dim))
-    t = int(hidden_states.shape[1])
-    k = k_proj(hidden_states).view(1, t, -1, head_dim).transpose(1, 2)  # (1, H_kv, T, D)
-    k = k * cos.unsqueeze(1) + rotate_half(k) * sin.unsqueeze(1)  # type: ignore[no-untyped-call]
-    rows = _window_attention_rows(module, hidden_states, k, (cos, sin), window)  # (H_kv, w, T)
-    mass = rows.sum(dim=0)  # (w, T)
-    w = int(mass.shape[0])
-    weights = decay ** torch.arange(
-        w - 1, -1, -1, dtype=torch.float32, device=mass.device
-    )  # newest row gets weight 1
-    return (weights.unsqueeze(1) * mass).sum(dim=0)  # (T,)
-
-
 class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
     """One layer's constant-memory streaming-BUG KV state (see module docstring).
 
     Internally tokens live as feature-by-token matrices ``(n, T)`` with ``n =
-    num_kv_heads * head_dim`` (``docs/notes/conventions.md``); conversion to the
+    num_kv_heads * head_dim``; conversion to the
     HF layout ``(1, H, T, D)`` happens only at the ``update()`` boundary. The
     retained middle is ``[quantized tier | fp32 tier]`` (each chronological
     under FIFO; position-tracked under adaptive retention).
@@ -323,8 +260,6 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         tracker: str = "bug",
         prefill_block_size: int = 128,
         retention: str = "fifo",
-        score_decay: float = 0.97,
-        surprise_blend: float = 0.5,
         quant_bits: int | None = None,
         quant_budget: int = 0,
         quant_bank: _QuantBank | None = None,
@@ -334,12 +269,6 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         hh_retain: bool = True,
         score_rank: int | None = None,
         seed_hh_warmup: bool = False,
-        w_key: Tensor | None = None,
-        merge: bool = False,
-        coord_codebook: ProductQuantizer | None = None,
-        anchor_rank: int = 0,
-        anchor_seal_absorbs: int = 4,
-        code_budget: int = 0,
     ) -> None:
         super().__init__()  # type: ignore[no-untyped-call]
         if rank < 0 or coord_budget < 0:
@@ -354,10 +283,6 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             raise ValueError(f"prefill_block_size must be >= 1, got {prefill_block_size}")
         if retention not in RETENTION_MODES:
             raise ValueError(f"retention must be one of {RETENTION_MODES}, got {retention!r}")
-        if not 0.0 < score_decay <= 1.0:
-            raise ValueError(f"score_decay must be in (0, 1], got {score_decay}")
-        if not 0.0 <= surprise_blend <= 1.0:
-            raise ValueError(f"surprise_blend must be in [0, 1], got {surprise_blend}")
         if quant_budget < 0:
             raise ValueError(f"quant_budget must be >= 0, got {quant_budget}")
         if (quant_bits is None) != (quant_budget == 0):
@@ -389,20 +314,21 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
                 "hh_retain=False requires hh_select='surprise': a discarded tier is "
                 "invisible to attention, so attention-mass selection is incoherent"
             )
-        # Week-11 SurpriseSLASH: the exact heavy-hitter tier can be selected by
-        # recent-attention mass ("attn", the Week-7 default -- needs the attach()
-        # score hook) OR by low-rank surprise ("surprise" -- the out-of-subspace
-        # residual, computed from the pre-step basis + stored keys, so it is
-        # *attach-free* and imposes no constraint on the tail retention rule).
-        if hh_budget > 0 and hh_select == "attn" and retention != "attn":
+        # Week-11 SurpriseSLASH: the exact heavy-hitter tier is selected by
+        # low-rank surprise (the out-of-subspace residual, computed from the
+        # pre-step basis + stored keys, so it is *attach-free* and imposes no
+        # constraint on the tail retention rule). The Week-7 "attn" selector read
+        # the EMA attention mass of the retired retention="attn" mode, so an
+        # enabled tier now requires hh_select='surprise'.
+        if hh_budget > 0 and hh_select == "attn":
             raise ValueError(
-                "hh_budget > 0 with hh_select='attn' (SLASH exact heavy-hitters) "
-                "requires retention='attn'"
+                "hh_budget > 0 (SLASH exact heavy-hitters) requires hh_select='surprise': "
+                "attention-mass selection retired with retention='attn'"
             )
         # Week-15 T2 (score-rank decoupling): cap SurpriseSLASH *selection* scoring
         # to the leading ``score_rank`` basis columns (``u_k[:, :s]`` -- energy-
         # ordered by the integrator's SVD, so a leading-column subview is the
-        # dominant subspace and orthonormal for free, the ``_seal_anchor`` fact).
+        # dominant subspace and orthonormal for free).
         # Applied ONLY at the SLASH selection site; the tail-retention surprise
         # snapshot stays uncapped. Storage rank (and so accounting) is unchanged.
         if score_rank is not None:
@@ -437,7 +363,6 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.min_sv_frac = min_sv_frac
         self.prefill_block_size = prefill_block_size
         self.retention = retention
-        self.score_decay = score_decay
         self.quant_bits = quant_bits
         self.quant_budget = quant_budget
         self.hh_budget = hh_budget
@@ -449,102 +374,12 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         # (default off). Only fires under chunked ingest (self._mode == "ingest") so
         # single-shot prefill keeps the tier empty, matching the deployed contract.
         self.seed_hh_warmup = seed_hh_warmup
-        # Week-12 Q-BUG: a frozen per-feature query-metric whitening L for the
-        # low-rank KEY gist. BUG minimizes ||M - M_hat||_F on keys, but attention
-        # weights error by the query directions; whitening the tracked keys by
-        # ``w_key`` (= sqrt of the calibrated per-feature query energy) reallocates
-        # the rank-r fidelity toward what attention reads (probe: -30..44% attn
-        # error at matched rank). Diagonal only -- a length-``n_features`` vector
-        # in the cache's (head*head_dim + dim) layout. The exact tier / sinks /
-        # recent ring are verbatim and untouched, so retrieval is preserved.
-        self.w_key: Tensor | None = None
-        self._w_key_col: Tensor | None = None
-        self._w_key_inv_col: Tensor | None = None
-        if w_key is not None:
-            if w_key.ndim != 1:
-                raise ValueError(f"w_key must be 1-D (per-feature diagonal), got {w_key.ndim}-D")
-            if not bool(torch.all(w_key > 0)):
-                raise ValueError("w_key must be strictly positive (it is a sqrt of query energy)")
-            self.w_key = w_key.detach().to(torch.float32)
-        self.merge = merge
         # rank=0 / coord_budget=0 => no low-rank middle => StreamingLLM baseline.
         self.lowrank_enabled = rank >= 1 and coord_budget >= 1
         if quant_budget > 0 and not self.lowrank_enabled:
             raise ValueError("quant_budget > 0 requires an enabled low-rank middle")
         if hh_budget > 0 and not self.lowrank_enabled:
             raise ValueError("hh_budget > 0 requires an enabled low-rank middle")
-        if self.w_key is not None and not self.lowrank_enabled:
-            raise ValueError("w_key (query-metric whitening) requires an enabled low-rank middle")
-        if self.w_key is not None and coord_codebook is not None:
-            raise ValueError("w_key and the CodeBUG frozen anchor are mutually exclusive")
-        # Week-13 T-B: the warm-up seed's tail-eviction/candidate-pool logic reasons
-        # over the fp32 low-rank tail only. A coded/quant second tier or merged
-        # (non-unique-position) columns would let a promoted token be double-counted
-        # or evict the wrong column, so the combination is rejected (never emitted by
-        # build_arms; guarded so a future caller cannot wire it silently).
-        # Week-19: the PolarQuant tier (quant_budget) is allowed -- the seed only routes the
-        # first chunk's sub-blocks through _absorb_block_slash, whose demotions reach the
-        # quant tier through the same _absorb_columns/_enforce_budgets path as every
-        # steady-state graduation (the unseeded q arm). CodeBUG / merge stay fenced.
-        if self.seed_hh_warmup and (coord_codebook is not None or merge):
-            raise ValueError(
-                "seed_hh_warmup operates on the fp32 low-rank tail only; it is not "
-                "combined with a coded tier (coord_codebook) or merge"
-            )
-        if merge and not self.lowrank_enabled:
-            raise ValueError("merge requires an enabled low-rank middle")
-        if merge and quant_budget > 0:
-            raise ValueError("merge and the quantized tier are mutually exclusive")
-        if merge and retention == "lowrank_surprise":
-            # _merge_down does not fuse the mid_surprise buffer (a merged
-            # super-column has no single graduation-time residual), so its length
-            # would diverge from the coordinates. Week-9 D3 uses neither together.
-            raise ValueError("merge and retention='lowrank_surprise' are mutually exclusive")
-        # Week-8 CodeBUG: product-quantized coordinate tier against a *frozen*
-        # reduced-rank anchor U_ref -- code once at graduation, never rotate the
-        # codes (the structural inverse of variant D's per-absorb requantize).
-        self.codebook = coord_codebook
-        self._coded_mode = coord_codebook is not None
-        self.anchor_rank = anchor_rank if anchor_rank > 0 else min(8, rank)
-        self.anchor_seal_absorbs = anchor_seal_absorbs
-        self.code_budget = code_budget
-        if self._coded_mode:
-            assert coord_codebook is not None
-            if not self.lowrank_enabled:
-                raise ValueError("coord_codebook requires an enabled low-rank middle")
-            if code_budget < 1:
-                raise ValueError("coord_codebook requires code_budget >= 1")
-            if quant_bits is not None or quant_budget > 0:
-                raise ValueError("coord_codebook and the PolarQuant tier are mutually exclusive")
-            if merge:
-                raise ValueError("coord_codebook and merge are mutually exclusive")
-            if not 1 <= self.anchor_rank <= rank:
-                raise ValueError(f"anchor_rank must be in [1, rank={rank}], got {self.anchor_rank}")
-            if coord_codebook.dim != self.anchor_rank:
-                raise ValueError(
-                    f"coord_codebook.dim ({coord_codebook.dim}) must equal "
-                    f"anchor_rank ({self.anchor_rank})"
-                )
-            if anchor_seal_absorbs < 0:
-                raise ValueError(f"anchor_seal_absorbs must be >= 0, got {anchor_seal_absorbs}")
-        elif code_budget > 0:
-            raise ValueError("code_budget > 0 requires coord_codebook")
-        # The second tier's column budget: PolarQuant (variant D) or CodeBUG.
-        self._second_tier_budget = quant_budget + code_budget
-        # Calibration hook: when set to a list, the exact anchor-frame coordinate
-        # vectors that would be coded are appended here (pre-quantization), so
-        # ``scripts/calibrate_codebook.py`` can fit the PQ on the true deployment
-        # distribution. None in normal operation (zero overhead).
-        self._calib_sink: list[Tensor] | None = None
-        # Ablation ONLY (``scripts/w8_carry_drift.py``): when True, the coded tier
-        # is re-anchored to the live basis and RE-CODED every absorb -- the
-        # variant-D analog that SHOULD compound. The falsifiable OFF control that
-        # proves the frozen-anchor ON path does not. Never set in a real run.
-        self._debug_recode_coded = False
-        # Drift experiment ONLY: when a dict, each coded column's true rank-r
-        # feature vector (K stream) is recorded at graduation keyed by position,
-        # so the readout reconstruction error can be measured. None in prod.
-        self._drift_truth: dict[int, Tensor] | None = None
         # SLASH exact heavy-hitter tier (Week-7 dominance program).
         self.hh_enabled = hh_budget >= 1 and self.lowrank_enabled
         self._quant_bank = (
@@ -553,26 +388,15 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             else (_QuantBank(quant_bits) if quant_bits is not None else None)
         )
         # Adaptive retention needs true per-column positions (the middle stops
-        # being contiguous); attention scoring additionally needs score buffers.
-        self.track_positions = self.lowrank_enabled and (retention != "fifo" or merge)
-        self.track_scores = self.lowrank_enabled and retention in ("attn", "blend")
-        self.surprise_blend = surprise_blend
+        # being contiguous).
+        self.track_positions = self.lowrank_enabled and retention != "fifo"
         # Week-9 D3: low-rank surprise retention keeps the highest-residual
         # (outlier) columns and evicts the ones the basis already reconstructs
-        # (redundant). Unlike ``energy`` (which reads ``||c_s||`` from the stored
-        # coordinates on the fly, zero extra bytes), the residual ``||k - U U^T
-        # k||`` is NOT recomputable after absorption (``U C`` lies in the
-        # subspace, residual == 0), so it must be *stored* per column -- one fp32
-        # scalar, exactly parallel to ``mid_score``. Counted in
-        # ``stored_state_numel`` (the honest-memory guardrail).
-        self.track_surprise = self.lowrank_enabled and retention in ("lowrank_surprise", "blend")
-        # Correlation probe (``scripts/w9_surprise.py`` GO/NO-GO gate): when True,
-        # surprise is tracked under *any* retention so a ``retention="attn"`` run
-        # can log (attention-mass, surprise) pairs; when ``_probe_sink`` is a list,
-        # the full (score, surprise, energy) column arrays are recorded at each
-        # eviction event. Both off (no overhead) in normal operation.
-        self._probe_surprise = False
-        self._probe_sink: list[tuple[Tensor, Tensor, Tensor]] | None = None
+        # (redundant). The residual ``||k - U U^T k||`` is NOT recomputable after
+        # absorption (``U C`` lies in the subspace, residual == 0), so it must be
+        # *stored* per column -- one fp32 scalar. Counted in
+        # ``stored_state_numel`` (the stored-state guardrail).
+        self.track_surprise = self.lowrank_enabled and retention == "lowrank_surprise"
         self.cumulative_length = 0
         self._reset_state()
 
@@ -590,41 +414,24 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.u_v: Tensor | None = None
         self.b_v: Tensor | None = None
         self.c_v: Tensor | None = None
-        # Quantized age tier (Week-7 D / Week-8 CodeBUG): codes/norms, rows =
-        # columns. Variant D: PolarQuant, shape ``(Wq, r)`` in the *live* basis,
-        # rotated per absorb. CodeBUG: ProductQuantizer, shape ``(W, M)`` in the
-        # *frozen* anchor ``u_ref``, never rotated.
-        self.qk_codes: Tensor | None = None  # (Wq, r) or (W, M) uint8 codes, K
+        # Quantized age tier (Week-7 D): PolarQuant codes/norms, rows = columns,
+        # shape ``(Wq, r)`` in the *live* basis, rotated per absorb.
+        self.qk_codes: Tensor | None = None  # (Wq, r) uint8 codes, K
         self.qk_norm: Tensor | None = None  # (Wq,) fp32
         self.qv_codes: Tensor | None = None
         self.qv_norm: Tensor | None = None
-        # CodeBUG frozen anchor: the reduced-rank basis coded columns live in.
-        self.u_ref_k: Tensor | None = None  # (n, r_a) fp32, frozen at seal
-        self.u_ref_v: Tensor | None = None
-        self.sealed = False
-        self._n_absorbs = 0
-        # Retention bookkeeping (Week-7 A): positions + EMA attention scores.
+        # Retention bookkeeping (Week-7 A): true per-column positions.
         self.mid_pos: Tensor | None = None  # (f_len,) int64, fp32-tier positions
         self.q_pos: Tensor | None = None  # (q_len,) int64, quant-tier positions
-        self.mid_score: Tensor | None = None  # (f_len,) fp32 EMA attention mass
-        self.q_score: Tensor | None = None  # (q_len,) fp32
         # Retention bookkeeping (Week-9 D3): per-column low-rank surprise (the
         # residual ||k - U U^T k|| at graduation, normalized -- a snapshot, never
-        # recomputed as the basis drifts, the honest analogue of how mid_score
-        # accumulates but is never recomputed).
+        # recomputed as the basis drifts).
         self.mid_surprise: Tensor | None = None  # (f_len,) fp32
         self.q_surprise: Tensor | None = None  # (q_len,) fp32
         # SLASH exact heavy-hitter tier (Week-7 dominance): verbatim K/V + posns.
         self.hh_k: Tensor | None = None  # (n, <=hh_budget) post-RoPE, verbatim
         self.hh_v: Tensor | None = None
         self.hh_pos: Tensor | None = None  # (hh_len,) int64 true positions
-        self.hh_score: Tensor | None = None  # (hh_len,) fp32 EMA attention mass
-        # Hierarchical merge (Week-7 dominance): token count each fp32 column
-        # represents (1 = a single token; >1 = a merged centroid super-column).
-        self.mid_weight: Tensor | None = None  # (f_len,) fp32
-        self.ring_score: Tensor | None = None  # (recent_len,) fp32
-        self._seen_observation = False
-        self._warned_unattached = False
         self._mid_k_cache: Tensor | None = None  # (n, mid_len) storage dtype, post-RoPE
         self._mid_v_cache: Tensor | None = None
         # Week-10 harness mode (default "normal" preserves every existing call
@@ -642,15 +449,6 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.num_heads = int(key_states.shape[1])
         self.head_dim = int(key_states.shape[3])
         self.n_features = self.num_heads * self.head_dim
-        if self.w_key is not None:
-            if tuple(self.w_key.shape) != (self.n_features,):
-                raise ValueError(
-                    f"w_key shape {tuple(self.w_key.shape)} != (n_features,) = ({self.n_features},)"
-                )
-            # Precompute the (n, 1) whitening / un-whitening columns (fp32).
-            col = self.w_key.to(self.device).reshape(self.n_features, 1)
-            self._w_key_col = col
-            self._w_key_inv_col = 1.0 / col
         self.is_initialized = True
 
     # ----------------------------------------------------------- conversions
@@ -659,21 +457,6 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         """``(1, H, T, D)`` -> feature-by-token ``(H*D, T)``."""
         h, t, d = x.shape[1], x.shape[2], x.shape[3]
         return x[0].permute(0, 2, 1).reshape(h * d, t)
-
-    def _whiten_key(self, mat: Tensor) -> Tensor:
-        """Apply the query-metric whitening ``L^T`` to a pre-RoPE key block
-        ``(n, m)`` (identity when ``w_key`` is unset). Diagonal ``L`` => a
-        per-feature rescale; the tracked basis then summarizes whitened keys."""
-        if self._w_key_col is None:
-            return mat
-        return mat * self._w_key_col.to(mat.dtype)
-
-    def _unwhiten_key(self, mat: Tensor) -> Tensor:
-        """Invert :meth:`_whiten_key` (``L^{-T}``) on a reconstructed pre-RoPE key
-        gist ``(n, m)`` before RoPE is re-applied for attention."""
-        if self._w_key_inv_col is None:
-            return mat
-        return mat * self._w_key_inv_col.to(mat.dtype)
 
     def _to_hf(self, mat: Tensor) -> Tensor:
         """Feature-by-token ``(H*D, T)`` -> ``(1, H, T, D)``."""
@@ -738,9 +521,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             return 0, 0, query_length
         recent = self._recent_len() + query_length
         mid = self._mid_len()
-        mid_cap = (
-            self.coord_budget + self._second_tier_budget + (self.hh_budget if self.hh_retain else 0)
-        )
+        mid_cap = self.coord_budget + self.quant_budget + (self.hh_budget if self.hh_retain else 0)
         # Under hh_retain=False the *visible* middle grows per absorb by the
         # DEMOTED count (candidates minus what the pool keeps) -- 0 while the
         # pool is still filling -- so the invisible pool must be simulated here
@@ -766,10 +547,6 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         grad_v = self.recent_v[:, :m]
         self.recent_k = self.recent_k[:, m:]
         self.recent_v = self.recent_v[:, m:]
-        grad_score: Tensor | None = None
-        if self.track_scores and self.ring_score is not None:
-            grad_score = self.ring_score[:m]
-            self.ring_score = self.ring_score[m:]
         self._mid_k_cache = None
         self._mid_v_cache = None
         if not self.lowrank_enabled:
@@ -780,15 +557,13 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         grad_start = self.cumulative_length - self._recent_len() - m
         grad_pos = torch.arange(grad_start, grad_start + m, dtype=torch.int64, device=grad_k.device)
         if self.hh_enabled:
-            self._absorb_block_slash(grad_k, grad_v, grad_pos, grad_score)
+            self._absorb_block_slash(grad_k, grad_v, grad_pos)
             return
         block_k = self._mat_rope(grad_k, grad_start, inverse=True)  # pre-RoPE, fp32
         block_v = grad_v.to(torch.float32)
-        self._absorb_columns(block_k, block_v, grad_pos, grad_score)
+        self._absorb_columns(block_k, block_v, grad_pos)
 
-    def _absorb_block_slash(
-        self, grad_k: Tensor, grad_v: Tensor, grad_pos: Tensor, grad_score: Tensor | None
-    ) -> None:
+    def _absorb_block_slash(self, grad_k: Tensor, grad_v: Tensor, grad_pos: Tensor) -> None:
         """SLASH: split the graduating block + the current exact heavy-hitter tier
         into (i) the top-``hh_budget`` tokens, kept **verbatim** (post-RoPE K, raw
         V -- exactly like sinks), and (ii) the rest, absorbed into the low-rank
@@ -797,55 +572,31 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         *outlier-removed residual* spectrum. Demoted former-heavy-hitters re-enter
         the tail at their true (non-contiguous) positions.
 
-        Selection rule (``hh_select``):
-
-        * ``"attn"`` (Week-7 dominance): keep the highest recent-attention-mass
-          tokens -- the heavy hitters -- with a persisted ``hh_score`` EMA.
-        * ``"surprise"`` (Week-11 SurpriseSLASH): keep the highest low-rank
-          *surprise* (out-of-subspace residual) tokens, recomputed for the whole
-          candidate pool against the current basis each absorb (so a token now
-          captured by the grown basis is demoted, while a persistently
-          un-representable outlier -- a sharp needle -- keeps residual ~1 and is
-          never demoted). Attach-free (no attention hook) and stores no score."""
-        sc = (
-            grad_score.to(torch.float32)
-            if grad_score is not None
-            else torch.zeros(grad_k.shape[1], dtype=torch.float32, device=grad_k.device)
-        )
+        Selection rule (``hh_select="surprise"``, Week-11 SurpriseSLASH): keep the
+        highest low-rank *surprise* (out-of-subspace residual) tokens, recomputed
+        for the whole candidate pool against the current basis each absorb (so a
+        token now captured by the grown basis is demoted, while a persistently
+        un-representable outlier -- a sharp needle -- keeps residual ~1 and is
+        never demoted). Attach-free (no attention hook) and stores no score."""
         # Candidate pool = current exact tier + graduating block (all post-RoPE).
         if self.hh_k is not None:
             assert self.hh_v is not None and self.hh_pos is not None
             cand_k = torch.cat([self.hh_k, grad_k], dim=1)
             cand_v = torch.cat([self.hh_v, grad_v], dim=1)
             cand_pos = torch.cat([self.hh_pos, grad_pos])
-            # A surprise-selected tier stores no hh_score; retained columns then
-            # contribute zeros to cand_score (which only feeds demoted columns'
-            # attention scores, ignored under retention="lowrank_surprise").
-            prev_sc = (
-                self.hh_score
-                if self.hh_score is not None
-                else torch.zeros(self.hh_k.shape[1], dtype=torch.float32, device=grad_k.device)
-            )
-            cand_score = torch.cat([prev_sc, sc])
         else:
-            cand_k, cand_v, cand_pos, cand_score = grad_k, grad_v, grad_pos, sc
+            cand_k, cand_v, cand_pos = grad_k, grad_v, grad_pos
         n_cand = int(cand_k.shape[1])
         keep_n = min(self.hh_budget, n_cand)
-        cand_k_pre: Tensor | None = None
-        if self.hh_select == "surprise":
-            # Score the whole pool by its CURRENT out-of-subspace residual. Under
-            # Q-BUG the basis is whitened, so the surprise must be measured in the
-            # same metric (whiten the pool for scoring only); the raw cand_k_pre is
-            # kept for the demote path, which re-whitens inside _absorb_columns.
-            cand_k_pre = self._mat_rope_at(cand_k, cand_pos, inverse=True)
-            # Week-15 T2: selection may score against the leading score_rank basis
-            # columns only (None = full basis). The tail-retention surprise
-            # snapshot in _absorb_columns stays UNCAPPED.
-            sel = self._surprise_scores(self._whiten_key(cand_k_pre), cap=self.score_rank)
-            if self.hh_neighbor > 0:  # span-boost so needle neighbours are kept too
-                sel = self._span_boost(sel, cand_pos, self.hh_neighbor)
-        else:
-            sel = cand_score  # highest recent-attention mass stays exact
+        # Score the whole pool by its CURRENT out-of-subspace residual; the raw
+        # cand_k_pre is kept for the demote path.
+        cand_k_pre = self._mat_rope_at(cand_k, cand_pos, inverse=True)
+        # Week-15 T2: selection may score against the leading score_rank basis
+        # columns only (None = full basis). The tail-retention surprise snapshot
+        # in _absorb_columns stays UNCAPPED.
+        sel = self._surprise_scores(cand_k_pre, cap=self.score_rank)
+        if self.hh_neighbor > 0:  # span-boost so needle neighbours are kept too
+            sel = self._span_boost(sel, cand_pos, self.hh_neighbor)
         # Highest selection score stays exact; ties fall back to recency.
         order = torch.argsort(sel, stable=True, descending=True)
         keep = order[:keep_n].sort().values  # chronological for clean assembly
@@ -853,31 +604,19 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.hh_k = cand_k[:, keep].clone()
         self.hh_v = cand_v[:, keep].clone()
         self.hh_pos = cand_pos[keep].clone()
-        # Surprise selection recomputes each absorb, so it persists no score.
-        self.hh_score = None if self.hh_select == "surprise" else cand_score[keep].clone()
         if demote.numel() > 0:
             dem_pos = cand_pos[demote]
-            if cand_k_pre is not None:
-                dem_k_pre = cand_k_pre[:, demote]  # already un-rotated above
-            else:
-                dem_k_pre = self._mat_rope_at(cand_k[:, demote], dem_pos, inverse=True)
+            dem_k_pre = cand_k_pre[:, demote]  # already un-rotated above
             dem_v = cand_v[:, demote].to(torch.float32)
-            self._absorb_columns(dem_k_pre, dem_v, dem_pos, cand_score[demote])
+            self._absorb_columns(dem_k_pre, dem_v, dem_pos)
 
-    def _absorb_columns(
-        self, block_k: Tensor, block_v: Tensor, positions: Tensor, scores: Tensor | None
-    ) -> None:
+    def _absorb_columns(self, block_k: Tensor, block_v: Tensor, positions: Tensor) -> None:
         """One augmented BUG step + coordinate carry + budget enforcement for a
         block of ``m`` new columns at the given ``positions`` (``(m,)`` int64; may
         be non-contiguous when heavy-hitters are demoted back into the tail)."""
         m = int(block_k.shape[1])
         if m == 0:
             return
-        # Week-12 Q-BUG: track the query-WHITENED key. The basis, coordinates and
-        # (lowrank-)surprise then all live in the whitened metric; the read path
-        # un-whitens before RoPE. Identity when w_key is unset (bit-for-bit BUG).
-        # V is never whitened (Track 1 is a key-side objective change).
-        block_k = self._whiten_key(block_k)
         # Week-9 D3: low-rank surprise = out-of-subspace fraction of the incoming
         # K columns, measured against the basis built from *strictly older*
         # history (pre-step u_k -- the true novelty signal). By Pythagoras (u_k
@@ -885,7 +624,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         # residual norm is sqrt(||k||^2 - ||c_old||^2). Normalized to [0, 1] =
         # sin of the angle between k and span(u_k) (scale-free across columns).
         surprise: Tensor | None = None
-        if self.track_surprise or self._probe_surprise:
+        if self.track_surprise:
             surprise = self._surprise_scores(block_k)
         if self.tracker == "oja":  # Week-20 swap: Oja's rule, validated Week-2 schedule
             n_seen = (self.c_k.shape[1] if self.c_k is not None else 0) + self._q_len()
@@ -921,14 +660,9 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             self.c_k = rot_k @ self.c_k
             self.c_v = rot_v @ self.c_v
         # Second tier: variant D re-expresses its codes into the new basis
-        # (dequantize -> rot @ -> requantize, the compounding path). CodeBUG does
-        # NOT: coded columns live in the *frozen* anchor ``u_ref`` and are never
-        # rotated, so no per-absorb quantization noise is re-injected.
+        # (dequantize -> rot @ -> requantize, the compounding path).
         if self._q_len() > 0:
-            if not self._coded_mode:
-                self._rotate_quant_tier(rot_k, rot_v)
-            elif self._debug_recode_coded and self.sealed:
-                self._recode_coded_tier()  # ablation-only variant-D analog
+            self._rotate_quant_tier(rot_k, rot_v)
         # Append the graduating block's coordinates (fp32 tier).
         new_ck = self.u_k.mT @ block_k
         new_cv = self.u_v.mT @ block_v
@@ -937,32 +671,10 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         if self.track_positions:
             pos = positions.to(dtype=torch.int64, device=block_k.device)
             self.mid_pos = pos if self.mid_pos is None else torch.cat([self.mid_pos, pos])
-        if self.track_scores:
-            sc = (
-                scores.to(torch.float32)
-                if scores is not None
-                else torch.zeros(m, dtype=torch.float32, device=block_k.device)
-            )
-            self.mid_score = sc if self.mid_score is None else torch.cat([self.mid_score, sc])
-        if (self.track_surprise or self._probe_surprise) and surprise is not None:
+        if self.track_surprise and surprise is not None:
             self.mid_surprise = (
                 surprise if self.mid_surprise is None else torch.cat([self.mid_surprise, surprise])
             )
-        if self.merge:
-            w = torch.ones(m, dtype=torch.float32, device=block_k.device)
-            self.mid_weight = w if self.mid_weight is None else torch.cat([self.mid_weight, w])
-        # CodeBUG: seal the frozen anchor after a short decode warmup, so U_ref
-        # reflects decode statistics (not just the prompt). Sealed once, then the
-        # coded tier is opened for demotion in the enforce step below.
-        self._n_absorbs += 1
-        if (
-            self._coded_mode
-            and not self.sealed
-            and self._n_absorbs >= self.anchor_seal_absorbs
-            and self.u_k is not None
-            and int(self.u_k.shape[1]) >= self.anchor_rank
-        ):
-            self._seal_anchor()
         self._enforce_budgets()
 
     def _surprise_scores(self, block_k: Tensor, cap: int | None = None) -> Tensor:
@@ -1034,47 +746,11 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             evict = torch.arange(n_out, device=device)
             keep = torch.arange(n_out, length, device=device)
             return evict, keep
-        if self.retention == "attn":
-            scores = self.mid_score if tier == "fp32" else self.q_score
-            assert scores is not None
-            # Pre-fill overflow evicts before the attach() hook can seed scores
-            # (update() runs inside the attention forward; the hook fires after)
-            # -- that is documented FIFO-by-design, so only warn for score-less
-            # evictions during decode (cumulative_length > 0).
-            if (
-                not self._seen_observation
-                and not self._warned_unattached
-                and self.cumulative_length > 0
-            ):
-                logger.warning(
-                    "retention='attn' evicting with no recorded attention scores "
-                    "(cache not attach()ed?) -- falling back to FIFO order"
-                )
-                self._warned_unattached = True
-        elif self.retention == "lowrank_surprise":
-            # Evict the LOWEST-surprise (best-reconstructed = most redundant)
-            # columns; the ascending argsort below keeps the high-residual
-            # outliers the low-rank summary cannot reproduce.
-            scores = self.mid_surprise if tier == "fp32" else self.q_surprise
-            assert scores is not None
-        elif self.retention == "blend":
-            # Week-9 D3 blend: combine attention mass and surprise on a common
-            # RANK scale (their raw units are incomparable -- attn mass is a
-            # heavy-tailed growing EMA, surprise a bounded feature-space ratio).
-            # score = alpha * rank(attn) + (1 - alpha) * rank(surprise); evict the
-            # lowest blended rank. alpha=1 => pure attn, alpha=0 => pure surprise.
-            attn = self.mid_score if tier == "fp32" else self.q_score
-            surp = self.mid_surprise if tier == "fp32" else self.q_surprise
-            assert attn is not None and surp is not None
-            a = self.surprise_blend
-            scores = a * _rank_normalize(attn) + (1.0 - a) * _rank_normalize(surp)
-        else:  # "energy"
-            if tier == "fp32":
-                assert self.c_k is not None
-                scores = self.c_k.norm(dim=0)
-            else:
-                assert self.qk_norm is not None
-                scores = self.qk_norm
+        # "lowrank_surprise": evict the LOWEST-surprise (best-reconstructed =
+        # most redundant) columns; the ascending argsort below keeps the
+        # high-residual outliers the low-rank summary cannot reproduce.
+        scores = self.mid_surprise if tier == "fp32" else self.q_surprise
+        assert scores is not None
         order = torch.argsort(scores, stable=True)  # ascending; ties keep age order
         evict = order[:n_out].sort().values
         keep = order[n_out:].sort().values
@@ -1084,43 +760,26 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         """Evict down to ``coord_budget`` (demoting to the quantized tier when
         enabled) and then the quantized tier down to ``quant_budget``."""
         f_over = self._f_len() - self.coord_budget
-        if f_over > 0 and self.merge:
-            self._merge_down(f_over)
-            f_over = 0
         if f_over > 0:
             assert self.c_k is not None and self.c_v is not None
-            self._probe_record()
             evict, keep = self._split_indices(f_over, tier="fp32")
             out_ck = self.c_k[:, evict]
             out_cv = self.c_v[:, evict]
             self.c_k = self.c_k[:, keep]
             self.c_v = self.c_v[:, keep]
             out_pos: Tensor | None = None
-            out_score: Tensor | None = None
             out_surprise: Tensor | None = None
             if self.track_positions:
                 assert self.mid_pos is not None
                 out_pos = self.mid_pos[evict]
                 self.mid_pos = self.mid_pos[keep]
-            if self.track_scores:
-                assert self.mid_score is not None
-                out_score = self.mid_score[evict]
-                self.mid_score = self.mid_score[keep]
             if self.track_surprise:
                 assert self.mid_surprise is not None
                 out_surprise = self.mid_surprise[evict]
                 self.mid_surprise = self.mid_surprise[keep]
-            elif self._probe_surprise and self.mid_surprise is not None:
-                self.mid_surprise = self.mid_surprise[keep]
-            if self._coded_mode:
-                # Demote into the CodeBUG coded tier -- but only once the anchor
-                # is sealed; during the short pre-seal warmup demoted columns are
-                # dropped (the fp32 budget covers the warmup window).
-                if self.sealed:
-                    self._append_coded(out_ck, out_cv, out_pos, out_score, out_surprise)
-            elif self.quant_bits is not None:
-                self._append_quant(out_ck, out_cv, out_pos, out_score, out_surprise)
-        q_over = self._q_len() - self._second_tier_budget
+            if self.quant_bits is not None:
+                self._append_quant(out_ck, out_cv, out_pos, out_surprise)
+        q_over = self._q_len() - self.quant_budget
         if q_over > 0:
             assert self.qk_codes is not None and self.qk_norm is not None
             assert self.qv_codes is not None and self.qv_norm is not None
@@ -1132,69 +791,9 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             if self.track_positions:
                 assert self.q_pos is not None
                 self.q_pos = self.q_pos[keep]
-            if self.track_scores:
-                assert self.q_score is not None
-                self.q_score = self.q_score[keep]
             if self.track_surprise:
                 assert self.q_surprise is not None
                 self.q_surprise = self.q_surprise[keep]
-
-    def _probe_record(self) -> None:
-        """GO/NO-GO correlation probe: snapshot the fp32 tier's (attention-mass,
-        surprise, energy) per-column arrays at an eviction event, for measuring
-        whether surprise is complementary to attention mass or redundant. Active
-        only when a ``_probe_sink`` list is attached (zero overhead otherwise)."""
-        if self._probe_sink is None or self.c_k is None:
-            return
-        if self.mid_score is None or self.mid_surprise is None:
-            return
-        energy = self.c_k.norm(dim=0)
-        self._probe_sink.append((self.mid_score.clone(), self.mid_surprise.clone(), energy.clone()))
-
-    def _merge_down(self, n_out: int) -> None:
-        """Hierarchical **dyadic** merge (Week-7 dominance): instead of *dropping*
-        the oldest ``n_out`` fp32 coordinate columns, collapse ``n_out`` adjacent
-        **equal-weight** pairs into weighted centroids -- so the middle keeps an
-        unbounded history at geometrically decaying resolution (recent = per-token,
-        old = coarse super-columns with weights ``..4,2,1``, a bounded count per
-        level like a binary counter), constant memory. Merging only equal-weight
-        neighbours keeps the pyramid balanced (a Compressive-Transformer / exponential
-        -histogram schedule) rather than letting one blob absorb all history.
-
-        Centroids are token-count-weighted -- a uniform-attention approximation
-        within a group; the log-count softmax correction that would make merged
-        *keys* exact is not applied (a documented, falsifiable approximation).
-        The reconstruction ``U C`` and position re-rotation treat a merged column
-        like any other, at its count-weighted mean position."""
-        assert self.c_k is not None and self.c_v is not None and self.mid_weight is not None
-        for _ in range(n_out):
-            length = self._f_len()
-            if length < 2:
-                return
-            w = self.mid_weight
-            eq = (w[:-1] == w[1:]).nonzero(as_tuple=False).flatten()
-            i = int(eq[0].item()) if eq.numel() > 0 else 0  # oldest equal pair, else oldest
-            wsum = w[i] + w[i + 1]
-            wi, wj = w[i].clone(), w[i + 1].clone()
-
-            def _merge_col(
-                c: Tensor, j: int = i, s: Tensor = wsum, a: Tensor = wi, b: Tensor = wj
-            ) -> Tensor:
-                cen = (c[:, j : j + 1] * a + c[:, j + 1 : j + 2] * b) / s
-                return torch.cat([c[:, :j], cen, c[:, j + 2 :]], dim=1)
-
-            self.c_k = _merge_col(self.c_k)
-            self.c_v = _merge_col(self.c_v)
-            self.mid_weight = torch.cat([w[:i], wsum.reshape(1), w[i + 2 :]])
-            if self.track_positions:
-                assert self.mid_pos is not None
-                p = self.mid_pos
-                mp = ((p[i] * w[i] + p[i + 1] * w[i + 1]) / wsum).round().to(torch.int64)
-                self.mid_pos = torch.cat([p[:i], mp.reshape(1), p[i + 2 :]])
-            if self.track_scores:
-                assert self.mid_score is not None
-                sc = self.mid_score
-                self.mid_score = torch.cat([sc[:i], (sc[i] + sc[i + 1]).reshape(1), sc[i + 2 :]])
 
     def _quantize_cols(self, cols: Tensor, stream: str) -> tuple[Tensor, Tensor]:
         """PolarQuant coordinate columns ``(r, m)`` -> ``(codes (m, r) uint8,
@@ -1229,7 +828,6 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         ck: Tensor,
         cv: Tensor,
         pos: Tensor | None,
-        score: Tensor | None,
         surprise: Tensor | None = None,
     ) -> None:
         """Demote evicted fp32 coordinate columns into the quantized tier."""
@@ -1248,9 +846,6 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         if self.track_positions:
             assert pos is not None
             self.q_pos = pos if self.q_pos is None else torch.cat([self.q_pos, pos])
-        if self.track_scores:
-            assert score is not None
-            self.q_score = score if self.q_score is None else torch.cat([self.q_score, score])
         if self.track_surprise:
             assert surprise is not None
             self.q_surprise = (
@@ -1272,171 +867,6 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         cv = rot_v @ self._dequantize(self.qv_codes, self.qv_norm)
         self.qk_codes, self.qk_norm = self._quantize_cols(ck, "K")
         self.qv_codes, self.qv_norm = self._quantize_cols(cv, "V")
-
-    # -------------------------------------------------- CodeBUG frozen anchor
-
-    def _seal_anchor(self) -> None:
-        """Freeze the CodeBUG anchor: snapshot the top-``anchor_rank`` columns of
-        the current live basis as the read-only ``u_ref`` the coded tier lives
-        in. Columns are energy-sorted (``b = diag(sigma)`` descending, nothing
-        rotates it), so the leading ``r_a`` capture the dominant subspace; a
-        subset of orthonormal columns is itself orthonormal, so no
-        re-orthonormalization is needed. Called once, after
-        ``anchor_seal_absorbs`` absorbs."""
-        assert self.u_k is not None and self.u_v is not None
-        # Guaranteed by the seal gate: the basis has >= anchor_rank columns.
-        ra = self.anchor_rank
-        self.u_ref_k = self.u_k[:, :ra].clone()
-        self.u_ref_v = self.u_v[:, :ra].clone()
-        self.sealed = True
-
-    def _append_coded(
-        self,
-        ck: Tensor,
-        cv: Tensor,
-        pos: Tensor | None,
-        score: Tensor | None,
-        surprise: Tensor | None = None,
-    ) -> None:
-        """Demote evicted fp32 columns into the CodeBUG coded tier: re-express
-        each from the *live* basis into the *frozen* anchor **once**
-        (``c_ref = u_ref^T (u_live @ c_live)``), PQ-encode, and append. This is
-        the only point a coded column is ever encoded; thereafter it is inert
-        (never rotated) -- the structural non-compounding guarantee."""
-        assert self.codebook is not None
-        assert self.u_ref_k is not None and self.u_ref_v is not None
-        assert self.u_k is not None and self.u_v is not None
-        ref_k = (self.u_ref_k.mT @ self.u_k) @ ck  # (r_a, m) anchor coordinates
-        ref_v = (self.u_ref_v.mT @ self.u_v) @ cv
-        if self._calib_sink is not None:  # calibration: record true anchor coords
-            self._calib_sink.append(ref_k.mT.detach().to("cpu", torch.float32))
-            self._calib_sink.append(ref_v.mT.detach().to("cpu", torch.float32))
-        if self._drift_truth is not None and pos is not None:  # drift experiment
-            xk = (self.u_k @ ck).detach().to("cpu", torch.float32)  # (n, m) rank-r truth
-            for j, p in enumerate(pos.tolist()):
-                self._drift_truth[int(p)] = xk[:, j]
-        codes_k, norm_k = self.codebook.quantize(ref_k.mT)  # (m, M) uint8, (m, 1)
-        codes_v, norm_v = self.codebook.quantize(ref_v.mT)
-        codes_k = codes_k.to(dtype=torch.uint8, device=self.device)
-        codes_v = codes_v.to(dtype=torch.uint8, device=self.device)
-        norm_k = norm_k.squeeze(-1).to(dtype=torch.float32, device=self.device)
-        norm_v = norm_v.squeeze(-1).to(dtype=torch.float32, device=self.device)
-        if self.qk_codes is None:
-            self.qk_codes, self.qk_norm = codes_k, norm_k
-            self.qv_codes, self.qv_norm = codes_v, norm_v
-        else:
-            assert self.qk_norm is not None and self.qv_codes is not None
-            assert self.qv_norm is not None
-            self.qk_codes = torch.cat([self.qk_codes, codes_k])
-            self.qk_norm = torch.cat([self.qk_norm, norm_k])
-            self.qv_codes = torch.cat([self.qv_codes, codes_v])
-            self.qv_norm = torch.cat([self.qv_norm, norm_v])
-        if self.track_positions:
-            assert pos is not None
-            self.q_pos = pos if self.q_pos is None else torch.cat([self.q_pos, pos])
-        if self.track_scores:
-            assert score is not None
-            self.q_score = score if self.q_score is None else torch.cat([self.q_score, score])
-        if self.track_surprise:
-            assert surprise is not None
-            self.q_surprise = (
-                surprise if self.q_surprise is None else torch.cat([self.q_surprise, surprise])
-            )
-
-    def _decode_coded(self, codes: Tensor, norm: Tensor | None) -> Tensor:
-        """Inverse of the coded-tier encode: ``(m, M)`` codes -> ``(r_a, m)``
-        anchor coordinates. In ``normalize`` mode the decoded unit direction is
-        scaled by the exact stored norm (magnitude carried losslessly); otherwise
-        the raw centroids carry magnitude."""
-        assert self.codebook is not None
-        idx = codes.to(torch.int64)
-        if self.codebook.normalize:
-            assert norm is not None
-            recon = self.codebook.dequantize(idx, norm.unsqueeze(-1))
-        else:
-            recon = self.codebook.decode(idx)
-        return recon.mT.to(device=self.device)  # (r_a, m)
-
-    def _recode_coded_tier(self) -> None:
-        """ABLATION ONLY (``_debug_recode_coded``): the variant-D analog. Decode
-        the coded tier, re-anchor ``u_ref`` to the current live basis, and
-        RE-CODE every column against it -- re-injecting PQ distortion every
-        absorb. This is the falsifiable OFF control that should compound; the
-        real (frozen-anchor) path never calls it."""
-        assert self.codebook is not None and self.u_ref_k is not None
-        assert self.u_ref_v is not None and self.u_k is not None and self.u_v is not None
-        assert self.qk_codes is not None and self.qv_codes is not None
-        full_k = self.u_ref_k @ self._decode_coded(self.qk_codes, self.qk_norm)  # (n, W)
-        full_v = self.u_ref_v @ self._decode_coded(self.qv_codes, self.qv_norm)
-        ra = self.anchor_rank
-        self.u_ref_k = self.u_k[:, :ra].clone()
-        self.u_ref_v = self.u_v[:, :ra].clone()
-        ref_k = self.u_ref_k.mT @ full_k  # (r_a, W) in the re-anchored frame
-        ref_v = self.u_ref_v.mT @ full_v
-        codes_k, norm_k = self.codebook.quantize(ref_k.mT)
-        codes_v, norm_v = self.codebook.quantize(ref_v.mT)
-        self.qk_codes = codes_k.to(dtype=torch.uint8, device=self.device)
-        self.qv_codes = codes_v.to(dtype=torch.uint8, device=self.device)
-        self.qk_norm = norm_k.squeeze(-1).to(dtype=torch.float32, device=self.device)
-        self.qv_norm = norm_v.squeeze(-1).to(dtype=torch.float32, device=self.device)
-
-    # ------------------------------------------------------------ scoring
-
-    def observe_attention(self, mass: Tensor) -> None:
-        """EMA-update retention scores from one decode step's attention mass over
-        the returned ``[sinks | hh | quant | fp32 | recent]`` columns (``(L,)``,
-        aggregated over all query heads). Called by the attach() hook."""
-        if not self.track_scores:
-            return
-        s, hh = self._sink_len(), self._hh_attended_len()
-        q, f, rlen = self._q_len(), self._f_len(), self._recent_len()
-        if mass.shape != (s + hh + q + f + rlen,):
-            raise ValueError(
-                f"attention mass must have length {s + hh + q + f + rlen} "
-                f"(sinks {s} + hh {hh} + quant {q} + fp32 {f} + recent {rlen}), "
-                f"got {tuple(mass.shape)}"
-            )
-        mass = mass.to(torch.float32)
-        g = self.score_decay
-        off = s
-        if hh > 0:
-            # A surprise-selected exact tier persists no hh_score (recomputed each
-            # absorb from the basis); only EMA-update an attention-selected tier.
-            if self.hh_score is not None:
-                self.hh_score = g * self.hh_score + mass[off : off + hh]
-            off += hh
-        if q > 0:
-            assert self.q_score is not None
-            self.q_score = g * self.q_score + mass[off : off + q]
-            off += q
-        if f > 0:
-            assert self.mid_score is not None
-            self.mid_score = g * self.mid_score + mass[off : off + f]
-            off += f
-        if self.ring_score is not None and rlen > 0:
-            self.ring_score = g * self.ring_score + mass[off:]
-        self._seen_observation = True
-
-    def seed_scores(self, seed: Tensor) -> None:
-        """Initialize retention scores from prompt attention: ``seed`` is a
-        ``(T,)`` per-position mass over the prompt (see
-        :func:`_prompt_seed_scores`); mapped to retained columns by position."""
-        if not self.track_scores:
-            return
-        rlen = self._recent_len()
-        if rlen > 0:
-            self.ring_score = (
-                seed[self.cumulative_length - rlen : self.cumulative_length]
-                .to(torch.float32)
-                .clone()
-            )
-        if self._f_len() > 0:
-            assert self.mid_pos is not None
-            self.mid_score = seed[self.mid_pos].to(torch.float32).clone()
-        if self._q_len() > 0:
-            assert self.q_pos is not None
-            self.q_score = seed[self.q_pos].to(torch.float32).clone()
-        self._seen_observation = True
 
     # -------------------------------------------------------------- update
 
@@ -1466,7 +896,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         one forward scores perplexity over the compressed cache. The retained block
         is strictly-past (true-position RoPE preserved); ``get_mask_sizes`` reports
         ``attended_length() + q_len`` so the causal mask sees it all. No absorb, no
-        recent append, no score/position mutation -- ``stored_state_numel`` is
+        recent append, no position mutation -- ``stored_state_numel`` is
         unchanged by this call."""
         k_ret, v_ret = self._decode_peek()
         return (
@@ -1489,9 +919,6 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         q = int(key_states.shape[2])
         self.recent_k = torch.cat([self.recent_k, self._to_mat(key_states)], dim=1)
         self.recent_v = torch.cat([self.recent_v, self._to_mat(value_states)], dim=1)
-        if self.track_scores and self.ring_score is not None:
-            zeros = torch.zeros(q, dtype=torch.float32, device=self.ring_score.device)
-            self.ring_score = torch.cat([self.ring_score, zeros])
         self.cumulative_length += q
         return self._decode_peek()
 
@@ -1515,9 +942,6 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.sink_v = v_mat[:, :n_sink].clone()
         self.recent_k = k_mat[:, t - recent :].clone()
         self.recent_v = v_mat[:, t - recent :].clone()
-        if self.track_scores:
-            # Zero until the attach() hook seeds them from the prompt's rows.
-            self.ring_score = torch.zeros(recent, dtype=torch.float32, device=k_mat.device)
 
         if mid > 0 and self.lowrank_enabled:
             # Week-13 T-B: when seeding (chunked ingest + an exact tier), route the
@@ -1546,10 +970,9 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
                         k_mat[:, n_sink + start : n_sink + stop],
                         v_mat[:, n_sink + start : n_sink + stop],
                         pos,
-                        None,
                     )
                 else:
-                    self._absorb_columns(k_pre[:, start:stop], v_mid[:, start:stop], pos, None)
+                    self._absorb_columns(k_pre[:, start:stop], v_mid[:, start:stop], pos)
         self.cumulative_length = t
         return key_states, value_states
 
@@ -1557,10 +980,6 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         assert self.recent_k is not None and self.recent_v is not None
         self.recent_k = torch.cat([self.recent_k, self._to_mat(key_states)], dim=1)
         self.recent_v = torch.cat([self.recent_v, self._to_mat(value_states)], dim=1)
-        if self.track_scores:
-            assert self.ring_score is not None
-            zero = torch.zeros(1, dtype=torch.float32, device=self.ring_score.device)
-            self.ring_score = torch.cat([self.ring_score, zero])
         self.cumulative_length += 1
         while self._recent_len() >= self.recent_window + self.absorb_block:
             self._absorb_block_into_stream(self.absorb_block)
@@ -1619,24 +1038,15 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         parts_v: list[Tensor] = []
         if self._q_len() > 0:
             assert self.qk_codes is not None and self.qv_codes is not None
-            if self._coded_mode:
-                # CodeBUG: reconstruct against the FROZEN anchor (never u_k).
-                assert self.u_ref_k is not None and self.u_ref_v is not None
-                parts_k.append(self.u_ref_k @ self._decode_coded(self.qk_codes, self.qk_norm))
-                parts_v.append(self.u_ref_v @ self._decode_coded(self.qv_codes, self.qv_norm))
-            else:
-                assert self.qk_norm is not None and self.qv_norm is not None
-                parts_k.append(self.u_k @ self._dequantize(self.qk_codes, self.qk_norm))
-                parts_v.append(self.u_v @ self._dequantize(self.qv_codes, self.qv_norm))
+            assert self.qk_norm is not None and self.qv_norm is not None
+            parts_k.append(self.u_k @ self._dequantize(self.qk_codes, self.qk_norm))
+            parts_v.append(self.u_v @ self._dequantize(self.qv_codes, self.qv_norm))
         if self._f_len() > 0:
             assert self.c_k is not None and self.c_v is not None
             parts_k.append(self.u_k @ self.c_k)
             parts_v.append(self.u_v @ self.c_v)
         k_pre_hat = torch.cat(parts_k, dim=1) if len(parts_k) > 1 else parts_k[0]
         v_hat = torch.cat(parts_v, dim=1) if len(parts_v) > 1 else parts_v[0]
-        # Q-BUG: the whole low-rank gist (both tiers) is reconstructed in the
-        # whitened metric; un-whiten back to the true pre-RoPE keys before RoPE.
-        k_pre_hat = self._unwhiten_key(k_pre_hat)
         if self.track_positions:
             k_hat = self._mat_rope_at(k_pre_hat, self._mid_positions(), inverse=False)
         else:
@@ -1680,11 +1090,11 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
     # ---------------------------------------------------------- accounting
 
     def stored_state_numel(self) -> int:
-        """Float-equivalents of the *stored* per-layer state (the honest memory):
-        fp32/verbatim tensors at 1 each; quantized codes at ``quant_bits/32``
+        """Float-equivalents of the *stored* per-layer state (what the accounting
+        bills): fp32/verbatim tensors at 1 each; quantized codes at ``quant_bits/32``
         each (bit-packable) + their fp32 norms; retention positions (int32) and
-        scores at 1 each. Shared quantizer side info is counted once at the
-        cache level (:meth:`BugStreamingCache.stored_state_numel`)."""
+        surprise snapshots at 1 each. Shared quantizer side info is counted once
+        at the cache level (:meth:`BugStreamingCache.stored_state_numel`)."""
         tensors = (
             self.sink_k,
             self.sink_v,
@@ -1696,55 +1106,36 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             self.c_v,
             self.hh_k,  # SLASH exact tier: full 2n floats/token, like a whole token
             self.hh_v,
-            self.u_ref_k,  # CodeBUG frozen anchor (n, r_a) fp32 -- counted, not free
-            self.u_ref_v,
         )
         total = sum(t.numel() for t in tensors if t is not None)
         # The square-root core B is *provably diagonal* (``augmented_bug_step``
         # returns ``diag(sigma)`` every step and nothing rotates it between
         # steps), so its deployable footprint is its ``r`` diagonal entries, not
-        # ``r^2`` -- counted honestly here (same convention as quant codes at
+        # ``r^2`` -- counted that way here (same convention as quant codes at
         # bits/32 rather than their uint8 storage). ``tests`` pin the diagonality.
         for core in (self.b_k, self.b_v):
             if core is not None:
                 total += int(min(core.shape))
         if self.qk_codes is not None:
             assert self.qv_codes is not None
-            # bits/code: PolarQuant (variant D, r codes/token) or ProductQuantizer
-            # (CodeBUG, M codes/token). Codes counted at bits/32 (bit-packable).
-            bits = self.codebook.bits if self.codebook is not None else self.quant_bits
+            # bits/code: PolarQuant (variant D, r codes/token). Codes counted at
+            # bits/32 (bit-packable).
+            bits = self.quant_bits
             assert bits is not None
             code_entries = int(self.qk_codes.numel() + self.qv_codes.numel())
             total += math.ceil(code_entries * bits / 32)
-            # Per-column norms (fp32): variant D always; CodeBUG in normalize mode.
+            # Per-column norms (fp32).
             for nrm in (self.qk_norm, self.qv_norm):
                 if nrm is not None:
                     total += int(nrm.numel())
-        bookkeeping = (
-            self.mid_pos,
-            self.q_pos,
-            self.mid_score,
-            self.q_score,
-            self.ring_score,
-            self.hh_pos,
-            self.hh_score,
-            self.mid_weight,
-        )
+        bookkeeping = (self.mid_pos, self.q_pos, self.hh_pos)
         total += sum(t.numel() for t in bookkeeping if t is not None)
         # Week-9 D3: the per-column surprise buffers are stored state under
-        # retention="lowrank_surprise" and are counted. Under the correlation
-        # probe (``_probe_surprise`` on a retention="attn" run) they are
-        # instrumentation only -- NOT part of the deployed config's footprint --
-        # so they are excluded from the honest budget in that case.
+        # retention="lowrank_surprise" and are counted.
         if self.track_surprise:
             for surp in (self.mid_surprise, self.q_surprise):
                 if surp is not None:
                     total += int(surp.numel())
-        # Week-12 Q-BUG: the frozen per-feature key-whitening diagonal is stored
-        # per-layer state (n floats, fp32), context-length-independent. Counted
-        # honestly like everything else; ~1.6% of the r32 basis at n=1024.
-        if self.w_key is not None:
-            total += int(self.w_key.numel())
         return int(total)
 
     def workspace_numel(self) -> int:
@@ -1762,9 +1153,9 @@ class BugStreamingCache(Cache):
     """Model-level constant-memory streaming-BUG cache (one layer per model layer).
 
     Pass as ``past_key_values`` to ``model.generate(...)`` / ``model(...)``.
-    With ``retention="attn"``, wrap the forward/generate in :meth:`attach` so
-    per-step attention rows drive the retention scores (mirrors
-    :meth:`MorphKVCache.attach`).
+    Every retention rule reads its signal off the stored keys, so no attention
+    hook is needed; :meth:`attach` exists only so a harness can wrap any
+    streaming cache the same way.
 
     Parameters
     ----------
@@ -1777,13 +1168,9 @@ class BugStreamingCache(Cache):
         Max retained fp32 middle-token coordinate columns per layer (0 disables
         the low-rank middle; with ``rank=0`` this cache *is* StreamingLLM).
     retention:
-        Coordinate eviction rule: ``"fifo"`` (Week-6 baseline), ``"attn"``
-        (EMA attention mass; needs :meth:`attach`), ``"energy"`` (``||c_s||_2``),
-        ``"lowrank_surprise"`` (Week-9 D3: keep the highest-residual outliers), or
-        ``"blend"`` (Week-9 D3: rank-blend attn mass and surprise, weight
-        ``surprise_blend``). See the module docstring.
-    score_decay:
-        EMA decay per decode step for ``retention="attn"`` scores.
+        Coordinate eviction rule: ``"fifo"`` (Week-6 baseline) or
+        ``"lowrank_surprise"`` (Week-9 D3: keep the highest-residual outliers).
+        See the module docstring.
     quant_bits, quant_budget:
         Week-7 D: demote evicted fp32 coordinates into a PolarQuant tier of
         ``quant_budget`` columns at ``quant_bits`` bits/coordinate (both set,
@@ -1812,8 +1199,6 @@ class BugStreamingCache(Cache):
         tracker: str = "bug",
         prefill_block_size: int = 128,
         retention: str = "fifo",
-        score_decay: float = 0.97,
-        surprise_blend: float = 0.5,
         quant_bits: int | None = None,
         quant_budget: int = 0,
         quant_seed: int = 0,
@@ -1823,12 +1208,6 @@ class BugStreamingCache(Cache):
         hh_retain: bool = True,
         score_rank: int | None = None,
         seed_hh_warmup: bool = False,
-        w_key: list[Tensor] | Tensor | None = None,
-        merge: bool = False,
-        coord_codebook: ProductQuantizer | None = None,
-        anchor_rank: int = 0,
-        anchor_seal_absorbs: int = 4,
-        code_budget: int = 0,
     ) -> None:
         base = getattr(model, "model", model)
         rotary = getattr(base, "rotary_emb", None)
@@ -1839,20 +1218,8 @@ class BugStreamingCache(Cache):
                 "exact RoPE round trip"
             )
         rope = _RopeAngles(rotary)
-        self._retention = retention
         self._quant_bank = _QuantBank(quant_bits, seed=quant_seed) if quant_bits else None
-        self._codebook = coord_codebook  # shared PQ side info, counted once
         n_layers = int(model.config.num_hidden_layers)
-        # Q-BUG whitening: one frozen per-feature diagonal per layer. Accept a
-        # per-layer list, a single (n,) vector broadcast to all layers, or None.
-        if w_key is None:
-            w_key_per_layer: list[Tensor | None] = [None] * n_layers
-        elif isinstance(w_key, list):
-            if len(w_key) != n_layers:
-                raise ValueError(f"w_key list has {len(w_key)} entries != {n_layers} layers")
-            w_key_per_layer = list(w_key)
-        else:
-            w_key_per_layer = [w_key] * n_layers
         layers: list[CacheLayerMixin | LinearAttentionCacheLayerMixin] = [
             BugStreamingLayer(
                 rope=rope,
@@ -1866,8 +1233,6 @@ class BugStreamingCache(Cache):
                 tracker=tracker,
                 prefill_block_size=prefill_block_size,
                 retention=retention,
-                score_decay=score_decay,
-                surprise_blend=surprise_blend,
                 quant_bits=quant_bits,
                 quant_budget=quant_budget,
                 quant_bank=self._quant_bank,
@@ -1877,12 +1242,6 @@ class BugStreamingCache(Cache):
                 hh_retain=hh_retain,
                 score_rank=score_rank,
                 seed_hh_warmup=seed_hh_warmup,
-                w_key=w_key_per_layer[layer_idx],
-                merge=merge,
-                coord_codebook=coord_codebook,
-                anchor_rank=anchor_rank,
-                anchor_seal_absorbs=anchor_seal_absorbs,
-                code_budget=code_budget,
             )
             for layer_idx in range(n_layers)
         ]
@@ -1890,60 +1249,14 @@ class BugStreamingCache(Cache):
 
     @contextmanager
     def attach(self, model: PreTrainedModel) -> Iterator[None]:
-        """Register per-layer hooks that record attention rows into the retention
-        scores (``retention="attn"``; a no-op otherwise). Per decode step the
-        aggregated attention row over this cache's *returned* K is recomputed
-        with MorphKV's exact machinery and EMA'd into per-column scores; at
-        pre-fill end the scores are seeded from the last ``recent_window``
-        prompt queries' causal rows. Also active for ``retention="blend"``, which
-        needs the same attention-mass scores as one of its two blended signals."""
-        if self._retention not in ("attn", "blend"):
-            yield
-            return
-        handles = []
-
-        def make_hook(cache: BugStreamingCache) -> Any:
-            def hook(
-                module: nn.Module,
-                args: tuple[Any, ...],
-                kwargs: dict[str, Any],
-                output: Any,
-            ) -> Any:
-                if kwargs.get("past_key_values") is not cache:
-                    return output  # a different cache is in play; stay out
-                layer = cache.layers[module.layer_idx]
-                assert isinstance(layer, BugStreamingLayer)
-                if not layer.is_initialized or layer.cumulative_length == 0:
-                    return output
-                if layer._mode == "score":
-                    return output  # frozen scoring is non-mutating: never re-seed
-                hidden_states = kwargs["hidden_states"]
-                cos, sin = kwargs["position_embeddings"]
-                if hidden_states.shape[1] == 1:  # decode step
-                    keys, _ = layer._decode_peek()  # memoized middle; cheap concat
-                    row = _aggregated_attention_row(module, hidden_states, keys, cos, sin)
-                    layer.observe_attention(row.sum(dim=0))
-                else:  # pre-fill: seed scores from the prompt's own attention
-                    seed = _prompt_seed_scores(
-                        module,
-                        hidden_states,
-                        (cos, sin),
-                        layer.recent_window,
-                        layer.score_decay,
-                    )
-                    layer.seed_scores(seed)
-                return output
-
-            return hook
-
-        for module in model.modules():
-            if hasattr(module, "layer_idx") and hasattr(module, "q_proj"):
-                handles.append(module.register_forward_hook(make_hook(self), with_kwargs=True))
-        try:
-            yield
-        finally:
-            for handle in handles:
-                handle.remove()
+        """No-op, kept so the harness can wrap any streaming cache uniformly
+        (``with cache.attach(model): ...``, as :class:`ShadowKVCache` and the
+        kvpress presses need). The surviving retention rule
+        (``retention="lowrank_surprise"``) and the SurpriseSLASH exact tier both
+        read their signal off the stored keys, so this cache needs no attention
+        hook; the Week-7 ``retention="attn"`` mode that did is retired."""
+        del model
+        yield
 
     def _bug_layers(self) -> list[BugStreamingLayer]:
         return [layer for layer in self.layers if isinstance(layer, BugStreamingLayer)]
@@ -1983,30 +1296,12 @@ class BugStreamingCache(Cache):
         for layer in self._bug_layers():
             layer.consolidate()
 
-    def enable_surprise_probe(self) -> list[tuple[Tensor, Tensor, Tensor]]:
-        """Week-9 D3 GO/NO-GO gate: instrument every layer to also track low-rank
-        surprise (under any retention) and record the per-column (attention-mass,
-        surprise, energy) arrays at each eviction into a shared sink, returned
-        here. Run a ``retention="attn"`` cache through a stream, then measure the
-        surprise<->attention correlation on the pooled sink (redundant if high,
-        complementary if low). Instrumentation only -- not counted in
-        :meth:`stored_state_numel` (the deployed config stores no surprise)."""
-        sink: list[tuple[Tensor, Tensor, Tensor]] = []
-        for layer in self._bug_layers():
-            layer._probe_surprise = True
-            layer._probe_sink = sink
-        return sink
-
     def stored_state_numel(self) -> int:
         """Total stored float-equivalents across layers (the constant-memory
         claim), plus the shared quantizer side info counted once."""
         total = sum(layer.stored_state_numel() for layer in self._bug_layers())
         if self._quant_bank is not None:
             total += self._quant_bank.side_info_numel()
-        if self._codebook is not None:
-            # Shared, calibrated PQ codebook: side info counted ONCE per cache
-            # (amortized across every coded token and every layer).
-            total += self._codebook.codebook_numel()
         return total
 
     def workspace_numel(self) -> int:

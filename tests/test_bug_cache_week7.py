@@ -1,16 +1,12 @@
 """Week-7 tests: adaptive coordinate retention (A) + quantized age tier (D).
 
 Extends the :mod:`tests.test_bug_cache` correctness ladder to the Week-7 knobs
-(``docs/week7-plan.md`` tier 1):
+(tier 1):
 
-* retention selection actually keeps the highest-scored / highest-energy
-  columns and preserves chronological order among survivors;
 * non-contiguous middles are re-rotated at their **true** tracked positions;
-* ``retention="attn"`` without any observations reduces to FIFO **bitwise**
-  (the stable-sort tiebreak) -- and the attach() hook records real scores;
 * the quantized tier bounds reconstruction error, keeps memory constant, and
-  is **counted honestly** (codes at ``bits/32`` float-equivalents + norms +
-  positions + scores + shared side info);
+  is **counted in the same unit** (codes at ``bits/32`` float-equivalents + norms +
+  positions + surprise snapshots + shared side info);
 * exact-mode parity with ``DynamicCache`` still holds for every variant when
   nothing overflows;
 * the mask-size == returned-length invariant holds for every variant.
@@ -70,6 +66,35 @@ def _kv(t: int, g: torch.Generator) -> tuple[torch.Tensor, torch.Tensor]:
     )
 
 
+def _surprise_layer(model: LlamaForCausalLM, seed: int) -> BugStreamingLayer:
+    """A saturated ``retention="lowrank_surprise"`` layer whose stored surprise is
+    hand-set so the columns at true positions 4..7 are the four evicted at the next
+    absorb -- leaving a deterministically NON-CONTIGUOUS middle."""
+    layer = BugStreamingLayer(
+        rope=_rope(model),
+        rank=8,
+        coord_budget=12,
+        recent_window=4,
+        absorb_block=4,
+        n_sink=2,
+        retention="lowrank_surprise",
+    )
+    g = torch.Generator().manual_seed(seed)
+    layer.update(*_kv(18, g))  # prefill: mid = 18 - 2 - 4 = 12 columns, exactly at cap
+    assert layer._f_len() == 12
+    assert layer.mid_pos is not None
+    assert torch.equal(layer.mid_pos, torch.arange(2, 14))
+    # 2.0 is above any real residual fraction (normalized into [0, 1]); the four
+    # zeros are the most-redundant columns and go first, ties broken by age.
+    surprise = torch.full((12,), 2.0)
+    surprise[2:6] = 0.0  # true positions 4..7
+    layer.mid_surprise = surprise.clone()
+    for _ in range(4):  # ring 4 -> 8 => absorb of 4 => evict 4
+        layer.update(*_kv(1, g))
+    assert layer._f_len() == 12
+    return layer
+
+
 # --------------------------------------------------------------------------
 # Constructor validation
 # --------------------------------------------------------------------------
@@ -78,8 +103,6 @@ def _kv(t: int, g: torch.Generator) -> tuple[torch.Tensor, torch.Tensor]:
 def test_week7_constructor_validation(tiny_model: LlamaForCausalLM) -> None:
     with pytest.raises(ValueError, match="retention"):
         BugStreamingCache(tiny_model, rank=8, coord_budget=16, retention="lru")
-    with pytest.raises(ValueError, match="score_decay"):
-        BugStreamingCache(tiny_model, rank=8, coord_budget=16, score_decay=0.0)
     with pytest.raises(ValueError, match="set together"):
         BugStreamingCache(tiny_model, rank=8, coord_budget=16, quant_bits=4)
     with pytest.raises(ValueError, match="set together"):
@@ -95,89 +118,62 @@ def test_week7_constructor_validation(tiny_model: LlamaForCausalLM) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_attn_retention_keeps_top_scored_columns(tiny_model: LlamaForCausalLM) -> None:
-    # Drive the layer directly; set scores by hand (the attach() hook's job) and
-    # check the eviction at the next absorb keeps exactly the top-scored columns
-    # while preserving chronological order among survivors.
-    layer = BugStreamingLayer(
-        rope=_rope(tiny_model),
-        rank=8,
+def _slash_layer(model: LlamaForCausalLM, hh_budget: int) -> BugStreamingLayer:
+    """The surprise-driven SLASH layer: a low-rank tail plus an exact tier of
+    ``hh_budget`` tokens kept verbatim."""
+    return BugStreamingLayer(
+        rope=_rope(model),
+        rank=4,
         coord_budget=12,
         recent_window=4,
         absorb_block=4,
         n_sink=2,
-        retention="attn",
+        retention="lowrank_surprise",
+        hh_budget=hh_budget,
+        hh_select="surprise",
     )
-    g = torch.Generator().manual_seed(0)
-    layer.update(*_kv(18, g))  # prefill: mid = 18 - 2 - 4 = 12 columns, exactly at cap
-    assert layer._f_len() == 12
+
+
+def test_exact_tier_stores_the_verbatim_post_rope_key(tiny_model: LlamaForCausalLM) -> None:
+    """The exact tier is EXACT: every column it holds is the post-RoPE key the model
+    produced at that token, bit for bit -- not a reconstruction, not a re-rotation.
+
+    That is the whole claim the surprise-selected tier rests on (a needle survives
+    because its key was never projected), so it is pinned at the tensor level: for each
+    ``j``, ``hh_k[:, j]`` equals the flattened key column at ``hh_pos[j]`` of the stream
+    that was fed in, and ``hh_v`` the value column. The selection path is the
+    surprise-driven one -- ``_absorb_block_slash`` scoring the whole candidate pool
+    against the current basis -- not a hand-placed tier.
+    """
+    layer = _slash_layer(tiny_model, hh_budget=6)
+    g = torch.Generator().manual_seed(7)
+    k, v = _kv(18, g)
+    layer.update(k, v)
+    for _ in range(8):  # two absorbs: the tier fills and then re-selects
+        k1, v1 = _kv(1, g)
+        k = torch.cat([k, k1], dim=2)
+        v = torch.cat([v, v1], dim=2)
+        layer.update(k1, v1)
+
+    assert layer.hh_k is not None and layer.hh_v is not None and layer.hh_pos is not None
+    assert layer._hh_len() == 6, "the exact tier must be full, or this pins nothing"
+    k_mat, v_mat = layer._to_mat(k), layer._to_mat(v)
+    for j, pos in enumerate(layer.hh_pos.tolist()):
+        assert torch.equal(layer.hh_k[:, j], k_mat[:, pos]), f"hh_k column {j} (pos {pos})"
+        assert torch.equal(layer.hh_v[:, j], v_mat[:, pos]), f"hh_v column {j} (pos {pos})"
+    # ... and the tier is not just the most recent tokens (which would make the
+    # equality above trivially true of any ring buffer).
+    assert layer.hh_pos.tolist() != list(range(20, 26))
+
+
+def test_surprise_retention_keeps_top_scored_columns(tiny_model: LlamaForCausalLM) -> None:
+    # Drive the layer directly; set the stored per-column surprise by hand (the
+    # graduation snapshot's job) and check the eviction at the next absorb keeps
+    # exactly the highest-residual columns, chronological order preserved.
+    layer = _surprise_layer(tiny_model, seed=0)
     assert layer.mid_pos is not None
-    assert torch.equal(layer.mid_pos, torch.arange(2, 14))
-
-    # Hand-set scores: columns at mid_pos 4,5,6,7 lowest => they must be evicted
-    # when the next absorb pushes 4 new columns in.
-    score = torch.full((12,), 10.0)
-    score[2:6] = 0.5  # positions 4..7
-    layer.mid_score = score.clone()
-    layer.ring_score = torch.full((4,), 7.0)  # graduating tokens carry this score
-    layer._seen_observation = True
-
-    for _ in range(4):  # ring 4 -> 8 => absorb of 4
-        layer.update(*_kv(1, g))
-    assert layer._f_len() == 12
     kept = layer.mid_pos.tolist()
     assert kept == [2, 3, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]  # 4..7 gone, order kept
-    # The graduated block carried its ring scores (7.0), not zeros.
-    assert layer.mid_score is not None
-    assert torch.allclose(layer.mid_score[-4:], torch.full((4,), 7.0))
-
-
-def test_energy_retention_keeps_high_norm_columns(tiny_model: LlamaForCausalLM) -> None:
-    # Feed a prefill whose middle has two blocks of hugely different scale; on
-    # overflow the low-energy columns must be the ones dropped, regardless of age.
-    layer = BugStreamingLayer(
-        rope=_rope(tiny_model),
-        rank=8,
-        coord_budget=8,
-        recent_window=4,
-        absorb_block=4,
-        n_sink=2,
-        retention="energy",
-    )
-    g = torch.Generator().manual_seed(1)
-    k, v = _kv(22, g)
-    k[:, :, 2:10, :] *= 100.0  # OLD middle tokens (positions 2..9) are high-energy
-    layer.update(k, v)
-    # mid = 22 - 2 - 4 = 16 -> overflow 8; the 8 kept must be the loud old ones.
-    assert layer._f_len() == 8
-    assert layer.mid_pos is not None
-    assert layer.mid_pos.tolist() == list(range(2, 10))
-
-
-def test_attn_without_observations_is_bitwise_fifo(tiny_model: LlamaForCausalLM) -> None:
-    # No attach() => all scores zero => stable-sort tiebreak == FIFO. The whole
-    # teacher-forced logit trajectory must match the fifo cache bitwise (this
-    # also pins the gather-based re-rotation path against the contiguous one).
-    tiny_model.config._attn_implementation = "sdpa"
-    stream = _prompt(70, seed=9)
-    outs = []
-    for retention in ("fifo", "attn"):
-        cache = BugStreamingCache(
-            tiny_model,
-            rank=8,
-            coord_budget=16,
-            recent_window=8,
-            absorb_block=4,
-            retention=retention,
-        )
-        logits = []
-        with torch.no_grad():
-            out = tiny_model(stream[:, :30], past_key_values=cache, use_cache=True)
-            for t in range(30, 70):
-                out = tiny_model(stream[:, t : t + 1], past_key_values=cache, use_cache=True)
-                logits.append(out.logits)
-        outs.append(torch.cat(logits))
-    assert torch.equal(outs[0], outs[1])
 
 
 def test_noncontiguous_middle_rerotated_at_true_positions(
@@ -185,22 +181,7 @@ def test_noncontiguous_middle_rerotated_at_true_positions(
 ) -> None:
     # After adaptive eviction the middle is non-contiguous; every reconstructed
     # key column must equal RoPE(U c_j) evaluated at that column's TRUE position.
-    layer = BugStreamingLayer(
-        rope=_rope(tiny_model),
-        rank=8,
-        coord_budget=8,
-        recent_window=4,
-        absorb_block=4,
-        n_sink=2,
-        retention="energy",
-    )
-    g = torch.Generator().manual_seed(2)
-    k, v = _kv(22, g)
-    k[:, :, 2:6, :] *= 50.0
-    k[:, :, 10:14, :] *= 50.0  # two loud islands -> non-contiguous survivors
-    layer.update(k, v)
-    for _ in range(6):
-        layer.update(*_kv(1, g))
+    layer = _surprise_layer(tiny_model, seed=2)
     assert layer.mid_pos is not None
     pos = layer.mid_pos.tolist()
     assert pos != list(range(pos[0], pos[0] + len(pos)))  # really non-contiguous
@@ -268,17 +249,15 @@ def test_quant_roundtrip_error_bounded(tiny_model: LlamaForCausalLM) -> None:
     demote_expected: dict[str, torch.Tensor] = {}
     orig_absorb = layer._absorb_columns
 
-    def spy(
-        block_k: torch.Tensor, block_v: torch.Tensor, positions: torch.Tensor, scores: object
-    ) -> None:
-        from kvdlra.integrators.streaming_torch import augmented_bug_step
+    def spy(block_k: torch.Tensor, block_v: torch.Tensor, positions: torch.Tensor) -> None:
+        from kvdlra.tracker.isvd import augmented_bug_step
 
         assert layer.u_k is not None and layer.b_k is not None
         _, _, rot_k = augmented_bug_step(
             layer.u_k.clone(), layer.b_k.clone(), block_k, layer.rank, theta=layer.theta
         )
         demote_expected["ck"] = rot_k @ snap_ck
-        orig_absorb(block_k, block_v, positions, cast(torch.Tensor | None, scores))
+        orig_absorb(block_k, block_v, positions)
 
     layer._absorb_columns = spy  # type: ignore[method-assign]
     for _ in range(4):
@@ -334,8 +313,8 @@ def test_quant_carry_norms_exact_under_identity_rotation(
 
 def test_quant_memory_counted_honestly(tiny_model: LlamaForCausalLM) -> None:
     # stored_state_numel must equal: base fp32 tensors + ceil(codes*bits/32)
-    # + fp32 norms + (positions + scores if tracked); side info counted once at
-    # the cache level. Recomputed here independently from the tier shapes.
+    # + fp32 norms + (positions + surprise snapshots if tracked); side info
+    # counted once at the cache level. Recomputed here from the tier shapes.
     cache = BugStreamingCache(
         tiny_model,
         rank=8,
@@ -343,7 +322,7 @@ def test_quant_memory_counted_honestly(tiny_model: LlamaForCausalLM) -> None:
         recent_window=4,
         absorb_block=4,
         n_sink=2,
-        retention="attn",
+        retention="lowrank_surprise",
         quant_bits=4,
         quant_budget=8,
     )
@@ -371,40 +350,20 @@ def test_quant_memory_counted_honestly(tiny_model: LlamaForCausalLM) -> None:
             if t is not None
         )
         base += 2 * int(cast(torch.Tensor, layer.b_k).shape[0])  # cores counted diagonal (r)
-        q, f, rlen = layer._q_len(), layer._f_len(), layer._recent_len()
+        q, f = layer._q_len(), layer._f_len()
         assert q == 8 and f == 8  # both tiers full after 40 steps
         r_k = int(cast(torch.Tensor, layer.qk_codes).shape[1])
         r_v = int(cast(torch.Tensor, layer.qv_codes).shape[1])
         codes = -(-(q * (r_k + r_v) * 4) // 32)  # ceil
         norms = 2 * q
         positions = f + q
-        scores = f + q + rlen
-        total_expected += base + codes + norms + positions + scores
+        surprise = f + q
+        total_expected += base + codes + norms + positions + surprise
     bank = cache._quant_bank
     assert bank is not None
     side = bank.side_info_numel()
     assert side > 0  # Pi + codebook really counted
     assert cache.stored_state_numel() == total_expected + side
-
-
-def test_variants_report_more_memory_than_baseline_at_same_config(
-    tiny_model: LlamaForCausalLM,
-) -> None:
-    # Honesty canary: at identical (rank, coord_budget), the attn variant must
-    # report MORE stored floats than fifo (positions + scores are not free).
-    stored = {}
-    for retention in ("fifo", "attn"):
-        cache = BugStreamingCache(
-            tiny_model, rank=8, coord_budget=16, recent_window=4, retention=retention
-        )
-        ids = _prompt(40, seed=6)
-        with torch.no_grad():
-            out = tiny_model(ids, past_key_values=cache, use_cache=True)
-            for _ in range(20):
-                tok = out.logits[:, -1:].argmax(-1)
-                out = tiny_model(tok, past_key_values=cache, use_cache=True)
-        stored[retention] = cache.stored_state_numel()
-    assert stored["attn"] > stored["fifo"]
 
 
 def test_memory_constant_with_quant_and_retention(tiny_model: LlamaForCausalLM) -> None:
@@ -414,7 +373,7 @@ def test_memory_constant_with_quant_and_retention(tiny_model: LlamaForCausalLM) 
         coord_budget=16,
         recent_window=8,
         absorb_block=4,
-        retention="energy",
+        retention="lowrank_surprise",
         quant_bits=4,
         quant_budget=16,
     )
@@ -441,11 +400,10 @@ def test_memory_constant_with_quant_and_retention(tiny_model: LlamaForCausalLM) 
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"retention": "attn"},
-        {"retention": "energy"},
+        {"retention": "lowrank_surprise"},
         {"quant_bits": 4, "quant_budget": 4096},
     ],
-    ids=["attn", "energy", "quant"],
+    ids=["surprise", "quant"],
 )
 def test_exact_mode_parity_all_variants(
     tiny_model: LlamaForCausalLM, kwargs: dict[str, object]
@@ -477,12 +435,11 @@ def test_exact_mode_parity_all_variants(
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"retention": "attn"},
-        {"retention": "energy"},
+        {"retention": "lowrank_surprise"},
         {"quant_bits": 4, "quant_budget": 8},
-        {"retention": "attn", "quant_bits": 4, "quant_budget": 8},
+        {"retention": "lowrank_surprise", "quant_bits": 4, "quant_budget": 8},
     ],
-    ids=["attn", "energy", "quant", "attn+quant"],
+    ids=["surprise", "quant", "surprise+quant"],
 )
 def test_mask_sizes_consistent_all_variants(
     tiny_model: LlamaForCausalLM, kwargs: dict[str, object]
@@ -509,50 +466,18 @@ def test_mask_sizes_consistent_all_variants(
             assert kv_offset + kv_length == layer.cumulative_length
 
 
-def test_attach_hook_records_and_seeds_scores(tiny_model: LlamaForCausalLM) -> None:
-    tiny_model.config._attn_implementation = "sdpa"
-    cache = BugStreamingCache(
-        tiny_model, rank=8, coord_budget=12, recent_window=8, absorb_block=4, retention="attn"
-    )
-    ids = _prompt(40, seed=11)
-    with torch.no_grad(), cache.attach(tiny_model):
-        out = tiny_model(ids, past_key_values=cache, use_cache=True)
-        layer = cache.layers[0]
-        assert isinstance(layer, BugStreamingLayer)
-        # Pre-fill seeding happened: scores exist and are not all zero.
-        assert layer._seen_observation
-        assert layer.mid_score is not None and float(layer.mid_score.sum()) > 0
-        assert layer.ring_score is not None and float(layer.ring_score.sum()) > 0
-        seeded = layer.mid_score.clone()
-        for _ in range(12):
-            tok = out.logits[:, -1:].argmax(-1)
-            out = tiny_model(tok, past_key_values=cache, use_cache=True)
-        # Decode observations kept flowing (scores moved from the seed).
-        assert layer.mid_score is not None
-        assert not torch.equal(layer.mid_score[: min(8, seeded.shape[0])], seeded[:8])
-    # Off-cache traffic is ignored: a different cache forward must not observe.
-    other = BugStreamingCache(
-        tiny_model, rank=8, coord_budget=12, recent_window=8, absorb_block=4, retention="attn"
-    )
-    with torch.no_grad(), cache.attach(tiny_model):
-        tiny_model(ids, past_key_values=other, use_cache=True)
-    other_layer = other.layers[0]
-    assert isinstance(other_layer, BugStreamingLayer)
-    assert not other_layer._seen_observation
-
-
 # --------------------------------------------------------------------------
 # SLASH: exact heavy-hitter tier + low-rank residual (dominance program)
 # --------------------------------------------------------------------------
 
 
 def test_slash_constructor_validation(tiny_model: LlamaForCausalLM) -> None:
-    with pytest.raises(ValueError, match="requires retention='attn'"):
-        BugStreamingCache(tiny_model, rank=8, coord_budget=12, hh_budget=4)  # fifo default
+    with pytest.raises(ValueError, match="requires hh_select='surprise'"):
+        BugStreamingCache(tiny_model, rank=8, coord_budget=12, hh_budget=4)  # attn default
     with pytest.raises(ValueError, match="hh_budget must be >= 0"):
-        BugStreamingCache(tiny_model, rank=8, coord_budget=12, retention="attn", hh_budget=-1)
+        BugStreamingCache(tiny_model, rank=8, coord_budget=12, hh_budget=-1)
     with pytest.raises(ValueError, match="requires an enabled low-rank middle"):
-        BugStreamingCache(tiny_model, rank=0, coord_budget=0, retention="attn", hh_budget=4)
+        BugStreamingCache(tiny_model, rank=0, coord_budget=0, hh_budget=4, hh_select="surprise")
 
 
 def test_slash_exact_mode_parity(tiny_model: LlamaForCausalLM) -> None:
@@ -566,7 +491,8 @@ def test_slash_exact_mode_parity(tiny_model: LlamaForCausalLM) -> None:
         coord_budget=4096,
         recent_window=8,
         absorb_block=4,
-        retention="attn",
+        retention="lowrank_surprise",
+        hh_select="surprise",
         hh_budget=8,
     )
     ref = DynamicCache()
@@ -590,7 +516,8 @@ def test_slash_mask_consistency(tiny_model: LlamaForCausalLM) -> None:
         coord_budget=12,
         recent_window=8,
         absorb_block=4,
-        retention="attn",
+        retention="lowrank_surprise",
+        hh_select="surprise",
         hh_budget=6,
     )
     layer = cache.layers[0]
@@ -606,51 +533,9 @@ def test_slash_mask_consistency(tiny_model: LlamaForCausalLM) -> None:
             assert kv_offset + kv_length == layer.cumulative_length
 
 
-def test_slash_heavy_hitters_are_exact_and_highest_scored(
-    tiny_model: LlamaForCausalLM,
-) -> None:
-    # Drive the layer directly with hand-set ring scores so a known set of
-    # tokens must be promoted to the exact tier -- and verify (a) they are the
-    # top-scored, (b) their stored K/V are the VERBATIM post-RoPE tokens (exact,
-    # not a low-rank reconstruction).
-    layer = BugStreamingLayer(
-        rope=_rope(tiny_model),
-        rank=8,
-        coord_budget=12,
-        recent_window=4,
-        absorb_block=4,
-        n_sink=2,
-        retention="attn",
-        hh_budget=4,
-    )
-    g = torch.Generator().manual_seed(23)
-    layer.update(*_kv(10, g))  # prefill -> low-rank tail only (hh empty)
-    assert layer._hh_len() == 0
-    # Feed decode tokens; before each absorb set the ring scores so positions
-    # 12,13 (first two graduating) are very high -> must land in hh and stay.
-    verbatim: dict[int, torch.Tensor] = {}
-    pos = 10
-    for _ in range(12):
-        k, v = _kv(1, g)
-        verbatim[pos] = layer._to_mat(k)[:, 0].clone()  # post-RoPE key column
-        layer.update(k, v)
-        # after each step, boost the score of the two oldest ring tokens
-        if layer.ring_score is not None and layer.ring_score.shape[0] >= 2:
-            layer.ring_score[0] += 100.0
-            layer.ring_score[1] += 100.0
-        layer._seen_observation = True
-        pos += 1
-    assert layer._hh_len() == 4
-    assert layer.hh_k is not None and layer.hh_pos is not None
-    # Every hh token's stored K equals the verbatim post-RoPE key (exact tier).
-    for j, p in enumerate(layer.hh_pos.tolist()):
-        if p in verbatim:
-            assert torch.allclose(layer.hh_k[:, j], verbatim[p], atol=1e-5)
-
-
 def test_slash_memory_counted_honestly(tiny_model: LlamaForCausalLM) -> None:
-    # hh tier costs 2n floats/token (K+V verbatim) + 1 position + 1 score, all
-    # counted; total memory must be bounded and equal the independent recount.
+    # hh tier costs 2n floats/token (K+V verbatim) + 1 position, all counted;
+    # total memory must be bounded and equal the independent recount.
     cache = BugStreamingCache(
         tiny_model,
         rank=8,
@@ -658,7 +543,8 @@ def test_slash_memory_counted_honestly(tiny_model: LlamaForCausalLM) -> None:
         recent_window=8,
         absorb_block=4,
         n_sink=2,
-        retention="attn",
+        retention="lowrank_surprise",
+        hh_select="surprise",
         hh_budget=6,
     )
     ids = _prompt(30, seed=24)
@@ -687,9 +573,8 @@ def test_slash_memory_counted_honestly(tiny_model: LlamaForCausalLM) -> None:
             if t is not None
         )
         base += 2 * int(cast(torch.Tensor, layer.b_k).shape[0])  # cores counted diagonal (r)
-        # bookkeeping: mid_pos + mid_score (f_len each) + hh_pos + hh_score
-        # (hh_len each) + ring_score (recent_len).
-        book = layer._f_len() * 2 + layer._hh_len() * 2 + layer._recent_len()
+        # bookkeeping: mid_pos + mid_surprise (f_len each) + hh_pos (hh_len).
+        book = layer._f_len() * 2 + layer._hh_len()
         assert layer.stored_state_numel() == base + book
 
 
@@ -700,7 +585,8 @@ def test_slash_memory_constant(tiny_model: LlamaForCausalLM) -> None:
         coord_budget=12,
         recent_window=8,
         absorb_block=4,
-        retention="attn",
+        retention="lowrank_surprise",
+        hh_select="surprise",
         hh_budget=8,
     )
     ids = _prompt(40, seed=25)
@@ -716,123 +602,3 @@ def test_slash_memory_constant(tiny_model: LlamaForCausalLM) -> None:
     assert isinstance(layer, BugStreamingLayer)
     assert layer.cumulative_length == 240
     assert layer._hh_len() == 8
-
-
-# --------------------------------------------------------------------------
-# Hierarchical merge (dominance program): unbounded history at decaying res
-# --------------------------------------------------------------------------
-
-
-def test_merge_constructor_validation(tiny_model: LlamaForCausalLM) -> None:
-    with pytest.raises(ValueError, match="merge requires an enabled low-rank"):
-        BugStreamingCache(tiny_model, rank=0, coord_budget=0, merge=True)
-    with pytest.raises(ValueError, match="mutually exclusive"):
-        BugStreamingCache(
-            tiny_model, rank=8, coord_budget=16, merge=True, quant_bits=4, quant_budget=8
-        )
-
-
-def test_merge_exact_mode_parity(tiny_model: LlamaForCausalLM) -> None:
-    # Budget so generous nothing overflows => merge never fires => bit-for-bit
-    # the same as a full-rank lossless cache.
-    tiny_model.config._attn_implementation = "sdpa"
-    cache = BugStreamingCache(
-        tiny_model, rank=N_FEATURES, coord_budget=4096, recent_window=8, absorb_block=4, merge=True
-    )
-    ref = DynamicCache()
-    stream = _prompt(55, seed=31)
-    with torch.no_grad():
-        out_a = tiny_model(stream[:, :25], past_key_values=cache, use_cache=True)
-        out_b = tiny_model(stream[:, :25], past_key_values=ref, use_cache=True)
-        assert torch.equal(out_a.logits, out_b.logits)
-        for t in range(25, 55):
-            tok = stream[:, t : t + 1]
-            out_a = tiny_model(tok, past_key_values=cache, use_cache=True)
-            out_b = tiny_model(tok, past_key_values=ref, use_cache=True)
-            assert torch.allclose(out_a.logits, out_b.logits, atol=1e-4)
-
-
-def test_merge_mask_consistency_and_unbounded_history(tiny_model: LlamaForCausalLM) -> None:
-    tiny_model.config._attn_implementation = "sdpa"
-    cache = BugStreamingCache(
-        tiny_model, rank=8, coord_budget=16, recent_window=8, absorb_block=4, merge=True
-    )
-    layer = cache.layers[0]
-    assert isinstance(layer, BugStreamingLayer)
-    ids = _prompt(40, seed=32)
-    with torch.no_grad():
-        out = tiny_model(ids, past_key_values=cache, use_cache=True)
-        for _ in range(300):
-            kv_length, kv_offset = layer.get_mask_sizes(1)
-            tok = out.logits[:, -1:].argmax(-1)
-            out = tiny_model(tok, past_key_values=cache, use_cache=True)
-            assert kv_length == layer.attended_length()
-            assert kv_offset + kv_length == layer.cumulative_length
-    # The fp32 tier stays capped, but the tokens it *represents* far exceed it
-    # (unbounded history at decaying resolution) -- the whole point of merging.
-    assert layer._f_len() <= 16
-    assert layer.mid_weight is not None
-    assert int(layer.mid_weight.sum().item()) > 100  # >> f_len
-
-
-def test_merge_column_is_weighted_centroid(tiny_model: LlamaForCausalLM) -> None:
-    # Drive _merge_down directly on a controlled state (isolating the merge math
-    # from the absorb's basis rotation): a dyadic merge of equal-weight neighbours
-    # must produce the count-weighted centroid, sum the weights, and mean the
-    # positions -- one merge per requested column, oldest equal pair first.
-    layer = BugStreamingLayer(
-        rope=_rope(tiny_model), rank=4, coord_budget=8, recent_window=4, absorb_block=4, merge=True
-    )
-    g = torch.Generator().manual_seed(33)
-    layer.c_k = torch.randn(4, 6, generator=g)
-    layer.c_v = torch.randn(4, 6, generator=g)
-    layer.mid_weight = torch.tensor([2.0, 2.0, 1.0, 1.0, 1.0, 1.0])
-    layer.mid_pos = torch.tensor([1, 5, 8, 9, 10, 11], dtype=torch.int64)
-    ck0, w0, pos0 = layer.c_k.clone(), layer.mid_weight.clone(), layer.mid_pos.clone()
-    layer.coord_budget = 5
-    layer._merge_down(1)  # remove 1 column via one dyadic merge
-    # Oldest equal pair is cols 0,1 (both weight 2) -> fused into a weight-4 col.
-    assert layer.mid_weight.tolist() == [4.0, 1.0, 1.0, 1.0, 1.0]
-    expect0 = (ck0[:, 0] * w0[0] + ck0[:, 1] * w0[1]) / (w0[0] + w0[1])
-    assert layer.c_k is not None
-    assert torch.allclose(layer.c_k[:, 0], expect0, atol=1e-6)
-    assert torch.equal(layer.c_k[:, 1:], ck0[:, 2:])  # rest untouched
-    assert layer.mid_pos is not None
-    exp_pos = round(float((pos0[0] * w0[0] + pos0[1] * w0[1]) / (w0[0] + w0[1])))
-    assert int(layer.mid_pos[0]) == exp_pos  # weighted-mean position
-
-
-def test_merge_memory_constant_and_counted(tiny_model: LlamaForCausalLM) -> None:
-    cache = BugStreamingCache(
-        tiny_model, rank=8, coord_budget=16, recent_window=8, absorb_block=4, merge=True
-    )
-    ids = _prompt(30, seed=34)
-    mems = []
-    with torch.no_grad():
-        out = tiny_model(ids, past_key_values=cache, use_cache=True)
-        for _ in range(200):
-            tok = out.logits[:, -1:].argmax(-1)
-            out = tiny_model(tok, past_key_values=cache, use_cache=True)
-            mems.append(cache.stored_state_numel())
-    assert max(mems[80:]) <= max(mems[:80])
-    layer = cache.layers[0]
-    assert isinstance(layer, BugStreamingLayer)
-    # mid_weight (f_len floats) is counted in the honest memory.
-    assert layer.mid_weight is not None
-    base = sum(
-        int(t.numel())
-        for t in (
-            layer.c_k,
-            layer.c_v,
-            layer.u_k,
-            layer.u_v,
-            layer.sink_k,
-            layer.sink_v,
-            layer.recent_k,
-            layer.recent_v,
-        )
-        if t is not None
-    )
-    base += 2 * int(cast(torch.Tensor, layer.b_k).shape[0])  # cores counted diagonal (r)
-    book = layer._f_len() * 2  # mid_pos + mid_weight (no scores: retention=fifo)
-    assert layer.stored_state_numel() == base + book

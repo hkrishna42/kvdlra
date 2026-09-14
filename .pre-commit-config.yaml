@@ -2,8 +2,13 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
+      # results/paper-v1/ holds VERBATIM copies of the files that produced the v1
+      # tables; a hook that strips a trailing blank line breaks the byte-identity
+      # the archive exists to guarantee (docs/plan/cleanup/paper-source-map.md).
       - id: trailing-whitespace
+        exclude: ^results/paper-v1/
       - id: end-of-file-fixer
+        exclude: ^results/paper-v1/
       - id: check-yaml
       - id: check-added-large-files
         args: ["--maxkb=1024"]

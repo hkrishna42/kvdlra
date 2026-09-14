@@ -1,9 +1,7 @@
-"""TurboQuant vector quantizers (arXiv:2504.19874): PolarQuant + QJL residual."""
+"""Vector quantizers for the cache: PolarQuant (TurboQuant, arXiv:2504.19874)."""
 
 from __future__ import annotations
 
 from kvdlra.quant.polar import PolarQuant
-from kvdlra.quant.product_quant import ProductQuantizer
-from kvdlra.quant.qjl import QJL
 
-__all__ = ["QJL", "PolarQuant", "ProductQuantizer"]
+__all__ = ["PolarQuant"]

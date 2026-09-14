@@ -5,19 +5,24 @@ One directory per pod, `results/<pod>/`, holding `manifest.json` (git SHA, confi
 model, library versions, GPU, wall clock, command line), `env.txt` (the pinned set as
 `name==version`), and the records a harvest parsed out of the log: `trials.jsonl`,
 `ppl.jsonl` (aggregate perplexity), `pplw.jsonl` (the per-window NLLs behind it -- a
-different schema, hence a different file), `diag.jsonl`. `check` is the gate every citable
-number passes: it re-derives the config hash from `configs/pods/<pod>.yaml`, resolves the
-SHA, enforces the pre-registration commit order, and requires EVERY cell the config calls
-for -- arm x task x sub-task x ctx -- to hold exactly `n_trials x len(seeds)` records, plus
-one perplexity record per (arm, ctx) for every `ppl` task. A trial that raised is recorded
-with `error` and still counted, so a cell can never silently shrink; a cell with no records
-at all is the loudest failure there is, which is what makes a pod that produced nothing
-impossible to pass off as a clean run.
+different schema, hence a different file), `latency.jsonl` (measured decode cost, one row
+per arm x ctx x batch), `diag.jsonl`. `check` is the gate every citable number passes: it
+re-derives the config hash from `configs/pods/<pod>.yaml`, resolves the SHA, enforces the
+pre-registration commit order, and requires EVERY cell the config calls for -- arm x
+generator x sub-task x ctx -- to hold exactly `n_trials x len(seeds)` records, plus one
+perplexity record AND `n_samples` per-window records per (arm, ctx) for every `ppl` task,
+and one decode record per (arm, ctx, batch) for every `latency` task. A trial that raised
+is recorded with `error` and still counted, so a cell can never silently shrink; a cell
+with no records at all is the loudest failure there is, which is what makes a pod that
+produced nothing impossible to pass off as a clean run. And because recording rather than
+skipping keeps every cell full, the error COUNT is its own rule: any recorded failure
+fails the pod (ruling R29), with no tolerance knob.
 
-`run`'s eval loop lands in Task 8; here `run` writes the manifest and the environment and
-`--dry-run` stops there, which is what the tests and `make check` exercise. Archived
-paper-v1 manifests carry `converted_by` and are skipped: they are static evidence of runs
-that happened before this entrypoint existed.
+`run` writes the manifest and the environment, then hands the pod config to
+`kvdlra.eval.runner.run_pod`, which is the eval loop; `--dry-run` stops after the manifest,
+which is what the tests and `make check` exercise. Archived paper-v1 manifests carry
+`converted_by` and are skipped: they are static evidence of runs that happened before this
+entrypoint existed.
 """
 
 from __future__ import annotations
@@ -29,19 +34,21 @@ import re
 import shlex
 import subprocess
 import sys
+import tomllib
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from importlib import metadata as md
 from pathlib import Path
 from typing import Any, cast
 
 import _paths  # noqa: F401
-import tomllib
 
 from kvdlra.eval.config import PodCfg, config_hash, load_arm, load_pod, load_task
 from kvdlra.eval.records import (
     TrialRecord,
     parse_diag_lines,
+    parse_error_lines,
+    parse_latency_lines,
     parse_ppl_lines,
     parse_pplw_lines,
     parse_trial_lines,
@@ -75,7 +82,7 @@ def _head() -> str:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _dist(pkg: str) -> str:
@@ -117,8 +124,8 @@ def manifest(name: str, sha: str, command_line: str, dry_run: bool) -> dict[str,
         "git_sha": sha,
         "config_hash": config_hash(pod),
         "model": pod.model,
-        # Resolved by the run that downloads the weights (Task 8); a dry run and a
-        # laptop-side launch have no revision to record.
+        # Resolved by the run that downloads the weights; a dry run and a laptop-side
+        # launch have no revision to record.
         "model_revision": None,
         "dataset_sha256": {},
         "torch": v["torch"],
@@ -156,6 +163,7 @@ def _read_manifest(out: Path) -> dict[str, Any] | None:
 def run(name: str, out: Path, dry_run: bool) -> int:
     # The manifest first: it is what loads the pod config, so an unknown pod name raises
     # before a half-written directory exists on disk.
+    pod = load_pod(name)
     m = manifest(name, _head(), shlex.join(sys.argv), dry_run)
     out.mkdir(parents=True, exist_ok=True)
     (out / "env.txt").write_text("\n".join(env_lines()) + "\n")
@@ -164,8 +172,20 @@ def run(name: str, out: Path, dry_run: bool) -> int:
         (out / "trials.jsonl").write_text("")
         print(f"{out}: manifest.json, env.txt, empty trials.jsonl (dry run)")
         return 0
-    print(f"{out}: manifest.json + env.txt written; the eval loop lands in Task 8")
-    return 2
+
+    # Imported here, not at module scope: `--dry-run` and `check` must work on a laptop
+    # without pulling in the eval stack (and, through it, kvpress).
+    import torch
+
+    from kvdlra.eval.data import load_model
+    from kvdlra.eval.runner import run_pod
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    loaded = load_model(pod.model, device, pod.dtype)
+    m["model_revision"] = getattr(loaded[0].config, "_commit_hash", None)
+    _write_manifest(out, m)
+    run_pod(pod, out, loaded)
+    return 0
 
 
 # --- launch -------------------------------------------------------------------
@@ -370,6 +390,43 @@ def _status(text: str) -> str | None:
     return None
 
 
+def _generators_by_subtask(pod: PodCfg) -> dict[str, set[str]]:
+    """Sub-task name -> the generators that produce it in this pod (`ppl` has none)."""
+    out: dict[str, set[str]] = {}
+    for tname in pod.tasks:
+        t = load_task(tname)
+        if t.generator != "ppl":
+            for sub in t.tasks:
+                out.setdefault(sub, set()).add(t.generator)
+    return out
+
+
+def _fill_generators(name: str, trials: list[TrialRecord]) -> None:
+    """Name the generator behind every harvested row, from the pod's own task configs.
+
+    No v1 `[trial]` line carries `generator=`, and `check` keys a cell by the generator
+    -- so a harvest that left it null keyed every cell "None" and rejected a complete,
+    correct pod. A row that names its own generator (the runner prints it) is taken as
+    it stands; the configs only fill the gap.
+
+    When two of a pod's tasks own the same sub-task name -- w19_fork runs the in-house
+    and the official 16K tasks, which both call a sub-task `vt` -- a row that does not
+    name its generator is unattributable, and guessing would pool two benchmarks into
+    one cell and call the doubled count complete. So it stops.
+    """
+    gens = _generators_by_subtask(load_pod(name))
+    for r in trials:
+        if r["generator"] is not None:
+            continue
+        owners = gens.get(r["task"], set())
+        if len(owners) > 1:
+            raise SystemExit(
+                f"pod {name}: sub-task {r['task']} belongs to more than one generator;"
+                " the runner must emit generator= in the [trial] row"
+            )
+        r["generator"] = next(iter(owners), None)
+
+
 def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     model = load_pod(name).model
     out.mkdir(parents=True, exist_ok=True)
@@ -383,9 +440,11 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     # Two artifacts of one sweep, two schemas, two files -- parsed independently, never
     # one instead of the other.
     trials = parse_trial_lines(text, model, source)
+    _fill_generators(name, trials)
     pplw = parse_pplw_lines(text, model, source)
     ppl = parse_ppl_lines(text, model, source)
-    diag = parse_diag_lines(text, model, source)
+    lat = parse_latency_lines(text, model, source)
+    diag, diag_skipped = parse_diag_lines(text, model, source)
 
     tpath = out / "trials.jsonl"
     n_old = len(read_jsonl(tpath)) if tpath.is_file() else 0
@@ -404,17 +463,33 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     if ppl:
         write_jsonl(out / "ppl.jsonl", ppl)
         records["ppl.jsonl"] = len(ppl)
+    if lat:
+        write_jsonl(out / "latency.jsonl", lat)
+        records["latency.jsonl"] = len(lat)
     if diag:
         records["diag.jsonl"] = _jsonl(out / "diag.jsonl", diag)
 
     m = _read_manifest(out) or manifest(name, _head(), source, False)
     m["harvested_at"] = _now()
     m["records"] = records
-    m["errors"] = sum(1 for t in trials if t["error"] is not None)
+    # Both axes: a perplexity arm that raised has no record to carry the failure, only
+    # the `[error]` line, so counting trial rows alone called such a pod clean.
+    m["errors"] = sum(1 for t in trials if t["error"] is not None) + len(
+        parse_error_lines(text, source)
+    )
     m["wall_clock_s"] = _wall_clock_s(text) or m.get("wall_clock_s")
     m["status"] = _status(text)
+    # A `[diag]` line the fetch cut in half parses into nothing. Counted in the manifest
+    # (and failed by `check`) rather than dropped: the skip is evidence the log came back
+    # truncated, which is a harvest to redo, not a pod that printed no diagnostics.
+    m["diag_skipped"] = diag_skipped
     _write_manifest(out, m)
     print(f"{out}: " + ", ".join(f"{k}={v}" for k, v in records.items()))
+    if diag_skipped:
+        print(
+            f"harvest: {diag_skipped} [diag] line(s) skipped"
+            " (payload not JSON -- truncated by the log fetch?)"
+        )
     return 0
 
 
@@ -427,23 +502,33 @@ def _pyproject_pins() -> dict[str, str]:
     return {name: ver for name, ver in pins if name in PINNED}
 
 
-def _expected_cells(pod: PodCfg) -> dict[tuple[str, str, int], tuple[int, str]]:
-    """Every cell the config calls for: arm x task x sub-task x ctx -> (n, task name).
+def _expected_cells(pod: PodCfg) -> dict[tuple[str, str, str, int], tuple[int, str]]:
+    """Every cell the config calls for: arm x generator x sub-task x ctx -> (n, task).
 
     The arm key is the string a record carries, which is `legacy_name` where one is set
-    (the v1 arm names live on in the records) and the config name otherwise. `ppl` tasks
-    contribute no cells: a perplexity sweep is one number per (arm, ctx), not a set of
-    Bernoulli trials, and it is checked through `ppl.jsonl` rather than here.
+    (the v1 arm names live on in the records) and the config name otherwise. The
+    GENERATOR is part of the key because the in-house and official RULER generators
+    reuse the sub-task names `niah_multivalue` and `vt` at the same context length, and
+    a pod naming both (w19_fork) would otherwise pool two different benchmarks into one
+    cell and call the doubled count complete.
+
+    A cell is `n_trials x len(seeds)` records. A task's `depths` grid does NOT multiply
+    it: the generator sweeps the grid across trial indices (`depths[trial % len]`), so
+    pinning depths changes which needle each trial places, not how many trials run.
+
+    `ppl` and `latency` tasks contribute no cells: a perplexity sweep is one number per
+    (arm, ctx) and a decode measurement one row per (arm, ctx, batch), not sets of
+    Bernoulli trials -- each is checked through its own file instead of here.
     """
     arms = [load_arm(a) for a in pod.arms]
     expect = {}
     for tname in pod.tasks:
         t = load_task(tname)
-        if t.generator == "ppl":
+        if t.generator in ("ppl", "latency"):
             continue
         for sub in t.tasks:
             for arm in arms:
-                expect[(arm.legacy_name or arm.name, sub, t.ctx)] = (
+                expect[(arm.legacy_name or arm.name, t.generator, sub, t.ctx)] = (
                     t.n_trials * len(t.seeds),
                     tname,
                 )
@@ -456,18 +541,20 @@ def _cell_fails(pod: PodCfg, trials: list[TrialRecord]) -> list[str]:
     arm of three, used to pass -- so the expected set comes from the config, not from
     the records, and a cell with no rows fails like a short one."""
     expect = _expected_cells(pod)
-    counts = Counter((r["arm"], r["task"], r["ctx"]) for r in trials)
+    counts = Counter((r["arm"], str(r.get("generator")), r["task"], r["ctx"]) for r in trials)
     fails = []
     for key in sorted(expect.keys() | counts.keys()):
-        arm, task, ctx = key
+        arm, gen, task, ctx = key
         want, n = expect.get(key), counts.get(key, 0)
         if want is None:
-            fails.append(f"cells: {arm} {task} ctx={ctx} is no cell of any task in {pod.name}")
+            fails.append(
+                f"cells: {arm} {gen}/{task} ctx={ctx} is no cell of any task in {pod.name}"
+            )
         elif n == 0:
-            fails.append(f"cells: {arm} {task} ctx={ctx} has 0 of {want[0]} records")
+            fails.append(f"cells: {arm} {gen}/{task} ctx={ctx} has 0 of {want[0]} records")
         elif n != want[0]:
             fails.append(
-                f"cells: {arm} {task} ctx={ctx} has n={n}, expected {want[0]}"
+                f"cells: {arm} {gen}/{task} ctx={ctx} has n={n}, expected {want[0]}"
                 f" ({want[1]}: n_trials x seeds)"
             )
     return fails
@@ -488,6 +575,52 @@ def _ppl_fails(pod: PodCfg, d: Path) -> list[str]:
     return [f"ppl: {arm} ctx={ctx} has no perplexity record" for arm, ctx in sorted(want - got)]
 
 
+def _pplw_fails(pod: PodCfg, d: Path) -> list[str]:
+    """Every `ppl` task holds `n_samples` per-window rows per (arm, ctx) in `pplw.jsonl`.
+
+    The sweep leaves two artifacts and `_ppl_fails` only looks at the aggregate one, so a
+    run whose per-window file came back short -- a truncated fetch, a `[pplw]` group whose
+    fragments never all arrived -- still passed with the pooled number intact and nothing
+    left to re-pool it from. The count is the protocol the config pre-registers, not
+    whatever came back.
+    """
+    p = d / "pplw.jsonl"
+    got = Counter((r["arm"], r["ctx"]) for r in read_jsonl(p)) if p.is_file() else Counter()
+    tasks = [t for t in (load_task(x) for x in pod.tasks) if t.generator == "ppl"]
+    arms = [a.legacy_name or a.name for a in (load_arm(x) for x in pod.arms)]
+    return [
+        f"pplw: {arm} ctx={t.ctx} has {got[(arm, t.ctx)]} of {t.n_samples} window rows"
+        for t in tasks
+        for arm in sorted(arms)
+        if got[(arm, t.ctx)] != t.n_samples
+    ]
+
+
+def _latency_fails(pod: PodCfg, d: Path) -> list[str]:
+    """Every `latency` task holds one `LatencyRecord` per (arm, ctx, batch).
+
+    The decode axis writes one row per point and no trial at all, so without this rule a
+    pod whose 64K points OOMed -- or whose whole task never ran -- would show an empty
+    `latency.jsonl` and nothing to fail on, exactly the hole `_ppl_fails` closes for the
+    perplexity axis.
+    """
+    p = d / "latency.jsonl"
+    got = {(r["arm"], r["ctx"], r["batch"]) for r in read_jsonl(p)} if p.is_file() else set()
+    tasks = [t for t in (load_task(x) for x in pod.tasks) if t.generator == "latency"]
+    arms = [load_arm(a) for a in pod.arms]
+    want = {
+        (a.legacy_name or a.name, c, b)
+        for t in tasks
+        for c in (t.ctxs or [t.ctx])
+        for b in t.batch_sizes
+        for a in arms
+    }
+    return [
+        f"latency: {arm} ctx={ctx} batch={batch} has no decode record"
+        for arm, ctx, batch in sorted(want - got)
+    ]
+
+
 def _env_fails(d: Path) -> list[str]:
     p = d / "env.txt"
     if not p.is_file():
@@ -506,7 +639,7 @@ def _env_fails(d: Path) -> list[str]:
     return fails
 
 
-def check(d: Path) -> int:
+def check(d: Path, log: Path | None = None) -> int:
     m = _read_manifest(d)
     if m is None:
         print(f"CHECK FAIL manifest: {d / 'manifest.json'} does not exist")
@@ -535,11 +668,44 @@ def check(d: Path) -> int:
     tpath = d / "trials.jsonl"
     trials = [cast(TrialRecord, r) for r in read_jsonl(tpath)] if tpath.is_file() else []
     n_err = sum(1 for t in trials if t["error"] is not None)
-    if n_err != m.get("errors"):
-        fails.append(f"errors: manifest says {m.get('errors')}, records hold {n_err}")
+    m_err = int(m.get("errors") or 0)
+    # Ruling R29. Recording a raised trial rather than skipping it keeps the cell full,
+    # which is the point -- and which leaves the cell rule with nothing to say about a
+    # pod whose every trial failed. So the count is its own rule, with no tolerance knob.
+    if n_err:
+        fails.append(f"errors: {n_err} trial(s) raised (see the error field in trials.jsonl)")
+    # The manifest counts all three axes; a perplexity or decode point that raised leaves
+    # an `[error]` log line and no record at all, so the excess over the trial rows is the
+    # non-trial count, not a disagreement -- name it instead of reporting a mismatch.
+    # FEWER than the rows is a real one: the manifest cannot have counted what it has not
+    # seen. Since R39 the watchdog's row filter keeps `[error]` lines, so when a harvested
+    # log is on hand (`--log`), its `[error]` line count is cross-checked against
+    # `m_err - n_err`; with no log passed, there is nothing to check it against, and the
+    # cross-check is skipped.
+    if m_err > n_err:
+        fails.append(
+            f"errors: {n_err} trial error(s) + {m_err - n_err} perplexity/latency error(s)"
+        )
+        if log and log.is_file():
+            lines = log.read_text().splitlines()
+            n_log_err = sum(1 for ln in lines if ln.startswith("[error]"))
+            if n_log_err != m_err - n_err:
+                fails.append(
+                    f"errors: {log} has {n_log_err} [error] line(s), wants {m_err - n_err}"
+                )
+    elif m_err < n_err:
+        fails.append(
+            f"errors: manifest/rows mismatch -- the manifest counts {m_err},"
+            f" the trial records {n_err}"
+        )
+    n_diag_skipped = int(m.get("diag_skipped") or 0)
+    if n_diag_skipped:
+        fails.append(f"diag: {n_diag_skipped} [diag] line(s) were unparseable")
     if trials or not m.get("dry_run"):  # a dry run has no records to count
         fails += _cell_fails(pod, trials)
         fails += _ppl_fails(pod, d)
+        fails += _pplw_fails(pod, d)
+        fails += _latency_fails(pod, d)
     fails += _env_fails(d)
 
     for f in fails:
@@ -569,9 +735,10 @@ def main() -> int:
     )
     c = sub.add_parser("check", help="verify a results directory")
     c.add_argument("dir")
+    c.add_argument("--log", default=None, help="cross-check its [error] lines vs manifest.errors")
     a = ap.parse_args()
     if a.cmd == "check":
-        return check(Path(a.dir))
+        return check(Path(a.dir), Path(a.log) if a.log else None)
     name = pod_name(a.pod)
     out = Path(a.out) if getattr(a, "out", None) else REPO_ROOT / "results" / name
     if a.cmd == "run":

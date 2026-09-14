@@ -1,11 +1,11 @@
-"""Unit tests for :class:`kvdlra.press.bug_press.BUGPress`.
+"""Unit tests for :class:`kvdlra.baselines.lowrank_press.BUGPress`.
 
 These are hermetic (no model download): they exercise the math-bearing internals
 -- the per-batch reshape/reconstruct (:meth:`BUGPress._compress_tensor`), the
 sink-preserving low-rank reconstruction (:meth:`BUGPress._lowrank_reconstruct`),
 the nominal ``compression_ratio``, and config-driven ``n_features`` -- plus the
-constructor guards. End-to-end generation through the kvpress hook is validated
-separately by ``scripts/generate_with_press.py`` (it loads a real model).
+constructor guards. End-to-end generation through the kvpress hook needs a real
+model and is out of scope for the CPU suite.
 """
 
 from __future__ import annotations
@@ -17,9 +17,9 @@ import numpy as np
 import pytest
 import torch
 
-from kvdlra.press import BUGPress
+from kvdlra.baselines.lowrank_press import BUGPress
 
-# Llama-3.2-1B shape constants (docs/notes/conventions.md).
+# Llama-3.2-1B shape constants (rows = features, columns = tokens).
 H, D = 8, 64
 N_FEATURES = H * D  # 512
 
@@ -38,16 +38,15 @@ def test_shape_preserved() -> None:
     assert out.dtype == x.dtype
 
 
-@pytest.mark.parametrize(("backend", "atol"), [("numpy", 1e-9), ("torch", 1e-4)])
-def test_full_rank_recovers_input(backend: str, atol: float) -> None:
+def test_full_rank_recovers_input() -> None:
     # rank_cap >= number of reconstructed columns => the tracked subspace spans
     # all payload columns => the projection is the identity (exact recovery).
-    # (torch backend computes in fp32, hence the looser tolerance.)
+    # (the tracker core computes in fp32, hence the looser tolerance.)
     t = 40
-    press = BUGPress(rank=t, n_sink=4, backend=backend)  # rank >= t - n_sink
+    press = BUGPress(rank=t, n_sink=4)  # rank >= t - n_sink
     x = _random_kv(bsz=1, t=t, seed=1)
     out = press._compress_tensor(x)
-    assert torch.allclose(out, x, atol=atol)
+    assert torch.allclose(out, x, atol=1e-4)
 
 
 def test_sinks_preserved_exactly_at_low_rank() -> None:
@@ -112,10 +111,9 @@ def test_hybrid_quantizes_kept_tokens_when_quant_bits_set() -> None:
     assert rel < 0.35  # 4-bit PolarQuant keeps the kept tokens close
 
 
-@pytest.mark.parametrize(("backend", "atol"), [("numpy", 1e-8), ("torch", 1e-4)])
-def test_exact_rank_r_input_reconstructed_exactly(backend: str, atol: float) -> None:
+def test_exact_rank_r_input_reconstructed_exactly() -> None:
     # An exactly rank-r feature-by-token matrix must be reconstructed exactly by
-    # a rank-r tracker (mirrors tests/test_streaming.py).
+    # a rank-r tracker (mirrors tests/test_isvd.py).
     r, t = 5, 50
     rng = np.random.default_rng(3)
     left = rng.standard_normal((N_FEATURES, r))
@@ -123,9 +121,9 @@ def test_exact_rank_r_input_reconstructed_exactly(backend: str, atol: float) -> 
     mat = left @ right  # exactly rank r, shape (512, T)
     # Reshape into (1, H, T, D) using the inverse of the press's own reshape.
     x = torch.from_numpy(mat).reshape(H, D, t).permute(0, 2, 1).unsqueeze(0)
-    press = BUGPress(rank=r, n_sink=0, backend=backend)
+    press = BUGPress(rank=r, n_sink=0)
     out = press._compress_tensor(x)
-    assert torch.allclose(out, x, atol=atol)
+    assert torch.allclose(out, x, atol=1e-4)
 
 
 def test_low_rank_is_lossy_on_full_rank_input() -> None:
@@ -196,9 +194,7 @@ def test_quant_more_bits_less_error() -> None:
     assert errs[0] > errs[1] > errs[2]
 
 
-def test_quant_requires_torch_backend() -> None:
-    with pytest.raises(ValueError, match="quant_bits requires backend='torch'"):
-        BUGPress(rank=16, quant_bits=4, backend="numpy")
+def test_quant_bits_guard() -> None:
     with pytest.raises(ValueError, match="quant_bits must be"):
         BUGPress(rank=16, quant_bits=0)
 

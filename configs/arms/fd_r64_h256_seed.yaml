@@ -17,7 +17,6 @@ cache:
   hh_neighbor: 1
   hh_retain: true
   seed_hh_warmup: true
-  w_key: null
   score_rank: null
   min_sv_frac: 0.0
   tracker: "fd"

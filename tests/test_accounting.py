@@ -1,10 +1,9 @@
 """Cross-method memory accounting -- the anti-drift pin.
 
-The load-bearing invariant (``docs/week10-plan.md``): the *formula* path in
-``kvdlra.accounting`` (used to count SnapKV / ShadowKV, which have no
-``stored_state_numel``) must reproduce the *measured* ``stored_state_numel`` of the
-streaming caches byte-for-byte, so BUG / MorphKV / SnapKV / ShadowKV all land on
-one honest float-equivalent axis. If a new cache tier is added to
+The load-bearing invariant: the *formula* path in ``kvdlra.accounting`` (used to
+count SnapKV / ShadowKV, which have no ``stored_state_numel``) must reproduce the
+*measured* ``stored_state_numel`` of the streaming caches byte-for-byte, so BUG /
+SnapKV / ShadowKV all land on one float-equivalent axis. If a new cache tier is added to
 ``stored_state_numel`` but not here, these tests fail loudly.
 
 Hermetic: a tiny random-weight Llama (2 layers, 2 KV heads x head_dim 16 =>
@@ -18,9 +17,8 @@ import torch
 from transformers import LlamaConfig, LlamaForCausalLM
 
 from kvdlra import accounting as acc
-from kvdlra.cache import BugStreamingCache, MorphKVCache
+from kvdlra.cache import BugStreamingCache
 from kvdlra.cache.bug_cache import BugStreamingLayer
-from kvdlra.cache.morph_cache import MorphKVLayer
 
 H, D = 2, 16
 N_FEATURES = H * D
@@ -75,8 +73,7 @@ def _bug_layer(cache: BugStreamingCache) -> BugStreamingLayer:
     "rank,retention,hh_budget,hh_select,hh_retain",
     [
         (8, "fifo", 0, "attn", True),
-        (8, "attn", 0, "attn", True),
-        (8, "attn", 6, "attn", True),
+        (8, "lowrank_surprise", 0, "attn", True),
         # Week-11 SurpriseSLASH: surprise-selected exact tier (no hh_score) on a
         # lowrank_surprise tail -- the tier the retrieval arms deploy.
         (8, "lowrank_surprise", 6, "surprise", True),
@@ -122,7 +119,6 @@ def test_bug_footprint_matches_stored_state_numel(
         n_sink=4,
         retention=retention,
         hh_count=layer._hh_len(),
-        hh_select=hh_select,
         u_present=layer.u_k is not None,
     )
     assert fp.float_equiv() == layer.stored_state_numel()
@@ -131,8 +127,8 @@ def test_bug_footprint_matches_stored_state_numel(
 def test_balanced_config_ratio_pin() -> None:
     """The Week-11 'balanced' operating point bugS-r128-h1024 at 32K on 8B
     (n=1024) computes to ~0.15x by the accounting formula -- the memory-cost
-    claim attached to the config in docs/week11*. Arm-style counts as built by
-    ``w10_frontier.build_arms`` (coord tier = everything not verbatim)."""
+    claim Week 11 attached to that config. Arm-style counts as built by
+    ``frontier.build_arms`` (coord tier = everything not verbatim)."""
     n, t, rank, hh = 1024, 32768, 128, 1024
     rw, sink = 32, 4
     coord = t - hh - rw - sink
@@ -144,7 +140,6 @@ def test_balanced_config_ratio_pin() -> None:
         n_sink=sink,
         retention="lowrank_surprise",
         hh_count=hh,
-        hh_select="surprise",
     )
     ratio = fp.ratio_fp16(t, n)
     assert 0.12 < ratio < 0.20  # "~0.15x": rank is the ppl lever, paid in memory
@@ -165,35 +160,32 @@ def test_r192_h1024_ratio_pin() -> None:
         n_sink=sink,
         retention="lowrank_surprise",
         hh_count=hh,
-        hh_select="surprise",
     )
     ratio = fp.ratio_fp16(t, n)
     assert 0.19 < ratio < 0.25  # computed 0.2216 at authoring time
 
 
-def test_bug_footprint_saturated_matches_bug_budget_floats() -> None:
-    """The high-water helper reproduces ``w5_streamppl.bug_budget_floats`` (fifo)."""
-    from w5_streamppl import bug_budget_floats  # scripts on sys.path via conftest/_paths
+def _bug_budget_floats(
+    n: int, rank: int, coord_budget: int, recent_window: int, absorb_block: int
+) -> int:
+    """The Week-5/6 pods' closed form for worst-case stored floats per layer: sinks +
+    recent ring at its high-water mark + (U, B, C) for keys AND values, with a diagonal
+    core (``r`` per stream, not ``r^2``). Transcribed from the script that solved the
+    matched-memory budgets (``scripts/w5_streamppl.py`` @ ``paper-v1-archive``); it is
+    the number every Week-5/6 arm was fitted to, so ``bug_footprint_saturated`` must
+    keep reproducing it exactly."""
+    ring = recent_window + absorb_block - 1
+    return 2 * n * 4 + 2 * n * ring + 2 * n * rank + 2 * rank * coord_budget + 2 * rank
 
+
+def test_bug_footprint_saturated_matches_bug_budget_floats() -> None:
+    """The high-water helper reproduces the pods' budget formula (fifo)."""
     for rank in (8, 16, 32):
         for w in (24, 100):
             fp = acc.bug_footprint_saturated(
                 N_FEATURES, rank=rank, coord_budget=w, recent_window=8, absorb_block=4
             )
-            assert fp.float_equiv() == bug_budget_floats(N_FEATURES, rank, w, 8, 4)
-
-
-# ---------------------------------------------------- MorphKV anti-drift pin
-
-
-def test_morph_footprint_matches_stored_state_numel(tiny_model: LlamaForCausalLM) -> None:
-    cache = MorphKVCache(tiny_model, capacity=32, recent_window=8)
-    _drive(tiny_model, cache)
-    layer = next(la for la in cache.layers if isinstance(la, MorphKVLayer))
-    assert layer.keys is not None
-    kept_len = int(layer.keys.shape[2])
-    fp = acc.morph_footprint(N_FEATURES, H, kept_len, recent_window=8)
-    assert fp.float_equiv() == layer.stored_state_numel()
+            assert fp.float_equiv() == _bug_budget_floats(N_FEATURES, rank, w, 8, 4)
 
 
 # ---------------------------------------------------- eviction / continuity
@@ -205,15 +197,27 @@ def test_evict_pure_fp16_ratio_is_keep_frac() -> None:
         assert fp.ratio_fp16(4096, 512) == pytest.approx(keep)
 
 
-def test_bug_prefill_ratio_matches_kv_memory_ratio() -> None:
-    """Continuity: the prefill helper reproduces ``kv_memory_ratio`` (fp case) to
-    the digit -- so the Phase-7 delegator refactor cannot shift Week-4 numbers."""
-    from w4_hybrid_sweep import kv_memory_ratio
+def _kv_memory_ratio(t: int, n_features: int, rank: int, n_sink: int = 4) -> float:
+    """Stored compressed-cache bits / full fp16-cache bits for one layer's K (or V),
+    fp coordinates. Transcribed from the Week-4 sweep script
+    (``scripts/w4_hybrid_sweep.py`` @ ``paper-v1-archive``) that produced the Week-4
+    memory ratios, so those numbers stay reproducible from ``accounting`` alone."""
+    fp16 = 16
+    t_pay = t - n_sink
+    full = t * n_features * fp16
+    u_bits = n_features * rank * fp16  # basis U (fp16), fixed cost
+    coord_bits = rank * t_pay * fp16
+    sink_bits = n_sink * n_features * fp16  # sinks kept exact
+    return (u_bits + coord_bits + sink_bits) / full
 
+
+def test_bug_prefill_ratio_matches_kv_memory_ratio() -> None:
+    """Continuity: the prefill helper reproduces the Week-4 ratio (fp case) to the
+    digit -- so the Phase-7 delegator refactor cannot shift Week-4 numbers."""
     for t in (1024, 4096):
         for rank in (32, 64, 128):
             fp = acc.bug_prefill_footprint(t, 512, rank)
-            assert fp.ratio_fp16(t, 512) == pytest.approx(kv_memory_ratio(t, 512, rank, None))
+            assert fp.ratio_fp16(t, 512) == pytest.approx(_kv_memory_ratio(t, 512, rank))
 
 
 # ---------------------------------------------------- ShadowKV honest split
@@ -249,7 +253,7 @@ def test_palu_ratio_tracks_rank_ratio() -> None:
 
 
 def test_palu_footprint_counts_sinks() -> None:
-    """Week-15: ``PaluPress`` keeps the ``n_sink`` leading columns exact, so the
+    """Week-15: ``SVDOraclePress`` keeps the ``n_sink`` leading columns exact, so the
     footprint counts them verbatim (``2*n*n_sink``, K+V at full feature width)
     and pays the per-token latent only over ``t - n_sink`` columns -- the exact
     sinks are stored, never free (the one-unit ethos)."""
@@ -315,7 +319,6 @@ def test_bug_ratio_stored_bits_exceeds_fp16_honest_band() -> None:
             n_sink=sink,
             retention="lowrank_surprise",
             hh_count=hh,
-            hh_select="surprise",
         )
         assert fp.ratio_fp16(t, n) == pytest.approx(fp16_exp, abs=2e-3)
         assert fp.ratio_stored_bits(t, n) == pytest.approx(stored_exp, abs=2e-3)

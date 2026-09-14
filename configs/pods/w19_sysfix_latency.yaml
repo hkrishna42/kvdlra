@@ -1,0 +1,18 @@
+name: w19_sysfix_latency
+model: "unsloth/Meta-Llama-3.1-8B-Instruct"
+dtype: bfloat16
+doc: >-
+  The re-run contract for the decode measurement the paper reports: Llama-3.1-8B on an
+  A100-40GB, batch 1, one token per forward at true positions after a chunked prefill,
+  CUDA-synchronized per step, p50 over the steady state (56 timed steps after 8 warm-up
+  steps). Three arms: the uncompressed cache, the r64 configuration, and 2-bit KIVI. The rows
+  it reproduces are archived as the `[latency ctx...]` lines in
+  results/paper-v1/w19-sysfix-llama/raw/w19-sysfix-llama-lines.txt, which the Week-20 sysfix
+  pod wrote; this config is what regenerates them. Needs a 40GB card for the 64K point. v1 had
+  no pre-registration: `prereg: null` records that, and it is the one field a re-run of this
+  pod must fill before launch (scripts/pod.py check enforces the commit order from L0 on).
+prereg: null
+arms: ["full", "isvd_r64_h256_seed", "kivi2_streaming"]
+tasks: ["latency_16k_32k_64k"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+gpu_budget_h: 0.0

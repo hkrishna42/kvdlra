@@ -5,16 +5,15 @@ when ``seed_hh_warmup=True`` the first chunk's middle is SLASH-routed through
 ``_absorb_block_slash`` in sub-blocks (scored against a strictly-older, needle-free
 basis), so an early-planted outlier enters ``hh_k``/``hh_v``/``hh_pos`` instead of
 being bypassed into the low-rank tail (the ~4-5K warm-up window). It ships
-**default-off** and is guarded against the coded/quant/merge tiers.
+**default-off**.
 
 ``tests/test_bug_cache_week11.py`` already pins the *mechanism* (capture at rank 4/8,
 disjointness, span, losslessness). This file is the **regression contract** for
 turning the knob on: a self-contained on/off proof-of-life, the bit-for-bit identity
-of the off path, the full coded/quant/merge guard, honest non-interference with the
-other arm families, and the accounting neutrality (identical ``stored_state_numel``).
+of the off path, non-interference with the other arm families, and the
+accounting neutrality (identical ``stored_state_numel``).
 
-Hermetic tiny Llama, mirroring ``tests/test_bug_cache_qbug.py`` /
-``tests/test_accounting.py``.
+Hermetic tiny Llama, mirroring ``tests/test_accounting.py``.
 """
 
 from __future__ import annotations
@@ -28,7 +27,6 @@ from transformers import LlamaConfig, LlamaForCausalLM
 from kvdlra import accounting as acc
 from kvdlra.cache import BugStreamingCache
 from kvdlra.cache.bug_cache import BugStreamingLayer
-from kvdlra.quant import ProductQuantizer
 
 H, D = 2, 16
 N_FEATURES = H * D
@@ -48,10 +46,8 @@ _STORED = (
     "hh_k",
     "hh_v",
     "hh_pos",
-    "hh_score",
     "mid_pos",
     "mid_surprise",
-    "ring_score",
 )
 
 
@@ -184,45 +180,7 @@ def test_seed_off_is_bit_identical_to_baseline(tiny_model: LlamaForCausalLM) -> 
     assert torch.equal(cast(torch.Tensor, ob.logits), cast(torch.Tensor, oo.logits))
 
 
-# ------------------------------------------- 3. guard: coded / quant / merge
-
-
-@pytest.mark.parametrize(
-    "extra",
-    [
-        {
-            "coord_codebook": ProductQuantizer(dim=4, bits=4, subspaces=2, seed=1),
-            "anchor_rank": 4,
-            "code_budget": 8,
-        },
-        {"merge": True},
-    ],
-    ids=["coord_codebook", "merge"],
-)
-def test_seed_rejects_coded_quant_merge(
-    tiny_model: LlamaForCausalLM, extra: dict[str, object]
-) -> None:
-    """The seed reasons over the fp32 low-rank tail only, so it is rejected (documented
-    message) with a coded second tier or a merged (non-unique-position) tail -- the
-    combinations that could double-count or mis-evict a promoted column. Week-19: the
-    PolarQuant tier is allowed (same graduation path as the unseeded q arm)."""
-    with pytest.raises(ValueError, match="fp32 low-rank tail only"):
-        BugStreamingCache(
-            tiny_model,
-            rank=4,
-            coord_budget=64,
-            recent_window=8,
-            absorb_block=4,
-            n_sink=4,
-            retention="lowrank_surprise",
-            hh_budget=2,
-            hh_select="surprise",
-            seed_hh_warmup=True,
-            **extra,  # type: ignore[arg-type]
-        )
-
-
-# ------------------------------------------- 4. non-interference (honest)
+# ------------------------------------------- 3. non-interference
 
 
 def test_seed_is_noop_on_non_hh_arm(tiny_model: LlamaForCausalLM) -> None:
@@ -314,7 +272,6 @@ def test_seed_footprint_identical_on_off(tiny_model: LlamaForCausalLM) -> None:
         n_sink=4,
         retention="lowrank_surprise",
         hh_count=lon._hh_len(),
-        hh_select="surprise",
         u_present=lon.u_k is not None,
     )
     assert fp.float_equiv() == lon.stored_state_numel()

@@ -2,21 +2,21 @@
 
 `quant-2bit`/`quant-4bit` wrap transformers' QuantizedCache (quanto backend). The arm
 supplies its OWN cache object (a QuantizedCache is NOT a DynamicCache subclass), so it
-needs a dedicated branch in build_arms, _footprint (else it trips the DynamicCache
+needs a dedicated branch in build_arm, _footprint (else it trips the DynamicCache
 assert), and retrieve. These hermetic tiny-Llama tests exercise all three on CPU.
 """
 
 from __future__ import annotations
 
-import argparse
 from typing import Any, cast
 
 import torch
 from transformers import LlamaConfig, LlamaForCausalLM
-from w10_frontier import _footprint, build_arms
-from w10_ruler import retrieve
 
-from kvdlra.press.compat import install_kvpress_prefill_compat
+from kvdlra.baselines.compat import install_kvpress_prefill_compat
+from kvdlra.eval.config import ArmCfg
+from kvdlra.eval.frontier import _footprint, build_arm
+from kvdlra.eval.ruler import retrieve
 
 H, D = 2, 16  # KV heads x head_dim -> n_features 32
 
@@ -44,35 +44,30 @@ def _model() -> LlamaForCausalLM:
     return m
 
 
-def _args() -> argparse.Namespace:
-    return argparse.Namespace(
-        methods=["quant"],
-        quant_nbits=[2, 4],
-        quant_group=64,
-        quant_residual=128,
-        ranks=[64],
-        hh_budgets=[256],
-        chunk=0,
-        recent_window=32,
-        absorb_block=16,
-        morph_keeps=[0.1],
-        evict_keeps=[0.1],
-        think_ratios=[0.5],
-        palu_ranks=[0.5],
-        palu_group=1,
-        shadow_ranks=[64],
-        shadow_topk=256,
-        hh_neighbor=0,
-        hh_discard=False,
-        qwhiten_file=None,
-        warmup_seed=False,
-        score_rank=None,
-        min_sv_frac=0.0,
-    )
+def _quant_arms(model: Any, t: int = 200) -> list[dict[str, Any]]:
+    """The 2- and 4-bit arms at the transformers-default (per-token) axes."""
+    return [
+        build_arm(
+            ArmCfg(
+                name=f"quant-{b}bit",
+                kind="quant",
+                quant={
+                    "nbits": b,
+                    "scheme": "token",
+                    "backend": "quanto",
+                    "group": 64,
+                    "residual": 128,
+                },
+            ),
+            model,
+            t,
+        )
+        for b in (2, 4)
+    ]
 
 
-def test_build_arms_creates_quant_arms() -> None:
-    arms = build_arms(_args(), _model(), 200)
+def test_build_arm_creates_quant_arms() -> None:
+    arms = _quant_arms(_model())
     names = [a["name"] for a in arms]
     assert names == ["quant-2bit", "quant-4bit"]
     assert all(a["kind"] == "quant" and a["chunkable"] is True for a in arms)  # Week-19: chunked
@@ -86,7 +81,7 @@ def test_quant_arm_runs_through_retrieve_and_footprint() -> None:
     n = H * D
     hay = torch.randint(0, 256, (1, 200))
     query = torch.randint(0, 256, (1, 8))
-    for arm in build_arms(_args(), model, 200):
+    for arm in _quant_arms(model):
         hit, ratio, _frac, sratio = retrieve(
             model, _StubTok(), arm, hay, query, ["1"], "cpu", 0, n, H, 4
         )
@@ -109,7 +104,7 @@ def test_quant_footprint_dispatch_matches_accounting() -> None:
         "name": "quant-2bit",
     }
     # Week-19: the aux (scale+zero) precision is read off the real cache after prefill.
-    cache = build_arms(_args(), _model(), 200)[0]["make"]()
+    cache = _quant_arms(_model())[0]["make"]()
     cast(Any, cache.layers[0]).update(torch.randn(1, H, 200, D), torch.randn(1, H, 200, D))
     fp = _footprint(arm, cast(Any, cache), 16384, 1024, H)
     assert fp.ratio_fp16(16384, 1024) == acc.quant_footprint(
@@ -120,52 +115,51 @@ def test_quant_footprint_dispatch_matches_accounting() -> None:
 # ---------------------------------------------- Week-18 W2: BUG x quant compose
 
 
-def _bug_args(**kw: Any) -> argparse.Namespace:
-    d: dict[str, Any] = {
-        "methods": ["bugslash"],
-        "ranks": [16],
-        "hh_budgets": [16],
-        "chunk": 40,
-        "recent_window": 16,
-        "absorb_block": 8,
-        "morph_keeps": [0.1],
-        "evict_keeps": [0.1],
-        "think_ratios": [0.5],
-        "palu_ranks": [0.5],
-        "palu_group": 1,
-        "shadow_ranks": [64],
-        "shadow_topk": 256,
-        "hh_neighbor": 0,
-        "hh_discard": False,
-        "qwhiten_file": None,
-        "warmup_seed": False,
-        "score_rank": None,
-        "min_sv_frac": 0.0,
-        "bug_quant_bits": None,
-        "bug_quant_budget": 0,
-    }
-    d.update(kw)
-    return argparse.Namespace(**d)
+def _compose_arm(model: Any, name: str, *, seed: bool, t: int = 160) -> dict[str, Any]:
+    """The composed arm: 32 fp32 coordinate columns kept, everything demoted from them
+    coded at 4 bits (quant_budget=null resolves to the whole context, so nothing is
+    dropped) -- the configs/arms/isvd_r64_h256_seed_q4 shape at tiny scale."""
+    return build_arm(
+        ArmCfg(
+            name=name,
+            kind="bug",
+            cache={
+                "rank": 16,
+                "coord_budget": 32,
+                "recent_window": 16,
+                "absorb_block": 8,
+                "n_sink": 4,
+                "retention": "lowrank_surprise",
+                "hh_budget": 16,
+                "hh_select": "surprise",
+                "hh_neighbor": 0,
+                "seed_hh_warmup": seed,
+                "quant_bits": 4,
+                "quant_budget": None,
+            },
+        ),
+        model,
+        t,
+    )
 
 
-def test_bug_quant_compose_arm_builds_with_q_suffix() -> None:
-    """--bug-quant-bits produces a bugS-...-q{bits} compose arm (no seed)."""
-    arms = build_arms(_bug_args(bug_quant_bits=4, bug_quant_budget=32), _model(), 160)
-    assert arms[0]["name"] == "bugS-r16-h16-q4"
-    assert arms[0]["kind"] == "bug"
+def test_bug_quant_compose_arm_builds() -> None:
+    """A coordinate tier composed with 4-bit coding is a cache arm like any other."""
+    arm = _compose_arm(_model(), "bugS-r16-h16-q4", seed=False)
+    assert arm["name"] == "bugS-r16-h16-q4" and arm["kind"] == "bug"
+    assert arm["kwargs"]["quant_bits"] == 4 and arm["kwargs"]["coord_budget"] == 32
 
 
 def test_seed_plus_quant_builds_and_seeds_the_exact_tier() -> None:
-    """Week-19: the seeded compose arm (bugSseed-...-q4, the sub-cliff candidate). The
+    """Week-19: the seeded compose arm (the sub-cliff candidate). The
     warm-up seed only routes the first chunk's sub-blocks through _absorb_block_slash --
     the same graduation path the unseeded q4 arm runs with its quant tier every step --
     so the combination is wired: it builds, its first-chunk ingest populates the exact
     tier (the seed effect), and the demoted columns reach the quant tier (billed)."""
-    from w10_frontier import _prefill_chunked
+    from kvdlra.eval.frontier import _prefill_chunked
 
     model = _model()
-    args = _bug_args(bug_quant_bits=4, bug_quant_budget=32, warmup_seed=True)
-    arm = build_arms(args, model, 160)[0]
+    arm = _compose_arm(model, "bugSseed-r16-h16-q4", seed=True)
     assert arm["name"] == "bugSseed-r16-h16-q4"
     cache = arm["make"]()
     hay = torch.randint(0, 256, (1, 160))
@@ -176,14 +170,3 @@ def test_seed_plus_quant_builds_and_seeds_the_exact_tier() -> None:
     assert layer._q_len() > 0  # demoted coordinates landed in the 4-bit tier
     fp = _footprint(arm, cache, 160, H * D, H)
     assert 0.0 < fp.ratio_stored_bits(160, H * D) < 1.0
-
-
-def test_plot_survives_empty_results() -> None:
-    """A RULER run where every arm SKIPs (e.g. quant on a -runtime pod with no CUDA
-    kernel) yields empty results; _plot must skip cleanly, not crash plt.subplots on a
-    0-row grid (the non-fatal Traceback seen on the Week-18 G1 runtime pods)."""
-    from pathlib import Path
-
-    import w10_ruler
-
-    w10_ruler._plot({"results": [], "tasks": ["niah_single"], "model": "m"}, Path("/tmp/w18_empty"))

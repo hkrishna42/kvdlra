@@ -78,20 +78,32 @@ KNOWN_DIVERGENCES = {
 
 
 def _drift(name: str) -> list[str]:
-    """Every (arm, sub-task, ctx) where the archive disagrees with the config."""
+    """Every (arm, sub-task, ctx) where the archive disagrees with the config.
+
+    `_expected_cells` keys by (arm, GENERATOR, sub-task, ctx) -- the generator has to be
+    part of a live cell's identity, because the in-house and official RULER generators
+    reuse `niah_multivalue` and `vt` at 16K. Archived rows carry `generator = null`: the
+    v1 emitters never printed it and Task 1 does not invent it, so here the expected
+    keys are projected back onto (arm, sub-task, ctx), SUMMING the two generators where
+    they collide. That is exactly what the archive did -- it pooled them -- and the
+    pooling is what w19_fork's allowlist entry says.
+    """
     d = ARCHIVE / ARCHIVE_DIR[name]
     assert d.is_dir(), f"{name}: no archive directory {d}"
     trials = d / "trials.jsonl"
     rows = [json.loads(x) for x in trials.read_text().splitlines() if x.strip()]
+    assert all(r.get("generator") is None for r in rows), f"{name}: archive is not v1"
     counts = Counter((r["arm"], r["task"], r["ctx"]) for r in rows)
-    expect = pod._expected_cells(load_pod(name))
+    expect: Counter[tuple[str, str, int]] = Counter()
+    for (arm, _gen, sub, ctx), (n, _task) in pod._expected_cells(load_pod(name)).items():
+        expect[(arm, sub, ctx)] += n
     out = []
     for key in sorted(expect.keys() | counts.keys()):
         want, got = expect.get(key), counts.get(key, 0)
         if want is None:
             out.append(f"{key}: {got} archived rows are no cell of this config")
-        elif got != want[0]:
-            out.append(f"{key}: {got} archived rows, config calls for {want[0]}")
+        elif got != want:
+            out.append(f"{key}: {got} archived rows, config calls for {want}")
     return out
 
 

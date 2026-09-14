@@ -48,5 +48,25 @@ jobs:
       - name: Mypy (strict)
         run: uv run mypy src tests scripts
 
+      # Through `make`, not bare pytest: the Makefile puts the venv's bin/ on PATH,
+      # and torch's C++ extension loader shells out to the `ninja` EXECUTABLE -- the
+      # quant tests fail to JIT without it. `uv run` resolves the same venv.
       - name: Pytest
-        run: uv run pytest -q
+        run: make test PY="uv run python"
+
+      # The two generated artifacts are part of the gate: `make tables` rebuilds every
+      # paper table from results/paper-v1 and diffs it against docs/plan/paper-v1-tables.md
+      # (a number that no longer regenerates fails here), and `make figures` proves the
+      # figure scripts still run against the archive.
+      - name: Tables (regenerate + diff vs paper-v1)
+        run: make tables PY="uv run python"
+
+      - name: Figures
+        run: make figures PY="uv run python"
+
+      # Every committed manifest through the gate a citable number has to pass. Today
+      # that is the paper-v1 archive (recognised and skipped) plus whatever a lane
+      # commits next -- so the rule is exercised in CI from the first real pod, not
+      # first discovered to be broken by the pod that needs it.
+      - name: Check (every committed manifest)
+        run: make check PY="uv run python"

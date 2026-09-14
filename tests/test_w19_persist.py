@@ -1,18 +1,20 @@
 """Week-19 A3: the realized systems win -- serialize -> reload -> H2D -> attend-ready
-wall-clock for full KV vs the flagship vs the fair-quant baseline (``w19_persist``).
+wall-clock for full KV vs the r64 arm vs the fair-quant baseline (``persist``).
 
 Hermetic (tiny Llama, CPU): H2D is a no-op on CPU and reported as such; the CUDA
 numbers come from the pod (MODE a3)."""
 
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
+from typing import Any
 
 import torch
-import w19_persist as persist
 from transformers import LlamaConfig, LlamaForCausalLM
-from w10_frontier import build_parser
+
+from kvdlra.eval import persist
+from kvdlra.eval.config import ArmCfg
+from kvdlra.eval.frontier import build_arm
 
 H, D = 2, 32  # head_dim 32 keeps B*H*T*D divisible by 64 for the per-token quant axis
 
@@ -35,35 +37,42 @@ def _model() -> LlamaForCausalLM:
     return m
 
 
-def _args(methods: list[str], chunk: int) -> argparse.Namespace:
-    ns = build_parser().parse_args(
-        [
-            "--ranks",
-            "16",
-            "--hh-budgets",
-            "16",
-            "--hh-neighbor",
-            "1",
-            "--warmup-seed",
-            "--quant-nbits",
-            "4",
-            "--quant-scheme",
-            "kivi",
-        ]
-    )
-    ns.methods = methods
-    ns.chunk = chunk
-    ns.recent_window = 16
-    ns.absorb_block = 8
-    return ns
+CFG = {
+    "full": ArmCfg(name="full", kind="full"),
+    "bug": ArmCfg(
+        name="bugSseed-r16-h16",
+        kind="bug",
+        cache={
+            "rank": 16,
+            "coord_budget": None,
+            "recent_window": 16,
+            "absorb_block": 8,
+            "n_sink": 4,
+            "retention": "lowrank_surprise",
+            "hh_budget": 16,
+            "hh_select": "surprise",
+            "hh_neighbor": 1,
+            "seed_hh_warmup": True,
+        },
+    ),
+    "quant": ArmCfg(
+        name="quant-4bit-kivi",
+        kind="quant",
+        quant={"nbits": 4, "scheme": "kivi", "backend": "quanto", "group": 64, "residual": 128},
+    ),
+}
+
+
+def _arms(model: Any, kinds: list[str], ctx: int) -> list[dict[str, Any]]:
+    return [build_arm(CFG[k], model, ctx) for k in kinds]
 
 
 def test_persist_rows_bytes_and_ratios(tmp_path: Path, capsys: object) -> None:
     """One row per arm with a measured on-disk size, its ratio to full KV, and the four
-    stage timings; the flagship and the 4-bit baseline persist far fewer bytes than full."""
+    stage timings; the r16 arm and the 4-bit baseline persist far fewer bytes than full."""
     model = _model()
     rows = persist.run_persist(
-        model, _args(["full", "bugslash", "quant"], chunk=40), ctx=200, device="cpu", tmp=tmp_path
+        model, _arms(model, ["full", "bug", "quant"], 200), 200, "cpu", tmp_path, chunk=40
     )
     by = {r["method"]: r for r in rows}
     assert set(by) == {"full", "bugSseed-r16-h16", "quant-4bit-kivi"}
@@ -82,19 +91,19 @@ def test_persist_rows_bytes_and_ratios(tmp_path: Path, capsys: object) -> None:
     assert len(lines) == 3 and all("bytes=" in ln and "cold=" in ln for ln in lines)
     # The stored ratio falls with T (gist O(rn+hn) + a rank-r coordinate slope < full's).
     rows400 = persist.run_persist(
-        model, _args(["full", "bugslash"], chunk=40), ctx=400, device="cpu", tmp=tmp_path
+        model, _arms(model, ["full", "bug"], 400), 400, "cpu", tmp_path, chunk=40
     )
     r400 = next(r for r in rows400 if r["kind"] == "bug")["ratio_bytes"]
     assert r400 < by["bugSseed-r16-h16"]["ratio_bytes"]
 
 
 def test_state_tensors_cover_the_honest_state(tmp_path: Path) -> None:
-    """The persisted flagship state is exactly the tensors the accounting bills
+    """The persisted streaming state is exactly the tensors the accounting bills
     (stored_state_numel), with the square-root cores stored as their diagonals."""
-    from w10_frontier import _prefill_chunked, build_arms
+    from kvdlra.eval.frontier import _prefill_chunked
 
     model = _model()
-    arm = next(a for a in build_arms(_args(["bugslash"], 40), model, 200) if a["kind"] == "bug")
+    arm = _arms(model, ["bug"], 200)[0]
     cache = arm["make"]()
     hay = torch.randint(0, 256, (1, 200))
     with cache.attach(model):
@@ -117,20 +126,18 @@ def test_run_persist_forwards_under_no_grad(tmp_path: Path) -> None:
         return orig(*a, **k)
 
     model.forward = spy
-    persist.run_persist(
-        model, _args(["full", "bugslash"], chunk=40), ctx=120, device="cpu", tmp=tmp_path
-    )
+    persist.run_persist(model, _arms(model, ["full", "bug"], 120), 120, "cpu", tmp_path, chunk=40)
     assert seen and not any(seen)
 
 
 def test_persisted_bytes_equal_the_tensor_content(tmp_path: Path) -> None:
     """torch.save writes a view's WHOLE underlying storage (the recent-window ring, the
-    core diagonals), which inflated the flagship's on-disk size 2.6x on the a3 pod. The
+    core diagonals), which inflated the streaming arm's on-disk size 2.6x on the a3 pod. The
     file must hold the tensors' content (numel x itemsize) plus only format overhead."""
-    from w10_frontier import _prefill_chunked, build_arms
+    from kvdlra.eval.frontier import _prefill_chunked
 
     model = _model()
-    arm = next(a for a in build_arms(_args(["bugslash"], 40), model, 400) if a["kind"] == "bug")
+    arm = _arms(model, ["bug"], 400)[0]
     cache = arm["make"]()
     with torch.no_grad(), cache.attach(model):
         _prefill_chunked(model, cache, torch.randint(0, 256, (1, 400)), 40)

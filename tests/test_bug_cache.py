@@ -13,7 +13,7 @@ ladder (design note §6):
 
 Also covers the ``augmented_bug_step`` extraction: the returned ``rot`` really
 is ``u_new^T u_old``, and the ``rank + block > n_features`` clamp fixes the
-latent degeneracy flagged in ``docs/week5.md``.
+latent degeneracy Week 5 flagged.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from transformers.cache_utils import DynamicCache, DynamicLayer
 
 from kvdlra.cache import BugStreamingCache
 from kvdlra.cache.bug_cache import BugStreamingLayer, _RopeAngles
-from kvdlra.integrators.streaming_torch import augmented_bug_step, blocked_bug_subspace
+from kvdlra.tracker.isvd import augmented_bug_step, blocked_bug_subspace
 
 # Tiny Llama: 2 layers, 2 KV heads x head_dim 16 => n_features = 32.
 H, D = 2, 16
@@ -107,7 +107,7 @@ def test_step_seed_matches_blocked_sweep() -> None:
 
 def test_step_clamps_overfull_augmentation() -> None:
     # rank + block > n_features: the residual has rank <= n - r, the clamp must
-    # keep the basis orthonormal and the step exact (the docs/week5.md latent bug).
+    # keep the basis orthonormal and the step exact (the Week-5 latent bug).
     g = torch.Generator().manual_seed(2)
     n = 16
     m = torch.randn(n, 64, generator=g, dtype=torch.float64)

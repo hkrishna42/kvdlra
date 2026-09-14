@@ -1,6 +1,6 @@
 """Week-10/11 regression: the RULER press path runs scorer presses SINGLE-SHOT.
 
-``w10_ruler.retrieve`` used to wrap kvpress scorer presses in ``ChunkPress`` for the
+``ruler.retrieve`` used to wrap kvpress scorer presses in ``ChunkPress`` for the
 OOM-safe path. But ``SnapKVPress.compress`` asserts ``q_len > window_size`` (64), so
 any ChunkPress chunk shorter than 64 (always true for the final chunk, and for small
 ``--chunk`` values) raised ``AssertionError: Query length ... should be greater than
@@ -22,7 +22,7 @@ import pytest
 import torch
 from transformers import LlamaConfig, LlamaForCausalLM
 
-from kvdlra.press.compat import install_kvpress_prefill_compat
+from kvdlra.baselines.compat import install_kvpress_prefill_compat
 
 H, D = 2, 16  # KV heads x head_dim -> n_features 32; num query heads 4
 
@@ -63,7 +63,8 @@ def test_retrieve_snapkv_single_shot_survives_subwindow_chunk(
 ) -> None:
     install_kvpress_prefill_compat()  # transformers cache_position shim
     from kvpress import SnapKVPress
-    from w10_ruler import retrieve
+
+    from kvdlra.eval.ruler import retrieve
 
     n, h_kv = H * D, H
     ctx = 128  # > SnapKV window_size (64) so single-shot q_len passes the assert

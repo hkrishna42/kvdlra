@@ -10,7 +10,6 @@ pre-knob cache; (4) the swapped trackers run end-to-end through prefill + decode
 
 from __future__ import annotations
 
-import argparse
 from typing import Any
 
 import pytest
@@ -18,7 +17,7 @@ import torch
 from transformers import LlamaConfig, LlamaForCausalLM
 
 from kvdlra.cache import BugStreamingCache
-from kvdlra.integrators.streaming_torch import augmented_bug_step, fd_step, oja_step
+from kvdlra.tracker.isvd import augmented_bug_step, fd_step, oja_step
 
 N, R, B = 32, 6, 5  # features, rank cap, block columns
 
@@ -148,29 +147,18 @@ def test_invalid_tracker_fails_loud() -> None:
         _cache(m, tracker="svd")
 
 
-def test_build_arms_names_and_threads_the_tracker() -> None:
-    from w10_frontier import build_arms, build_parser
+def test_the_swap_arm_configs_name_and_thread_the_tracker() -> None:
+    """The three tracker arms are three configs, not three CLI flags: each names its own
+    swapped arm and its ``tracker`` reaches the constructed layer."""
+    from kvdlra.eval.config import load_arm
+    from kvdlra.eval.frontier import build_arm
 
     m = _model()
-    ns = build_parser().parse_args([])
-    ns.methods, ns.ranks, ns.hh_budgets, ns.chunk = ["bugslash"], [R], [2], 16
-    ns.warmup_seed = True
-    for trk, suf in (("bug", ""), ("oja", "-oja"), ("fd", "-fd")):
-        ns.tracker = trk
-        arms = [a for a in build_arms(ns, m, 64) if a["kind"] == "bug"]
-        assert arms and all(a["name"].endswith(suf) or trk == "bug" for a in arms)
-        layer = arms[0]["make"]()._bug_layers()[0]
-        assert layer.tracker == trk
-
-
-def test_parser_exposes_tracker_flag() -> None:
-    from w10_frontier import build_parser
-
-    ns = build_parser().parse_args(["--tracker", "fd"])
-    assert ns.tracker == "fd"
-    with pytest.raises(SystemExit):
-        build_parser().parse_args(["--tracker", "svd"])
-
-
-def _ns(**kw: Any) -> argparse.Namespace:  # kept for symmetry with sibling tests
-    return argparse.Namespace(**kw)
+    for cfg_name, legacy, trk in (
+        ("isvd_r64_h256_seed", "bugSseed-r64-h256", "bug"),
+        ("oja_r64_h256_seed", "bugSseed-r64-h256-oja", "oja"),
+        ("fd_r64_h256_seed", "bugSseed-r64-h256-fd", "fd"),
+    ):
+        arm = build_arm(load_arm(cfg_name), m, 64)
+        assert arm["name"] == legacy and arm["kwargs"]["tracker"] == trk
+        assert arm["make"]()._bug_layers()[0].tracker == trk

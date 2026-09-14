@@ -73,8 +73,8 @@ Shape / device / dtype notes
   ``past_key_values.update``, so the cached (and therefore captured) keys are
   post-RoPE. RoPE smears low-rank structure across positions, so any
   singular-value / low-rank analysis on these keys is measuring the harder,
-  post-RoPE object. Values are never rotated. See
-  ``docs/notes/rope-pitfall.md``.
+  post-RoPE object. Values are never rotated -- this is the Week-2 RoPE pitfall,
+  and why the caches track PRE-RoPE keys.
 * **Pre-RoPE capture (``pre`` / ``both``)** monkey-patches the module-level
   ``transformers.models.llama.modeling_llama.apply_rotary_pos_emb`` to record
   its ``k`` argument (the key tensor *before* rotation) on each call.
@@ -245,7 +245,7 @@ def dump(args: argparse.Namespace) -> None:
     from datasets import load_dataset
     from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
 
-    from kvdlra.utils.seed import seed_everything
+    from kvdlra.util.seed import seed_everything
 
     class CapturingCache(DynamicCache):
         """``DynamicCache`` that snapshots full per-layer (K, V) after each update.

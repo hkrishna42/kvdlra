@@ -72,7 +72,7 @@ def _chunked_prefill(
     *,
     attach: bool,
 ) -> None:
-    """OOM-safe chunked prefill (mirrors ``w10_frontier._prefill_chunked``); the
+    """OOM-safe chunked prefill (mirrors ``frontier._prefill_chunked``); the
     exact ``hh`` tier only populates through this ingest path. ``attach=False``
     exercises the attach-free surprise selection."""
     t = int(ids.shape[1])
@@ -371,27 +371,6 @@ def test_seed_preserves_disjointness_and_caps(tiny_model: LlamaForCausalLM) -> N
     assert depth in hh  # the needle is a top-surprise promotion
 
 
-def test_seed_warmup_rejects_coded_and_merge(tiny_model: LlamaForCausalLM) -> None:
-    """Finding-3 guard: the warm-up seed reasons over the fp32 tail only, so it is
-    rejected with a coded tier or merge (the guard blocks a silent future miswire that
-    could double-count a token). Week-19 wires the PolarQuant tier (bugSseed-...-q)."""
-    fenced: list[dict[str, object]] = [{"merge": True}]  # Week-19: quant tier now allowed
-    for kw in fenced:
-        with pytest.raises(ValueError, match="fp32 low-rank tail only"):
-            BugStreamingCache(
-                tiny_model,
-                rank=4,
-                coord_budget=64,
-                recent_window=8,
-                absorb_block=4,
-                retention="lowrank_surprise",
-                hh_budget=2,
-                hh_select="surprise",
-                seed_hh_warmup=True,
-                **kw,  # type: ignore[arg-type]
-            )
-
-
 def test_seed_lossless_at_full_rank(tiny_model: LlamaForCausalLM) -> None:
     """Warm-up seed preserves losslessness: full rank + full budget + seed on still
     reconstructs the exact past (routing the first chunk through SLASH moves outliers
@@ -493,8 +472,10 @@ def test_hh_select_surprise_allows_lowrank_surprise_retention(tiny_model: LlamaF
     )
 
 
-def test_hh_select_attn_still_requires_attn_retention(tiny_model: LlamaForCausalLM) -> None:
-    with pytest.raises(ValueError, match="requires retention='attn'"):
+def test_hh_select_attn_is_rejected(tiny_model: LlamaForCausalLM) -> None:
+    """The attention-mass selector read the retired retention="attn" scores, so an
+    enabled exact tier must be surprise-selected -- fail loud, never degenerate."""
+    with pytest.raises(ValueError, match="requires hh_select='surprise'"):
         BugStreamingCache(
             tiny_model,
             rank=4,
@@ -516,8 +497,8 @@ def test_hh_neighbor_requires_surprise(tiny_model: LlamaForCausalLM) -> None:
             tiny_model,
             rank=4,
             coord_budget=32,
-            retention="attn",
-            hh_budget=4,
+            retention="lowrank_surprise",
+            hh_budget=0,
             hh_select="attn",
             hh_neighbor=1,
         )

@@ -1,8 +1,11 @@
 PY ?= .venv/bin/python
 # torch's C++ extension loader shells out to the `ninja` EXECUTABLE, and `$(PY) -m pytest`
 # does not put the venv's bin/ on PATH -- without this the quant tests fail to JIT (8 of
-# them on a clean clone: "Ninja is required to load C++ extensions").
-export PATH := $(dir $(abspath $(PY))):$(PATH)
+# them on a clean clone: "Ninja is required to load C++ extensions"). `lastword` because
+# PY is not always one word: `PY="uv run python"` would otherwise expand to three bogus
+# entries (`$(abspath)` maps over every word), corrupting the PATH it prepends to. The
+# last word names the interpreter, and `uv run` puts its own venv bin/ on PATH anyway.
+export PATH := $(dir $(abspath $(lastword $(PY)))):$(PATH)
 
 .PHONY: test tables env figures check clean
 # No -q here: pyproject's addopts already carries one, and a second one suppresses the

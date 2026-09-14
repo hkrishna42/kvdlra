@@ -221,6 +221,8 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
         for r in args.ranks:
             # The kwargs are named once and both stored and applied, so configs/arms/*.yaml
             # can be checked against them without constructing a cache (Task 4 parity test).
+            # `make` closes over a COPY (dict(kwargs)): mutating the stored "kwargs" dict must
+            # not change what a later make() call constructs.
             kwargs: dict[str, Any] = {
                 "rank": r,
                 "coord_budget": cb,
@@ -236,7 +238,7 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                     "kind": "bug",
                     "rank": r,
                     "kwargs": kwargs,
-                    "make": lambda kw=kwargs: BugStreamingCache(model, **kw),
+                    "make": lambda kw=dict(kwargs): BugStreamingCache(model, **kw),
                 }
             )
 
@@ -319,7 +321,7 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                         "hh_select": "surprise",
                         "hh_budget": hh,
                         "kwargs": kwargs,
-                        "make": lambda kw=kwargs: BugStreamingCache(model, **kw),
+                        "make": lambda kw=dict(kwargs): BugStreamingCache(model, **kw),
                     }
                 )
 
@@ -349,7 +351,7 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                     "hh_select": "surprise",
                     "hh_budget": hh,
                     "kwargs": kwargs,
-                    "make": lambda kw=kwargs: BugStreamingCache(model, **kw),
+                    "make": lambda kw=dict(kwargs): BugStreamingCache(model, **kw),
                 }
             )
 
@@ -489,7 +491,7 @@ def build_arms(args: argparse.Namespace, model: Any, t: int) -> list[dict[str, A
                     "rank_s": rs,
                     "chunkable": False,  # single-shot prefill only (port scope guard)
                     "kwargs": kwargs,
-                    "make": lambda kw=kwargs: ShadowKVCache(model, **kw),
+                    "make": lambda kw=dict(kwargs): ShadowKVCache(model, **kw),
                 }
             )
     if "quant" in want:  # Week-18/19: KIVI-style 2/4-bit (+8-bit control) KV baseline

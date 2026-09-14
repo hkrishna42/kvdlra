@@ -4,14 +4,18 @@ dtype: bfloat16
 doc: >-
   Week-18 G1: the quantized-KV baseline the review panel asked for, against the r64 arm, on
   RULER{single,multikey,multivalue,vt} and perplexity at 16K and 32K. Its aggregate memory rows
-  are archived under results/paper-v1/w18-<model>. Pre-registered bar: ~$60, the blocking cell
-  of the matrix. This pod also ran an UNSEEDED q4 cell whose two tier budgets were swapped, so
-  its coded tier never filled and its rows bill identically to the r64 arm; that cell is
-  superseded by w19_a1q and has no config. v1 had no pre-registration: `prereg: null` records
-  that, and it is the one field a re-run of this pod must fill before launch (scripts/pod.py
-  check enforces the commit order from L0 on).
+  are archived under results/paper-v1/w18-<model>. This pod also ran an UNSEEDED q4 cell whose
+  two tier budgets were swapped, so its coded tier never filled and its rows bill identically to
+  the r64 arm; that cell is superseded by w19_a1q and has no config, so it is not in `arms:`
+  below. arms/image describe what a faithful RE-RUN uses; the archived rows for this pod are
+  listed in results/paper-v1/w18-g1-<model>/manifest.json (the W18 quant arms produced no rows --
+  the pod launched the lighter -runtime image, where quanto could not JIT its 2/4-bit kernel; the
+  -devel image below is the corrected choice for a re-run). Pre-registered bar: ~$60, the
+  blocking cell of the matrix. v1 had no pre-registration: `prereg: null` records that, and it
+  is the one field a re-run of this pod must fill before launch (scripts/pod.py check enforces
+  the commit order from L0 on).
 prereg: null
-arms: ["kivi2_streaming", "kivi4_streaming", "isvd_r64_h256_seed", "isvd_r64_h256_seed_q4"]
+arms: ["kivi2_streaming", "kivi4_streaming", "isvd_r64_h256_seed"]
 tasks: ["ruler_inhouse_16k", "ruler_inhouse_32k", "ppl_16k", "ppl_32k"]
 image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
 gpu_budget_h: 0.0

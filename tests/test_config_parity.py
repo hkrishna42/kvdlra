@@ -74,17 +74,20 @@ PARAMS: dict[str, tuple[str, dict[str, str]]] = {  # legacy arm -> (flags, legac
 }
 
 # Legacy arm-dict fields that are structure, not parameters: the name, the dispatch kind,
-# the factories, the captured kwargs, and the flags that only steer the harness.
-IGNORED = {"name", "kind", "rank", "chunkable", "press_type", "make", "make_press", "make_cache"}
+# the factories, the captured kwargs, and the flags that only steer the harness. `chunkable`
+# used to sit in this set too, which let YAML<->legacy drift on the single-shot guard pass
+# silently; it is compared explicitly below instead, since it lives at the top of ArmCfg
+# rather than inside press:/quant: (so it cannot go through the `fields`/`blocks` mapping).
+IGNORED = {"name", "kind", "rank", "press_type", "make", "make_press", "make_cache"}
 KIND = {"composite": "press_quant"}  # the legacy dispatch key for the YAML `composite` kind
 
 
-def _legacy(flags: str, name: str) -> dict[str, Any]:
+def _legacy(flags: str, name: str, t: int = T) -> dict[str, Any]:
     """The legacy arm dict named ``name``, built by the CLI path ``flags`` produced."""
     import w10_frontier  # scripts/ is on pythonpath; deleted in Task 8 with this import
 
     ns = w10_frontier.build_parser().parse_args([*flags.split(), "--chunk", "4096"])
-    arms = w10_frontier.build_arms(ns, model=None, t=T)
+    arms = w10_frontier.build_arms(ns, model=None, t=t)
     return next(a for a in arms if a["name"] == name)
 
 
@@ -96,10 +99,18 @@ def _yaml_name(legacy: str) -> str:
     return hits[0]
 
 
+@pytest.mark.parametrize("t", [16384, 32768], ids=["16k", "32k"])
 @pytest.mark.parametrize("legacy", sorted(CACHE))
-def test_yaml_cache_arm_matches_legacy_build_arms(legacy: str) -> None:
-    """The YAML resolves to the legacy lambda's keyword set, key for key."""
-    assert arm_kwargs(load_arm(_yaml_name(legacy)), t=T) == _legacy(CACHE[legacy], legacy)["kwargs"]
+def test_yaml_cache_arm_matches_legacy_build_arms(legacy: str, t: int) -> None:
+    """The YAML resolves to the legacy lambda's keyword set, key for key, at 16K and 32K.
+
+    Both lengths matter: a budget pinned to the 16K value (e.g. hand-typed instead of left
+    ``null`` for ``arm_kwargs`` to resolve) would still pass at ``t=T`` and only show up once
+    the context length actually moves the derived ``coord_budget``/``quant_budget``.
+    """
+    got = arm_kwargs(load_arm(_yaml_name(legacy)), t=t)
+    want = _legacy(CACHE[legacy], legacy, t=t)["kwargs"]
+    assert got == want
 
 
 @pytest.mark.parametrize("legacy", sorted(PARAMS))
@@ -108,7 +119,15 @@ def test_yaml_press_arm_matches_legacy_build_arms(legacy: str) -> None:
     flags, fields = PARAMS[legacy]
     arm, cfg = _legacy(flags, legacy), load_arm(_yaml_name(legacy))
     assert KIND.get(cfg.kind, cfg.kind) == arm["kind"]
-    assert set(fields) == set(arm) - IGNORED, "a legacy field is unaccounted for"
+    # The single-shot guard: not routed through `fields`/`blocks` (see IGNORED above), so it
+    # needs its own line, with the legacy dict's implicit default (True, ArmCfg's own default)
+    # where a branch never sets the key at all (e.g. ea-k*/snapkv-k*). kivi2_singleshot is NOT
+    # covered here: it isn't in PARAMS, because its chunkable=false (chunk=0, single-shot) is a
+    # deliberate config-level choice with no legacy build_arms counterpart -- the legacy "quant"
+    # branch always sets chunkable=True regardless of the pod-level --chunk value. See
+    # test_kivi2_singleshot_differs_from_the_streaming_arm_only_in_chunk below.
+    assert cfg.chunkable == arm.get("chunkable", True), f"{legacy}: chunkable drifted from legacy"
+    assert set(fields) == set(arm) - IGNORED - {"chunkable"}, "a legacy field is unaccounted for"
     blocks = {**cfg.press, **cfg.quant}
     assert set(blocks) - set(fields.values()) <= {"chunk"}, "an unidentified YAML field"
     assert {k: blocks[k] for k in fields.values()} == {v: arm[k] for k, v in fields.items()}

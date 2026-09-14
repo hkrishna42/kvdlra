@@ -4,7 +4,7 @@ A standalone kvpress press that quantizes each token's key (and value) vector
 with :class:`kvdlra.quant.PolarQuant` (TurboQuant §2), reconstructing in place
 (same shape, ThinK-style -- so it measures the *quality* cost of ``bits``-bit KV
 quantization). Its purpose is the **fairness control** for Week 4: quantization is
-orthogonal to *how* you shrink the cache, so an honest comparison quantizes the
+orthogonal to *how* you shrink the cache, so a like-for-like comparison quantizes the
 eviction baselines too. Compose it after an eviction press:
 
     ComposedPress([SnapKVPress(compression_ratio=0.6), TurboQuantPress(bits=4)])

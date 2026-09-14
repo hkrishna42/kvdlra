@@ -12,8 +12,15 @@ A perplexity sweep leaves TWO artifacts, and they are different records in diffe
 files: the aggregate ``PplRecord`` (``ppl.jsonl``) and the per-window ``PplwRecord``
 (``pplw.jsonl``). Neither substitutes for the other.
 
-``haystack_id``/``depth``/``prompt_sha256``/``error`` are carried in the schema but are
-``None`` for the archived paper-v1 records: the v1 emitters never printed them.
+``generator``/``haystack_id``/``depth``/``code_family``/``prompt_sha256``/``error`` are
+carried in the schema but are ``None`` for the archived paper-v1 records: the v1
+emitters never printed them, and the archive is not re-converted to invent them. Read
+them with ``.get`` -- an archived row has the key absent, not null.
+
+``generator`` is part of a cell's identity, not decoration: the in-house and official
+RULER generators reuse the sub-task names ``niah_multivalue`` and ``vt`` at the same
+context length, so a pod running both pools two different benchmarks into one key
+unless the generator separates them (``scripts/pod.py``'s ``_expected_cells``).
 """
 
 from __future__ import annotations
@@ -39,7 +46,7 @@ PPL_RE = re.compile(
     r"^\s*(\S+)\s+\[T=(\d+)\] ppl=([0-9.]+)(?: tok_eq/layer=([0-9.]+))? .*?ratio=([0-9.]+)"
     r"(?: sbits=([0-9.]+))?"
 )
-# The emitter's own documented format (scripts/w10_frontier.py run(), pinned by
+# The emitter's own documented format (frontier._log_pplw, pinned by
 # tests/test_w15_pplw.py): one line per (arm, T), except that a would-be >400-char line
 # splits into ``part=i/N`` fragments of 8 values, because `vastai logs` truncates a line
 # at ~500 chars. Dropping the fragments -- which is what the first harvest did -- loses
@@ -57,8 +64,10 @@ class TrialRecord(TypedDict):
     trial: int
     hit: int
     frac: float
+    generator: str | None
     haystack_id: str | None
     depth: float | None
+    code_family: str | None
     prompt_sha256: str | None
     error: str | None
     source: str
@@ -122,8 +131,12 @@ def parse_trial_lines(text: str, model: str, source: str) -> list[TrialRecord]:
                 "trial": int(trial),
                 "hit": int(hit),
                 "frac": float(frac),
+                # A harvested log row carries only what the line printed; the generator
+                # that produced it is not in the format, so it stays unknown here.
+                "generator": None,
                 "haystack_id": None,
                 "depth": None,
+                "code_family": None,
                 "prompt_sha256": None,
                 "error": None,
                 "source": f"{source}:{i}",

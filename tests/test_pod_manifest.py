@@ -49,8 +49,9 @@ def test_check_counts_errors(tmp_path: Path) -> None:
         json.dumps(
             {
                 "model": "m", "arm": "a", "task": "t", "ctx": 1, "seed": 0, "trial": 0,
-                "hit": 0, "frac": 0.0, "haystack_id": None, "depth": None,
-                "prompt_sha256": None, "error": "RuntimeError: boom", "source": "x",
+                "hit": 0, "frac": 0.0, "generator": "inhouse", "haystack_id": None,
+                "depth": None, "code_family": None, "prompt_sha256": None,
+                "error": "RuntimeError: boom", "source": "x",
             }
         )
         + "\n"
@@ -93,7 +94,8 @@ def test_check_rejects_a_short_cell(dry_pod: Path, tmp_path: Path) -> None:
     rows = [
         {
             "model": "m", "arm": "bugSseed-r64-h256", "task": "niah_single", "ctx": 16384,
-            "seed": 0, "trial": t, "hit": 1, "frac": 1.0, "haystack_id": None, "depth": None,
+            "seed": 0, "trial": t, "hit": 1, "frac": 1.0, "generator": "inhouse",
+            "haystack_id": None, "depth": None, "code_family": None,
             "prompt_sha256": None, "error": None, "source": "x",
         }
         for t in (0, 1)
@@ -293,7 +295,9 @@ def test_launch_dry_run_prints_the_vastai_command(tmp_path: Path) -> None:
 
 # w18_g1's expected cell set, spelled out rather than re-derived: three arms by their
 # `legacy_name` (the string a record carries), the four in-house RULER sub-tasks, two
-# context lengths, 6 trials x 2 seeds each. The two ppl tasks contribute no cells.
+# context lengths, 6 trials x 2 seeds each. The two ppl tasks contribute no cells. A cell
+# is keyed by its GENERATOR too, so the synthetic rows carry `generator: "inhouse"` --
+# a row without it is an archived one, and is no cell of a live pod.
 ARMS = ("quant-2bit-kivi", "quant-4bit-kivi", "bugSseed-r64-h256")
 SUBTASKS = ("niah_single", "niah_multikey", "niah_multivalue", "vt")
 CTXS = (16384, 32768)
@@ -303,8 +307,9 @@ def _trials(*arms: str) -> list[dict[str, object]]:
     return [
         {
             "model": "m", "arm": arm, "task": task, "ctx": ctx, "seed": seed, "trial": t,
-            "hit": 1, "frac": 1.0, "haystack_id": None, "depth": None,
-            "prompt_sha256": None, "error": None, "source": "x",
+            "hit": 1, "frac": 1.0, "generator": "inhouse", "haystack_id": None,
+            "depth": None, "code_family": None, "prompt_sha256": None,
+            "error": None, "source": "x",
         }
         for arm in arms
         for ctx in CTXS
@@ -350,7 +355,7 @@ def test_check_fails_a_non_dry_run_harvest_with_no_records(dry_pod: Path, tmp_pa
     assert r.returncode == 1
     out = r.stdout + r.stderr
     assert out.count("CHECK FAIL cells") == len(ARMS) * len(SUBTASKS) * len(CTXS) == 24
-    assert "CHECK FAIL cells: bugSseed-r64-h256 vt ctx=32768 has 0 of 12 records" in out
+    assert "CHECK FAIL cells: bugSseed-r64-h256 inhouse/vt ctx=32768 has 0 of 12 records" in out
 
 
 def test_check_fails_when_only_one_arm_reported(dry_pod: Path, tmp_path: Path) -> None:

@@ -8,16 +8,17 @@ model, library versions, GPU, wall clock, command line), `env.txt` (the pinned s
 different schema, hence a different file), `diag.jsonl`. `check` is the gate every citable
 number passes: it re-derives the config hash from `configs/pods/<pod>.yaml`, resolves the
 SHA, enforces the pre-registration commit order, and requires EVERY cell the config calls
-for -- arm x task x sub-task x ctx -- to hold exactly `n_trials x len(seeds)` records, plus
-one perplexity record per (arm, ctx) for every `ppl` task. A trial that raised is recorded
+for -- arm x generator x sub-task x ctx -- to hold exactly `n_trials x len(seeds)` records,
+plus one perplexity record per (arm, ctx) for every `ppl` task. A trial that raised is recorded
 with `error` and still counted, so a cell can never silently shrink; a cell with no records
 at all is the loudest failure there is, which is what makes a pod that produced nothing
 impossible to pass off as a clean run.
 
-`run`'s eval loop lands in Task 8; here `run` writes the manifest and the environment and
-`--dry-run` stops there, which is what the tests and `make check` exercise. Archived
-paper-v1 manifests carry `converted_by` and are skipped: they are static evidence of runs
-that happened before this entrypoint existed.
+`run` writes the manifest and the environment, then hands the pod config to
+`kvdlra.eval.runner.run_pod`, which is the eval loop; `--dry-run` stops after the manifest,
+which is what the tests and `make check` exercise. Archived paper-v1 manifests carry
+`converted_by` and are skipped: they are static evidence of runs that happened before this
+entrypoint existed.
 """
 
 from __future__ import annotations
@@ -117,8 +118,8 @@ def manifest(name: str, sha: str, command_line: str, dry_run: bool) -> dict[str,
         "git_sha": sha,
         "config_hash": config_hash(pod),
         "model": pod.model,
-        # Resolved by the run that downloads the weights (Task 8); a dry run and a
-        # laptop-side launch have no revision to record.
+        # Resolved by the run that downloads the weights; a dry run and a laptop-side
+        # launch have no revision to record.
         "model_revision": None,
         "dataset_sha256": {},
         "torch": v["torch"],
@@ -156,6 +157,7 @@ def _read_manifest(out: Path) -> dict[str, Any] | None:
 def run(name: str, out: Path, dry_run: bool) -> int:
     # The manifest first: it is what loads the pod config, so an unknown pod name raises
     # before a half-written directory exists on disk.
+    pod = load_pod(name)
     m = manifest(name, _head(), shlex.join(sys.argv), dry_run)
     out.mkdir(parents=True, exist_ok=True)
     (out / "env.txt").write_text("\n".join(env_lines()) + "\n")
@@ -164,8 +166,20 @@ def run(name: str, out: Path, dry_run: bool) -> int:
         (out / "trials.jsonl").write_text("")
         print(f"{out}: manifest.json, env.txt, empty trials.jsonl (dry run)")
         return 0
-    print(f"{out}: manifest.json + env.txt written; the eval loop lands in Task 8")
-    return 2
+
+    # Imported here, not at module scope: `--dry-run` and `check` must work on a laptop
+    # without pulling in the eval stack (and, through it, kvpress).
+    import torch
+
+    from kvdlra.eval.data import load_model
+    from kvdlra.eval.runner import run_pod
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    loaded = load_model(pod.model, device, pod.dtype)
+    m["model_revision"] = getattr(loaded[0].config, "_commit_hash", None)
+    _write_manifest(out, m)
+    run_pod(pod, out, loaded)
+    return 0
 
 
 # --- launch -------------------------------------------------------------------
@@ -427,13 +441,22 @@ def _pyproject_pins() -> dict[str, str]:
     return {name: ver for name, ver in pins if name in PINNED}
 
 
-def _expected_cells(pod: PodCfg) -> dict[tuple[str, str, int], tuple[int, str]]:
-    """Every cell the config calls for: arm x task x sub-task x ctx -> (n, task name).
+def _expected_cells(pod: PodCfg) -> dict[tuple[str, str, str, int], tuple[int, str]]:
+    """Every cell the config calls for: arm x generator x sub-task x ctx -> (n, task).
 
     The arm key is the string a record carries, which is `legacy_name` where one is set
-    (the v1 arm names live on in the records) and the config name otherwise. `ppl` tasks
-    contribute no cells: a perplexity sweep is one number per (arm, ctx), not a set of
-    Bernoulli trials, and it is checked through `ppl.jsonl` rather than here.
+    (the v1 arm names live on in the records) and the config name otherwise. The
+    GENERATOR is part of the key because the in-house and official RULER generators
+    reuse the sub-task names `niah_multivalue` and `vt` at the same context length, and
+    a pod naming both (w19_fork) would otherwise pool two different benchmarks into one
+    cell and call the doubled count complete.
+
+    A cell is `n_trials x len(seeds)` records. A task's `depths` grid does NOT multiply
+    it: the generator sweeps the grid across trial indices (`depths[trial % len]`), so
+    pinning depths changes which needle each trial places, not how many trials run.
+
+    `ppl` tasks contribute no cells: a perplexity sweep is one number per (arm, ctx),
+    not a set of Bernoulli trials, and it is checked through `ppl.jsonl` rather than here.
     """
     arms = [load_arm(a) for a in pod.arms]
     expect = {}
@@ -443,7 +466,7 @@ def _expected_cells(pod: PodCfg) -> dict[tuple[str, str, int], tuple[int, str]]:
             continue
         for sub in t.tasks:
             for arm in arms:
-                expect[(arm.legacy_name or arm.name, sub, t.ctx)] = (
+                expect[(arm.legacy_name or arm.name, t.generator, sub, t.ctx)] = (
                     t.n_trials * len(t.seeds),
                     tname,
                 )
@@ -456,18 +479,20 @@ def _cell_fails(pod: PodCfg, trials: list[TrialRecord]) -> list[str]:
     arm of three, used to pass -- so the expected set comes from the config, not from
     the records, and a cell with no rows fails like a short one."""
     expect = _expected_cells(pod)
-    counts = Counter((r["arm"], r["task"], r["ctx"]) for r in trials)
+    counts = Counter((r["arm"], str(r.get("generator")), r["task"], r["ctx"]) for r in trials)
     fails = []
     for key in sorted(expect.keys() | counts.keys()):
-        arm, task, ctx = key
+        arm, gen, task, ctx = key
         want, n = expect.get(key), counts.get(key, 0)
         if want is None:
-            fails.append(f"cells: {arm} {task} ctx={ctx} is no cell of any task in {pod.name}")
+            fails.append(
+                f"cells: {arm} {gen}/{task} ctx={ctx} is no cell of any task in {pod.name}"
+            )
         elif n == 0:
-            fails.append(f"cells: {arm} {task} ctx={ctx} has 0 of {want[0]} records")
+            fails.append(f"cells: {arm} {gen}/{task} ctx={ctx} has 0 of {want[0]} records")
         elif n != want[0]:
             fails.append(
-                f"cells: {arm} {task} ctx={ctx} has n={n}, expected {want[0]}"
+                f"cells: {arm} {gen}/{task} ctx={ctx} has n={n}, expected {want[0]}"
                 f" ({want[1]}: n_trials x seeds)"
             )
     return fails

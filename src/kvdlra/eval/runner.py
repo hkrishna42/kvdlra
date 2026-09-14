@@ -1,0 +1,247 @@
+"""The eval loop `scripts/pod.py run` drives: a pod config in, records out.
+
+One pod is a model, a set of arms and a set of tasks; the loop is every task x every
+arm x (for a retrieval task) every sub-task x seed x trial. Each trial appends a
+``TrialRecord`` to ``results/<pod>/trials.jsonl`` as it completes, so a pod killed
+halfway leaves a readable partial file rather than nothing.
+
+A trial that raises is RECORDED -- ``error`` set, ``hit=0``, ``frac=0.0`` -- and the
+loop continues. The v1 harness printed SKIP and dropped the trial, which silently
+shrank a cell's n; `scripts/pod.py check` now requires every configured cell to hold
+exactly ``n_trials x len(seeds)`` records, so a dropped trial would fail the run
+instead of quietly weakening it.
+
+The ``[trial]``, ``[<task> ctx<T>]``, ``[pplw]`` and ``ppl=`` lines are printed as
+well as written: they are the pod's stdout contract, and `pod.py harvest` can rebuild
+the same records from a `vastai logs` capture when the results directory never made it
+off the instance.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+from pathlib import Path
+from typing import Any
+
+import torch
+
+from kvdlra.baselines.compat import install_kvpress_prefill_compat
+from kvdlra.eval import frontier, longbench, official_ruler, ruler
+from kvdlra.eval.config import PodCfg, TaskCfg, load_arm, load_task
+from kvdlra.eval.data import load_corpus_ids, load_corpus_sentences
+from kvdlra.eval.records import PplRecord, PplwRecord, TrialRecord, write_jsonl
+
+# Which module answers for a task config's `generator:`. Looked up as a module, not as
+# a function, so the attribute resolves at call time (a test can substitute one).
+GENERATORS = {
+    "inhouse": ruler,
+    "official_ruler": official_ruler,
+    "longbench": longbench,
+}
+# v1's perplexity corpus. WikiText-103 TRAIN is a known defect (docs/plan/CODE_AUDIT.md,
+# CLAUDE.md); switching it moves every archived ppl number, so L2 owns that change.
+PPL_CORPUS = "wikitext-103"
+
+
+def run_pod(pod: PodCfg, out: Path, model: Any, dry_model: bool = False) -> None:
+    """Evaluate ``pod`` into ``out``.
+
+    ``model`` is the ``(model, tokenizer)`` pair `kvdlra.eval.data.load_model` returns.
+    ``dry_model`` runs the loop without one: nothing is loaded and no dimensions are
+    read off a config, which is how the error path is exercised on CPU with the
+    generator substituted (``tests/test_pod_run_records_errors.py``).
+    """
+    t0 = time.perf_counter()
+    out.mkdir(parents=True, exist_ok=True)
+    trials_path = out / "trials.jsonl"
+    trials_path.write_text("")
+
+    mdl: Any = None
+    tok: Any = None
+    device, n, h_kv = "cpu", 0, 0
+    if not dry_model:
+        mdl, tok = model
+        device = str(next(mdl.parameters()).device)
+        n, h_kv = _dims(mdl.config)
+        install_kvpress_prefill_compat()  # transformers 5.8: presses need the shim
+        # Never eager at long T -- eager materializes O(T^2). Harmless on CPU.
+        mdl.config._attn_implementation = "sdpa"
+
+    n_err = 0
+    ppl: list[PplRecord] = []
+    pplw: list[PplwRecord] = []
+    for tname in pod.tasks:
+        task = load_task(tname)
+        arms = [_build(a, mdl, task.ctx) for a in pod.arms]
+        if task.generator == "ppl":
+            rows = _ppl_rows(arms, mdl, tok, task, device=device, n=n, h_kv=h_kv)
+            ppl += [_ppl_record(pod, r) for r in rows if r["status"] == "ok"]
+            pplw += [w for r in rows if r["status"] == "ok" for w in _pplw_records(pod, r)]
+            continue
+        for arm in arms:
+            for sub in task.tasks:
+                n_err += _cell(pod, task, arm, sub, mdl, tok, trials_path, device, n, h_kv)
+
+    records = {"trials.jsonl": sum(1 for _ in trials_path.read_text().splitlines())}
+    if ppl:
+        write_jsonl(out / "ppl.jsonl", ppl)
+        records["ppl.jsonl"] = len(ppl)
+    if pplw:
+        write_jsonl(out / "pplw.jsonl", pplw)
+        records["pplw.jsonl"] = len(pplw)
+    _finish(out, records, n_err, time.perf_counter() - t0)
+
+
+def _dims(cfg: Any) -> tuple[int, int]:
+    """(feature width per layer, KV heads) -- the two numbers the accounting needs."""
+    head_dim = getattr(cfg, "head_dim", cfg.hidden_size // cfg.num_attention_heads)
+    return int(head_dim * cfg.num_key_value_heads), int(cfg.num_key_value_heads)
+
+
+def _build(name: str, model: Any, ctx: int) -> dict[str, Any]:
+    return frontier.build_arm(load_arm(name), model, ctx)
+
+
+def _cell(
+    pod: PodCfg,
+    task: TaskCfg,
+    arm: dict[str, Any],
+    sub: str,
+    model: Any,
+    tok: Any,
+    trials_path: Path,
+    device: str,
+    n: int,
+    h_kv: int,
+) -> int:
+    """One (arm, sub-task, ctx) cell: every (seed, trial), appended as it completes.
+
+    ``depths`` does NOT multiply the cell: the generator sweeps the grid across trial
+    indices (``depths[trial % len]``), so a cell is ``n_trials x len(seeds)`` records
+    whether or not the task pins depths -- the same count `_expected_cells` computes.
+    """
+    module = GENERATORS[task.generator]
+    chunk = task.chunk if arm["chunkable"] else 0
+    pool = None if task.filler in ("cycle", "official") else load_corpus_sentences(task.filler)
+    hits, fracs, ratios, sbits, errors = 0, [], [], [], 0
+    for seed in task.seeds:
+        for trial in range(task.n_trials):
+            try:
+                hit, frac, meta = module.run_trial(
+                    arm, model, tok, task, sub, seed, trial,
+                    device=device, chunk=chunk, n=n, h_kv=h_kv, pool=pool,
+                )  # fmt: skip
+                err = None
+            except Exception as exc:
+                # Recorded, never dropped: a cell that silently shrinks is how a weak
+                # arm used to look like a clean one. The reason travels with the row.
+                hit, frac, meta, err = 0, 0.0, {}, f"{type(exc).__name__}: {exc}"
+                errors += 1
+                if device.startswith("cuda"):
+                    torch.cuda.empty_cache()
+            hits += hit
+            fracs.append(frac)
+            if meta.get("ratio") is not None:
+                ratios.append(float(meta["ratio"]))
+                sbits.append(float(meta["sbits"]))
+            row: TrialRecord = {
+                "model": pod.model,
+                "arm": arm["name"],
+                "task": sub,
+                "ctx": task.ctx,
+                "seed": seed,
+                "trial": trial,
+                "hit": hit,
+                "frac": frac,
+                "generator": task.generator,
+                "haystack_id": meta.get("haystack_id"),
+                "depth": meta.get("depth"),
+                "code_family": meta.get("code_family"),
+                "prompt_sha256": meta.get("prompt_sha256"),
+                "error": err,
+                "source": f"{pod.name}:run",
+            }
+            with trials_path.open("a") as f:
+                f.write(json.dumps(row, sort_keys=True) + "\n")
+                f.flush()
+            print(
+                f"[trial] task={sub} ctx={task.ctx} arm={arm['name']} seed={seed} "
+                f"trial={trial} hit={hit} frac={frac:.3f}" + (f" error={err}" if err else ""),
+                flush=True,
+            )
+    total = len(fracs)
+    # `n=` and `sbits=` come last so the archived-line regex keeps matching unchanged.
+    print(
+        f"[{sub} ctx{task.ctx}] {arm['name']:14s} acc={hits / total:.2f} "
+        f"recall={sum(fracs) / total:.2f} ratio={_mean(ratios):.3f} "
+        f"sbits={_mean(sbits):.3f} n={total}",
+        flush=True,
+    )
+    return errors
+
+
+def _mean(xs: list[float]) -> float:
+    return sum(xs) / len(xs) if xs else float("nan")
+
+
+def _ppl_rows(
+    arms: list[dict[str, Any]],
+    model: Any,
+    tok: Any,
+    task: TaskCfg,
+    *,
+    device: str,
+    n: int,
+    h_kv: int,
+) -> list[dict[str, Any]]:
+    ids = load_corpus_ids(tok, device, corpus=PPL_CORPUS)
+    samples = frontier.windows(ids, task.ctx, task.window, task.n_samples)
+    if not samples:
+        print(f"[T={task.ctx}] corpus too short for {task.n_samples} windows", flush=True)
+        return []
+    print(f"[T={task.ctx}] {len(samples)} window(s) of {task.ctx}+{task.window}", flush=True)
+    return frontier.run_ppl(
+        arms, model, samples, task.ctx, chunk=task.chunk, n=n, h_kv=h_kv, device=device
+    )
+
+
+def _ppl_record(pod: PodCfg, row: dict[str, Any]) -> PplRecord:
+    return {
+        "model": pod.model,
+        "arm": str(row["method"]),
+        "ctx": int(row["T"]),
+        "ppl": float(row["ppl"]),
+        "ratio": float(row["ratio_fp16"]),
+        "sbits": float(row["ratio_stored_bits"]),
+        "tok_eq": float(row["tok_equiv_per_layer"]),
+        "source": f"{pod.name}:run",
+    }
+
+
+def _pplw_records(pod: PodCfg, row: dict[str, Any]) -> list[PplwRecord]:
+    """The per-window NLLs behind one sweep -- a different schema, a different file."""
+    return [
+        {
+            "model": pod.model,
+            "arm": str(row["method"]),
+            "ctx": int(row["T"]),
+            "window_idx": i,
+            "ntok": int(ntok),
+            "nll_sum_nats": float(v) * int(ntok),
+            "source": f"{pod.name}:run",
+        }
+        for i, (v, ntok) in enumerate(zip(row["window_nlls"], row["window_toks"], strict=True))
+    ]
+
+
+def _finish(out: Path, records: dict[str, int], errors: int, wall_clock_s: float) -> None:
+    """Fold what the run produced into the manifest `pod.py run` wrote at launch."""
+    path = out / "manifest.json"
+    m = json.loads(path.read_text()) if path.is_file() else {"pod": out.name}
+    m["records"] = records
+    m["errors"] = errors
+    m["wall_clock_s"] = wall_clock_s
+    m["harvested_at"] = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
+    path.write_text(json.dumps(m, indent=2, sort_keys=True) + "\n")
+    print(f"{out}: " + ", ".join(f"{k}={v}" for k, v in records.items()), flush=True)

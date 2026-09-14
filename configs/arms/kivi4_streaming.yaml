@@ -1,0 +1,13 @@
+name: kivi4_streaming
+legacy_name: "quant-4bit-kivi"
+kind: quant
+chunkable: true
+doc: >-
+  4-bit KV quantization, KIVI grouping, quanto backend, chunked prefill.
+quant:
+  nbits: 4
+  scheme: "kivi"
+  backend: "quanto"
+  group: 64
+  residual: 128
+  chunk: 4096

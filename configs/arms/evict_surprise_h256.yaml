@@ -1,0 +1,18 @@
+name: evict_surprise_h256
+legacy_name: "bugEVICT-h256"
+kind: bug
+chunkable: true
+doc: >-
+  Attribution control: a degenerate rank-1 gist (coordinate tier pinned at one column) with the
+  same surprise-selected exact tier, i.e. near-pure surprise-selected verbatim eviction. If the
+  r64 arm retrieves at the same exact-tier size as this, the gist is not what wins.
+cache:
+  rank: 1
+  coord_budget: 1
+  recent_window: 32
+  absorb_block: 16
+  n_sink: 4
+  retention: "lowrank_surprise"
+  hh_budget: 256
+  hh_select: "surprise"
+  hh_neighbor: 0

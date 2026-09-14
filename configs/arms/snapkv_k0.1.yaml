@@ -1,0 +1,8 @@
+name: snapkv_k0.1
+legacy_name: "snapkv-k0.1"
+kind: press
+chunkable: true
+doc: >-
+  SnapKV eviction keeping 10% of tokens at prefill.
+press:
+  keep: 0.1

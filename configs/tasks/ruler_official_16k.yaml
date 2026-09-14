@@ -1,0 +1,12 @@
+name: ruler_official_16k
+generator: official_ruler
+ctx: 16384
+doc: >-
+  The external anchor: prompts built by the NVIDIA RULER generator at a pinned commit (their
+  essay haystacks, needle types and templates), 12 records per task at seed 42, scored by their
+  own tokens_to_generate and string_match_all. Closes the self-authored-benchmark gap; nine
+  official task names.
+tasks: ["niah_single_1", "niah_single_2", "niah_single_3", "niah_multikey_1", "niah_multikey_2", "niah_multikey_3", "niah_multivalue", "niah_multiquery", "vt"]
+n_trials: 12
+seeds: [42]
+filler: "official"

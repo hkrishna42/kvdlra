@@ -1,0 +1,15 @@
+name: w18_g4
+model: "unsloth/Meta-Llama-3.1-8B-Instruct"
+dtype: bfloat16
+doc: >-
+  Week-18 G4: firming at 32K -- the r128-s32 arm at 8 trials x 2 seeds, the baselines beside it,
+  the r/n = 0.25 rank-wall control, and the perplexity block on the SAME pod (which is what
+  kills the cross-week splice the panel objected to). Its perplexity cells ran 8 windows, not
+  the 4 of ppl_32k. Pre-registered bar: ~$30-40. v1 had no pre-registration: `prereg: null`
+  records that, and it is the one field a re-run of this pod must fill before launch
+  (scripts/pod.py check enforces the commit order from L0 on).
+prereg: null
+arms: ["isvd_r128_h1024_seed_s32", "think_c0.5", "svd_oracle_r0.5", "isvd_r256_h1024_seed", "full"]
+tasks: ["ruler_inhouse_32k", "ppl_32k"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-runtime"
+gpu_budget_h: 0.0

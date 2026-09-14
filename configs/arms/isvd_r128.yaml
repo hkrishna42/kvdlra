@@ -1,0 +1,14 @@
+name: isvd_r128
+legacy_name: "bug-r128"
+kind: bug
+chunkable: true
+doc: >-
+  Rank-128 streaming gist, no exact tier.
+cache:
+  rank: 128
+  coord_budget: null
+  recent_window: 32
+  absorb_block: 16
+  n_sink: 4
+  retention: "fifo"
+  min_sv_frac: 0.0

@@ -1,0 +1,15 @@
+name: w19_swap
+model: "unsloth/Meta-Llama-3.1-8B-Instruct"
+dtype: bfloat16
+doc: >-
+  Week-20 tracker swap: same cache (sinks, ring, seed, 256-token exact tier, rank 64), gist
+  tracker replaced by Oja's rule or Frequent Directions. Read whatever it shows. As run, the Oja
+  arm used library defaults (untuned) and the FD arm crashed, so neither cell supports a claim
+  that the tracker is load-bearing. v1 had no pre-registration: `prereg: null` records that, and
+  it is the one field a re-run of this pod must fill before launch (scripts/pod.py check
+  enforces the commit order from L0 on).
+prereg: null
+arms: ["oja_r64_h256_seed", "fd_r64_h256_seed"]
+tasks: ["ruler_inhouse_16k", "ppl_16k"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-runtime"
+gpu_budget_h: 0.0

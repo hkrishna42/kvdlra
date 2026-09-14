@@ -1,0 +1,15 @@
+name: isvd_r256
+legacy_name: "bug-r256"
+kind: bug
+chunkable: true
+doc: >-
+  Rank-256 streaming gist, no exact tier. Diverges on Qwen/Mistral with the singular-value floor
+  off (Week-17: ppl 27531).
+cache:
+  rank: 256
+  coord_budget: null
+  recent_window: 32
+  absorb_block: 16
+  n_sink: 4
+  retention: "fifo"
+  min_sv_frac: 0.0

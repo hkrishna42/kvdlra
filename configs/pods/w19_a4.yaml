@@ -1,0 +1,14 @@
+name: w19_a4
+model: "unsloth/Meta-Llama-3.1-8B-Instruct"
+dtype: bfloat16
+doc: >-
+  Week-19 A4: the 64K point. The gist is O(rn + hn), constant in the context length, so its
+  stored ratio falls as 1/T -- the one frontier property a fixed-bit quantizer cannot match.
+  Needs an 80GB card; the r64 cells ran 4 trials x 2 seeds, the comparators 6 x 2. v1 had no
+  pre-registration: `prereg: null` records that, and it is the one field a re-run of this pod
+  must fill before launch (scripts/pod.py check enforces the commit order from L0 on).
+prereg: null
+arms: ["ea_k0.1", "kivi2_streaming", "kivi4_streaming", "isvd_r64_h256_seed", "full"]
+tasks: ["ruler_inhouse_64k", "ppl_64k"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+gpu_budget_h: 0.0

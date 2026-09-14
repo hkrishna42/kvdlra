@@ -1,0 +1,14 @@
+name: kivi2_streaming
+legacy_name: "quant-2bit-kivi"
+kind: quant
+chunkable: true
+doc: >-
+  2-bit KV quantization, per-channel keys and per-token values (the KIVI grouping), transformers
+  QuantizedCache over the quanto backend, chunked prefill with the fp16 residual flushed.
+quant:
+  nbits: 2
+  scheme: "kivi"
+  backend: "quanto"
+  group: 64
+  residual: 128
+  chunk: 4096

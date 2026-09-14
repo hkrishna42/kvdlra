@@ -1,0 +1,25 @@
+name: fd_r64_h256_seed
+legacy_name: "bugSseed-r64-h256-fd"
+kind: bug
+chunkable: true
+doc: >-
+  Tracker-swap ablation: the r64 arm with a Frequent-Directions tracker. The Week-20 run
+  crashed; the cell is unmeasured.
+cache:
+  rank: 64
+  coord_budget: null
+  recent_window: 32
+  absorb_block: 16
+  n_sink: 4
+  retention: "lowrank_surprise"
+  hh_budget: 256
+  hh_select: "surprise"
+  hh_neighbor: 1
+  hh_retain: true
+  seed_hh_warmup: true
+  w_key: null
+  score_rank: null
+  min_sv_frac: 0.0
+  tracker: "fd"
+  quant_bits: null
+  quant_budget: 0

@@ -1,0 +1,13 @@
+name: w19_a2
+model: "unsloth/Meta-Llama-3.1-8B-Instruct"
+dtype: bfloat16
+doc: >-
+  Week-19 A2: the official-benchmark anchor. The RULER generator is cloned at a pinned commit
+  and builds the prompts on the pod; the same arms are then scored by RULER's own metric. v1 had
+  no pre-registration: `prereg: null` records that, and it is the one field a re-run of this pod
+  must fill before launch (scripts/pod.py check enforces the commit order from L0 on).
+prereg: null
+arms: ["full", "think_c0.5", "svd_oracle_r0.5", "ea_k0.1", "kivi2_streaming", "kivi4_streaming", "isvd_r64_h256_seed"]
+tasks: ["ruler_official_16k"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+gpu_budget_h: 0.0

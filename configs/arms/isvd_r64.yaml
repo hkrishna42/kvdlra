@@ -1,0 +1,14 @@
+name: isvd_r64
+legacy_name: "bug-r64"
+kind: bug
+chunkable: true
+doc: >-
+  Rank-64 streaming gist, no exact tier: the pure-gist point of the rank sweep.
+cache:
+  rank: 64
+  coord_budget: null
+  recent_window: 32
+  absorb_block: 16
+  n_sink: 4
+  retention: "fifo"
+  min_sv_frac: 0.0

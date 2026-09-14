@@ -1,0 +1,13 @@
+name: w18_g2_qwen
+model: "Qwen/Qwen2.5-7B-Instruct"
+dtype: bfloat16
+doc: >-
+  Week-18 G2: the realistic-filler control against the archived cyclic filler, 16K, 12 records
+  per cell. Pre-registered bar: ~$65, blocking. v1 had no pre-registration: `prereg: null`
+  records that, and it is the one field a re-run of this pod must fill before launch
+  (scripts/pod.py check enforces the commit order from L0 on).
+prereg: null
+arms: ["isvd_r64_h256_seed", "think_c0.5", "svd_oracle_r0.5", "ea_k0.1"]
+tasks: ["ruler_inhouse_16k_wikitext"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-runtime"
+gpu_budget_h: 0.0

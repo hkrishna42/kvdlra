@@ -1,0 +1,14 @@
+name: w19_q4off
+model: "unsloth/Meta-Llama-3.1-8B-Instruct"
+dtype: bfloat16
+doc: >-
+  Week-20 q4off: the composed sub-cliff cell on the official anchor, on the same nine tasks and
+  twelve records as w19_a2. w19_fork ran only the composites there, so the band's standing on
+  the external suite was half-measured until this pod. v1 had no pre-registration: `prereg:
+  null` records that, and it is the one field a re-run of this pod must fill before launch
+  (scripts/pod.py check enforces the commit order from L0 on).
+prereg: null
+arms: ["isvd_r64_h256_seed_q4"]
+tasks: ["ruler_official_16k"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+gpu_budget_h: 0.0

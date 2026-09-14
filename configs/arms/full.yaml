@@ -1,0 +1,6 @@
+name: full
+legacy_name: "full"
+kind: full
+chunkable: true
+doc: >-
+  Uncompressed KV cache: the reference arm every ratio is taken against.

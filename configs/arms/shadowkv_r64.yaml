@@ -1,0 +1,13 @@
+name: shadowkv_r64
+legacy_name: "shadow-r64"
+kind: shadow
+chunkable: false
+doc: >-
+  ShadowKV: rank-64 low-rank keys resident on GPU, values offloaded to host, sparse top-k
+  decode. Single-shot prefill only (port scope guard).
+cache:
+  rank_s: 64
+  top_k: 256
+  chunk: 8
+  recent_window: 32
+  n_sink: 4

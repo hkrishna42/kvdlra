@@ -1,0 +1,13 @@
+name: w17_floor_mistral
+model: "mistralai/Mistral-7B-Instruct-v0.3"
+dtype: bfloat16
+doc: >-
+  Week-17 FLOOR on Mistral, where the rank-128 pure-gist cell diverges (ppl 138) with the floor
+  off. v1 had no pre-registration: `prereg: null` records that, and it is the one field a re-run
+  of this pod must fill before launch (scripts/pod.py check enforces the commit order from L0
+  on).
+prereg: null
+arms: ["isvd_r64", "isvd_r128", "isvd_r256", "isvd_r256_f0.01"]
+tasks: ["ppl_16k"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-runtime"
+gpu_budget_h: 0.0

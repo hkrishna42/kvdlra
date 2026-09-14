@@ -1,0 +1,14 @@
+name: w19_fork_mistral
+model: "mistralai/Mistral-7B-Instruct-v0.3"
+dtype: bfloat16
+doc: >-
+  Week-20 fork: the byte-matched eviction x quantization composites on the same needles as
+  w19_a1q, to test whether the sub-cliff band is exclusive of composites or only of scalar
+  quantizers. Needs the -devel image (quanto). v1 had no pre-registration: `prereg: null`
+  records that, and it is the one field a re-run of this pod must fill before launch
+  (scripts/pod.py check enforces the commit order from L0 on).
+prereg: null
+arms: ["ea_k0.1_kivi2", "ea_k0.1_kivi4", "ea_k0.25_kivi2", "ea_k0.25_kivi4"]
+tasks: ["ruler_inhouse_16k", "ruler_inhouse_32k"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+gpu_budget_h: 0.0

@@ -1,0 +1,14 @@
+name: w19_a1q_qwen
+model: "Qwen/Qwen2.5-7B-Instruct"
+dtype: bfloat16
+doc: >-
+  Week-19 A1Q: the first real measurement of the composed sub-cliff cell -- 512 fp32 coordinate
+  columns kept, everything demoted from them coded at 4 bits. ~25 min per 16K cell, ~1.4 h per
+  32K cell for the streaming r64 arm. v1 had no pre-registration: `prereg: null` records that,
+  and it is the one field a re-run of this pod must fill before launch (scripts/pod.py check
+  enforces the commit order from L0 on).
+prereg: null
+arms: ["isvd_r64_h256_seed_q4"]
+tasks: ["ruler_inhouse_16k", "ruler_inhouse_32k", "ppl_16k", "ppl_32k"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+gpu_budget_h: 0.0

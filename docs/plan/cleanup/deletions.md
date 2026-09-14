@@ -278,3 +278,213 @@ deleted"), and it is not.
 | **delta, Task 6** | **-5,011** |
 | **delta, Task 7** | **-4,672** |
 | **delta, cumulative** | **-9,683** |
+
+# --- Task 9 ---------------------------------------------------------------
+
+## Task 9a --- scripts, pod launchers, morph, figures, stale docs
+
+Rules applied: R21 (morph), R22 (figures), R23 (docs), R24 (scripts). The
+buckets and LOC are the `docs/plan/cleanup/reachability.md` §2 values; the
+`pod-sh` edges all die in the same commit, because the pod launchers that
+carried them are deleted here too (R24) and, as Tasks 6--7 established, those
+launchers `git clone --branch week3/week7` from origin and never executed this
+tree's copy anyway.
+
+### `scripts/*.py` --- every file outside the five entrypoints
+
+Surviving entrypoints: `_paths.py`, `pod.py`, `tables.py`, `figures.py`,
+`dump_kv.py` (+ `make_arxiv.sh`, kept --- see "kept" below).
+
+| path | LOC | bucket | evidence |
+|---|---|---|---|
+| `scripts/generate_with_press.py` | 269 | scripts-only | reachability §2: reached only from other `scripts/*.py`, all deleted here |
+| `scripts/w10_parse_logs.py` | 80 | none | reachability §2: no pod launcher invokes it and no test imports it |
+| `scripts/w11_merge.py` | 165 | tests | decision-table merger; superseded by `scripts/tables.py build` |
+| `scripts/w11_probe.py` | 203 | pod-sh | reachability §2 `pod-sh`: its only live edge was a `scripts/pod/*.sh` launcher, deleted in this commit (R24) |
+| `scripts/w12_calibrate_qkey.py` | 98 | pod-sh | reachability §2 `pod-sh`: its only live edge was a `scripts/pod/*.sh` launcher, deleted in this commit (R24) |
+| `scripts/w12_qbug_probe.py` | 299 | scripts-only | reachability §2: reached only from other `scripts/*.py`, all deleted here |
+| `scripts/w13_tracka_probe.py` | 557 | none | reachability §2: no pod launcher invokes it and no test imports it |
+| `scripts/w13_trackb_bypass.py` | 236 | none | reachability §2: no pod launcher invokes it and no test imports it |
+| `scripts/w13_trackc_probe.py` | 282 | none | reachability §2: no pod launcher invokes it and no test imports it |
+| `scripts/w13_trackx_angles_probe.py` | 298 | none | reachability §2: no pod launcher invokes it and no test imports it |
+| `scripts/w13_trackx_rank_probe.py` | 231 | none | reachability §2: no pod launcher invokes it and no test imports it |
+| `scripts/w14_second_bypass_probe.py` | 628 | none | reachability §2: no pod launcher invokes it and no test imports it |
+| `scripts/w15_intervals.py` | 161 | tests | folded into `kvdlra.eval.stats` (Task 8); no surviving test imports it |
+| `scripts/w15_scorerank_probe.py` | 435 | none | reachability §2: no pod launcher invokes it and no test imports it |
+| `scripts/w16_intervals.py` | 159 | none | folded into `kvdlra.eval.stats` (Task 8) |
+| `scripts/w16_tier2_probe.py` | 228 | pod-sh | reachability §2 `pod-sh`: its only live edge was a `scripts/pod/*.sh` launcher, deleted in this commit (R24) |
+| `scripts/w17_intervals.py` | 164 | none | folded into `kvdlra.eval.stats` (Task 8) |
+| `scripts/w18_intervals.py` | 212 | tests | folded into `kvdlra.eval.stats` (Task 8); `tests/test_w18_intervals.py` deleted with it |
+| `scripts/w19_a1_report.py` | 157 | none | report generator; its output is kept as a narrative report (R17) |
+| `scripts/w19_a2_misses.py` | 81 | none | report generator; its output is kept as a narrative report (R17) |
+| `scripts/w19_dashboard.py` | 488 | none | report generator; superseded by `scripts/tables.py build` |
+| `scripts/w19_fork_report.py` | 135 | scripts-only | report generator; its output is kept as a narrative report (R17) |
+| `scripts/w20_close_report.py` | 183 | none | report generator; its output is kept as a narrative report (R17) |
+| `scripts/w4_fair.py` | 201 | pod-sh+tests | reachability §2 `pod-sh+tests`: its only live edge was a `scripts/pod/*.sh` launcher, deleted in this commit (R24) |
+| `scripts/w4_head_to_head.py` | 185 | none | reachability §2: no pod launcher invokes it and no test imports it |
+| `scripts/w4_hybrid_sweep.py` | 182 | pod-sh+tests | reachability §2 `pod-sh+tests`: its only live edge was a `scripts/pod/*.sh` launcher, deleted in this commit (R24) |
+| `scripts/w4_needle.py` | 197 | pod-sh+tests | reachability §2 `pod-sh+tests`: its only live edge was a `scripts/pod/*.sh` launcher, deleted in this commit (R24) |
+| `scripts/w5_decode_validate.py` | 246 | none | reachability §2: no pod launcher invokes it and no test imports it |
+| `scripts/w5_fp16_longctx.py` | 296 | pod-sh | reachability §2 `pod-sh`: its only live edge was a `scripts/pod/*.sh` launcher, deleted in this commit (R24) |
+| `scripts/w5_hybrid.py` | 314 | pod-sh | reachability §2 `pod-sh`: its only live edge was a `scripts/pod/*.sh` launcher, deleted in this commit (R24) |
+| `scripts/w5_longctx.py` | 360 | pod-sh | reachability §2 `pod-sh`: its only live edge was a `scripts/pod/*.sh` launcher, deleted in this commit (R24) |
+| `scripts/w5_needle.py` | 264 | pod-sh | reachability §2 `pod-sh`: its only live edge was a `scripts/pod/*.sh` launcher, deleted in this commit (R24) |
+| `scripts/w5_ruler.py` | 263 | pod-sh+tests | reachability §2 `pod-sh+tests`: its only live edge was a `scripts/pod/*.sh` launcher, deleted in this commit (R24) |
+| `scripts/w5_streamppl.py` | 517 | pod-sh+tests | reachability §2 `pod-sh+tests`: its only live edge was a `scripts/pod/*.sh` launcher, deleted in this commit (R24) |
+| `scripts/w7_decode_needle.py` | 278 | none | reachability §2: no pod launcher invokes it and no test imports it |
+| `scripts/w9_frontier.py` | 133 | none | reachability §2: no pod launcher invokes it and no test imports it |
+| `scripts/w9_recall_8b.py` | 138 | none | reachability §2: no pod launcher invokes it and no test imports it |
+| `scripts/week2_select_docs.py` | 62 | none | reachability §2: no pod launcher invokes it and no test imports it |
+
+Subtotal: 38 files, 9385 LOC.
+
+### `scripts/pod/*.sh` --- every launcher except `boot.sh` and `watchdog.sh`
+
+R24: the per-week launchers are folded into the two SHA-pinned survivors ---
+`boot.sh` (the `--onstart` payload, which now hands off to
+`scripts/pod.py run --pod "$POD"` with the arms/tasks read from
+`configs/pods/<pod>.yaml`) and `watchdog.sh` (harvest + destroy). Everything a
+week-launcher encoded as flags is now a committed pod config, so the launcher
+is duplicate, not evidence.
+
+| path | LOC | bucket | evidence |
+|---|---|---|---|
+| `scripts/pod/scrape_w10.sh` | 24 | pod launcher | pure-shell log harvester (reachability §1) |
+| `scripts/pod/w10_gpu.sh` | 84 | pod launcher | week launcher for pods whose arms/tasks are now `configs/pods/*.yaml`; every `scripts/*.py` it invoked is deleted in this commit |
+| `scripts/pod/w11_baselines.sh` | 58 | pod launcher | week launcher for pods whose arms/tasks are now `configs/pods/*.yaml`; every `scripts/*.py` it invoked is deleted in this commit |
+| `scripts/pod/w11_gpu.sh` | 105 | pod launcher | week launcher for pods whose arms/tasks are now `configs/pods/*.yaml`; every `scripts/*.py` it invoked is deleted in this commit |
+| `scripts/pod/w11_probe8b.sh` | 50 | pod launcher | week launcher for pods whose arms/tasks are now `configs/pods/*.yaml`; every `scripts/*.py` it invoked is deleted in this commit |
+| `scripts/pod/w11_r128.sh` | 333 | pod launcher | week launcher for pods whose arms/tasks are now `configs/pods/*.yaml`; every `scripts/*.py` it invoked is deleted in this commit |
+| `scripts/pod/w11_table.sh` | 65 | pod launcher | week launcher for pods whose arms/tasks are now `configs/pods/*.yaml`; every `scripts/*.py` it invoked is deleted in this commit |
+| `scripts/pod/w12_probe_r128.sh` | 50 | pod launcher | week launcher for pods whose arms/tasks are now `configs/pods/*.yaml`; every `scripts/*.py` it invoked is deleted in this commit |
+| `scripts/pod/w16.sh` | 219 | pod launcher | folded into `scripts/pod/boot.sh` + `configs/pods/w17_floor*.yaml` (Task 8) |
+| `scripts/pod/w18.sh` | 161 | pod launcher | folded into `scripts/pod/boot.sh` + `configs/pods/w18_*.yaml` (Task 8) |
+| `scripts/pod/w18_boot.sh` | 94 | pod launcher | folded into `scripts/pod/boot.sh` (Task 8) --- it was the same `--onstart` payload with a `$DRIVER` indirection |
+| `scripts/pod/w18_finalizer.sh` | 14 | pod launcher | pure-shell log harvester (reachability §1: invokes no `scripts/*.py`); `scripts/pod.py harvest` replaces it |
+| `scripts/pod/w18_g4fallback.sh` | 22 | pod launcher | pure-shell log harvester (reachability §1) |
+| `scripts/pod/w18_watchdog.sh` | 53 | pod launcher | folded into `scripts/pod/watchdog.sh` (Task 8) |
+| `scripts/pod/w18_watchdog2.sh` | 27 | pod launcher | folded into `scripts/pod/watchdog.sh` (Task 8) |
+| `scripts/pod/w19.sh` | 259 | pod launcher | folded into `scripts/pod/boot.sh` + `configs/pods/w19_*.yaml` (Task 8) |
+| `scripts/pod/w19_watchdog.sh` | 58 | pod launcher | folded into `scripts/pod/watchdog.sh` (Task 8) |
+| `scripts/pod/w5_confirm_8b.sh` | 40 | pod launcher | week launcher for pods whose arms/tasks are now `configs/pods/*.yaml`; every `scripts/*.py` it invoked is deleted in this commit |
+| `scripts/pod/w5_fp16_8b.sh` | 38 | pod launcher | week launcher for pods whose arms/tasks are now `configs/pods/*.yaml`; every `scripts/*.py` it invoked is deleted in this commit |
+| `scripts/pod/w5_hybrid_needle_8b.sh` | 39 | pod launcher | week launcher for pods whose arms/tasks are now `configs/pods/*.yaml`; every `scripts/*.py` it invoked is deleted in this commit |
+| `scripts/pod/w5_longctx_8b.sh` | 32 | pod launcher | week launcher for pods whose arms/tasks are now `configs/pods/*.yaml`; every `scripts/*.py` it invoked is deleted in this commit |
+| `scripts/pod/w5_streamppl_8b.sh` | 63 | pod launcher | week launcher for pods whose arms/tasks are now `configs/pods/*.yaml`; every `scripts/*.py` it invoked is deleted in this commit |
+| `scripts/pod/w7_streamppl_8b.sh` | 63 | pod launcher | week launcher for pods whose arms/tasks are now `configs/pods/*.yaml`; every `scripts/*.py` it invoked is deleted in this commit |
+
+Subtotal: 23 files, 1951 LOC.
+### morph (R21)
+
+`MorphKV` is an eviction baseline whose numbers do not appear anywhere in
+`paper/main.tex` (`git grep -n -i morph paper/main.tex` is empty) and no
+`configs/arms/*.yaml` declares `kind: morph`, so nothing `make tables` or
+`make figures` regenerates depends on it. Task 7 severed the `src/` import that
+made it look load-bearing; this commit removes the module and everything that
+mirrored it.
+
+| path | LOC | bucket | evidence |
+|---|---|---|---|
+| `src/kvdlra/cache/morph_cache.py` | 449 | pod-sh+tests | reachability §2 L124. Every `pod-sh` edge ran through `scripts/w10_{frontier,ruler,longbench}.py` (deleted Task 8) and `scripts/w5_streamppl.py` / `w5_decode_validate.py` / `w7_decode_needle.py` (deleted above), plus the `w5_*.sh` / `w7_*.sh` launchers (deleted above). Nothing is left. |
+| `tests/test_morph_cache.py` | 260 | test of the deleted module | the only thing it tests is `morph_cache` |
+
+Edited, not deleted (the morph references that survived Task 8):
+
+- `src/kvdlra/cache/__init__.py` — the `MorphKVCache` / `MorphKVLayer` import and
+  the two `__all__` entries.
+- `src/kvdlra/eval/frontier.py` — the `MorphKVCache` import, the
+  `_footprint` `kind == "morph"` branch, and the two type unions
+  (`score_streaming`'s `cache:` annotation, the `ingesting` noqa comment).
+- `src/kvdlra/eval/ruler.py`, `src/kvdlra/eval/longbench.py` — `"morph"` dropped
+  from the `arm["kind"] in (...)` streaming tuple (no config declares it).
+- `src/kvdlra/accounting.py` — `morph_footprint` (the formula mirror of
+  `MorphKVLayer.stored_state_numel`, which no longer exists) and the two
+  docstring mentions.
+- `src/kvdlra/cache/shadow_cache.py` — the `:meth:`MorphKVCache.attach`` Sphinx
+  cross-reference becomes prose. The two *prose* references to MorphKV as prior
+  work (§4 of the module docstring) stay: they describe the published method,
+  not our class.
+- `tests/test_accounting.py` — `test_morph_footprint_matches_stored_state_numel`
+  (the anti-drift pin for a formula that is gone).
+- `tests/test_w10_ingest.py` —
+  `test_morph_chunked_ingest_lossless_matches_dynamic_cache`; the BUG lossless
+  oracle, the bounded-state pin and the mode-restore pin all stay.
+- `tests/test_w10_score_mode.py` —
+  `test_morph_frozen_scoring_matches_dynamic_cache_when_no_eviction`, the
+  `_build(model, kind)` dispatcher and the two `["bug", "morph"]`
+  parametrizations (which collapse to the BUG case).
+
+### figures (R22)
+
+Kept — exactly the three files `git show ee8c0ab:paper/main.tex | grep
+includegraphics` names:
+
+- `figures/week19/coldstart.pdf`
+- `figures/week19/fairquant.pdf`
+- `figures/week19/one_over_t.pdf`
+
+Deleted: the other 86 tracked files under `figures/` (`week1`, `week2`,
+`week4`, `week5`, `week7`, `week8`, `week9`, `week10`, the three `week19`
+`.png` companions, and the `.json` data sidecars) — no `\includegraphics`
+names them, and `make figures` regenerates the paper's three from
+`results/paper-v1/` into the gitignored `docs/paper/figures/`, so a committed
+raster of a superseded figure is a stale copy of nothing the build reads.
+Also deleted: `figs/.gitkeep` (the directory is an unused scratch output root;
+its `.gitignore` lines go in 9c) and `experiments/` (6 files — four dated
+Week-1/2 scratch `README.md`s and two `run.py` prototypes, neither imported by
+anything nor invoked by any launcher).
+
+### docs (R23)
+
+`git mv docs/reviews docs/plan/reviews` — the 2026-09-06 / 2026-09-08 review
+packets are planning records and belong under `docs/plan/` with the rest
+(CLAUDE.md's target layout is `docs/{plan,adr,paper}` and nothing else).
+
+Deleted, 57 files: `docs/week*.md` (49 weekly writeups, kickoffs, handovers and
+explainers), `docs/notes/` (5), `docs/board/` (2), `docs/week10_report/` (1),
+`docs/index.md`, `docs/reference.md`, `docs/PLAN.md`, `docs/w14-sizing.md`, and
+`mkdocs.yml` (the site that published them; its four dev deps go in 9c).
+Evidence: cited by nothing executable — no test, no entrypoint, no config and
+no `Makefile` target reads any of them; the live plan of record is
+`docs/plan/` and the paper is `paper/`. They are recoverable at the tag
+`paper-v1-archive` (ee8c0ab).
+
+**Hand-off to Task 10 (R16 wording pass): dangling docstring citations.**
+Deleting `docs/week*.md` and `docs/notes/` leaves these *prose* references in
+surviving source with no target. Each needs the citation dropped or re-pointed;
+none of them affects behaviour, and none has a surviving in-repo equivalent
+(the content exists only at the tag), so re-pointing is an editorial call this
+task does not make:
+
+| file | reference |
+|---|---|
+| `src/kvdlra/accounting.py:257` | `docs/week10-plan.md` |
+| `src/kvdlra/cache/bug_cache.py:3,4,48,241` | `docs/week5-plan.md`, `docs/notes/streaming-decode-design.md`, `docs/week7-plan.md`, `docs/notes/conventions.md` |
+| `src/kvdlra/tracker/isvd.py:6,44,116,133,196` | `docs/notes/conventions.md`, `docs/PLAN.md`, `docs/week17`, `docs/week5.md` |
+| `src/kvdlra/eval/frontier.py:434` | `docs/week15-significance.md` |
+| `src/kvdlra/baselines/turbo_press.py:19` | `docs/notes/turboquant-rope-interaction.md` |
+| `src/kvdlra/baselines/lowrank_press.py:24,31,41,135,273` | `docs/notes/{conventions,rope-pitfall,turboquant-rope-interaction}.md`, `docs/PLAN.md` |
+| `scripts/dump_kv.py:77` | `docs/notes/rope-pitfall.md` |
+| `scripts/tables.py:41` | `docs/week18-kickoff.md` |
+| `tests/test_bug_cache.py:16,110` · `test_bug_cache_week7.py:4` · `test_w17_rankfloor.py:5` · `test_bug_press.py:22` · `test_accounting.py:130` | `docs/week5.md`, `docs/week7-plan.md`, `docs/week11*`, `docs/week17`, `docs/notes/conventions.md` |
+
+Repaired here instead (they cite a *script* deleted in this commit, and the
+successor is an in-repo path, so the re-point is mechanical, not editorial):
+`src/kvdlra/eval/official_ruler.py` (`scripts/pod/w19.sh` → "the pod
+bootstrap"), `src/kvdlra/baselines/turbo_press.py` and
+`src/kvdlra/cache/bug_cache.py` (`scripts/w4_fair.py` → dropped),
+`tests/test_ruler_template_tail.py` (`scripts/ruler.py` →
+`kvdlra.eval.ruler._tail_len`; the `scripts/w16_tier2_probe.py` line dropped),
+`tests/test_bug_press.py` (`scripts/generate_with_press.py` → dropped),
+`tests/test_golden_cache.py` (`scripts/pod/w18.sh` flags →
+`configs/arms/isvd_r64_h256_seed`).
+
+Two anti-drift pins in `tests/test_accounting.py` imported their reference
+formula *from* a deleted script (`w5_streamppl.bug_budget_floats`,
+`w4_hybrid_sweep.kv_memory_ratio`). They test `kvdlra.accounting`, a surviving
+module, so they are kept: each reference formula is transcribed into the test
+as a private helper naming the script and the tag it came from. The assertion
+is unchanged, so the pin still fails if `accounting` drifts.
+`pyproject.toml`'s `pythonpath` comment, which justified `scripts` on the path
+by exactly those two imports, is re-worded to the real remaining reason
+(`import pod` / `import tables` in the entrypoint tests).

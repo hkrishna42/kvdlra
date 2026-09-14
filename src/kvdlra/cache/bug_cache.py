@@ -85,7 +85,7 @@ coordinate buffer attack the first two:
   re-coded per absorb with error bounded by the one-shot PolarQuant distortion
   per event -- whether that per-event jitter compounds visibly over deep
   horizons is exactly what the Week-7 bin curves falsify.
-  Accounting (the Week-4 fairness convention, ``scripts/w4_fair.py``): codes
+  Accounting (the Week-4 fairness convention): codes
   count ``quant_bits/32`` float-equivalents each (bit-packable), plus one fp32
   norm per column per K/V stream, plus the shared rotation/codebook side
   information counted **once** per cache (:class:`_QuantBank`).

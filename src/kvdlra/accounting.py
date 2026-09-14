@@ -4,11 +4,9 @@ Every Week-10 frontier arm stores something different (BUG low-rank factors,
 eviction survivors, ShadowKV low-rank keys + CPU-offloaded values). This module
 counts each **honestly, in the same unit**, reusing the repo's existing
 conventions so the *measured* caches
-(:meth:`kvdlra.cache.BugStreamingCache.stored_state_numel`,
-:meth:`kvdlra.cache.MorphKVCache.stored_state_numel`) and the *formula-only*
-presses (SnapKV / ExpectedAttention via kvpress, ShadowKV) land on ONE axis. See
-``docs/week10-plan.md`` (the "Memory accounting -- the core deliverable" section)
-and ``docs/week10-kickoff.md``.
+(:meth:`kvdlra.cache.BugStreamingCache.stored_state_numel`) and the
+*formula-only* presses (SnapKV / ExpectedAttention via kvpress, ShadowKV) land on
+ONE axis.
 
 Conventions (identical to ``stored_state_numel`` / ``kv_memory_ratio`` /
 ``evict_quant_memory``):
@@ -69,7 +67,7 @@ class Footprint:
     def float_equiv(self) -> float:
         """Float-equivalents / layer (fp32-word unit), byte-identical to
         ``stored_state_numel``: verbatim at 1 each, codes ``ceil(bits/32)``, aux at
-        1 each. Integer-valued for measured (BUG/MorphKV) configs."""
+        1 each. Integer-valued for measured (BUG) configs."""
         codes = math.ceil(self.quant_code_bits / 32) if self.quant_code_bits else 0
         return self.verbatim_elems + codes + self.aux_words
 
@@ -263,17 +261,6 @@ def evict_footprint(
     return Footprint(
         verbatim_elems=0.0, quant_code_bits=2 * n * kept * quant_bits, aux_words=2 * kept
     )
-
-
-# ------------------------------------------------------------------- MorphKV
-
-
-def morph_footprint(n: int, h_kv: int, kept_len: int, recent_window: int) -> Footprint:
-    """Per-layer footprint of a MorphKV layer, mirroring
-    :meth:`MorphKVLayer.stored_state_numel`: kept K/V (``2n`` each over ``kept_len``
-    tokens) + the score buffer ``(H_kv, R, kept_len)``. ``kept_len`` should include
-    any ``evict_interval-1`` overshoot when auditing the measured high-water."""
-    return Footprint(verbatim_elems=2 * n * kept_len, aux_words=h_kv * recent_window * kept_len)
 
 
 # ------------------------------------------------------------------ ThinK

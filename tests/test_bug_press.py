@@ -4,8 +4,8 @@ These are hermetic (no model download): they exercise the math-bearing internals
 -- the per-batch reshape/reconstruct (:meth:`BUGPress._compress_tensor`), the
 sink-preserving low-rank reconstruction (:meth:`BUGPress._lowrank_reconstruct`),
 the nominal ``compression_ratio``, and config-driven ``n_features`` -- plus the
-constructor guards. End-to-end generation through the kvpress hook is validated
-separately by ``scripts/generate_with_press.py`` (it loads a real model).
+constructor guards. End-to-end generation through the kvpress hook needs a real
+model and is out of scope for the CPU suite.
 """
 
 from __future__ import annotations

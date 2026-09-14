@@ -11,7 +11,7 @@ eviction baselines too. Compose it after an eviction press:
 
 gives "SnapKV x TurboQuant" -- evict tokens, then quantize the survivors -- the
 apples-to-apples counterpart of ``BUGPress(rank=r, quant_bits=b)``
-("BUG x TurboQuant"). Used by ``scripts/w4_fair.py``.
+("BUG x TurboQuant").
 
 Quantizes the **per-token joint feature vector** (``num_kv_heads * head_dim`` =
 512 for Llama-3.2-1B), matching the BUG feature convention. These are post-RoPE

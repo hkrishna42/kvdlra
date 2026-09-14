@@ -28,7 +28,7 @@ from torch.nn.functional import cross_entropy
 from transformers.cache_utils import Cache, DynamicCache
 
 from kvdlra import accounting as acc
-from kvdlra.cache import BugStreamingCache, MorphKVCache, ShadowKVCache
+from kvdlra.cache import BugStreamingCache, ShadowKVCache
 from kvdlra.eval.config import ArmCfg, arm_kwargs
 from kvdlra.quant.kivi_cache import aux_words, flush, make_quant_cache
 
@@ -68,7 +68,7 @@ def _prefill_chunked(model: Any, cache: Cache, ctx: torch.Tensor, chunk: int) ->
     is consolidated after every chunk. ``logits_to_keep=1`` drops the P x vocab
     logits so no forward's activations scale with the full ``T``."""
     t = int(ctx.shape[1])
-    ingesting = getattr(cache, "ingesting")  # noqa: B009 (BugStreamingCache/MorphKVCache)
+    ingesting = getattr(cache, "ingesting")  # noqa: B009 (BugStreamingCache/ShadowKVCache)
     consolidate = getattr(cache, "consolidate")  # noqa: B009
     with ingesting():
         for start in range(0, t, chunk):
@@ -87,7 +87,7 @@ def _prefill_chunked(model: Any, cache: Cache, ctx: torch.Tensor, chunk: int) ->
 @torch.no_grad()
 def score_streaming(
     model: Any,
-    cache: BugStreamingCache | MorphKVCache | ShadowKVCache,
+    cache: BugStreamingCache | ShadowKVCache,
     ctx_ids: torch.Tensor,
     win_ids: torch.Tensor,
     chunk: int = 0,
@@ -315,11 +315,6 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
             quant_count=q_len,
             quant_bits=layer.quant_bits if q_len else None,
         )
-    if kind == "morph":
-        assert isinstance(cache, MorphKVCache)
-        mlayer = cast(Any, cache.layers[0])
-        kept = int(mlayer.keys.shape[2])
-        return acc.morph_footprint(n, h_kv, kept, recent_window=mlayer.recent_window)
     if kind == "shadow":
         from kvdlra.cache import ShadowKVLayer
 

@@ -4,8 +4,8 @@ The golden was generated at paper-v1-archive (ee8c0ab) on CPU; every source move
 leave it unchanged. Regenerate ONLY with ``python tests/test_golden_cache.py --regen``
 and a DECISIONS.md entry.
 
-The run mirrors the pods' ``bugSseed-r64-h256`` arm (scripts/pod/w18.sh: ``--ranks 64
---hh-budgets 256 --hh-neighbor 1 --warmup-seed``) on a hermetic tiny Llama, through the
+The run mirrors the pods' ``bugSseed-r64-h256`` arm (``configs/arms/isvd_r64_h256_seed``:
+rank 64, hh_budget 256, hh_neighbor 1, warmup seed) on a hermetic tiny Llama, through the
 production prefill helper (``frontier._prefill_chunked``) so the archived path is
 the one under test: rank-64 gist over 128 features, a surprise-selected exact tier, the
 first-chunk warm-up seed, then the reconstructed middle. ``hh_budget`` is 32 (not 256)

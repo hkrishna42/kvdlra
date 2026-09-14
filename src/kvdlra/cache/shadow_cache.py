@@ -524,9 +524,8 @@ class ShadowKVCache(Cache):
     def attach(self, model: PreTrainedModel) -> Iterator[None]:
         """Register the pre-attention selection hooks for a decode forward/generate
         (harmless during pre-fill, where the hook sees ``cumulative_length == 0`` and
-        skips). Symmetric with :meth:`MorphKVCache.attach`, but ShadowKV's hook is a
-        *pre*-hook (query-aware, before attention) rather than an observe-only
-        post-hook."""
+        skips). ShadowKV's hook is a *pre*-hook (query-aware, before attention) rather
+        than the observe-only post-hook an eviction cache uses."""
         handles = self._install_hooks(model)
         try:
             yield

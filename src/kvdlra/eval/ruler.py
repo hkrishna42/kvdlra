@@ -289,7 +289,7 @@ def retrieve(
     (kvdlra.accounting); the stored-bits ratio bills fp32-at-rest state as stored."""
     hay = hay.to(device)
     ctx_len = int(hay.shape[1])
-    streaming = arm["kind"] in ("bug", "morph", "shadow")
+    streaming = arm["kind"] in ("bug", "shadow")
     if streaming:
         cache: Cache = arm["make"]()
         # Week-15 A1 fix: the attach() scope covers prefill AND decode (uniform for

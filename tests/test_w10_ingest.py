@@ -1,13 +1,12 @@
-"""Week-10 Phase 3: chunked ``ingest`` prefill on BUG + MorphKV (unlocks 32K/64K).
+"""Week-10 Phase 3: chunked ``ingest`` prefill on the BUG cache (unlocks 32K/64K).
 
 Chunked ingest appends each prompt chunk to the recent ring and defers the absorb
-to ``consolidate()`` (BUG) / the attach hook's per-chunk seed+evict (MorphKV), so
-no forward ever holds the full-``T`` K/V. Appending a block then consolidating is
-equivalent to feeding the chunk one token at a time; it differs from single-shot
-prefill only in that each chunk attends to a *compressed* past (the documented
+to ``consolidate()``, so no forward ever holds the full-``T`` K/V. Appending a block
+then consolidating is equivalent to feeding the chunk one token at a time; it differs
+from single-shot prefill only in that each chunk attends to a *compressed* past (the documented
 deviation -- **exact at a lossless config**). Pins:
 
-* lossless config (BUG full rank / MorphKV capacity >= T): chunked-ingest frozen
+* lossless config (BUG full rank, full coord budget): chunked-ingest frozen
   scoring matches a full ``DynamicCache`` -> the ``get_mask_sizes`` math is correct
   end to end for ``q_len > 1`` ingest;
 * chunked ingest reaches the SAME bounded compressed state as single-shot (memory
@@ -26,7 +25,7 @@ import torch
 from transformers import LlamaConfig, LlamaForCausalLM
 from transformers.cache_utils import DynamicCache
 
-from kvdlra.cache import BugStreamingCache, MorphKVCache
+from kvdlra.cache import BugStreamingCache
 
 H, D = 2, 16
 N_FEATURES = H * D
@@ -70,7 +69,7 @@ def _make_bug(model: LlamaForCausalLM, *, rank: int, coord_budget: int) -> BugSt
 
 
 def _chunked_prefill(
-    model: LlamaForCausalLM, cache: BugStreamingCache | MorphKVCache, ids: torch.Tensor, chunk: int
+    model: LlamaForCausalLM, cache: BugStreamingCache, ids: torch.Tensor, chunk: int
 ) -> None:
     """Drive an OOM-safe chunked prefill: first chunk single-shot-prefills, later
     chunks ingest; consolidate after each (mirrors frontier._prefill_chunked)."""
@@ -98,9 +97,7 @@ def _dynamic_window_logits(
     return cast(torch.Tensor, out.logits)
 
 
-def _single_shot(
-    model: LlamaForCausalLM, cache: BugStreamingCache | MorphKVCache, ids: torch.Tensor
-) -> None:
+def _single_shot(model: LlamaForCausalLM, cache: BugStreamingCache, ids: torch.Tensor) -> None:
     with torch.no_grad(), cache.attach(model):
         model(ids, past_key_values=cache, use_cache=True)
 
@@ -119,19 +116,6 @@ def test_bug_chunked_ingest_lossless_matches_dynamic_cache(tiny_model: LlamaForC
         with bug.frozen_scoring():
             out = tiny_model(win, past_key_values=bug, use_cache=True, position_ids=_pos(64, 16))
     assert torch.allclose(out.logits, ref, atol=2e-3, rtol=2e-3)
-
-
-def test_morph_chunked_ingest_lossless_matches_dynamic_cache(tiny_model: LlamaForCausalLM) -> None:
-    """MorphKV capacity >= T keeps every token, so chunked ingest (append + hook
-    seed/evict, no actual eviction) matches the full DynamicCache."""
-    ids, win = _prompt(64), _prompt(16, seed=9)
-    ref = _dynamic_window_logits(tiny_model, ids, win)
-    morph = MorphKVCache(tiny_model, capacity=256, recent_window=8)
-    with torch.no_grad():
-        _chunked_prefill(tiny_model, morph, ids, chunk=16)
-        with morph.frozen_scoring():
-            out = tiny_model(win, past_key_values=morph, use_cache=True, position_ids=_pos(64, 16))
-    assert torch.allclose(out.logits, ref, atol=1e-4, rtol=1e-4)
 
 
 # --------------------------------------------------------- bounded state (OOM-safety)
@@ -156,7 +140,7 @@ def test_bug_chunked_ingest_reaches_bounded_state(tiny_model: LlamaForCausalLM) 
 
 
 def test_ingesting_restores_normal_mode(tiny_model: LlamaForCausalLM) -> None:
-    bug: BugStreamingCache | MorphKVCache = _make_bug(tiny_model, rank=8, coord_budget=32)
+    bug = _make_bug(tiny_model, rank=8, coord_budget=32)
     _chunked_prefill(tiny_model, bug, _prompt(48), chunk=16)
     assert all(cast(Any, layer)._mode == "normal" for layer in bug.layers)
     # the q_len==1 decode invariant is live again after ingest.

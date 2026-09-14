@@ -1,4 +1,4 @@
-"""Pins for the template-derived RULER query tail (``scripts/ruler.py``).
+"""Pins for the template-derived RULER query tail (``kvdlra.eval.ruler._tail_len``).
 
 The Week-16 Tier-2 generality push replaced the hardcoded ``_TAIL_K = 48`` slice --
 tuned to Llama's chat-template token count -- with a template-derived tail so the whole
@@ -10,8 +10,6 @@ lengths; a wrong slice = silent needle failure = false 0s). These tests pin:
 * Llama identity (a short question stays at the 48-token floor -> validated slices unchanged);
 * the new-family fix (a long question expands the tail so a naive 48 would have dropped it);
 * the fail-loud tripwire when the question is not recoverable from the query.
-
-The real-tokenizer path is exercised at $0 CPU by ``scripts/w16_tier2_probe.py`` (G-TAIL).
 """
 
 from __future__ import annotations

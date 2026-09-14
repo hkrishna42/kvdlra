@@ -38,7 +38,7 @@ import torch
 from kvdlra.eval.config import TaskCfg
 from kvdlra.eval.ruler import _tail_len, prompt_sha256, retrieve
 
-# Where the pod left the prompts the RULER generator built (scripts/pod/w19.sh clones
+# Where the pod left the prompts the RULER generator built (the pod bootstrap clones
 # NVIDIA/RULER at a pinned commit and runs its prepare.py into this directory).
 DATA_DIR = Path(os.environ.get("RULER_DATA", "/root/ruler_data"))
 

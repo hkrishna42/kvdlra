@@ -114,7 +114,7 @@ def generate(
     prompt_ids = prompt_ids.to(device)
     pre, last = prompt_ids[:, :-1], prompt_ids[:, -1:]
     ctx_len = int(pre.shape[1])
-    streaming = arm["kind"] in ("bug", "morph", "shadow")
+    streaming = arm["kind"] in ("bug", "shadow")
     if streaming:
         cache: Cache = arm["make"]()
         # Week-15 A1 fix: attach() covers prefill AND decode (uniform for all

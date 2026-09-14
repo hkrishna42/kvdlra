@@ -1,11 +1,11 @@
 """Week-7 tests: adaptive coordinate retention (A) + quantized age tier (D).
 
 Extends the :mod:`tests.test_bug_cache` correctness ladder to the Week-7 knobs
-(``docs/week7-plan.md`` tier 1):
+(tier 1):
 
 * non-contiguous middles are re-rotated at their **true** tracked positions;
 * the quantized tier bounds reconstruction error, keeps memory constant, and
-  is **counted honestly** (codes at ``bits/32`` float-equivalents + norms +
+  is **counted in the same unit** (codes at ``bits/32`` float-equivalents + norms +
   positions + surprise snapshots + shared side info);
 * exact-mode parity with ``DynamicCache`` still holds for every variant when
   nothing overflows;

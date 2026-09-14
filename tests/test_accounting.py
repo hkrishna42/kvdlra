@@ -127,7 +127,7 @@ def test_bug_footprint_matches_stored_state_numel(
 def test_balanced_config_ratio_pin() -> None:
     """The Week-11 'balanced' operating point bugS-r128-h1024 at 32K on 8B
     (n=1024) computes to ~0.15x by the accounting formula -- the memory-cost
-    claim attached to the config in docs/week11*. Arm-style counts as built by
+    claim Week 11 attached to that config. Arm-style counts as built by
     ``frontier.build_arms`` (coord tier = everything not verbatim)."""
     n, t, rank, hh = 1024, 32768, 128, 1024
     rw, sink = 32, 4

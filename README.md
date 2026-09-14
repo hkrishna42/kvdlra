@@ -88,6 +88,9 @@ scripts/pod.py check results/mypod
 environment into the harvested log, and hands off to `scripts/pod.py run --pod <pod>`.
 `scripts/pod/watchdog.sh` polls, harvests and destroys the instance unattended.
 
+On a GPU you already have, skip steps 2 and 3 and run the same loop locally:
+`scripts/pod.py run --pod mypod` writes `results/mypod/` directly, and `check` gates it.
+
 `check` is the gate a citable number has to pass. It re-derives the config hash from the
 pod's YAML, resolves the SHA, enforces the pre-registration commit order, and requires
 every cell the config calls for — arm × generator × sub-task × context — to hold exactly
@@ -97,7 +100,8 @@ that produced nothing cannot be passed off as a clean run.
 
 A run writes `results/<pod>/`: `manifest.json` (git SHA, config hash, model revision,
 dataset and haystack digests, library and CUDA versions, GPU, wall clock, command line),
-`env.txt`, and the records — `trials.jsonl`, `ppl.jsonl`, `pplw.jsonl`, `diag.jsonl`.
+`env.txt`, and the records — `trials.jsonl`, `ppl.jsonl`, `pplw.jsonl`,
+`latency.jsonl`, `diag.jsonl`.
 
 ## License
 

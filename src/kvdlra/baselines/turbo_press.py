@@ -16,7 +16,7 @@ apples-to-apples counterpart of ``BUGPress(rank=r, quant_bits=b)``
 Quantizes the **per-token joint feature vector** (``num_kv_heads * head_dim`` =
 512 for Llama-3.2-1B), matching the BUG feature convention. These are post-RoPE
 keys; we quantize/dequantize in place (no re-rotation), so the PolarQuant rotation
-Pi and RoPE never interact (see ``docs/notes/turboquant-rope-interaction.md``).
+Pi and RoPE never interact.
 ``compression_ratio`` is 0 (quantization removes no tokens); the real bit cost is
 accounted for by the caller's memory model.
 

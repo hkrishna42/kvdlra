@@ -140,13 +140,13 @@ def test_ruler_decode_attach_scope_bugs_identity(tiny_model: LlamaForCausalLM) -
     """TRIPWIRE (pre-registered): widening the attach() scope must be a
     bit-for-bit no-op for bugS (SurpriseSLASH) arms.
 
-    ``BugStreamingCache.attach`` installs hooks ONLY for retention "attn"/
-    "blend" (otherwise it yields without registering anything), and bugS arms
-    run retention="lowrank_surprise" with hh_select="surprise" -- attach-free by
-    construction. So the fixed ``retrieve()`` (prefill AND decode attached) must
-    generate EXACTLY the tokens of a direct manual chunked-prefill + decode with
-    NO attach anywhere (the simplest honest identity: it brackets both the
-    pre-change and post-change scopes).
+    ``BugStreamingCache.attach`` registers no hook at all -- it yields, and the
+    retention rule that needed one (``retention="attn"``) is retired -- and bugS
+    arms run retention="lowrank_surprise" with hh_select="surprise", which reads
+    its signal off the stored keys. So the fixed ``retrieve()`` (prefill AND
+    decode attached) must generate EXACTLY the tokens of a direct manual
+    chunked-prefill + decode with NO attach anywhere (the simplest identity: it
+    brackets both the pre-change and post-change scopes).
 
     If this test ever fails, the attach widening changed bugS decode behaviour:
     STOP, scope the widening in ``ruler.retrieve`` / ``longbench.

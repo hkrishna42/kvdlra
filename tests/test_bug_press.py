@@ -19,7 +19,7 @@ import torch
 
 from kvdlra.baselines.lowrank_press import BUGPress
 
-# Llama-3.2-1B shape constants (docs/notes/conventions.md).
+# Llama-3.2-1B shape constants (rows = features, columns = tokens).
 H, D = 8, 64
 N_FEATURES = H * D  # 512
 

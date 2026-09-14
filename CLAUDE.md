@@ -3,14 +3,14 @@
 ## What this is
 Streaming low-rank KV-cache compression: a rank-r gist tracked online by a block
 incremental-SVD step (`isvd`; the shipped "BUG step" at theta=None, min_sv_frac=0
-IS Brand-2006 incremental SVD — streaming_torch.py:290-293), a surprise-selected
+IS Brand-2006 incremental SVD — src/kvdlra/tracker/isvd.py:296-298), a surprise-selected
 exact tier, sinks, a recent ring, a warm-up seed. From Week 1: a fused
 factored-attention kernel. Target: ICML 2027. Working branch: week7.
 
 ## Read before touching anything
 docs/plan/ICML2027_PLAN.md · docs/plan/CODE_AUDIT.md · docs/plan/PC_REVIEW.md ·
 docs/plan/STATE.md (append-only log) · docs/plan/DECISIONS.md (append-only) ·
-docs/plan/lanes/*.md · prereg/*.md · results/w20-close-report.md
+docs/plan/lanes/*.md · prereg/*.md · docs/plan/reports/w20-close-report.md
 
 ## Facts that are settled (do not re-litigate; see CODE_AUDIT.md for file:line)
 - The tracker is incremental SVD. "DLRA", "BUG integrator", "honest", "marquee",

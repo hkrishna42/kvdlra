@@ -1,10 +1,15 @@
-"""Blocked (chunked) streaming BUG subspace tracker in PyTorch.
+"""Blocked (chunked) streaming subspace tracker in PyTorch.
 
-A GPU-capable, ``torch`` implementation of the augmented rank-adaptive BUG
-subspace tracker (Ceruti--Kusch--Lubich, arXiv:2104.05247 §2), processing
-the feature-by-token matrix ``M`` (rows = features, columns = tokens;
-``docs/notes/conventions.md``) **a block of columns at a time** instead of one
-column at a time.
+Block incremental SVD with rank truncation (Brand 2006): each step range-augments
+the orthonormal basis with the block's out-of-basis residual, rebuilds the
+square-root core, and truncates back to the rank cap. The augmented step and its
+rank-adaptive truncation criterion are taken from Ceruti--Kusch--Lubich
+(arXiv:2104.05247 §2); at the shipped settings (``theta=None, min_sv_frac=0``) it
+IS fixed-rank incremental SVD. No error bound is claimed here: the robustness
+results that step comes with are for an ODE flow, not a column stream.
+
+It processes the feature-by-token matrix ``M`` (rows = features, columns =
+tokens) **a block of columns at a time** instead of one column at a time.
 
 Why blocked (the motivation)
 ----------------------------
@@ -13,8 +18,8 @@ for the Week-2 *proof* that streaming BUG tracks the SVD oracle, but far too slo
 for Week-3/4 perplexity sweeps and 8B (the loop is CPU-bound; a GPU does not help
 it). Processing ``block_size`` columns per augmented-BUG step turns ``T`` Python
 iterations into ``ceil(T / block_size)`` and runs the QR/SVD/matmuls as batched
-``torch`` ops on the tensor's own device (GPU). It is the **same** augmented BUG
-integrator (Ceruti--Kusch--Lubich 2022, arXiv:2104.05247 §2) with a rank-``b``
+``torch`` ops on the tensor's own device (GPU). It is the **same** augmented
+step (Ceruti--Kusch--Lubich 2022, arXiv:2104.05247 §2) with a rank-``b``
 data increment per step rather than rank-1; the block size is a speed/fidelity
 knob:
 
@@ -41,7 +46,7 @@ Given the current orthonormal basis ``U`` (``n x r``) and square-root core ``B``
        ``keep`` directions (``rank_cap`` and/or the Frobenius-tail ``theta``);
        ``U <- U_aug @ u_loc[:, :keep]``, ``B <- diag(sigma[:keep])``.
 
-Mixed precision (``docs/PLAN.md`` §8 pitfall #4): the QR/SVD/matmuls run in
+Mixed precision (PLAN §8 pitfall #4): the QR/SVD/matmuls run in
 ``compute_dtype`` (default ``float32``) regardless of the storage dtype of ``M``;
 bf16 storage is safe, bf16 *core* math is not.
 
@@ -49,10 +54,13 @@ NOTE: library code -- no ``print``/I/O here.
 
 References
 ----------
-G. Ceruti, J. Kusch and C. Lubich, "A rank-adaptive robust integrator for
-dynamical low-rank approximation," BIT Numer. Math. 62 (2022) 1149--1174,
-arXiv:2104.05247, §2. The core runs in fp32 even when the data is stored in
-bf16 (PLAN §8 pitfall #4).
+M. Brand, "Fast low-rank modifications of the thin singular value decomposition,"
+Linear Algebra Appl. 415 (2006) 20--30 -- the incremental SVD this reduces to at
+``theta=None, min_sv_frac=0``. G. Ceruti, J. Kusch and C. Lubich, "A rank-adaptive
+robust integrator for dynamical low-rank approximation," BIT Numer. Math. 62
+(2022) 1149--1174, arXiv:2104.05247, §2 -- the augmented step and the
+Frobenius-tail truncation criterion. The core runs in fp32 even when the data is
+stored in bf16 (PLAN §8 pitfall #4).
 """
 
 from __future__ import annotations
@@ -113,7 +121,7 @@ def augmented_bug_step(
         times the leading one. ``0.0`` (default) is a no-op, bit-for-bit the
         archived path. Caps the tracked rank at the block's numerical rank so a
         rank-deficient stream cannot pad the basis to ``rank_cap`` with near-null
-        tail directions (the Week-17 high-rank stability fix, docs/week17).
+        tail directions (the Week-17 high-rank stability fix).
 
     Returns
     -------
@@ -130,7 +138,7 @@ def augmented_bug_step(
     The number of *admitted* new directions is clamped to ``n - r`` so the
     augmented basis ``[u | q]`` always fits in ``R^n``. This fixes the latent
     degeneracy of the original blocked sweep when ``rank_cap + block_size >
-    n_features`` (the ablation follow-up in ``docs/week5.md``): the residual has
+    n_features`` (the Week-5 ablation follow-up): the residual has
     rank at most ``n - r`` mathematically, so the discarded QR columns are
     numerically null and the clamp is exact up to roundoff.
 
@@ -193,7 +201,7 @@ def augmented_bug_step(
         # Week-17: relative singular-value floor -- drop directions whose singular
         # value is <= min_sv_frac of the leading one, so a rank-deficient block
         # does not pad the basis to rank_cap with near-null tail directions (the
-        # high-rank divergence substrate: docs/week17). Self-scaling relative to
+        # high-rank divergence substrate). Self-scaling relative to
         # sigma[0] so no per-stream tuning; 0.0 = off = the bit-for-bit archived path.
         keep = max(1, min(keep, int((sigma > min_sv_frac * sigma[0]).sum().item())))
     u_new = u_aug @ u_loc[:, :keep]  # (n, keep)

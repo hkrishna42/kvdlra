@@ -1,5 +1,6 @@
 """The single statistics module. Wilson + exact McNemar are the paper's verified tools
-(ported from scripts/w15_intervals.py and w18_intervals.py); Holm/BH/bootstrap/TOST are
+(ported from ``scripts/w15_intervals.py`` and ``w18_intervals.py`` @
+``paper-v1-archive``); Holm/BH/bootstrap/TOST are
 the corrections the review panel asked for. scipy does the arithmetic."""
 
 from __future__ import annotations

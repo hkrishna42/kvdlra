@@ -431,7 +431,7 @@ def run_ppl(
             assert fp is not None
             # Pooled ppl: BYTE-IDENTICAL to the pre-Week-15 computation (summed
             # nats / summed tokens, then exp). window_nlls/window_toks are a pure
-            # ADDITION so error bars exist (docs/week15-significance.md); the
+            # ADDITION so error bars exist (Week-15 intervals); the
             # pin: ppl == exp(sum(nll_i*tok_i)/sum(tok_i)) recomputed from them.
             ppl = float(torch.tensor(total_nll / total_tok).exp())
             _log_pplw(t, arm["name"], window_nlls, window_toks[0])

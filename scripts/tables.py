@@ -38,7 +38,7 @@ from kvdlra.eval.records import (
 from kvdlra.eval.stats import Key, McNemar, mcnemar_exact, wilson
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-MODEL_BY_TAG = {  # the exact HF ids the Week-18/19 pods ran (docs/week18-kickoff.md)
+MODEL_BY_TAG = {  # the exact HF ids the Week-18/19 pods ran
     "llama": "unsloth/Meta-Llama-3.1-8B-Instruct",
     "mistral": "mistralai/Mistral-7B-Instruct-v0.3",
     "qwen": "Qwen/Qwen2.5-7B-Instruct",

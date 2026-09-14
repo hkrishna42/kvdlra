@@ -2,7 +2,7 @@
 (``min_sv_frac``) in :func:`augmented_bug_step` -- the fix that caps the tracked
 gist rank at the stream's effective rank instead of padding to ``rank_cap`` with
 near-null tail directions (the high-rank divergence substrate behind Mistral
-``bug-r128`` / Qwen ``bug-r256`` and the Qwen ``h1024`` puzzle; see docs/week17).
+``bug-r128`` / Qwen ``bug-r256`` and the Qwen ``h1024`` puzzle).
 
 The catastrophic real-transformer-KV ppl blow-up is real-KV-spectrum specific and
 GPU-gated -- it is NOT reproduced here. These tests pin the fix's *contract* at $0:

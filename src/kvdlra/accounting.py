@@ -1,8 +1,8 @@
-"""Cross-method KV-cache memory accounting -- the single honest source of truth.
+"""Cross-method KV-cache memory accounting -- one unit for every method.
 
 Every Week-10 frontier arm stores something different (BUG low-rank factors,
 eviction survivors, ShadowKV low-rank keys + CPU-offloaded values). This module
-counts each **honestly, in the same unit**, reusing the repo's existing
+counts each **in the same unit**, reusing the repo's existing
 conventions so the *measured* caches
 (:meth:`kvdlra.cache.BugStreamingCache.stored_state_numel`) and the
 *formula-only* presses (SnapKV / ExpectedAttention via kvpress, ShadowKV) land on
@@ -13,7 +13,7 @@ Conventions (identical to ``stored_state_numel`` / ``kv_memory_ratio`` /
 
 * fp / verbatim elements count as **1 float-equivalent** each -- *regardless of
   device*, so a CPU-offloaded float counts the same as a GPU float (this is what
-  neutralises ShadowKV's value-offload on the honest memory axis);
+  neutralises ShadowKV's value-offload on the stored-state axis);
 * quantized codes count at ``bits/32`` float-equivalents (bit-packable), ``ceil``
   over all codes, plus one fp32 norm per quantised column;
 * the diagonal BUG core costs ``r`` per stream, not ``r**2``;
@@ -77,7 +77,7 @@ class Footprint:
         return self.verbatim_elems * store_bits + self.quant_code_bits + self.aux_words * FP32_BITS
 
     def stored_bits(self) -> float:
-        """Honest at-rest bits / layer: the ``fp32_verbatim_elems`` subset of
+        """At-rest bits / layer: the ``fp32_verbatim_elems`` subset of
         ``verbatim_elems`` billed at its actual 32 bits, the remainder at 16, codes
         native, aux at 32. Equals ``bits(16)`` for any method with no fp32-at-rest
         state (ThinK/Palu/eviction/full/ShadowKV, ``fp32_verbatim_elems == 0``);
@@ -96,11 +96,11 @@ class Footprint:
         bits/layer) -- byte-identical to ``kv_memory_ratio`` for the BUG prefill
         model, and ``keep_frac`` for pure-fp16 eviction. This is the *fp16-equivalent*
         headline (BUG's fp32 state billed as if fp16); see :meth:`ratio_stored_bits`
-        for the honest at-rest number."""
+        for the at-rest number."""
         return self.bits(FP16_BITS) / (2 * t * n * FP16_BITS)
 
     def ratio_stored_bits(self, t: int, n: int) -> float:
-        """Honest at-rest stored-bits ratio (:meth:`stored_bits` / full-fp16-cache
+        """At-rest stored-bits ratio (:meth:`stored_bits` / full-fp16-cache
         bits). Equals :meth:`ratio_fp16` for every method with no fp32-at-rest state;
         for BUG r64 it is ~0.15x/0.27x vs the 0.085x/0.149x fp16-equivalent number."""
         return self.stored_bits() / (2 * t * n * FP16_BITS)
@@ -113,7 +113,7 @@ class Footprint:
     def gpu_ratio_fp16(self, t: int, n: int) -> float:
         """GPU-resident stored bits / full-fp16-cache bits. Equals
         :meth:`ratio_fp16` for every all-GPU method; for ShadowKV it is the
-        (flattering) GPU-only number, reported *beside* the honest total."""
+        (flattering) GPU-only number, reported *beside* the device-agnostic total."""
         gpu = self.verbatim_elems if self.gpu_verbatim_elems is None else self.gpu_verbatim_elems
         gpu_bits = gpu * FP16_BITS + self.quant_code_bits + self.aux_words * FP32_BITS
         return gpu_bits / (2 * t * n * FP16_BITS)
@@ -218,7 +218,8 @@ def bug_prefill_footprint(
     """The Week-4 ``BUGPress`` *prefill* model (distinct from the streaming
     :func:`bug_footprint`): every non-sink token kept as a coordinate, basis ``U``,
     exact sinks -- **no** recent ring or diagonal core. Its ``ratio_fp16`` is
-    byte-identical to ``scripts/w4_hybrid_sweep.kv_memory_ratio`` for the fp case.
+    byte-identical to ``scripts/w4_hybrid_sweep.kv_memory_ratio`` @ ``paper-v1-archive``
+    for the fp case.
     Kept for the Phase-7 delegator consolidation / continuity, not the frontier
     (the Week-10 frontier stores the streaming cache, so it uses
     :func:`bug_footprint`)."""
@@ -252,9 +253,9 @@ def evict_footprint(
     column. Pure-fp16 ``ratio_fp16`` == ``keep_frac`` exactly.
 
     Note: this is the corrected convention (no spurious ``+FP16`` norm term for the
-    pure-fp16 case that ``scripts/w4_fair.evict_quant_memory`` carries); the
-    published scripts keep their number until the Phase-7 delegator consolidation
-    (see ``docs/week10-plan.md``)."""
+    pure-fp16 case that ``scripts/w4_fair.evict_quant_memory`` @ ``paper-v1-archive``
+    carries); the published scripts keep their number until the Phase-7 delegator
+    consolidation."""
     kept = keep_frac * t
     if quant_bits is None:
         return Footprint(verbatim_elems=2 * n * kept)
@@ -276,7 +277,7 @@ def think_footprint(
 
     Note: the kvpress ``ThinKPress`` *zeros* pruned channels (same tensor shape, no
     measured gain), so this analytic footprint -- not the DynamicCache numel -- is
-    the honest deployable memory."""
+    the deployable memory."""
     kept_ch = max(1, round((1.0 - key_channel_ratio) * head_dim))
     verbatim = t * kept_ch * h_kv + t * n  # pruned K + full V
     aux = h_kv * kept_ch  # kept-channel indices, per head (one-time)
@@ -352,7 +353,7 @@ def shadow_footprint(
     **CPU-offloaded:** the FULL value cache (``t*n``), fetched sparsely each step.
     Under this repo's device-agnostic float rule the offloaded V counts at 1
     float/elem in the total (``cpu_ratio_fp16 -> 0.5``), so the offload buys ZERO on
-    the honest memory axis -- its only fair savings are low-rank K and sparse decode.
+    the stored-state axis -- its only fair savings are low-rank K and sparse decode.
     Reporting V-offload as "free" is forbidden.
 
     With the defaults ``n_sink = recent_len = 0`` the whole context is the middle,
@@ -405,13 +406,13 @@ def quant_footprint(
     """KIVI-style 2/4-bit KV baseline (transformers ``QuantizedCache`` / quanto backend,
     arm ``quant-{nbits}bit``). The ``residual_length`` most-recent tokens stay verbatim
     in the model dtype; older tokens are quantized to ``nbits`` with a per-``group``
-    scale+shift. Billed honestly to match what quanto actually stores (verified via the
+    scale+shift. Billed to match what quanto actually stores (verified via the
     Week-18 probe: ``_data`` uint8 codes at ``nbits``, ``_scale``+``_shift`` fp32, one
     pair per group, no zeropoint): code bits at ``nbits``, ``scale_words`` fp32 aux words
     per group, residual as fp16 verbatim. Asymptote ``(nbits + scale_words*32/group)/16``
     -> 2-bit/g64 = 0.1875x, 4-bit/g64 = 0.3125x (the KIVI/KVQuant 0.125-0.19x band).
 
-    ``fp32_verbatim_elems`` is 0 (the residual is model-dtype), so its honest
+    ``fp32_verbatim_elems`` is 0 (the residual is model-dtype), so its
     ``ratio_stored_bits`` equals ``ratio_fp16`` -- billed on the same footing as ThinK/
     Palu, unlike BUG whose fp32 state splits the two."""
     resid = min(residual_length, t)
@@ -429,7 +430,7 @@ def quant_footprint(
 @contextmanager
 def measure_peak_gpu(device: str) -> Iterator[Callable[[], int | None]]:
     """Yield a getter for ``torch.cuda.max_memory_allocated`` over the block, or a
-    getter returning ``None`` on CPU (honestly unmeasured, not faked). The peak
+    getter returning ``None`` on CPU (unmeasured, not faked). The peak
     includes activations/workspace, so it is reported *beside* the analytic
     footprint, never as the deployable-cache claim."""
     import torch
@@ -447,7 +448,7 @@ def measure_peak_gpu(device: str) -> Iterator[Callable[[], int | None]]:
 
 @dataclass(frozen=True)
 class MemoryReport:
-    """One arm's three memory numbers + the honest ShadowKV split."""
+    """One arm's three memory numbers + the ShadowKV device split."""
 
     arm: str
     t: int

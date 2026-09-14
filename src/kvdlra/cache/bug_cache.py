@@ -1,8 +1,7 @@
 """``BugStreamingCache`` -- a constant-memory decode-time streaming BUG KV cache.
 
-Week-5 Axis B (``docs/week5-plan.md`` §"New capability to build",
-``docs/notes/streaming-decode-design.md``): the first use of BUG *as a streaming
-integrator during generation*. Everywhere else in this project BUG compresses
+Week-5 Axis B: the first use of the tracked basis *during generation* rather than
+over a finished prefill. Everywhere else in this project BUG compresses
 the pre-fill and is static during decode (:class:`kvdlra.baselines.lowrank_press.BUGPress`); this
 cache advances the tracked subspace **per generated token** at a fixed rank cap,
 so the stored cache size is *bounded* -- independent of how many tokens have
@@ -20,7 +19,7 @@ What is stored per layer (all bounded; see the design note §4)
   core ``B`` (``r x r``, steers the basis; attention never sees it), and up to
   ``coord_budget`` per-token **coordinate** columns ``C`` (``r`` floats per
   token instead of ``n``). When the coordinate buffer is full, columns are
-  *evicted* (see "Week-7 retention" below) -- that is the honest memory bound:
+  *evicted* (see "Week-7 retention" below) -- that is the memory bound:
   softmax attention needs per-token information for every attendable token, so
   "constant memory" can only mean bounding the attended set. At matched memory
   the BUG cache retains a ~``n/r`` x longer (but only approximately represented)
@@ -33,11 +32,13 @@ passes no kwargs to the cache) and pushes it verbatim into the recent ring.
 When the ring overflows, the oldest ``absorb_block`` tokens *graduate*: their
 keys are exactly un-rotated to pre-RoPE (the model's own rotary embedding, so
 angles are bit-identical; the inverse divides by ``attention_scaling**2``), one
-augmented rank-adaptive BUG step (:func:`kvdlra.tracker.isvd.
-augmented_bug_step` -- the validated integrator math, fp32 core per PLAN §8
+augmented rank-truncating step (:func:`kvdlra.tracker.isvd.
+augmented_bug_step` -- block incremental SVD, fp32 core per PLAN §8
 pitfall #4) advances ``(U, B)``, existing coordinates are re-expressed in the
 new basis (``C <- rot @ C`` -- each truncation projects old tokens onto the new
-subspace; the graceful-degradation mechanism the DLRA robustness bound governs),
+subspace, which is where repeated projection erodes them; no error bound is
+claimed for it, the rank-adaptive robustness results are for an ODE flow, not a
+column stream),
 and the graduating coordinates are appended. Attention then sees ``[sinks |
 RoPE(U C, true positions) | recent]``; the middle reconstruction only changes on
 absorb events and is cached in between, so the steady-state per-step cost is a
@@ -45,8 +46,8 @@ concat plus attention over a constant-length cache. Amortized per-token update
 cost: ``O(n r + (r+b)^3 / b + r^2 W / b)`` -- bounded, independent of generated
 length.
 
-Week-7 retention (``docs/week7-plan.md`` tier 1)
-------------------------------------------------
+Week-7 retention (tier 1)
+-------------------------
 Week 6 measured the deep-horizon loss mechanisms: FIFO coordinate eviction
 (adaptive *subspace*, non-adaptive *retention*), erosion by repeated
 projection, and the fixed-rank squeeze. Two independent knobs on the same
@@ -55,7 +56,7 @@ coordinate buffer attack the first two:
 * **(A) adaptive coordinate retention** -- ``retention``:
 
   - ``"fifo"`` (default): drop the oldest column (the Week-6 behaviour; note
-    the Week-7 integrator robustness fix makes reruns *fp-equivalent*, not
+    the Week-7 tracker robustness fix makes reruns *fp-equivalent*, not
     bit-identical, to the archived Week-6 numbers -- rerun baselines in-sweep);
   - ``"lowrank_surprise"`` (Week-9 D3): drop the column with the smallest
     **low-rank reconstruction residual** ``||k - U U^T k|| / ||k||`` -- i.e. keep
@@ -193,7 +194,7 @@ class _QuantBank:
     The rotation ``Pi`` and Lloyd--Max codebook are *data-oblivious* side
     information shared by every layer and both K/V coordinate streams;
     :meth:`side_info_numel` reports their float cost **once** so the matched-
-    memory budget can count it honestly (Week-7 guardrail: every variant counts
+    memory budget can count it in the same unit (Week-7 guardrail: every variant counts
     ALL its memory).
     """
 
@@ -238,7 +239,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
     """One layer's constant-memory streaming-BUG KV state (see module docstring).
 
     Internally tokens live as feature-by-token matrices ``(n, T)`` with ``n =
-    num_kv_heads * head_dim`` (``docs/notes/conventions.md``); conversion to the
+    num_kv_heads * head_dim``; conversion to the
     HF layout ``(1, H, T, D)`` happens only at the ``update()`` boundary. The
     retained middle is ``[quantized tier | fp32 tier]`` (each chronological
     under FIFO; position-tracked under adaptive retention).
@@ -394,7 +395,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         # (redundant). The residual ``||k - U U^T k||`` is NOT recomputable after
         # absorption (``U C`` lies in the subspace, residual == 0), so it must be
         # *stored* per column -- one fp32 scalar. Counted in
-        # ``stored_state_numel`` (the honest-memory guardrail).
+        # ``stored_state_numel`` (the stored-state guardrail).
         self.track_surprise = self.lowrank_enabled and retention == "lowrank_surprise"
         self.cumulative_length = 0
         self._reset_state()
@@ -1089,8 +1090,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
     # ---------------------------------------------------------- accounting
 
     def stored_state_numel(self) -> int:
-        """Float-equivalents of the *stored* per-layer state (the honest memory):
-        fp32/verbatim tensors at 1 each; quantized codes at ``quant_bits/32``
+        """Float-equivalents of the *stored* per-layer state (what the accounting
+        bills): fp32/verbatim tensors at 1 each; quantized codes at ``quant_bits/32``
         each (bit-packable) + their fp32 norms; retention positions (int32) and
         surprise snapshots at 1 each. Shared quantizer side info is counted once
         at the cache level (:meth:`BugStreamingCache.stored_state_numel`)."""
@@ -1110,7 +1111,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         # The square-root core B is *provably diagonal* (``augmented_bug_step``
         # returns ``diag(sigma)`` every step and nothing rotates it between
         # steps), so its deployable footprint is its ``r`` diagonal entries, not
-        # ``r^2`` -- counted honestly here (same convention as quant codes at
+        # ``r^2`` -- counted that way here (same convention as quant codes at
         # bits/32 rather than their uint8 storage). ``tests`` pin the diagonality.
         for core in (self.b_k, self.b_v):
             if core is not None:

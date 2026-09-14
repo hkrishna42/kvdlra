@@ -10,7 +10,8 @@ Three figures, one per `\\includegraphics` in paper/main.tex @ee8c0ab:
   automatically when the w19-a4-llama archive directory exists.
 * ``coldstart`` -- persisted-cache cold start (seconds) at 16K/32K: full vs r64 vs 2-bit.
   The protocol behind those rows -- warm page-cache read, H2D, reconstruct, median of 5
-  repeats -- is `scripts/pod/w19.sh@ee8c0ab` (its persist block, ``--repeats 5``); the
+  repeats -- is `scripts/pod/w19.sh` @ `paper-v1-archive` (its persist block,
+  ``--repeats 5``); the
   figure's subtitle states it, so this is where that claim comes from.
 
 Every accuracy is counted from `results/paper-v1/<pod>/trials.jsonl`, the same per-trial

@@ -21,15 +21,15 @@ feature-by-token matrix stores ``U`` (``512 x r``) plus per-token coordinates
 cache in genuinely factored form is a Week-4+ concern; here we isolate the
 *accuracy* question. See :attr:`compression_ratio`.
 
-Matrix convention (``docs/notes/conventions.md``)
--------------------------------------------------
+Matrix convention
+-----------------
 A per-layer key tensor ``K`` of shape ``(H, T, D) = (8, T, 64)`` (batch squeezed)
 is factored as ``M = K.transpose(0, 2, 1).reshape(H*D, T)`` -- **rows = features**
 (``head_dim * num_kv_heads = 512``), **columns = tokens** (``T``); a new token is
 a new column. The rank-``r`` reconstruction is reshaped straight back.
 
-RoPE operating point (Week-2 finding; ``docs/notes/rope-pitfall.md``)
---------------------------------------------------------------------
+RoPE operating point (Week-2 finding)
+-------------------------------------
 HuggingFace caches *post-RoPE* keys, which are markedly less low-rank; pre-RoPE
 keys roughly halve the reconstruction error at matched rank. With
 ``pre_rope=True`` (default) ``BUGPress`` recomputes the pre-RoPE keys from the
@@ -38,8 +38,8 @@ layer's hidden states (via kvpress's :func:`get_prerope_key_states`), factors
 to the reconstruction before writing it back -- so attention still sees correctly
 rotated keys. Values carry no RoPE and are factored directly.
 
-Attention sinks (``docs/PLAN.md`` §8 pitfall #5)
-------------------------------------------------
+Attention sinks (PLAN §8 pitfall #5)
+------------------------------------
 The first ``n_sink`` token columns are known high-norm outliers that dominate the
 spectrum; Week-2 excluded them from the low-rank model. Here they are kept
 **exact** (StreamingLLM-style) -- only columns ``n_sink:`` are reconstructed.
@@ -132,7 +132,8 @@ class BUGPress(BasePress):  # type: ignore[misc]
     block_size: int = 128
     # TurboQuant (Week 4): if set, quantize the per-token BUG coordinate vectors
     # with PolarQuant at ``quant_bits`` bits/coord. ``None``
-    # keeps fp factors. See docs/notes/turboquant-rope-interaction.md.
+    # keeps fp factors. The rotation and RoPE never interact: see
+    # :mod:`kvdlra.baselines.turbo_press`.
     quant_bits: int | None = None
     # ``head_dim * num_kv_heads``; set from the model in ``post_init_from_model``
     # but defaulted to the Llama-3.2-1B value so the press is usable stand-alone.
@@ -270,7 +271,7 @@ class BUGPress(BasePress):  # type: ignore[misc]
         """Apply :meth:`_lowrank_reconstruct` per batch element.
 
         ``x`` has shape ``(bsz, H, T, D)``; factored as ``(H*D, T)`` per batch
-        element (the ``docs/notes/conventions.md`` layout) and reshaped back.
+        element (rows = features, columns = tokens) and reshaped back.
         """
         bsz, h, t, d = x.shape
         out = torch.empty_like(x)

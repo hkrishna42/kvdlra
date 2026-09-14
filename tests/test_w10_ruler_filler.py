@@ -12,9 +12,10 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-import w10_ruler as wr
-from w4_needle import _FILLER
-from w10_ruler import _filler_to, build_task
+
+from kvdlra.eval import ruler as wr
+from kvdlra.eval.data import FILLER
+from kvdlra.eval.ruler import _filler_to, build_task
 
 
 class _WordTok:
@@ -34,7 +35,7 @@ def _old_cycle(tok: _WordTok, ctx: int) -> list[str]:
     sentences: list[str] = []
     i = 0
     while len(tok(" ".join(sentences)).input_ids) < ctx:
-        sentences.append(_FILLER[i % len(_FILLER)])
+        sentences.append(FILLER[i % len(FILLER)])
         i += 1
     return sentences
 
@@ -114,7 +115,7 @@ def test_filler_to_is_memoized_per_haystack() -> None:
     whole text each step (O(n^2) tokenizer calls: ~5 min per trial at 64K). The same
     (ctx, filler, seed, trial) haystack is rebuilt for every arm and trial, so it is
     memoized; the second call must not tokenize again and must return equal output."""
-    import w10_ruler
+    from kvdlra.eval import ruler
 
     class _CountTok:
         calls = 0
@@ -125,10 +126,10 @@ def test_filler_to_is_memoized_per_haystack() -> None:
             return type("Enc", (), {"input_ids": list(range(n))})()
 
     tok = _CountTok()
-    w10_ruler._filler_cached.cache_clear()
-    first = w10_ruler._filler_to(tok, 64, filler="cycle")
+    ruler._filler_cached.cache_clear()
+    first = ruler._filler_to(tok, 64, filler="cycle")
     n_calls = _CountTok.calls
     assert n_calls > 1
-    second = w10_ruler._filler_to(tok, 64, filler="cycle")
+    second = ruler._filler_to(tok, 64, filler="cycle")
     assert second == first and _CountTok.calls == n_calls
-    assert w10_ruler._filler_to(tok, 128, filler="cycle") != first  # a different ctx rebuilds
+    assert ruler._filler_to(tok, 128, filler="cycle") != first  # a different ctx rebuilds

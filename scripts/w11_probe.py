@@ -27,10 +27,10 @@ import re
 import _paths  # noqa: F401  (prepends src/ to sys.path if needed)
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from w10_ruler import build_task
 
 from kvdlra.cache import BugStreamingCache
 from kvdlra.cache.bug_cache import BugStreamingLayer
+from kvdlra.eval.ruler import build_task
 
 JSON_BEGIN = "===W11_PROBE_JSON_BEGIN==="
 JSON_END = "===W11_PROBE_JSON_END==="

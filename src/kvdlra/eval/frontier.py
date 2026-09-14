@@ -1,54 +1,39 @@
-"""Week-10: the definitive long-context frontier -- perplexity vs honestly-counted
-KV-cache memory, one consistent protocol across every method.
+"""The long-context perplexity axis, the arm builder, and the memory accounting.
 
-Compares **BUG** (``BugStreamingCache``, ranks {32,64,128,256}) against **MorphKV**
-(``MorphKVCache``, decode eviction) and the kvpress prefill presses **SnapKV** /
-**ExpectedAttention**, on ONE protocol: prefill ``T`` tokens with each method's
-compression active, then score teacher-forced perplexity on a frozen ``W``-token
-continuation window attending to the *compressed* cache (the "compress-then-score"
-deviation documented in ``perplexity_sweep.window_nll`` / ``w4_fair``, now uniform
-for streaming caches and presses alike). Memory is counted honestly per
-``kvdlra.accounting`` (float-equivalents/layer, the ``stored_state_numel`` unit)
-and cross-checked against the live cache.
+One protocol across every method: prefill ``T`` tokens with the arm's compression
+active, then score teacher-forced perplexity on a frozen ``W``-token continuation
+window attending to the *compressed* cache (the "compress-then-score" deviation
+documented in ``window_nll`` / Week-4). Memory is counted per ``kvdlra.accounting``
+(float-equivalents per layer, the ``stored_state_numel`` unit) and cross-checked
+against the live cache.
 
-Phase 2 (this file's default) banks the FIRST real 3-method frontier at moderate
-``T`` with **single-shot prefill** on the Mac CPU / 1B, where single-shot fits.
-Chunked ``ingest`` prefill (Phase 3) unlocks 32K/64K; ShadowKV (Phase 6) and the
-RULER secondary axis (Phase 4) land later. See ``docs/week10-plan.md``.
+This module also owns the two pieces every other eval axis shares: the prefill
+helpers (``_prefill_chunked`` for a streaming cache, ``_prefill_plain`` for a
+QuantizedCache) and ``_footprint``, which maps an arm plus its post-prefill cache to
+a ``Footprint``.
 
-Example (CPU smoke, 1B)
------------------------
-    uv run python scripts/w10_frontier.py --device cpu --T 1024 \
-        --ranks 32 64 --n-samples 1 --methods bug morph snapkv
+The ``[pplw]`` and ``ppl=`` lines this module prints are the pod's stdout contract:
+``kvdlra.eval.records`` parses them back out of a harvested log, so their format is
+frozen (``tests/test_w15_pplw.py``).
 """
 
 from __future__ import annotations
 
 import argparse
 import gc
-import json
 from contextlib import nullcontext
-from pathlib import Path
 from typing import Any, cast
 
-import _paths  # noqa: F401
-import matplotlib
 import torch
-from perplexity_sweep import load_corpus_ids, load_model
 from torch.nn.functional import cross_entropy
 from transformers.cache_utils import Cache, DynamicCache
 
 from kvdlra import accounting as acc
 from kvdlra.baselines.compat import install_kvpress_prefill_compat
 from kvdlra.cache import BugStreamingCache, MorphKVCache, ShadowKVCache
+from kvdlra.eval.data import load_corpus_ids, load_model
 from kvdlra.quant.kivi_cache import aux_words, flush, make_quant_cache
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
-DEFAULT_MODEL = "unsloth/Llama-3.2-1B-Instruct"
-JSON_BEGIN = "===W10_FRONTIER_JSON_BEGIN==="
-JSON_END = "===W10_FRONTIER_JSON_END==="
 N_SINK = 4
 
 
@@ -60,7 +45,7 @@ def _score_window(
     model: Any, cache: Cache, ctx_len: int, win_ids: torch.Tensor
 ) -> tuple[float, int]:
     """Summed NLL (nats) + scored-token count for the frozen continuation window,
-    at TRUE positions -- byte-for-byte ``perplexity_sweep.window_nll``'s scorer."""
+    at TRUE positions -- the Week-3 ``window_nll`` scorer, byte for byte."""
     win = win_ids.unsqueeze(0)
     win_len = int(win_ids.shape[0])
     pos = torch.arange(ctx_len, ctx_len + win_len, device=win_ids.device).unsqueeze(0)
@@ -747,65 +732,15 @@ def _log_row(row: dict[str, Any]) -> None:
     )
 
 
-# --------------------------------------------------------------------- plot
-
-
-def _plot(blob: dict[str, Any], out: Path) -> None:
-    per_t = blob["per_T"]
-    fig, axes = plt.subplots(1, len(per_t), figsize=(6.5 * len(per_t), 5), squeeze=False)
-    kind_style = {
-        "bug": ("tab:orange", "o"),
-        "morph": ("tab:green", "s"),
-        "press": ("tab:red", "^"),
-        "quant": ("tab:purple", "D"),
-        "shadow": ("tab:brown", "v"),
-        "full": ("tab:blue", "*"),
-    }
-    ordered = sorted(per_t.items(), key=lambda kv: int(kv[0]))
-    for ax, (t, rows) in zip(axes[0], ordered, strict=False):
-        ok = [r for r in rows if r["status"] == "ok"]
-        for kind, (c, m) in kind_style.items():
-            pts = sorted(
-                (r["tok_equiv_per_layer"], r["ppl"], r["method"]) for r in ok if r["kind"] == kind
-            )
-            if not pts:
-                continue
-            ax.plot(
-                [p[0] for p in pts],
-                [p[1] for p in pts],
-                marker=m,
-                color=c,
-                lw=1.8,
-                ms=8,
-                label=kind,
-                alpha=0.9,
-            )
-        full = [r for r in ok if r["kind"] == "full"]
-        if full:
-            ax.axhline(full[0]["ppl"], ls=":", c="grey", lw=1)
-        ax.set_xscale("log")
-        ax.set_xlabel("KV memory (float-equiv token-eq / layer)  ->  more compression left")
-        ax.set_ylabel("perplexity (lower is better)")
-        ax.set_title(f"T = {t}")
-        ax.legend(fontsize=9)
-        ax.grid(True, which="both", alpha=0.3)
-    fig.suptitle(f"Week-10 frontier: BUG vs eviction -- {blob['model'].split('/')[-1]}")
-    fig.tight_layout()
-    out.parent.mkdir(parents=True, exist_ok=True)
-    for suffix in (".png", ".pdf"):
-        fig.savefig(out.with_suffix(suffix), dpi=150)
-    print(f"[wrote {out.with_suffix('.png')}]", flush=True)
-
-
-# --------------------------------------------------------------------- main
+# --------------------------------------------------------- the legacy CLI builder
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """The full frontier argparse. Exposed so other harnesses (w16_storage) can build a
+    """The full frontier argparse. Exposed so other harnesses (storage.py) can build a
     COMPLETE build_arms namespace via ``build_parser().parse_args([])`` instead of a
     hand-listed one that silently goes stale when a new flag lands (Week-18 drift fix)."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--model", default="unsloth/Llama-3.2-1B-Instruct")
     parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
     parser.add_argument("--dtype", default="float32", choices=["float32", "bfloat16", "float16"])
     parser.add_argument("--T", type=int, nargs="+", default=[2048])
@@ -933,25 +868,3 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out-fig", default="figures/week10/frontier_longctx")
     parser.add_argument("--plot-only", action="store_true")
     return parser
-
-
-def main() -> None:
-    args = build_parser().parse_args()
-
-    out_json = Path(args.out_json)
-    if args.plot_only:
-        _plot(json.loads(out_json.read_text()), Path(args.out_fig))
-        return
-
-    blob = run(args)
-    out_json.parent.mkdir(parents=True, exist_ok=True)
-    out_json.write_text(json.dumps(blob, indent=2) + "\n")
-    _plot(blob, Path(args.out_fig))
-    print(JSON_BEGIN)
-    print(json.dumps(blob))
-    print(JSON_END)
-    print(f"[wrote {out_json}]", flush=True)
-
-
-if __name__ == "__main__":
-    main()

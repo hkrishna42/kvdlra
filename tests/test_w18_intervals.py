@@ -1,6 +1,6 @@
 """Week-18: the marker-free, per-trial-aware intervals builder.
 
-Pins the w10_ruler line CONTRACT from the consumer side: the aggregate row (with the
+Pins the RULER line CONTRACT from the consumer side: the aggregate row (with the
 Week-18 sbits=/n= suffix) and the [trial] line must parse, multikey included, and the
 McNemar path must run on paired per-trial data.
 """

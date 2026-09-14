@@ -1,35 +1,22 @@
-"""Week-10 PRIMARY long-context axis: RULER accuracy vs honestly-counted memory.
+"""The in-house RULER-style retrieval axis: needle generators + one-trial retrieval.
 
-Perplexity (``w10_frontier.py``) is a weak long-context signal and structurally
-favours BUG's global summary; the standard, fairer test is task **retrieval
-accuracy** on RULER (and LongBench, ``w10_longbench.py``). This runs a *focused
-RULER subset* -- the tasks most sensitive to KV compression -- as an
-accuracy-vs-memory frontier, comparing the SAME arms as the ppl frontier (BUG
-``BugStreamingCache`` ranks {32,64,128,256}, MorphKV, SnapKV / ExpectedAttention
-presses) at honestly-matched memory (``kvdlra.accounting``).
-
-Focused subset:
+Four tasks, the ones most sensitive to KV compression:
 
 * ``niah_single``    -- one needle among filler (retrieve its code);
 * ``niah_multikey``  -- ``n_keys`` distinct keys, retrieve ONE queried key's code
-  (``w5_ruler.build_multikey_haystack``; eviction cannot know which key is asked);
+  (eviction cannot know which key is asked);
 * ``niah_multivalue``-- one key with ``n_values`` codes, retrieve ALL of them;
 * ``vt``             -- variable tracking: a chain ``V0=<num>; V1=V0; ...`` then
   ask the value of the last variable (retrieve the root number through the chain).
 
-Prefill uses OOM-safe chunked ingest for the streaming caches (BUG/MorphKV,
-Phase 3) and single-shot full-``T`` prefill for the kvpress scorer presses
-(``logits_to_keep=1`` + sdpa keeps it memory-safe, and SnapKV's ``q_len >
-window_size`` assert forbids a chunked prefill); the short query + answer are
-decoded one token per forward at TRUE positions (the eviction fairness fix,
-``w9_recovery`` / ``w4_needle``). Memory is measured on the post-prefill
-compressed cache. ``--plot-only`` rebuilds figures.
+Prefill uses OOM-safe chunked ingest for the streaming caches and single-shot full-``T``
+prefill for the kvpress scorer presses (``logits_to_keep=1`` + sdpa keeps it memory-safe,
+and SnapKV's ``q_len > window_size`` assert forbids a chunked prefill); the short query +
+answer are decoded one token per forward at TRUE positions (the eviction fairness fix).
+Memory is measured on the post-prefill compressed cache.
 
-Example (CPU smoke, 1B)
------------------------
-    uv run python scripts/w10_ruler.py --device cpu --context-lens 2048 \
-        --tasks niah_single niah_multikey --ranks 64 128 --n-trials 3 \
-        --methods full bug morph snapkv
+The generator (``build_task`` and the filler builder) is the v1 one, body for body: it
+produced every archived cell, so a change here moves the numbers. Generator v2 is L2's.
 """
 
 from __future__ import annotations
@@ -37,30 +24,18 @@ from __future__ import annotations
 import argparse
 import functools
 import gc
-import json
 import random
 from collections.abc import Sequence
 from contextlib import nullcontext
-from pathlib import Path
 from typing import Any, cast
 
-import _paths  # noqa: F401
-import matplotlib
 import torch
-from perplexity_sweep import load_corpus_sentences, load_model
 from transformers.cache_utils import Cache, DynamicCache
-from w4_needle import _FILLER
-from w5_ruler import _LABELS
-from w10_frontier import _footprint, _prefill_chunked, _prefill_plain, build_arms
 
 from kvdlra.baselines.compat import install_kvpress_prefill_compat
+from kvdlra.eval.data import FILLER, LABELS, load_corpus_sentences, load_model
+from kvdlra.eval.frontier import _footprint, _prefill_chunked, _prefill_plain, build_arms
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
-DEFAULT_MODEL = "unsloth/Llama-3.2-1B-Instruct"
-JSON_BEGIN = "===W10_RULER_JSON_BEGIN==="
-JSON_END = "===W10_RULER_JSON_END==="
 _TAIL_K = 48  # FLOOR for the decoded query tail (question + assistant header, as in
 # w4/w5); the actual tail is template-derived per family (see _templated) and never
 # shorter than this, so Llama's validated 48-token slice is preserved bit-for-bit.
@@ -80,7 +55,7 @@ def _filler_to(
     trial: int = 0,
 ) -> list[str]:
     """Filler sentences up to ``ctx`` tokens. ``filler="cycle"`` (default) is the
-    bit-identical archived path: the fixed 10-sentence ``_FILLER`` cycled. Any other
+    bit-identical archived path: the fixed 10-sentence ``FILLER`` cycled. Any other
     value draws from a realistic-corpus ``pool`` (loaded once by the caller and passed
     in, so tests need no network), seed-shuffled per (seed, trial) so every trial sees
     a different natural-text haystack -- the Week-18 external-validity fix.
@@ -97,7 +72,7 @@ def _filler_to(
 def _filler_cached(
     tok: Any, ctx: int, filler: str, pool: tuple[str, ...] | None, seed: int, trial: int
 ) -> tuple[str, ...]:
-    base: Sequence[str] = _FILLER if filler == "cycle" else (pool or ())
+    base: Sequence[str] = FILLER if filler == "cycle" else (pool or ())
     if not base:
         raise ValueError(f"filler={filler!r} requires a non-empty pool")
     order = list(range(len(base)))
@@ -209,7 +184,7 @@ def build_task(
         return pre, query, [str(code)]
 
     if task == "niah_multikey":
-        labels = _LABELS[:n_keys]
+        labels = LABELS[:n_keys]
         codes = _codes(g, n_keys)
         for k, (lab, code) in enumerate(zip(labels, codes, strict=True)):
             pos = min(n, max(0, int((k + 1) / (n_keys + 1) * n) + (k % 3)))
@@ -221,7 +196,7 @@ def build_task(
         return pre, query, [str(codes[qi])]
 
     if task == "niah_multivalue":
-        label = _LABELS[trial % len(_LABELS)]
+        label = LABELS[trial % len(LABELS)]
         codes = _codes(g, n_values)
         for i, code in enumerate(codes):
             pos = min(n, max(0, int((i + 1) / (n_values + 1) * n) + (i % 3)))
@@ -490,194 +465,3 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "seeds": args.seeds,
         "results": results,
     }
-
-
-# ------------------------------------------------------------- plot
-
-
-def _plot(blob: dict[str, Any], out: Path) -> None:
-    results = blob["results"]
-    tasks = blob["tasks"]
-    ctxs = sorted({int(r["ctx"]) for r in results})
-    if not ctxs or not tasks:
-        # Every arm SKIP'd (e.g. a quant run on a -runtime pod without the CUDA kernel):
-        # nothing to plot. Skip cleanly instead of crashing plt.subplots on a 0-row grid.
-        print(f"[plot skipped: no result rows for {out}]", flush=True)
-        return
-    fig, axes = plt.subplots(
-        len(ctxs), len(tasks), figsize=(4.6 * len(tasks), 4.0 * len(ctxs)), squeeze=False
-    )
-    kind_style = {
-        "bug": ("tab:orange", "o"),
-        "morph": ("tab:green", "s"),
-        "press": ("tab:red", "^"),
-        "quant": ("tab:purple", "D"),
-        "shadow": ("tab:brown", "v"),
-        "full": ("tab:blue", "*"),
-    }
-    for i, ctx in enumerate(ctxs):
-        for j, task in enumerate(tasks):
-            ax = axes[i][j]
-            rows = [r for r in results if r["task"] == task and int(r["ctx"]) == ctx]
-            for kind, (c, m) in kind_style.items():
-                pts = sorted((r["ratio_fp16"], r["accuracy"]) for r in rows if r["kind"] == kind)
-                if pts:
-                    ax.plot(
-                        [p[0] for p in pts],
-                        [p[1] for p in pts],
-                        marker=m,
-                        color=c,
-                        lw=1.8,
-                        ms=7,
-                        label=kind,
-                        alpha=0.9,
-                    )
-            ax.set_ylim(-0.05, 1.05)
-            ax.set_xscale("log")
-            ax.set_title(f"{task}  (T={ctx})", fontsize=10)
-            ax.set_xlabel("KV memory / full fp16")
-            ax.set_ylabel("accuracy")
-            ax.grid(True, which="both", alpha=0.3)
-            if i == 0 and j == 0:
-                ax.legend(fontsize=8)
-    fig.suptitle(f"Week-10 RULER: retrieval accuracy vs memory -- {blob['model'].split('/')[-1]}")
-    fig.tight_layout()
-    out.parent.mkdir(parents=True, exist_ok=True)
-    for suffix in (".png", ".pdf"):
-        fig.savefig(out.with_suffix(suffix), dpi=150)
-    print(f"[wrote {out.with_suffix('.png')}]", flush=True)
-
-
-# ------------------------------------------------------------- main
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", default=DEFAULT_MODEL)
-    parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
-    parser.add_argument("--dtype", default="float32", choices=["float32", "bfloat16", "float16"])
-    parser.add_argument("--context-lens", type=int, nargs="+", default=[2048])
-    parser.add_argument("--tasks", nargs="+", default=list(TASKS), choices=list(TASKS))
-    parser.add_argument("--ranks", type=int, nargs="+", default=[32, 64, 128, 256])
-    parser.add_argument("--morph-keeps", type=float, nargs="+", default=[0.1, 0.25, 0.5])
-    parser.add_argument("--evict-keeps", type=float, nargs="+", default=[0.1, 0.25, 0.5])
-    parser.add_argument("--think-ratios", type=float, nargs="+", default=[0.3, 0.5, 0.7])
-    parser.add_argument("--palu-ranks", type=float, nargs="+", default=[0.25, 0.5])
-    parser.add_argument("--palu-group", type=int, default=1)
-    # Week-18 quant baseline + compose (mirror w10_frontier.build_parser so the quant/
-    # q4 arms build here too -- build_arms reads --quant-nbits directly for the quant arm).
-    parser.add_argument("--quant-nbits", type=int, nargs="+", default=[2, 4])
-    parser.add_argument("--quant-group", type=int, default=64)
-    parser.add_argument("--quant-residual", type=int, default=128)
-    parser.add_argument("--quant-scheme", default="token", choices=["token", "kivi"])
-    parser.add_argument("--quant-backend", default="quanto", choices=["quanto", "hqq"])
-    parser.add_argument("--bug-quant-bits", type=int, default=None)
-    parser.add_argument("--bug-quant-budget", type=int, default=0)
-    parser.add_argument("--shadow-ranks", type=int, nargs="+", default=[64, 128])
-    parser.add_argument("--shadow-topk", type=int, default=256)
-    parser.add_argument("--recent-window", type=int, default=32)
-    parser.add_argument("--absorb-block", type=int, default=16)
-    parser.add_argument(
-        "--hh-budgets",
-        type=int,
-        nargs="+",
-        default=[256, 1024, 2048],
-        help="Week-11 SurpriseSLASH exact-tier sizes (bugslash/bugevict)",
-    )
-    parser.add_argument(
-        "--hh-neighbor", type=int, default=0, help="SurpriseSLASH span-expansion window (0=off)"
-    )
-    parser.add_argument(
-        "--hh-discard",
-        action="store_true",
-        help="Week-12 H1 ablation: bugslash arms select-and-DISCARD (hh_retain=False; "
-        "pool invisible to attention) -> bugSdrop-* arm names",
-    )
-    parser.add_argument(
-        "--warmup-seed",
-        action="store_true",
-        help="Week-13 T-B: seed the exact tier from the first ingest chunk's outliers "
-        "-> bugSseed-* arms (fixes the warm-up window; requires --chunk>0)",
-    )
-    parser.add_argument(
-        "--score-rank",
-        type=int,
-        default=None,
-        help="Week-15 T2: cap the SLASH surprise-scoring basis at this many leading "
-        "columns (selection-rank decoupled from storage-rank) -> '-s{k}' arm suffix; "
-        "storage/footprint unchanged; requires 1 <= k <= rank",
-    )
-    parser.add_argument(
-        "--tracker",
-        default="bug",
-        choices=["bug", "oja", "fd"],
-        help="Week-20 tracker-swap ablation: gist tracker for the bug arms (bug = the "
-        "rank-adaptive BUG step, = fixed-rank incremental SVD at the flagship defaults; "
-        "oja = Oja's rule; fd = Frequent Directions)",
-    )
-    parser.add_argument(
-        "--min-sv-frac",
-        type=float,
-        default=0.0,
-        help="Week-17: relative singular-value floor for the streaming integrator "
-        "(0.0=off; e.g. 1e-2) -> '-f{v}' arm suffix; storage/footprint unchanged",
-    )
-    parser.add_argument("--chunk", type=int, default=0, help="chunked-prefill block size")
-    parser.add_argument(
-        "--filler",
-        default="cycle",
-        choices=["cycle", "wikitext", "wikitext-103", "pg19"],
-        help="RULER haystack filler: 'cycle' (bit-identical 10-sentence loop) or a "
-        "realistic corpus, seed-shuffled per trial (Week-18 external-validity fix)",
-    )
-    parser.add_argument(
-        "--depths",
-        type=float,
-        nargs="+",
-        default=None,
-        help="niah_single needle-depth grid in [0,1] (swept across trials); "
-        "default None keeps the archived mid-depth+jitter placement",
-    )
-    parser.add_argument("--n-trials", type=int, default=4)
-    parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1])
-    parser.add_argument("--n-keys", type=int, default=8)
-    parser.add_argument("--n-values", type=int, default=4)
-    parser.add_argument("--n-hops", type=int, default=3)
-    parser.add_argument(
-        "--methods",
-        nargs="+",
-        default=[
-            "full",
-            "bug",
-            "morph",
-            "snapkv",
-            "ea",
-            "think",
-            "palu",
-            "shadow",
-        ],
-    )
-    parser.add_argument("--out-json", default="results/w10-ruler-1b.json")
-    # untracked scratch default so a local smoke run never clobbers a committed
-    # figure; pass --out-fig figures/weekN/... explicitly to update a real one.
-    parser.add_argument("--out-fig", default="figures/scratch/ruler_accuracy")
-    parser.add_argument("--plot-only", action="store_true")
-    args = parser.parse_args()
-
-    out_json = Path(args.out_json)
-    if args.plot_only:
-        _plot(json.loads(out_json.read_text()), Path(args.out_fig))
-        return
-
-    blob = run(args)
-    out_json.parent.mkdir(parents=True, exist_ok=True)
-    out_json.write_text(json.dumps(blob, indent=2) + "\n")
-    _plot(blob, Path(args.out_fig))
-    print(JSON_BEGIN)
-    print(json.dumps(blob))
-    print(JSON_END)
-    print(f"[wrote {out_json}]", flush=True)
-
-
-if __name__ == "__main__":
-    main()

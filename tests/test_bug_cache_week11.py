@@ -72,7 +72,7 @@ def _chunked_prefill(
     *,
     attach: bool,
 ) -> None:
-    """OOM-safe chunked prefill (mirrors ``w10_frontier._prefill_chunked``); the
+    """OOM-safe chunked prefill (mirrors ``frontier._prefill_chunked``); the
     exact ``hh`` tier only populates through this ingest path. ``attach=False``
     exercises the attach-free surprise selection."""
     t = int(ids.shape[1])

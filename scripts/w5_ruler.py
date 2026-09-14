@@ -42,13 +42,15 @@ import _paths  # noqa: F401  # bootstrap: make kvdlra importable when run as a s
 import matplotlib
 import torch
 from kvpress import ExpectedAttentionPress, SnapKVPress
-from perplexity_sweep import load_model
 from w4_fair import evict_quant_memory
 from w4_hybrid_sweep import kv_memory_ratio
-from w4_needle import _FILLER, retrieve
+from w4_needle import retrieve
 
 from kvdlra.baselines.compat import install_kvpress_prefill_compat
 from kvdlra.baselines.lowrank_press import BUGPress
+from kvdlra.eval.data import FILLER as _FILLER
+from kvdlra.eval.data import LABELS as _LABELS
+from kvdlra.eval.data import load_model
 
 matplotlib.use("Agg")  # headless / CPU-safe backend; set before pyplot import
 import matplotlib.pyplot as plt
@@ -62,25 +64,6 @@ METHOD_STYLE = {
     "ExpectedAttn keep0.15": ("tab:red", "D", ":"),
     "ExpectedAttn keep0.05": ("tab:pink", "X", ":"),
 }
-# Distinct key labels (NATO-ish); codes are distinct 5-digit numbers per trial.
-_LABELS = [
-    "amber",
-    "bronze",
-    "coral",
-    "delta",
-    "ember",
-    "flint",
-    "garnet",
-    "hazel",
-    "indigo",
-    "jade",
-    "kelp",
-    "lunar",
-    "maple",
-    "nickel",
-    "onyx",
-    "pearl",
-]
 _TAIL_K = 48  # question + assistant header fed AFTER compression (as in w4_needle)
 
 

@@ -1,4 +1,4 @@
-"""Week-19 A2: official NVIDIA-RULER prompts through our arms (``w19_official_ruler``).
+"""Week-19 A2: official NVIDIA-RULER prompts through our arms (``official_ruler``).
 
 Hermetic: a whitespace fake tokenizer with a chat template + the tiny-Llama model; the
 real generator/tokenizer path runs on the pod (MODE a2).
@@ -12,9 +12,10 @@ from typing import Any
 
 import pytest
 import torch
-import w19_official_ruler as official
 from transformers import LlamaConfig, LlamaForCausalLM
-from w10_frontier import build_parser
+
+from kvdlra.eval import official_ruler as official
+from kvdlra.eval.frontier import build_parser
 
 # Shaped like RULER c3f5e3b records: the answer prefix is its own field, not in `input`.
 NIAH = (
@@ -149,11 +150,3 @@ def test_run_emits_intervals_compatible_rows(tmp_path: Path, monkeypatch: Any, c
     rows = [ln for ln in out.splitlines() if ln.startswith("[niah_single_2 ctx64]")]
     assert len(rows) == 2 and all(ROW.search(ln) for ln in rows), rows
     assert sum(ln.startswith("[trial] task=niah_single_2") for ln in out.splitlines()) == 4
-
-
-def test_parse_args_composes_with_the_frontier_parser() -> None:
-    """The anchor CLI extends build_parser(); a duplicated option (e.g. --out-json) raises
-    at construction, which the CPU smoke hit and the run() test cannot see."""
-    args = official.parse_args(["--data-dir", "d", "--tasks", "vt", "--methods", "full"])
-    assert args.data_dir == "d" and args.tasks == ["vt"] and args.methods == ["full"]
-    assert args.out_json == "results/w19-official-ruler.json" and args.context_len == 16384

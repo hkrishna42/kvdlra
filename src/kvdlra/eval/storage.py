@@ -1,53 +1,35 @@
-"""Week-16 Tier-4 (systems) -- MEASURED storage footprint vs full KV.
+"""MEASURED storage footprint vs full KV (the systems tier).
 
 The caches are *reconstruct-then-attend* (attention sees a full-length reconstruction of
-the retained history), so a naive decode-time ``max_memory_allocated`` would show BUG with
-a HIGHER peak than full KV -- the opposite of the paper's story, and a Mode-B low-rank
-attention kernel (future work) is what a real throughput/peak-VRAM win needs. So Tier-4 is
-reframed honestly around what BUG actually optimizes: the *stored* cache state.
+the retained history), so a naive decode-time ``max_memory_allocated`` shows a HIGHER
+peak than full KV -- the opposite of the paper's story, and a Mode-B low-rank attention
+kernel (future work) is what a real throughput / peak-VRAM win needs. So this tier is
+framed around what the method actually optimizes: the *stored* cache state.
 
-This measures, after a real chunked prefill at several context lengths, the live cache's
+After a real chunked prefill at several context lengths this measures the live cache's
 ``stored_state_numel()`` (summed ``.numel()`` over its real tensors -- the deployable
 constant-memory state) against full KV (``2*t*n`` per layer), and reports:
 
-* **measured storage ratio** (float-equivalent) vs context -- the empirical "3-5x less
-  memory" curve, no longer a bare formula;
+* **measured storage ratio** (float-equivalent) vs context -- the empirical curve, not a
+  bare formula;
 * an **accounting-integrity** cross-check: measured floats vs the analytic
   ``Footprint.float_equiv()`` (pinned equal by ``tests/test_accounting.py`` on tiny
   configs -- here confirmed at real scale, bar = within +-5%);
 * the **reconstruction workspace** (``workspace_numel()``) -- the transient the kernel
   would remove -- reported beside storage so the reconstruct-then-attend cost is explicit;
-* on CUDA only, ``measure_peak_gpu`` for the *eviction* arms (which genuinely shrink the
-  ``DynamicCache``), the honest systems point for that regime.
-
-CPU example (1B)::
-
-    uv run python scripts/w16_storage.py --context-lens 1024 2048 4096 8192 \
-        --ranks 32 128 --methods full bug bugslash --chunk 512 --warmup-seed
+* on CUDA, ``measure_peak_gpu`` per arm, the measured resident contrast.
 """
 
 from __future__ import annotations
 
 import argparse
-import base64
-import json
-from pathlib import Path
 from typing import Any
 
-import _paths  # noqa: F401  (prepends src/ to sys.path if needed)
-import matplotlib
 import torch
-from perplexity_sweep import load_model
-from w10_frontier import _footprint, _prefill_chunked, build_arms, build_parser
 
 from kvdlra.accounting import measure_peak_gpu
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # must follow matplotlib.use("Agg")
-
-DEFAULT_MODEL = "unsloth/Llama-3.2-1B-Instruct"
-JSON_BEGIN = "===W16_STORAGE_JSON_BEGIN==="
-JSON_END = "===W16_STORAGE_JSON_END==="
+from kvdlra.eval.data import load_model
+from kvdlra.eval.frontier import _footprint, _prefill_chunked, build_arms, build_parser
 
 
 def _smoke_args(args: argparse.Namespace) -> argparse.Namespace:
@@ -168,62 +150,4 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "integrity_ok": ok,
         "results": rows,
     }
-    # Base64-fold at 400 chars/line so `vastai logs` truncation (~500 chars) can't
-    # eat the payload -- decode with the scrape_w10.sh flip-flop (tr -d ' \r\n'|base64 -d).
-    payload = base64.b64encode(json.dumps(blob).encode()).decode()
-    print(JSON_BEGIN)
-    for i in range(0, len(payload), 400):
-        print(payload[i : i + 400])
-    print(JSON_END)
     return blob
-
-
-def _plot(blob: dict[str, Any], out: Path) -> None:
-    rows = blob["results"]
-    methods = sorted({r["method"] for r in rows if r["kind"] != "full"})
-    fig, ax = plt.subplots(figsize=(6.4, 4.6))
-    for method in methods:
-        pts = sorted((r["ctx"], r["measured_ratio"]) for r in rows if r["method"] == method)
-        ax.plot([p[0] for p in pts], [p[1] for p in pts], marker="o", lw=1.8, label=method)
-    ax.axhline(1.0, color="gray", ls="--", lw=1.0, label="full KV")
-    ax.set_xscale("log")
-    ax.set_yscale("log")
-    ax.set_xlabel("context length (tokens)")
-    ax.set_ylabel("measured stored / full KV (float-equivalent)")
-    ax.set_title(f"Week-16 Tier-4: measured storage footprint -- {blob['model'].split('/')[-1]}")
-    ax.grid(True, which="both", alpha=0.3)
-    ax.legend(fontsize=8)
-    fig.tight_layout()
-    out.parent.mkdir(parents=True, exist_ok=True)
-    for suffix in (".png", ".pdf"):
-        fig.savefig(out.with_suffix(suffix), dpi=150)
-    print(f"[wrote {out.with_suffix('.png')}]", flush=True)
-
-
-def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--model", default=DEFAULT_MODEL)
-    p.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
-    p.add_argument("--dtype", default="float32", choices=["float32", "bfloat16", "float16"])
-    p.add_argument("--context-lens", type=int, nargs="+", default=[1024, 2048, 4096, 8192])
-    p.add_argument("--ranks", type=int, nargs="+", default=[32, 128])
-    p.add_argument("--hh-budgets", type=int, nargs="+", default=[1024])
-    p.add_argument("--methods", nargs="+", default=["full", "bug", "bugslash"])
-    p.add_argument("--chunk", type=int, default=512)
-    p.add_argument("--warmup-seed", action="store_true")
-    p.add_argument("--out-json", default="results/w16-storage.json")
-    p.add_argument("--out-fig", default="figures/week16/storage_footprint")
-    p.add_argument("--plot-only", action="store_true")
-    args = p.parse_args()
-    out_json = Path(args.out_json)
-    if args.plot_only:
-        _plot(json.loads(out_json.read_text()), Path(args.out_fig))
-        return
-    blob = run(args)
-    out_json.parent.mkdir(parents=True, exist_ok=True)
-    out_json.write_text(json.dumps(blob, indent=2) + "\n")
-    _plot(blob, Path(args.out_fig))
-
-
-if __name__ == "__main__":
-    main()

@@ -37,11 +37,11 @@ import _paths  # noqa: F401  # bootstrap: make kvdlra importable when run as a s
 import matplotlib
 import torch
 from generate_with_press import LONG_PROMPTS
-from perplexity_sweep import load_model
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 from transformers.cache_utils import Cache, DynamicCache, DynamicLayer
 
 from kvdlra.cache import BugStreamingCache, MorphKVCache
+from kvdlra.eval.data import load_model
 from kvdlra.util.seed import seed_everything
 
 matplotlib.use("Agg")  # headless / CPU-safe backend; set before pyplot import

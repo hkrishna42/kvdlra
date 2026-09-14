@@ -50,11 +50,11 @@ from typing import Any
 import _paths  # noqa: F401  # bootstrap: make kvdlra importable when run as a script
 import matplotlib
 import torch
-from perplexity_sweep import load_corpus_ids, load_model
 from transformers import PreTrainedModel
 from transformers.cache_utils import Cache, DynamicCache, DynamicLayer
 
 from kvdlra.cache import BugStreamingCache, MorphKVCache
+from kvdlra.eval.data import load_corpus_ids, load_model
 from kvdlra.util.seed import seed_everything
 
 matplotlib.use("Agg")  # headless / CPU-safe backend; set before pyplot import

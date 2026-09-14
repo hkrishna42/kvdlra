@@ -1,57 +1,40 @@
-"""Week-10 PRIMARY long-context axis (realistic tasks): LongBench F1 vs memory.
+"""The realistic long-context axis: LongBench token-F1 vs memory.
 
-Complements the synthetic RULER frontier (``w10_ruler.py``) with *realistic*
-long-context QA from LongBench (arXiv:2308.14508). Where RULER holds the query out
-(compress-then-query, eviction's Achilles heel), LongBench puts the question
-**in the prompt** -- the standard compress-the-whole-prompt-then-generate protocol,
-which is *fairer to eviction* (it can keep query-relevant tokens at prefill). Having
+Complements the synthetic RULER frontier with realistic long-context QA from LongBench
+(arXiv:2308.14508). Where RULER holds the query out (compress-then-query, eviction's
+Achilles heel), LongBench puts the question **in the prompt** -- the standard
+compress-the-whole-prompt-then-generate protocol, which is *fairer to eviction*. Having
 both is the balanced long-context picture.
 
 Focused QA subset (token-F1 scored, no extra deps): ``qasper``, ``multifieldqa_en``,
-``hotpotqa``, ``2wikimqa`` -- realistic ~4-18K-token contexts. Same arms as the ppl
-/ RULER frontiers (BUG ``BugStreamingCache`` ranks / MorphKV / SnapKV / EA), OOM-safe
-chunked-ingest prefill / ``ChunkPress``, greedy generation at TRUE positions. Memory
-counted honestly (``kvdlra.accounting``). ``--plot-only`` rebuilds figures.
+``hotpotqa``, ``2wikimqa`` -- realistic ~4-18K-token contexts. Same arms as the ppl /
+RULER axes, OOM-safe chunked-ingest prefill / ``ChunkPress``, greedy generation at TRUE
+positions, memory counted by ``kvdlra.accounting``.
 
-Note: contexts are middle-truncated to ``--max-len`` tokens (LongBench-style) to set
-the compression budget; absolute F1 is template-sensitive, only the *within-setup*
-method ordering is the claim. Most LongBench tasks live < 32K, so LongBench carries
-the realistic-tasks story while RULER carries 64K.
-
-Example (CPU smoke, 1B)
------------------------
-    uv run python scripts/w10_longbench.py --device cpu --tasks qasper \
-        --max-len 2048 --n-examples 3 --ranks 128 --methods full bug morph snapkv
+Note: contexts are middle-truncated to ``max_len`` tokens (LongBench-style) to set the
+compression budget; absolute F1 is template-sensitive, only the *within-setup* method
+ordering is the claim. Most LongBench tasks live < 32K, so LongBench carries the
+realistic-tasks story while RULER carries 64K.
 """
 
 from __future__ import annotations
 
 import argparse
 import gc
-import json
 import re
 import string
 from collections import Counter
-from pathlib import Path
 from typing import Any
 
-import _paths  # noqa: F401
-import matplotlib
 import torch
 from datasets import load_dataset
-from perplexity_sweep import load_model
 from transformers.cache_utils import Cache, DynamicCache
-from w10_frontier import _footprint, _prefill_chunked, build_arms
-from w10_ruler import _decode
 
 from kvdlra.baselines.compat import install_kvpress_prefill_compat
+from kvdlra.eval.data import load_model
+from kvdlra.eval.frontier import _footprint, _prefill_chunked, build_arms
+from kvdlra.eval.ruler import _decode
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
-DEFAULT_MODEL = "unsloth/Llama-3.2-1B-Instruct"
-JSON_BEGIN = "===W10_LONGBENCH_JSON_BEGIN==="
-JSON_END = "===W10_LONGBENCH_JSON_END==="
 QA_TASKS = ("qasper", "multifieldqa_en", "hotpotqa", "2wikimqa", "narrativeqa")
 _PROMPT = (
     "{context}\n\nAnswer the question based on the passage above. "
@@ -135,7 +118,7 @@ def generate(
         # Week-15 A1 fix: attach() covers prefill AND decode (uniform for all
         # streaming arms) -- decode outside attach left ShadowKV's selection hook
         # unregistered, silently degrading it to most-recent-chunks retention
-        # (same defect as w10_ruler.py; those published rows are VOID).
+        # (the same defect as the RULER harness; those published rows are VOID).
         with cache.attach(model):  # type: ignore[attr-defined]
             if 0 < chunk < ctx_len:
                 _prefill_chunked(model, cache, pre, chunk)
@@ -236,126 +219,3 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "n_examples": args.n_examples,
         "results": results,
     }
-
-
-# ------------------------------------------------------------- plot
-
-
-def _plot(blob: dict[str, Any], out: Path) -> None:
-    results = blob["results"]
-    tasks = blob["tasks"]
-    fig, axes = plt.subplots(1, len(tasks), figsize=(4.8 * len(tasks), 4.4), squeeze=False)
-    kind_style = {
-        "bug": ("tab:orange", "o"),
-        "morph": ("tab:green", "s"),
-        "press": ("tab:red", "^"),
-        "full": ("tab:blue", "*"),
-    }
-    for j, task in enumerate(tasks):
-        ax = axes[0][j]
-        rows = [r for r in results if r["task"] == task]
-        for kind, (c, m) in kind_style.items():
-            pts = sorted((r["ratio_fp16"], r["f1"]) for r in rows if r["kind"] == kind)
-            if pts:
-                ax.plot(
-                    [p[0] for p in pts],
-                    [p[1] for p in pts],
-                    marker=m,
-                    color=c,
-                    lw=1.8,
-                    ms=7,
-                    label=kind,
-                    alpha=0.9,
-                )
-        ax.set_ylim(-0.02, 1.02)
-        ax.set_xscale("log")
-        ax.set_title(task, fontsize=10)
-        ax.set_xlabel("KV memory / full fp16")
-        ax.set_ylabel("token-F1")
-        ax.grid(True, which="both", alpha=0.3)
-        if j == 0:
-            ax.legend(fontsize=8)
-    fig.suptitle(f"Week-10 LongBench: QA F1 vs memory -- {blob['model'].split('/')[-1]}")
-    fig.tight_layout()
-    out.parent.mkdir(parents=True, exist_ok=True)
-    for suffix in (".png", ".pdf"):
-        fig.savefig(out.with_suffix(suffix), dpi=150)
-    print(f"[wrote {out.with_suffix('.png')}]", flush=True)
-
-
-# ------------------------------------------------------------- main
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", default=DEFAULT_MODEL)
-    parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
-    parser.add_argument("--dtype", default="float32", choices=["float32", "bfloat16", "float16"])
-    parser.add_argument(
-        "--tasks", nargs="+", default=["qasper", "multifieldqa_en"], choices=list(QA_TASKS)
-    )
-    parser.add_argument("--max-len", type=int, default=4096, help="prompt token budget")
-    parser.add_argument("--n-examples", type=int, default=20)
-    parser.add_argument("--max-new", type=int, default=48)
-    parser.add_argument("--ranks", type=int, nargs="+", default=[32, 64, 128, 256])
-    parser.add_argument("--morph-keeps", type=float, nargs="+", default=[0.1, 0.25, 0.5])
-    parser.add_argument("--evict-keeps", type=float, nargs="+", default=[0.1, 0.25, 0.5])
-    parser.add_argument("--think-ratios", type=float, nargs="+", default=[0.3, 0.5, 0.7])
-    parser.add_argument("--palu-ranks", type=float, nargs="+", default=[0.25, 0.5])
-    parser.add_argument("--palu-group", type=int, default=1)
-    parser.add_argument("--shadow-ranks", type=int, nargs="+", default=[64, 128])
-    parser.add_argument("--shadow-topk", type=int, default=256)
-    parser.add_argument("--recent-window", type=int, default=32)
-    parser.add_argument("--absorb-block", type=int, default=16)
-    parser.add_argument("--chunk", type=int, default=0, help="chunked-prefill block size")
-    # Week-18 W6: the SurpriseSLASH/flagship knobs build_arms needs for the bugslash arm
-    # (hh_budgets/hh_neighbor are read directly; the rest are getattr-defaulted). Without
-    # these the flagship bugSseed arm could not run on LongBench -- the panel's "flagship
-    # never LongBench-tested" gap. LongBench (real doc-QA) is eviction's home turf, so
-    # this is an appendix external anchor, not a headline.
-    parser.add_argument("--hh-budgets", type=int, nargs="+", default=[256, 1024])
-    parser.add_argument("--hh-neighbor", type=int, default=0)
-    parser.add_argument("--hh-discard", action="store_true")
-    parser.add_argument("--warmup-seed", action="store_true")
-    parser.add_argument("--score-rank", type=int, default=None)
-    parser.add_argument("--min-sv-frac", type=float, default=0.0)
-    parser.add_argument("--bug-quant-bits", type=int, default=None)
-    parser.add_argument("--bug-quant-budget", type=int, default=0)
-    parser.add_argument("--quant-nbits", type=int, nargs="+", default=[2, 4])
-    parser.add_argument("--quant-group", type=int, default=64)
-    parser.add_argument("--quant-residual", type=int, default=128)
-    parser.add_argument(
-        "--methods",
-        nargs="+",
-        default=[
-            "full",
-            "bug",
-            "morph",
-            "snapkv",
-            "ea",
-            "think",
-            "palu",
-            "shadow",
-        ],
-    )
-    parser.add_argument("--out-json", default="results/w10-longbench-1b.json")
-    parser.add_argument("--out-fig", default="figures/week10/longbench_f1")
-    parser.add_argument("--plot-only", action="store_true")
-    args = parser.parse_args()
-    out_json = Path(args.out_json)
-    if args.plot_only:
-        _plot(json.loads(out_json.read_text()), Path(args.out_fig))
-        return
-
-    blob = run(args)
-    out_json.parent.mkdir(parents=True, exist_ok=True)
-    out_json.write_text(json.dumps(blob, indent=2) + "\n")
-    _plot(blob, Path(args.out_fig))
-    print(JSON_BEGIN)
-    print(json.dumps(blob))
-    print(JSON_END)
-    print(f"[wrote {out_json}]", flush=True)
-
-
-if __name__ == "__main__":
-    main()

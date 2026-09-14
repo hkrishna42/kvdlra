@@ -1,31 +1,28 @@
-"""Week-19 A2: the official-benchmark anchor -- NVIDIA RULER prompts through OUR arms.
+"""The external retrieval anchor: NVIDIA RULER prompts through our arms.
 
-The retrieval evidence so far comes from an in-repo generator (``w10_ruler.py``:
-cyclic/WikiText filler, our needle/query templates). This runs the SAME arms and the
-SAME decode-at-true-positions protocol on prompts produced by the official RULER
-generator (github.com/NVIDIA/RULER ``scripts/data/prepare.py``, pinned by commit on
-the pod): their haystacks (Paul Graham essays / noise), their needle types (words,
-numbers, uuids), their templates, their ``tokens_to_generate``, and their scoring
-rule (``string_match_all``: every reference output must appear in the prediction).
+The in-house evidence comes from our own generator (``kvdlra.eval.ruler``: cyclic or
+WikiText filler, our needle/query templates). This runs the SAME arms and the SAME
+decode-at-true-positions protocol on prompts produced by the official RULER generator
+(github.com/NVIDIA/RULER ``scripts/data/prepare.py``, pinned by commit on the pod):
+their haystacks (Paul Graham essays / noise), their needle types (words, numbers,
+uuids), their templates, their ``tokens_to_generate``, and their scoring rule
+(``string_match_all``: every reference output must appear in the prediction).
 
 Protocol (mirrors RULER's ``meta-llama3`` template for instruct models): the task
 prompt minus its trailing answer prefix is the user turn of the tokenizer's chat
 template; the answer prefix is appended after the assistant header, priming the
-completion. The haystack + question up to the template-derived tail is the
-compressed prefill; the tail (question + assistant header + answer prefix) is decoded
-at true positions (``w10_ruler._tail_len``), exactly as in the in-repo harness.
+completion. The haystack + question up to the template-derived tail is the compressed
+prefill; the tail (question + assistant header + answer prefix) is decoded at true
+positions (``ruler._tail_len``), exactly as in the in-house harness.
 
-Rows print in the ``w10_ruler`` format (``[<task> ctx<T>] <arm> acc=... n=...`` plus
-per-trial ``[trial]`` lines) so ``w18_intervals.py`` ingests them unchanged.
+Rows print in the in-house format (``[<task> ctx<T>] <arm> acc=... n=...`` plus
+per-trial ``[trial]`` lines), which is the pod's stdout contract.
 
-Usage (pod)
------------
-    python scripts/data/prepare.py --save_dir data --benchmark synthetic --task niah_single_2 \
-        --tokenizer_path $MODEL --tokenizer_type hf --max_seq_length 16384 --num_samples 12 \
-        --model_template_type base          # in the RULER checkout
-    PYTHONPATH=src python scripts/w19_official_ruler.py --model $MODEL --device cuda \
-        --dtype bfloat16 --chunk 4096 --data-dir <RULER>/data --tasks niah_single_2 vt \
-        --methods full bugslash --ranks 64 --hh-budgets 256 --hh-neighbor 1 --warmup-seed
+The pod prepares the prompts first::
+
+    python scripts/data/prepare.py --save_dir data --benchmark synthetic \
+        --task niah_single_2 --tokenizer_path $MODEL --tokenizer_type hf \
+        --max_seq_length 16384 --num_samples 12 --model_template_type base
 """
 
 from __future__ import annotations
@@ -35,16 +32,13 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
-import _paths  # noqa: F401
 import torch
-from perplexity_sweep import load_model
-from w10_frontier import build_arms, build_parser
-from w10_ruler import _tail_len, retrieve
 
 from kvdlra.baselines.compat import install_kvpress_prefill_compat
+from kvdlra.eval.data import load_model
+from kvdlra.eval.frontier import build_arms
+from kvdlra.eval.ruler import _tail_len, retrieve
 
-JSON_BEGIN = "===W19_OFFICIAL_RULER_JSON_BEGIN==="
-JSON_END = "===W19_OFFICIAL_RULER_JSON_END==="
 # RULER synthetic.yaml tokens_to_generate (the official generation budgets).
 TOKENS_TO_GENERATE = {"niah": 128, "vt": 30, "cwe": 120, "fwe": 50, "qa": 32}
 
@@ -95,7 +89,7 @@ def templated_official(
     return pre, query
 
 
-def load_task(data_dir: Path, task: str, n: int | None) -> list[dict[str, Any]]:
+def load_records(data_dir: Path, task: str, n: int | None) -> list[dict[str, Any]]:
     """The first ``n`` records of ``<data_dir>/<task>/validation.jsonl``."""
     path = data_dir / task / "validation.jsonl"
     rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
@@ -114,7 +108,7 @@ def run(args: Any) -> dict[str, Any]:
     print(f"model={args.model} n={n_feat} tasks={args.tasks} ctx={ctx} data={args.data_dir}")
     results: list[dict[str, Any]] = []
     for task in args.tasks:
-        records = load_task(Path(args.data_dir), task, args.n_examples)
+        records = load_records(Path(args.data_dir), task, args.n_examples)
         max_new = TOKENS_TO_GENERATE[task.split("_")[0]]
         for arm in build_arms(args, model, ctx):
             arm_chunk = args.chunk if arm.get("chunkable", True) else 0
@@ -167,29 +161,3 @@ def run(args: Any) -> dict[str, Any]:
                 flush=True,
             )
     return {"model": args.model, "benchmark": "ruler-official", "ctx": ctx, "results": results}
-
-
-def parse_args(argv: list[str] | None = None) -> Any:
-    parser = build_parser()  # every arm flag, identical to the ppl/RULER harnesses
-    parser.add_argument("--data-dir", required=True, help="RULER prepare.py --save_dir")
-    parser.add_argument("--tasks", nargs="+", default=["niah_single_2"])
-    parser.add_argument("--context-len", type=int, default=16384, help="prepare max_seq_length")
-    parser.add_argument("--n-examples", type=int, default=None, help="first N records per task")
-    parser.set_defaults(out_json="results/w19-official-ruler.json")  # build_parser owns --out-json
-    return parser.parse_args(argv)
-
-
-def main() -> None:
-    args = parse_args()
-    blob = run(args)
-    out = Path(args.out_json)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(blob, indent=2) + "\n")
-    print(JSON_BEGIN)
-    print(json.dumps(blob))
-    print(JSON_END)
-    print(f"[wrote {out}]", flush=True)
-
-
-if __name__ == "__main__":
-    main()

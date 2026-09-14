@@ -34,7 +34,7 @@ CELL = (
 )
 PPL = "  bugSseed-r64-h256 [T=16384] ppl=5.308 tok_eq/layer=1377.7 ratio=0.085 sbits=0.150\n"
 PPLW = "[pplw] T=16384 bugSseed-r64-h256 ntok=511 nlls=1.573386,1.236791\n"
-# A >400-char line splits into part=i/N lines of 8 values (scripts/w10_frontier.py);
+# A >400-char line splits into part=i/N lines of 8 values (scripts/frontier.py);
 # vast.ai truncates a log line at ~500 chars, so the parts ARE the artifact.
 PPLW_SPLIT = (
     "[pplw] T=32768 quant-2bit-kivi ntok=255 part=1/3 nlls=1.000000,2.000000\n"

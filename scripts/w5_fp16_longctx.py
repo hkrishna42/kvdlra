@@ -42,7 +42,11 @@ import matplotlib
 import numpy as np
 import torch
 from kvpress import ExpectedAttentionPress, SnapKVPress
-from perplexity_sweep import evaluate, load_corpus_ids, load_model
+from perplexity_sweep import (  # DELETED in Task 8; this script goes in Task 9
+    evaluate,
+    load_corpus_ids,
+    load_model,
+)
 from transformers import PreTrainedModel
 from w4_fair import evict_quant_memory
 from w4_hybrid_sweep import kv_memory_ratio

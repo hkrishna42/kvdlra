@@ -149,7 +149,7 @@ def test_invalid_tracker_fails_loud() -> None:
 
 
 def test_build_arms_names_and_threads_the_tracker() -> None:
-    from w10_frontier import build_arms, build_parser
+    from kvdlra.eval.frontier import build_arms, build_parser
 
     m = _model()
     ns = build_parser().parse_args([])
@@ -164,7 +164,7 @@ def test_build_arms_names_and_threads_the_tracker() -> None:
 
 
 def test_parser_exposes_tracker_flag() -> None:
-    from w10_frontier import build_parser
+    from kvdlra.eval.frontier import build_parser
 
     ns = build_parser().parse_args(["--tracker", "fd"])
     assert ns.tracker == "fd"

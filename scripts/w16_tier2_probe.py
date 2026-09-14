@@ -36,8 +36,9 @@ from typing import Any
 import _paths  # noqa: F401  (prepends src/ to sys.path if needed)
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from w10_frontier import build_arms
-from w10_ruler import build_task, retrieve
+
+from kvdlra.eval.frontier import build_arms
+from kvdlra.eval.ruler import build_task, retrieve
 
 JSON_BEGIN = "===W16_TIER2_PROBE_JSON_BEGIN==="
 JSON_END = "===W16_TIER2_PROBE_JSON_END==="

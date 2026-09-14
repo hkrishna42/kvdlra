@@ -28,7 +28,11 @@ from pathlib import Path
 import _paths  # noqa: F401  # bootstrap: make kvdlra importable when run as a script
 import matplotlib
 from kvpress import ExpectedAttentionPress, SnapKVPress
-from perplexity_sweep import evaluate, load_model, load_wikitext_ids
+from perplexity_sweep import (  # DELETED in Task 8; this script goes in Task 9
+    evaluate,
+    load_model,
+    load_wikitext_ids,
+)
 
 from kvdlra.baselines.compat import install_kvpress_prefill_compat
 

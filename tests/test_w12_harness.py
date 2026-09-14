@@ -13,11 +13,11 @@ import argparse
 
 import pytest
 import torch
-import w10_frontier
 from transformers import LlamaConfig, LlamaForCausalLM
 
 from kvdlra.cache import BugStreamingCache
 from kvdlra.cache.bug_cache import BugStreamingLayer
+from kvdlra.eval import frontier
 
 
 def _tiny_model() -> LlamaForCausalLM:
@@ -59,7 +59,7 @@ def _first_layer(cache: BugStreamingCache) -> BugStreamingLayer:
 
 def test_hh_discard_builds_bugsdrop_arms() -> None:
     model = _tiny_model()
-    arms = w10_frontier.build_arms(_args(hh_discard=True), model, t=64)
+    arms = frontier.build_arms(_args(hh_discard=True), model, t=64)
     assert [a["name"] for a in arms] == ["bugSdrop-r8-h4"]
     layer = _first_layer(arms[0]["make"]())
     assert layer.hh_retain is False
@@ -71,7 +71,7 @@ def test_warmup_seed_builds_bugsseed_arms() -> None:
     # bugS vs bugSseed is a clean A/B (and stays separable from bugS-* under an
     # anchored/hyphenated grep, like bugSdrop).
     model = _tiny_model()
-    arms = w10_frontier.build_arms(_args(warmup_seed=True), model, t=64)
+    arms = frontier.build_arms(_args(warmup_seed=True), model, t=64)
     assert [a["name"] for a in arms] == ["bugSseed-r8-h4"]
     layer = _first_layer(arms[0]["make"]())
     assert layer.seed_hh_warmup is True
@@ -82,7 +82,7 @@ def test_warmup_seed_builds_bugsseed_arms() -> None:
 def test_default_stays_bugs_with_retain() -> None:
     model = _tiny_model()
     # No hh_discard attribute at all (older callers): getattr-default keeps bugS.
-    arms = w10_frontier.build_arms(_args(), model, t=64)
+    arms = frontier.build_arms(_args(), model, t=64)
     assert [a["name"] for a in arms] == ["bugS-r8-h4"]
     assert _first_layer(arms[0]["make"]()).hh_retain is True
 
@@ -97,4 +97,4 @@ def test_arm_families_are_not_cross_greppable() -> None:
 def test_discard_still_requires_chunk() -> None:
     model = _tiny_model()
     with pytest.raises(ValueError, match="chunked prefill"):
-        w10_frontier.build_arms(_args(hh_discard=True, chunk=0), model, t=64)
+        frontier.build_arms(_args(hh_discard=True, chunk=0), model, t=64)

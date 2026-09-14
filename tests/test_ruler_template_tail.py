@@ -1,4 +1,4 @@
-"""Pins for the template-derived RULER query tail (``scripts/w10_ruler.py``).
+"""Pins for the template-derived RULER query tail (``scripts/ruler.py``).
 
 The Week-16 Tier-2 generality push replaced the hardcoded ``_TAIL_K = 48`` slice --
 tuned to Llama's chat-template token count -- with a template-derived tail so the whole
@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import pytest
 import torch
-from w10_ruler import _first_divergence, _tail_len, _templated
+
+from kvdlra.eval.ruler import _first_divergence, _tail_len, _templated
 
 # --------------------------------------------------------------- pure arithmetic
 

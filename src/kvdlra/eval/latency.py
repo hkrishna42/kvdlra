@@ -1,46 +1,36 @@
-"""Week-20 systems fix: MEASURED decode latency and peak VRAM at the real operating point.
+"""MEASURED decode latency and peak VRAM at the real operating point.
 
-The exit-gate systems review (F2) rejected the paper's only latency datum -- 1B on CPU at
-a 327-token context, +10% -- as unrepresentative, and its "decode residency ~1.06x" as an
+The exit-gate systems review rejected the paper's only latency datum -- 1B on CPU at a
+327-token context, +10% -- as unrepresentative, and its "decode residency ~1.06x" as an
 analytic sum (stored + workspace) rather than a measured contrast, because the full-KV
 arm's decode peak was never measured. This measures both, per arm x context, batch 1:
 
 * decode ms/token -- one token per forward at TRUE positions (the apples-to-apples
   protocol every arm can run), N steps after a warm-up, CUDA-synchronized per step.
-  p50 is the steady-state cost; max and the spike count (> 2x p50) surface BUG's
+  p50 is the steady-state cost; max and the spike count (> 2x p50) surface the
   absorb-event middle rebuild (the ``ready`` cost of the persistence benchmark,
   amortized over ``absorb_block`` tokens) and KIVI's per-step dequantize.
 * peak VRAM during decode (``max_memory_allocated`` after a reset post-prefill) and the
   post-prefill resident allocation, with the model weights subtracted so the
-  KV-attributable numbers are a direct contrast: full vs flagship vs KIVI-2bit.
+  KV-attributable numbers are a direct contrast.
 
-Rows (harvested like ``[persist``):
+Rows (harvested like ``[persist``)::
+
     [latency ctx16384] full  ms/tok=.. mean=.. max=.. spikes=.. resident_gb=.. peak_gb=..
-
-    python scripts/w20_latency.py --model M --device cuda --dtype bfloat16 --chunk 4096 \
-        --context-lens 16384 32768 65536 --methods full bugslash quant --ranks 64 \
-        --hh-budgets 256 --hh-neighbor 1 --warmup-seed --quant-nbits 2 --quant-scheme kivi
 """
 
 from __future__ import annotations
 
-import json
 import statistics
 import time
 from contextlib import nullcontext
-from pathlib import Path
 from typing import Any
 
-import _paths  # noqa: F401
 import torch
-from perplexity_sweep import load_model
 from transformers.cache_utils import DynamicCache
-from w10_frontier import _prefill_chunked, _prefill_plain, build_arms, build_parser
 
-from kvdlra.baselines.compat import install_kvpress_prefill_compat
+from kvdlra.eval.frontier import _prefill_chunked, _prefill_plain, build_arms
 
-JSON_BEGIN = "===W20_LATENCY_JSON_BEGIN==="
-JSON_END = "===W20_LATENCY_JSON_END==="
 GB = 1024**3
 
 
@@ -77,7 +67,7 @@ def run_latency(
             cache = arm["make"]()
             _prefill_plain(model, cache, hay, args.chunk)
         else:
-            raise ValueError(f"w20_latency covers full/bug/quant arms, not {kind!r}")
+            raise ValueError(f"latency covers full/bug/quant arms, not {kind!r}")
         _sync(device)
         resident_gb, _ = _mem(device)
         if device.startswith("cuda"):
@@ -129,32 +119,3 @@ def run_latency(
         if device.startswith("cuda"):
             torch.cuda.empty_cache()
     return rows
-
-
-def main() -> None:
-    parser = build_parser()
-    parser.add_argument("--context-lens", type=int, nargs="+", default=[2048])
-    parser.add_argument("--n-steps", type=int, default=64)
-    parser.add_argument("--warmup", type=int, default=8)
-    parser.set_defaults(out_json="results/w20-latency.json", methods=["full", "bugslash", "quant"])
-    args = parser.parse_args()
-    install_kvpress_prefill_compat()
-    model, _tok = load_model(args.model, args.device, args.dtype)
-    model.config._attn_implementation = "sdpa"
-    rows = [
-        r
-        for ctx in args.context_lens
-        for r in run_latency(model, args, ctx, args.device, args.n_steps, args.warmup)
-    ]
-    blob = {"model": args.model, "device": args.device, "dtype": args.dtype, "rows": rows}
-    out = Path(args.out_json)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(blob, indent=2) + "\n")
-    print(JSON_BEGIN)
-    print(json.dumps(blob))
-    print(JSON_END)
-    print(f"[wrote {out}]", flush=True)
-
-
-if __name__ == "__main__":
-    main()

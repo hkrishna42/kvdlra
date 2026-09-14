@@ -47,12 +47,12 @@ from typing import Any, cast
 import _paths  # noqa: F401  # bootstrap: make kvdlra importable when run as a script
 import matplotlib
 import torch
-from perplexity_sweep import load_corpus_ids, load_model
 from transformers import PreTrainedModel
 from transformers.cache_utils import Cache, DynamicCache
 from w5_streamppl import bug_budget_floats, build_methods
 
 from kvdlra.cache import BugStreamingCache, MorphKVCache
+from kvdlra.eval.data import load_corpus_ids, load_model
 from kvdlra.util.seed import seed_everything
 
 matplotlib.use("Agg")

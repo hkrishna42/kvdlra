@@ -1,6 +1,6 @@
 """Every v1 arm built from YAML must produce exactly what the legacy CLI path produced.
 
-``configs/arms/*.yaml`` replaces the flag soup of ``scripts/w10_frontier.py`` (Task 8
+``configs/arms/*.yaml`` replaces the flag soup of ``kvdlra.eval.frontier`` (Task 8
 deletes the builder). Until then that builder is the oracle, and parity is checked two
 ways: a cache arm's YAML must reproduce the exact keyword set its ``make`` lambda
 passes to ``BugStreamingCache`` / ``ShadowKVCache``, key for key; a press/quant arm's
@@ -84,10 +84,10 @@ KIND = {"composite": "press_quant"}  # the legacy dispatch key for the YAML `com
 
 def _legacy(flags: str, name: str, t: int = T) -> dict[str, Any]:
     """The legacy arm dict named ``name``, built by the CLI path ``flags`` produced."""
-    import w10_frontier  # scripts/ is on pythonpath; deleted in Task 8 with this import
+    from kvdlra.eval import frontier  # deleted in Task 8 with this import
 
-    ns = w10_frontier.build_parser().parse_args([*flags.split(), "--chunk", "4096"])
-    arms = w10_frontier.build_arms(ns, model=None, t=t)
+    ns = frontier.build_parser().parse_args([*flags.split(), "--chunk", "4096"])
+    arms = frontier.build_arms(ns, model=None, t=t)
     return next(a for a in arms if a["name"] == name)
 
 

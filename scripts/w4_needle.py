@@ -32,30 +32,15 @@ import _paths  # noqa: F401  # bootstrap: make kvdlra importable when run as a s
 import matplotlib
 import torch
 from kvpress import ExpectedAttentionPress, SnapKVPress
-from perplexity_sweep import load_model
 from w4_hybrid_sweep import kv_memory_ratio
 
 from kvdlra.baselines.compat import install_kvpress_prefill_compat
 from kvdlra.baselines.lowrank_press import BUGPress
+from kvdlra.eval.data import FILLER as _FILLER
+from kvdlra.eval.data import load_model
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-
-# Neutral filler sentences (cycled to build the haystack). Deliberately bland so
-# the needle is the only distinctive fact.
-_FILLER = [
-    "The weather in the valley was mild and unremarkable that afternoon.",
-    "A gentle breeze moved through the tall grass near the river.",
-    "The library kept its usual hours throughout the quiet week.",
-    "Several birds gathered on the fence before flying away together.",
-    "The old clock in the hallway ticked steadily as always.",
-    "Rows of books lined the shelves from floor to ceiling.",
-    "The train arrived on schedule and departed a few minutes later.",
-    "Sunlight fell across the wooden floor in long thin stripes.",
-    "The market sold fruit, bread, and flowers every morning.",
-    "A narrow path wound between the hills toward the coast.",
-]
-
 
 # Tokens at the end (question + assistant header) fed *after* compression, so the
 # answer is generated attending to the compressed haystack (not a pre-compression

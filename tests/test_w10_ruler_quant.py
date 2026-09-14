@@ -13,10 +13,10 @@ from typing import Any, cast
 
 import torch
 from transformers import LlamaConfig, LlamaForCausalLM
-from w10_frontier import _footprint, build_arms
-from w10_ruler import retrieve
 
 from kvdlra.baselines.compat import install_kvpress_prefill_compat
+from kvdlra.eval.frontier import _footprint, build_arms
+from kvdlra.eval.ruler import retrieve
 
 H, D = 2, 16  # KV heads x head_dim -> n_features 32
 
@@ -159,7 +159,7 @@ def test_seed_plus_quant_builds_and_seeds_the_exact_tier() -> None:
     the same graduation path the unseeded q4 arm runs with its quant tier every step --
     so the combination is wired: it builds, its first-chunk ingest populates the exact
     tier (the seed effect), and the demoted columns reach the quant tier (billed)."""
-    from w10_frontier import _prefill_chunked
+    from kvdlra.eval.frontier import _prefill_chunked
 
     model = _model()
     args = _bug_args(bug_quant_bits=4, bug_quant_budget=32, warmup_seed=True)
@@ -174,14 +174,3 @@ def test_seed_plus_quant_builds_and_seeds_the_exact_tier() -> None:
     assert layer._q_len() > 0  # demoted coordinates landed in the 4-bit tier
     fp = _footprint(arm, cache, 160, H * D, H)
     assert 0.0 < fp.ratio_stored_bits(160, H * D) < 1.0
-
-
-def test_plot_survives_empty_results() -> None:
-    """A RULER run where every arm SKIPs (e.g. quant on a -runtime pod with no CUDA
-    kernel) yields empty results; _plot must skip cleanly, not crash plt.subplots on a
-    0-row grid (the non-fatal Traceback seen on the Week-18 G1 runtime pods)."""
-    from pathlib import Path
-
-    import w10_ruler
-
-    w10_ruler._plot({"results": [], "tasks": ["niah_single"], "model": "m"}, Path("/tmp/w18_empty"))

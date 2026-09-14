@@ -161,7 +161,7 @@ def _model() -> LlamaForCausalLM:
 
 
 def _args(**kw: Any) -> argparse.Namespace:
-    from w10_frontier import build_parser
+    from kvdlra.eval.frontier import build_parser
 
     ns = build_parser().parse_args([])
     ns.methods = ["quant"]
@@ -172,7 +172,7 @@ def _args(**kw: Any) -> argparse.Namespace:
 
 
 def test_build_arms_names_encode_scheme_and_backend() -> None:
-    from w10_frontier import build_arms
+    from kvdlra.eval.frontier import build_arms
 
     m = _model()
     assert [a["name"] for a in build_arms(_args(), m, 200)] == ["quant-2bit", "quant-4bit"]
@@ -186,10 +186,9 @@ def test_build_arms_names_encode_scheme_and_backend() -> None:
 def test_quant_arm_retrieves_with_chunked_prefill() -> None:
     """retrieve() with --chunk > 0 must run the quant arm through the chunked prefill
     (+ flush) and still return a measurement; single-shot (chunk=0) too."""
-    from w10_frontier import build_arms
-    from w10_ruler import retrieve
-
     from kvdlra.baselines.compat import install_kvpress_prefill_compat
+    from kvdlra.eval.frontier import build_arms
+    from kvdlra.eval.ruler import retrieve
 
     install_kvpress_prefill_compat()
     m = _model()
@@ -208,7 +207,7 @@ def test_score_quant_runs_without_autograd() -> None:
     """The ppl path must not retain the prefill graph: the W18/W19 quant-ppl OOMs (38 GB
     allocated during a 4K chunk on Qwen-7B) were an undecorated score_quant building
     autograd history across the whole prefill. Dequantized state must carry no grad."""
-    from w10_frontier import build_arms, score_quant
+    from kvdlra.eval.frontier import build_arms, score_quant
 
     m = _model()
     arm = build_arms(_args(quant_scheme="kivi", quant_nbits=[4]), m, 256)[0]
@@ -227,7 +226,7 @@ def test_composite_arm_composes_eviction_and_quant() -> None:
     the survivors are stored quantized -- billed kept-fraction x nbits by _footprint's
     press_quant branch). End-to-end composition is validated by the Llama-3.2-1B CPU
     probe and the GPU run; this guards the arm wiring."""
-    from w10_frontier import build_arms
+    from kvdlra.eval.frontier import build_arms
 
     m = _model()
     arms = build_arms(

@@ -1,5 +1,5 @@
 """Week-19 A3: the realized systems win -- serialize -> reload -> H2D -> attend-ready
-wall-clock for full KV vs the flagship vs the fair-quant baseline (``w19_persist``).
+wall-clock for full KV vs the flagship vs the fair-quant baseline (``persist``).
 
 Hermetic (tiny Llama, CPU): H2D is a no-op on CPU and reported as such; the CUDA
 numbers come from the pod (MODE a3)."""
@@ -10,9 +10,10 @@ import argparse
 from pathlib import Path
 
 import torch
-import w19_persist as persist
 from transformers import LlamaConfig, LlamaForCausalLM
-from w10_frontier import build_parser
+
+from kvdlra.eval import persist
+from kvdlra.eval.frontier import build_parser
 
 H, D = 2, 32  # head_dim 32 keeps B*H*T*D divisible by 64 for the per-token quant axis
 
@@ -91,7 +92,7 @@ def test_persist_rows_bytes_and_ratios(tmp_path: Path, capsys: object) -> None:
 def test_state_tensors_cover_the_honest_state(tmp_path: Path) -> None:
     """The persisted flagship state is exactly the tensors the accounting bills
     (stored_state_numel), with the square-root cores stored as their diagonals."""
-    from w10_frontier import _prefill_chunked, build_arms
+    from kvdlra.eval.frontier import _prefill_chunked, build_arms
 
     model = _model()
     arm = next(a for a in build_arms(_args(["bugslash"], 40), model, 200) if a["kind"] == "bug")
@@ -127,7 +128,7 @@ def test_persisted_bytes_equal_the_tensor_content(tmp_path: Path) -> None:
     """torch.save writes a view's WHOLE underlying storage (the recent-window ring, the
     core diagonals), which inflated the flagship's on-disk size 2.6x on the a3 pod. The
     file must hold the tensors' content (numel x itemsize) plus only format overhead."""
-    from w10_frontier import _prefill_chunked, build_arms
+    from kvdlra.eval.frontier import _prefill_chunked, build_arms
 
     model = _model()
     arm = next(a for a in build_arms(_args(["bugslash"], 40), model, 400) if a["kind"] == "bug")

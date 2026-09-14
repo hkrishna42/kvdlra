@@ -73,7 +73,7 @@ def _chunked_prefill(
     model: LlamaForCausalLM, cache: BugStreamingCache | MorphKVCache, ids: torch.Tensor, chunk: int
 ) -> None:
     """Drive an OOM-safe chunked prefill: first chunk single-shot-prefills, later
-    chunks ingest; consolidate after each (mirrors w10_frontier._prefill_chunked)."""
+    chunks ingest; consolidate after each (mirrors frontier._prefill_chunked)."""
     t = int(ids.shape[1])
     with cache.attach(model), cache.ingesting():
         for start in range(0, t, chunk):

@@ -54,13 +54,13 @@ from typing import Any
 import _paths  # noqa: F401  # bootstrap: make kvdlra importable when run as a script
 import matplotlib
 from kvpress import ExpectedAttentionPress, SnapKVPress
-from perplexity_sweep import load_model
 from w4_fair import evict_quant_memory
 from w4_hybrid_sweep import kv_memory_ratio
 from w4_needle import build_haystack, retrieve
 
 from kvdlra.baselines.compat import install_kvpress_prefill_compat
 from kvdlra.baselines.lowrank_press import BUGPress
+from kvdlra.eval.data import load_model
 
 matplotlib.use("Agg")  # headless / CPU-safe backend; set before pyplot import
 import matplotlib.pyplot as plt

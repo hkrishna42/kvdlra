@@ -2,7 +2,7 @@
 
 Unlike w16/w17_intervals -- which recovered each cell's trial count from a hand-
 maintained NBLOCK table and dropped every niah_multikey row via a narrow regex -- this
-reads the real per-cell ``n=`` off the aggregate line (emitted by w10_ruler as of
+reads the real per-cell ``n=`` off the aggregate line (emitted by kvdlra.eval.ruler as of
 Week-18) and parses ALL four RULER tasks including multikey. It also consumes the
 per-trial ``[trial]`` lines to run exact McNemar tests on pre-registered arm contrasts
 (every "beats" claim must clear McNemar p<0.05 on paired per-trial data).

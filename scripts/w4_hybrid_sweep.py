@@ -29,9 +29,9 @@ from typing import cast
 
 import _paths  # noqa: F401  # bootstrap: make kvdlra importable when run as a script
 import matplotlib
-from perplexity_sweep import evaluate, load_model, load_wikitext_ids
 
 from kvdlra.baselines.lowrank_press import BUGPress
+from kvdlra.eval.data import load_model
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -88,6 +88,8 @@ def main() -> None:
         return
 
     model, tokenizer = load_model(args.model, args.device, args.dtype)
+    from perplexity_sweep import evaluate, load_wikitext_ids  # gone with Task 8
+
     ids = load_wikitext_ids(tokenizer, args.device)
     n_features = int(model.config.head_dim * model.config.num_key_value_heads)
     eval_args = argparse.Namespace(

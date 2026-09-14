@@ -1,17 +1,17 @@
-"""Week-19 A3: the realized systems win -- persisted-cache cold start, measured.
+"""The realized systems win: persisted-cache cold start, measured.
 
-The byte ratio of the stored state is measured (``w16_storage.py``: cold-load 0.150x /
+The byte ratio of the stored state is measured by ``storage.py`` (cold-load 0.150x /
 0.139x at 16K/32K). What turns it into a deployment existence proof is the *wall-clock*
 of bringing a persisted cache back to attend-ready: serialize -> reload from disk ->
-host-to-device -> reconstruct (BUG: ``_ensure_mid_cache``, the reconstruct-then-attend
-middle; the quant baseline: one full dequantize; full KV: nothing). Arms: full KV, the
-flagship ``bugSseed-r64-h256``, and the fair 2/4-bit KIVI baseline, same prefill.
+host-to-device -> reconstruct (the streaming cache: ``_ensure_mid_cache``, the
+reconstruct-then-attend middle; the quant baseline: one full dequantize; full KV:
+nothing). Arms: full KV, the r64 arm, and the fair 2/4-bit KIVI baseline, same prefill.
 
-What is persisted is exactly the state the accounting bills: for BUG the
+What is persisted is exactly the state the accounting bills: for the streaming cache the
 ``stored_state_numel`` tensor set (square-root cores as their diagonals); for the quant
 baseline the packed codes + scales/zeros (+ the fp16 residual); for full KV its fp16
-K/V. Timings are medians of ``--repeats`` runs after the file was just written (warm
-page cache: the OS read is the floor, the H2D + reconstruct terms are the real cost).
+K/V. Timings are medians of ``repeats`` runs after the file was just written (warm page
+cache: the OS read is the floor, the H2D + reconstruct terms are the real cost).
 
 Rows (``^\\[persist``) are the harvest record::
 
@@ -21,25 +21,18 @@ Rows (``^\\[persist``) are the harvest record::
 
 from __future__ import annotations
 
-import json
 import statistics
 import time
 from pathlib import Path
 from typing import Any
 
-import _paths  # noqa: F401
 import torch
-from perplexity_sweep import load_model
 from transformers.cache_utils import DynamicCache
-from w10_frontier import _prefill_chunked, _prefill_plain, build_arms, build_parser
 
-from kvdlra.baselines.compat import install_kvpress_prefill_compat
+from kvdlra.eval.frontier import _prefill_chunked, _prefill_plain, build_arms
 from kvdlra.quant.kivi_cache import _PerChannel
 
-JSON_BEGIN = "===W19_PERSIST_JSON_BEGIN==="
-JSON_END = "===W19_PERSIST_JSON_END==="
-
-# The BUG layer's stored state (mirrors BugStreamingLayer.stored_state_numel): tiers,
+# The streaming layer's stored state (mirrors BugStreamingLayer.stored_state_numel): tiers,
 # bases, coordinates, quantized tier + norms, retention positions. The diagonal cores
 # and the surprise snapshots are added below (they need their own handling).
 _BUG_ATTRS = (
@@ -169,7 +162,7 @@ def run_persist(
             cache = arm["make"]()
             _prefill_plain(model, cache, hay, args.chunk)
         else:
-            raise ValueError(f"w19_persist covers full/bug/quant arms, not {kind!r}")
+            raise ValueError(f"persist covers full/bug/quant arms, not {kind!r}")
         state = state_tensors(kind, cache)
         m = persist_roundtrip(state, tmp / f"{arm['name']}.pt", device, repeats)
         m["t_ready"] = attend_ready_seconds(kind, cache, device, repeats)
@@ -191,34 +184,3 @@ def run_persist(
         if device.startswith("cuda"):
             torch.cuda.empty_cache()
     return rows
-
-
-def main() -> None:
-    parser = build_parser()
-    parser.add_argument("--context-lens", type=int, nargs="+", default=[2048])
-    parser.add_argument("--repeats", type=int, default=3)
-    parser.add_argument("--tmp", default="/tmp/w19_persist")
-    parser.set_defaults(out_json="results/w19-persist.json", methods=["full", "bugslash", "quant"])
-    args = parser.parse_args()
-    install_kvpress_prefill_compat()
-    model, _tok = load_model(args.model, args.device, args.dtype)
-    model.config._attn_implementation = "sdpa"
-    tmp = Path(args.tmp)
-    tmp.mkdir(parents=True, exist_ok=True)
-    rows = [
-        r
-        for ctx in args.context_lens
-        for r in run_persist(model, args, ctx, args.device, tmp, args.repeats)
-    ]
-    blob = {"model": args.model, "device": args.device, "dtype": args.dtype, "rows": rows}
-    out = Path(args.out_json)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(blob, indent=2) + "\n")
-    print(JSON_BEGIN)
-    print(json.dumps(blob))
-    print(JSON_END)
-    print(f"[wrote {out}]", flush=True)
-
-
-if __name__ == "__main__":
-    main()

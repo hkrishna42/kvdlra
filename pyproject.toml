@@ -73,6 +73,9 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra -q --strict-markers"
+# `--strict-markers` refuses an undeclared marker, so the one the suite is allowed to
+# use is declared here. Nothing carries it yet: the CPU suite is a 90-second gate.
+markers = ["slow: loads a model or runs a long sweep; deselect with -m 'not slow'"]
 # src layout: import kvdlra from src/ even if the editable install's import hook
 # is dropped by an env re-sync. No-op when the package is properly installed.
 # scripts/ is on the path so the entrypoint tests can `import pod` / `import tables`

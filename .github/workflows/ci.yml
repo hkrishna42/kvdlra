@@ -63,3 +63,10 @@ jobs:
 
       - name: Figures
         run: make figures PY="uv run python"
+
+      # Every committed manifest through the gate a citable number has to pass. Today
+      # that is the paper-v1 archive (recognised and skipped) plus whatever a lane
+      # commits next -- so the rule is exercised in CI from the first real pod, not
+      # first discovered to be broken by the pod that needs it.
+      - name: Check (every committed manifest)
+        run: make check PY="uv run python"

@@ -5,6 +5,13 @@ arm x (for a retrieval task) every sub-task x seed x trial. Each trial appends a
 ``TrialRecord`` to ``results/<pod>/trials.jsonl`` as it completes, so a pod killed
 halfway leaves a readable partial file rather than nothing.
 
+``trials.jsonl`` is the ONLY file that streams. The perplexity, per-window and decode
+rows are buffered in memory and written at the very end of the pod, so a run killed
+mid-sweep leaves no ``ppl.jsonl``, ``pplw.jsonl`` or ``latency.jsonl`` at all -- not a
+short one. The recovery path for a killed pod is `scripts/pod.py harvest` from its log:
+every row of all four files is printed as it is produced, which is what the stdout
+contract below is for.
+
 A trial that raises is RECORDED -- ``error`` set, ``hit=0``, ``frac=0.0`` -- and the
 loop continues. The v1 harness printed SKIP and dropped the trial, which silently
 shrank a cell's n; `scripts/pod.py check` now requires every configured cell to hold

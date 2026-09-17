@@ -12,6 +12,8 @@ n_features 32), mirroring ``tests/test_bug_cache.py``.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 import torch
 from transformers import LlamaConfig, LlamaForCausalLM
@@ -122,6 +124,44 @@ def test_bug_footprint_matches_stored_state_numel(
         u_present=layer.u_k is not None,
     )
     assert fp.float_equiv() == layer.stored_state_numel()
+
+
+def test_bug_footprint_matches_stored_state_numel_at_a_collapsed_rank(
+    tiny_model: LlamaForCausalLM,
+) -> None:
+    """The same pin at a rank the Week-17 singular-value floor (``min_sv_frac``)
+    collapsed BELOW the configured cap: the measured state shrinks with the basis, so
+    the formula only reproduces it when fed the live ``u_k.shape[1]``. Billing the cap
+    over-counts -- the second assertion is the defect ``frontier._footprint`` closes."""
+    cache = BugStreamingCache(
+        tiny_model,
+        rank=32,
+        coord_budget=24,
+        recent_window=8,
+        absorb_block=4,
+        n_sink=4,
+        min_sv_frac=0.3,
+    )
+    _drive(tiny_model, cache)
+    layer = _bug_layer(cache)
+    assert layer.u_k is not None and layer.u_v is not None
+    rank_k, rank_v = int(layer.u_k.shape[1]), int(layer.u_v.shape[1])
+    assert max(rank_k, rank_v) < 32, "the floor did not fire -- no collapse to bill"
+    # K and V collapse INDEPENDENTLY (21 and 23 here). Every rank term in the formula is
+    # ``2*rank*x``, symmetric in the two streams, so the live rank it takes is their
+    # mean -- which is what ``frontier._footprint`` passes.
+    assert rank_k != rank_v, "the asymmetry this billing has to handle did not occur"
+    tracked = (rank_k + rank_v) / 2
+    counts: dict[str, Any] = {
+        "coord_count": layer._f_len() + layer._q_len(),
+        "recent_len": layer._recent_len(),
+        "n_sink": 4,
+        "hh_count": layer._hh_len(),
+        "u_present": True,
+    }
+    fp = acc.bug_footprint(N_FEATURES, rank=tracked, **counts)
+    assert fp.float_equiv() == layer.stored_state_numel()
+    assert acc.bug_footprint(N_FEATURES, rank=32, **counts).float_equiv() > fp.float_equiv()
 
 
 def test_balanced_config_ratio_pin() -> None:

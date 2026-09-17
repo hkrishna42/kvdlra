@@ -289,12 +289,30 @@ def _press(cfg: ArmCfg) -> dict[str, Any]:
     return {"keep": float(p["keep"]), "make": _evict_factory(cfg)}
 
 
+def _tracked_rank(u: torch.Tensor | None) -> int:
+    """Columns a stored basis actually holds; 0 when the layer has yet to absorb one.
+
+    The rank that is BILLED -- as against ``arm["rank"]``, the configured *cap*: the
+    Week-17 relative singular-value floor (``min_sv_frac``) drops near-null tail
+    directions, so a floor-on layer tracks fewer columns than the cap and the cap
+    over-bills it (audit finding 0.2). The K and V streams collapse independently.
+    """
+    return 0 if u is None else int(u.shape[1])
+
+
 def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> acc.Footprint:
     """Per-layer footprint of the arm's *post-prefill* state."""
     kind = arm["kind"]
     if kind == "bug":
         assert isinstance(cache, BugStreamingCache)
         layer = cache._bug_layers()[0]
+        # The LIVE tracked rank, never arm["rank"]. Every rank term in `bug_footprint`
+        # is `2*rank*x` -- symmetric in the two streams -- so where the floor collapsed
+        # K and V to different widths (measured 21 vs 23 on one tiny-model layer) their
+        # MEAN is what reproduces the measured `stored_state_numel` exactly, and it can
+        # be a half-integer. No basis yet => rank 0, billed with u_present=False so the
+        # basis and core terms drop out together.
+        rank = (_tracked_rank(layer.u_k) + _tracked_rank(layer.u_v)) / 2
         # Thread the arm's retention + hh_select so surprise arms count their
         # position/surprise buffers too (fifo default keeps existing arms
         # byte-identical); the anti-drift pin guards this against drift.
@@ -305,7 +323,7 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
         q_len = layer._q_len()
         return acc.bug_footprint(
             n,
-            rank=int(arm["rank"]),
+            rank=rank,
             coord_count=layer._f_len(),
             recent_len=layer._recent_len(),
             n_sink=N_SINK,
@@ -408,6 +426,7 @@ def run_ppl(
                 window_nlls: list[float] = []  # per-window MEAN nll (nats/token)
                 window_toks: list[int] = []  # per-window scored-token counts
                 fp: acc.Footprint | None = None
+                eff_rank: int | None = None  # bug arms only: the live tracked rank
                 arm_chunk = chunk if arm.get("chunkable", True) else 0
                 for ctx_ids, win_ids in samples:
                     if arm["kind"] == "press" or arm["kind"] == "full":
@@ -425,6 +444,11 @@ def run_ppl(
                     window_toks.append(ntok)
                     if fp is None:
                         fp = _footprint(arm, cache, t, n, h_kv)
+                        if isinstance(cache, BugStreamingCache):
+                            # The narrowest K basis in the cache: the ppl axis's
+                            # one-number view of how far the floor collapsed the gist
+                            # (`diag.jsonl` carries the per-layer K and V ranks).
+                            eff_rank = min(_tracked_rank(la.u_k) for la in cache._bug_layers())
                     del cache
                     gc.collect()
                 peak = peak_get()
@@ -450,6 +474,7 @@ def run_ppl(
                 "gpu_ratio_fp16": fp.gpu_ratio_fp16(t, n),
                 "cpu_ratio_fp16": fp.cpu_ratio_fp16(t, n),
                 "peak_gpu_bytes": peak,
+                "eff_rank": eff_rank,
                 "status": "ok",
             }
         except Exception as exc:
@@ -506,9 +531,13 @@ def _log_row(row: dict[str, Any]) -> None:
         return
     # `sbits=` appended after `ratio=` -- records.PPL_RE captures ratio= and ignores the
     # tail, so archived ppl lines keep parsing unchanged.
+    # `eff_rank=` (bug arms only) goes LAST: records.PPL_RE is a prefix match, so a
+    # field appended after `sbits=` leaves every archived and new line parsing the same.
+    eff = row.get("eff_rank")
     print(
         f"  {row['method']:14s} [T={row['T']}] ppl={row['ppl']:.3f} "
         f"tok_eq/layer={row['tok_equiv_per_layer']:.1f} ratio={row['ratio_fp16']:.3f} "
-        f"sbits={row.get('ratio_stored_bits', float('nan')):.3f}",
+        f"sbits={row.get('ratio_stored_bits', float('nan')):.3f}"
+        f"{'' if eff is None else f' eff_rank={eff}'}",
         flush=True,
     )

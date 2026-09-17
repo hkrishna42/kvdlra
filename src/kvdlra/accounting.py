@@ -129,7 +129,7 @@ class Footprint:
 
 def bug_footprint(
     n: int,
-    rank: int,
+    rank: float,
     coord_count: int,
     recent_len: int,
     *,
@@ -142,6 +142,15 @@ def bug_footprint(
 ) -> Footprint:
     """Per-layer footprint of one ``BugStreamingCache`` layer state, mirroring
     :meth:`BugStreamingLayer.stored_state_numel` to the float.
+
+    ``rank`` is the **live tracked rank** -- the columns the layer's bases actually hold
+    (``u_k.shape[1]``) -- not the configured cap the arm was built with: the Week-17
+    singular-value floor (``min_sv_frac``) drops near-null tail directions, so a
+    floor-on layer tracks fewer, and the cap would bill a basis that is not stored
+    (audit finding 0.2). Every rank term below is ``2*rank*x``, i.e. symmetric in the K
+    and V streams, so where the floor collapsed the two to different widths their MEAN
+    is the value that reproduces ``stored_state_numel`` -- a half-integer ``rank`` is
+    well defined here and leaves ``float_equiv()`` integral.
 
     ``coord_count`` fp32 coordinate columns (K+V, ``2*rank`` each), ``recent_len``
     verbatim recent-ring tokens (``2n``), ``n_sink`` verbatim sinks (``2n``),

@@ -92,23 +92,39 @@ def score_streaming(
     ctx_ids: torch.Tensor,
     win_ids: torch.Tensor,
     chunk: int = 0,
+    *,
+    arm: str,
+    idx: int | None = None,
 ) -> tuple[float, int]:
     """Prefill into a streaming cache (compresses) then frozen-window score over the
     compressed cache (non-mutating). ``chunk > 0`` (and < ctx) uses OOM-safe chunked
-    ingest; otherwise single-shot."""
+    ingest; otherwise single-shot. ``arm`` / ``idx`` only label the diagnostics."""
     ctx = ctx_ids.unsqueeze(0)
     ctx_len = int(ctx_ids.shape[0])
-    with cache.attach(model):
-        if 0 < chunk < ctx_len:
-            _prefill_chunked(model, cache, ctx, chunk)
-        else:
-            model(ctx, past_key_values=cache, use_cache=True, logits_to_keep=1)
-    with cache.frozen_scoring():
-        scored = _score_window(model, cache, ctx_len, win_ids)
-    # The tripwire's rows leave the library here -- drained after the sample and before
-    # the cache is dropped, since nothing else ever reads them again.
-    if isinstance(cache, BugStreamingCache):
-        emit_diag(cache.drain_diag(), model=str(model.name_or_path), source="ppl")
+    try:
+        with cache.attach(model):
+            if 0 < chunk < ctx_len:
+                _prefill_chunked(model, cache, ctx, chunk)
+            else:
+                model(ctx, past_key_values=cache, use_cache=True, logits_to_keep=1)
+        with cache.frozen_scoring():
+            scored = _score_window(model, cache, ctx_len, win_ids)
+    finally:
+        # The tripwire's rows leave the library here -- drained after the sample and
+        # before the cache is dropped, since nothing else ever reads them again. In a
+        # `finally` because the window worth reading most is the last one before an
+        # `OrthonormalityError`: the cache flushes it before raising (L1.1), and an emit
+        # on the success path alone would let it die with the cache, leaving the trial
+        # recorded as an error with no diagnostics behind it.
+        if isinstance(cache, BugStreamingCache):
+            emit_diag(
+                cache.drain_diag(),
+                model=str(model.name_or_path),
+                source="ppl",
+                arm=arm,
+                ctx=ctx_len,
+                idx=idx,
+            )
     return scored
 
 
@@ -434,7 +450,7 @@ def run_ppl(
                 fp: acc.Footprint | None = None
                 eff_rank: int | None = None  # bug arms only: the live tracked rank
                 arm_chunk = chunk if arm.get("chunkable", True) else 0
-                for ctx_ids, win_ids in samples:
+                for sample_idx, (ctx_ids, win_ids) in enumerate(samples):
                     if arm["kind"] == "press" or arm["kind"] == "full":
                         press = arm["make"]()
                         nll, ntok, cache = score_press(model, press, ctx_ids, win_ids, arm_chunk)
@@ -443,7 +459,15 @@ def run_ppl(
                         nll, ntok = score_quant(model, cache, ctx_ids, win_ids, arm_chunk)
                     else:
                         cache = arm["make"]()
-                        nll, ntok = score_streaming(model, cache, ctx_ids, win_ids, arm_chunk)
+                        nll, ntok = score_streaming(
+                            model,
+                            cache,
+                            ctx_ids,
+                            win_ids,
+                            arm_chunk,
+                            arm=str(arm["name"]),
+                            idx=sample_idx,
+                        )
                     total_nll += nll
                     total_tok += ntok
                     window_nlls.append(nll / ntok)

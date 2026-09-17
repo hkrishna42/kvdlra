@@ -397,23 +397,38 @@ def parse_diag_lines(text: str, model: str, source: str) -> tuple[list[dict[str,
 DIAG_ROWS: list[dict[str, object]] = []
 
 
-def emit_diag(rows: list[dict[str, object]], *, model: str, source: str) -> None:
+def emit_diag(
+    rows: list[dict[str, object]],
+    *,
+    model: str,
+    source: str,
+    arm: str,
+    ctx: int,
+    task: str | None = None,
+    idx: int | None = None,
+) -> None:
     """Print one ``[diag] {json}`` line per row, and buffer the rows for the runner.
 
     The two artifacts every record type leaves, from one call: the log line (which
     :func:`parse_diag_lines` reads back, stamping the model and the line it came from)
-    and the in-process row (which lands in ``diag.jsonl`` directly). The payload is the
-    cache's row verbatim -- the 11 fields of
-    :meth:`kvdlra.cache.BugStreamingCache.drain_diag`, ~200 chars -- so it stays inside
-    the ~400-char budget a log fetch leaves and never needs the ``part=i/N`` splitting
-    the ``[pplw]`` contract falls back on.
+    and the in-process row (which lands in ``diag.jsonl`` directly).
 
-    ``source`` is the axis that produced the rows (``ppl`` / ``ruler`` / ``longbench``),
-    which is what tells two sets of diagnostics in one pod apart.
+    The payload is the cache's row (the 11 fields of
+    :meth:`kvdlra.cache.BugStreamingCache.drain_diag`) plus the four fields that say
+    WHICH measurement it is: ``arm``, ``ctx``, ``task`` and ``idx`` (the sample or trial
+    the surrounding loop is on). They go into the printed line as well as the buffered
+    row, so a harvest off the log rebuilds exactly the same record -- without them a
+    pod running eleven arms emits one undifferentiated stream of ranks and
+    orthonormality errors that no row can be assigned to an arm. ~260 chars, still
+    inside the ~400-char budget a log fetch leaves, so no ``part=i/N`` splitting.
+
+    ``source`` is the axis that produced the rows (``ppl`` / ``ruler`` / ``longbench``).
     """
+    stamp: dict[str, object] = {"arm": arm, "ctx": ctx, "task": task, "idx": idx}
     for row in rows:
-        print("[diag] " + json.dumps(row, sort_keys=True, separators=(",", ":")), flush=True)
-        DIAG_ROWS.append({**row, "model": model, "source": source})
+        payload = {**row, **stamp}
+        print("[diag] " + json.dumps(payload, sort_keys=True, separators=(",", ":")), flush=True)
+        DIAG_ROWS.append({**payload, "model": model, "source": source})
 
 
 def write_jsonl(

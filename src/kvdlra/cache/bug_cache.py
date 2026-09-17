@@ -491,6 +491,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         # Orthonormality guard bookkeeping: absorbs so far and the current diag window
         # (max orth_error / min effective rank per stream since the last emitted row).
         self._absorbs = 0
+        self._diag_window = 0  # absorbs since the last flush -- 0 means nothing to flush
+        self._diag_tokens = 0  # ``tokens_seen`` of the last absorb in the open window
         self._diag_max_err_k = 0.0
         self._diag_max_err_v = 0.0
         self._diag_min_rank_k: int | None = None
@@ -774,13 +776,14 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self._absorbs += 1
         err_k = orth_error(self.u_k)
         err_v = orth_error(self.u_v)
-        tokens_seen = max(self.cumulative_length, int(positions.max()) + 1)
+        self._diag_window += 1
+        self._diag_tokens = max(self.cumulative_length, int(positions.max()) + 1)
         if self.orth_abort_tol is not None and max(err_k, err_v) > self.orth_abort_tol:
             self._diag_max_err_k = max(self._diag_max_err_k, err_k)
             self._diag_max_err_v = max(self._diag_max_err_v, err_v)
             self._diag_min_rank_k = _running_min(self._diag_min_rank_k, eff_rank(self.b_k))
             self._diag_min_rank_v = _running_min(self._diag_min_rank_v, eff_rank(self.b_v))
-            self._flush_diag_window(tokens_seen)
+            self._flush_diag_window()
             raise OrthonormalityError(
                 f"layer={self.layer_idx} orth_err={max(err_k, err_v):.3e} > "
                 f"abort_tol={self.orth_abort_tol} at absorb {self._absorbs}"
@@ -820,15 +823,15 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self._diag_min_rank_k = _running_min(self._diag_min_rank_k, eff_rank(self.b_k))
         self._diag_min_rank_v = _running_min(self._diag_min_rank_v, eff_rank(self.b_v))
         if self._absorbs % self.diag_every == 0:
-            self._flush_diag_window(tokens_seen)
+            self._flush_diag_window()
 
-    def _diag_row(self, tokens_seen: int) -> dict[str, object]:
+    def _diag_row(self) -> dict[str, object]:
         """One diagnostic row built from the current (open) window; does not reset it."""
         assert self.u_k is not None and self.u_v is not None
         return {
             "layer": self.layer_idx,
             "absorbs": self._absorbs,
-            "tokens_seen": tokens_seen,
+            "tokens_seen": self._diag_tokens,
             "orth_err_k": self._diag_max_err_k,
             "orth_err_v": self._diag_max_err_v,
             "eff_rank_k": self._diag_min_rank_k,
@@ -839,11 +842,13 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             "fixed_v": self._diag_fixed_v,
         }
 
-    def _flush_diag_window(self, tokens_seen: int) -> None:
+    def _flush_diag_window(self) -> None:
         """Append one row from the current window and reset it -- shared by the periodic
-        (``diag_every``) flush and the abort path (fix1 Minor #3), so there is exactly one
-        place that resets the window counters."""
-        self.diag.append(self._diag_row(tokens_seen))
+        (``diag_every``) flush, the abort path (fix1 Minor #3) and the partial-window
+        flush :meth:`BugStreamingCache.drain_diag` does, so there is exactly one place
+        that resets the window counters."""
+        self.diag.append(self._diag_row())
+        self._diag_window = 0
         self._diag_max_err_k = self._diag_max_err_v = 0.0
         self._diag_min_rank_k = self._diag_min_rank_v = None
         self._diag_fixed_k = self._diag_fixed_v = False
@@ -1502,9 +1507,17 @@ class BugStreamingCache(Cache):
         orth_err_k, orth_err_v, eff_rank_k, eff_rank_v, rank_k, rank_v, fixed_k,
         fixed_v}`` -- the orthonormality window maxima, the effective-rank window minima,
         the live rank and whether the guard repaired that stream. Draining is what a
-        runner does once per trial to write them out."""
+        runner does once per trial to write them out.
+
+        The OPEN window is flushed first, so every drained layer that absorbed anything
+        yields at least one row whatever ``diag_every`` is. Without it the periodic flush
+        is the only emitter and a sample shorter than one window says nothing at all: at
+        the pods' ``diag_every: 4096`` that is every 16K sample, and even at the default
+        64 the tail of every sample is dropped (fix1 PR-29 A/D)."""
         rows: list[dict[str, object]] = []
         for layer in self._bug_layers():
+            if layer._diag_window:
+                layer._flush_diag_window()
             rows.extend(layer.diag)
             layer.diag.clear()
         return rows

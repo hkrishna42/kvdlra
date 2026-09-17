@@ -68,14 +68,18 @@ def run_pod(pod: PodCfg, out: Path, model: Any, dry_model: bool = False) -> None
     read off a config, which is how the error path is exercised on CPU with the
     generator substituted (``tests/test_pod_run_records_errors.py``).
 
-    A run always starts fresh -- ``trials.jsonl`` is truncated here -- and resume is not
-    supported; re-running a pod re-runs all of it. `scripts/pod.py harvest` is the path
-    that guards against a results directory shrinking.
+    A run always starts fresh -- ``trials.jsonl`` is truncated and the diagnostics
+    buffer cleared here -- and resume is not supported; re-running a pod re-runs all of
+    it. `scripts/pod.py harvest` is the path that guards against a results directory
+    shrinking.
     """
     t0 = time.perf_counter()
     out.mkdir(parents=True, exist_ok=True)
     trials_path = out / "trials.jsonl"
     trials_path.write_text("")
+    # Fresh here too: a pod that raised out of a previous `run_pod` in this process
+    # must not leak its diagnostics into this one's diag.jsonl.
+    DIAG_ROWS.clear()
 
     mdl: Any = None
     tok: Any = None

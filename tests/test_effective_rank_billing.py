@@ -2,8 +2,8 @@
 
 ``CODE_AUDIT`` finding 0.2: the arm dict's ``rank`` is the configured *cap*, but the
 Week-17 relative singular-value floor (``min_sv_frac``) drops near-null tail directions,
-so a floor-on layer tracks fewer columns than the cap -- and the layers of one cache
-collapse to different ranks. Billing the cap over-counts state that is not stored
+so a floor-on layer tracks fewer columns than the cap -- and its K and V streams collapse
+to different widths. Billing the cap over-counts state that is not stored
 (``2*n*rank`` basis + ``2*rank*coord_count`` coordinates + ``2*rank`` core) on every
 axis that calls ``_footprint``: perplexity, retrieval and longbench alike.
 
@@ -25,15 +25,16 @@ from kvdlra.eval import frontier, records
 from kvdlra.eval.config import ArmCfg
 from kvdlra.eval.frontier import _footprint, _tracked_rank
 from tests.conftest import N_FEATURES
-from tests.test_accounting import _drive
+from tests.test_accounting import D_K, D_V, _drive, _low_rank_kv_model
 
 H_KV = 2
 N_SINK = 4
-# A floor this aggressive is what collapses the tiny model's own KV spectrum below the
-# cap (measured: 21 columns on layer 0, 20 on layer 1, at rank=32). The floor's own
-# contract -- that it caps at the effective rank without degrading reconstruction -- is
-# pinned on a synthetic low-rank stream in tests/test_w17_rankfloor.py.
-MIN_SV_FRAC = 0.3
+# The collapse is driven by a stream whose rank is STRUCTURAL (`_low_rank_kv_model`:
+# rank D_K pre-RoPE keys, rank D_V values, whatever the tokens), so the floor caps the
+# tracked bases at exactly D_K and D_V -- a property of the input, not of where the tiny
+# model's own singular-value tail lands at some floor. The floor's own contract is
+# pinned on the same synthetic shape in tests/test_w17_rankfloor.py.
+MIN_SV_FRAC = 1e-2
 CACHE_KW: dict[str, Any] = {
     "rank": 32,
     "coord_budget": 24,
@@ -66,21 +67,21 @@ def _bill(layer: BugStreamingLayer, rank: float, **kw: Any) -> acc.Footprint:
 
 def test_collapsed_layer_bills_the_tracked_rank(tiny_model: LlamaForCausalLM) -> None:
     """Floor on: the arm is billed for the columns the bases hold, not the cap."""
-    cache = _driven(tiny_model, min_sv_frac=MIN_SV_FRAC)
+    cache = _driven(_low_rank_kv_model(tiny_model), min_sv_frac=MIN_SV_FRAC)
     layer = cache._bug_layers()[0]
     assert layer.u_k is not None and layer.u_v is not None
     rank_k, rank_v = int(layer.u_k.shape[1]), int(layer.u_v.shape[1])
-    assert max(rank_k, rank_v) < int(ARM["rank"])  # collapsed -- the case being billed
-    # The K and V streams collapse INDEPENDENTLY (21 and 23 here), and `bug_footprint`'s
-    # rank terms are symmetric in them, so the exact bill is their mean. Billing
-    # `u_k.shape[1]` alone would UNDER-count the wider V basis by (n + coord + 1) floats
-    # per column of difference -- which is why the pin below is the arbiter.
-    assert rank_k != rank_v, "the asymmetry this billing has to handle did not occur"
+    # Each side caps at its own stream's rank, both below the cap: the case being billed.
+    assert (rank_k, rank_v) == (D_K, D_V) and max(rank_k, rank_v) < int(ARM["rank"])
+    # The K and V streams collapse INDEPENDENTLY, and `bug_footprint`'s rank terms are
+    # symmetric in them, so the exact bill is their mean. Billing `u_k.shape[1]` alone
+    # would UNDER-count the wider V basis by (n + coord + 1) floats per column of
+    # difference -- which is why the pin below is the arbiter.
     tracked = (rank_k + rank_v) / 2
 
     fp = _footprint(ARM, cache, t=200, n=N_FEATURES, h_kv=H_KV)
-    # `_footprint` bills LAYER 0, and the layers collapse independently too (21 and 20
-    # K columns here), so the cache total over its layers is not this number.
+    # `_footprint` bills LAYER 0 only, so the cache total over its layers is not this
+    # number (each layer is billed on its own bases).
     assert fp.float_equiv() == layer.stored_state_numel()
     assert fp == _bill(layer, tracked, u_present=True)
     # ...and the configured cap over-bills it: the defect this closes.
@@ -117,11 +118,12 @@ def test_layer_with_no_basis_bills_rank_zero_and_no_basis(tiny_model: LlamaForCa
 def test_tracked_rank_reads_the_basis_and_is_zero_without_one(
     tiny_model: LlamaForCausalLM,
 ) -> None:
-    layers = _driven(tiny_model, min_sv_frac=MIN_SV_FRAC)._bug_layers()
+    model = _low_rank_kv_model(tiny_model)
+    layers = _driven(model, min_sv_frac=MIN_SV_FRAC)._bug_layers()
     widths = [_tracked_rank(la.u_k) for la in layers]
     # Same length as `layers`, so this also says no layer reported a missing basis as 0.
     assert widths == [int(la.u_k.shape[1]) for la in layers if la.u_k is not None]
-    assert min(widths) < int(ARM["rank"])  # every layer collapses on its own
+    assert widths == [D_K] * len(layers)  # every layer collapses to its own stream rank
     assert _tracked_rank(None) == 0
 
 
@@ -131,20 +133,21 @@ def test_eff_rank_on_the_ppl_row_appends_without_breaking_the_harvest(
     """``eff_rank=`` is appended at the END of the pooled ppl line. ``records.PPL_RE``
     is a prefix match, so the harvest reads the line exactly as before."""
     t, window = 64, 16
+    model = _low_rank_kv_model(tiny_model)
     cfg = ArmCfg(
         name="bug-r32",
         kind="bug",
         cache={**CACHE_KW, "coord_budget": None, "min_sv_frac": MIN_SV_FRAC},
     )
-    arm = frontier.build_arm(cfg, tiny_model, t)
+    arm = frontier.build_arm(cfg, model, t)
     ids = torch.randint(0, 256, ((t + window) * 3,), generator=torch.Generator().manual_seed(0))
     samples = frontier.windows(ids, t, window, 2)
     (row,) = frontier.run_ppl(
-        [arm], tiny_model, samples, t, chunk=0, n=N_FEATURES, h_kv=H_KV, device="cpu"
+        [arm], model, samples, t, chunk=0, n=N_FEATURES, h_kv=H_KV, device="cpu"
     )
     assert row["status"] == "ok"
-    eff = row["eff_rank"]
-    assert isinstance(eff, int) and 0 < eff <= int(cfg.cache["rank"])
+    eff = row["eff_rank"]  # the narrowest K basis: this stream's own rank, not the cap
+    assert eff == D_K < int(cfg.cache["rank"])
 
     out = capsys.readouterr().out
     (line,) = [ln for ln in out.splitlines() if " ppl=" in ln]

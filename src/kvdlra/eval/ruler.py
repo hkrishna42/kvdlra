@@ -284,11 +284,15 @@ def retrieve(
     n: int,
     h_kv: int,
     max_new: int,
+    *,
+    task: str | None = None,
+    idx: int | None = None,
 ) -> tuple[bool, float, float, float]:
     """Prefill the haystack (chunked, OOM-safe) then decode the query+answer. Returns
     (hit, fp16-memory-ratio, hits_fraction, stored-bits-ratio). A hit requires ALL
     ``targets`` in the output. Memory is the post-prefill compressed footprint
-    (kvdlra.accounting); the stored-bits ratio bills fp32-at-rest state as stored."""
+    (kvdlra.accounting); the stored-bits ratio bills fp32-at-rest state as stored.
+    ``task`` / ``idx`` only label the diagnostics this trial drains."""
     hay = hay.to(device)
     ctx_len = int(hay.shape[1])
     streaming = arm["kind"] in ("bug", "shadow")
@@ -299,15 +303,38 @@ def retrieve(
         # ShadowKV's pre-attention selection hook never ran at decode and
         # _selected_chunks fell back to the most-recent chunks -- excluding the
         # mid-context needle by construction (the published 0/0/0/0 rows are VOID).
-        with cache.attach(model):  # type: ignore[attr-defined]
-            if 0 < chunk < ctx_len:
-                _prefill_chunked(model, cache, hay, chunk)
-            else:
-                model(hay, past_key_values=cache, use_cache=True, logits_to_keep=1)
-            fp = _footprint(arm, cache, ctx_len, n, h_kv)
-            text = _decode(
-                model, tok, cache, query.to(device), ctx_len, device, block=False, max_new=max_new
-            )
+        try:
+            with cache.attach(model):  # type: ignore[attr-defined]
+                if 0 < chunk < ctx_len:
+                    _prefill_chunked(model, cache, hay, chunk)
+                else:
+                    model(hay, past_key_values=cache, use_cache=True, logits_to_keep=1)
+                fp = _footprint(arm, cache, ctx_len, n, h_kv)
+                text = _decode(
+                    model,
+                    tok,
+                    cache,
+                    query.to(device),
+                    ctx_len,
+                    device,
+                    block=False,
+                    max_new=max_new,
+                )
+        finally:
+            # The tripwire's rows, before the cache goes -- in a `finally` so an
+            # `OrthonormalityError` still delivers the window the cache flushed before
+            # raising (the trial is recorded as an error either way). `cache` is bound
+            # inside this branch, so the try/finally is here and not around the chain.
+            if isinstance(cache, BugStreamingCache):
+                emit_diag(
+                    cache.drain_diag(),
+                    model=str(model.name_or_path),
+                    source="ruler",
+                    arm=str(arm["name"]),
+                    ctx=ctx_len,
+                    task=task,
+                    idx=idx,
+                )
     elif arm["kind"] == "quant":
         # KIVI-style QuantizedCache baseline (Week-18/19): the arm supplies its OWN cache
         # object (not a press over a DynamicCache); prefill honors --chunk (Week-19: the
@@ -348,8 +375,6 @@ def retrieve(
         )
     frac = sum(t in text for t in targets) / len(targets)
     hit = frac >= 1.0
-    if isinstance(cache, BugStreamingCache):  # the tripwire's rows, before the cache goes
-        emit_diag(cache.drain_diag(), model=str(model.name_or_path), source="ruler")
     del cache
     gc.collect()
     return hit, fp.ratio_fp16(ctx_len, n), frac, fp.ratio_stored_bits(ctx_len, n)
@@ -412,7 +437,7 @@ def run_trial(
     # 12 tokens is enough for one number; every other task answers with several.
     max_new = 12 if task.tasks == ["niah_single"] else 40
     hit, ratio, frac, sbits = retrieve(
-        model, tok, arm, hay, query, targets, device, chunk, n, h_kv, max_new
+        model, tok, arm, hay, query, targets, device, chunk, n, h_kv, max_new, task=sub, idx=trial
     )
     depth = None
     if task.depths and sub == "niah_single":

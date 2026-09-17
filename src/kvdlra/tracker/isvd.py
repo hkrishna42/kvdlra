@@ -68,7 +68,60 @@ from __future__ import annotations
 import torch
 from torch import Tensor
 
-__all__ = ["augmented_bug_step", "blocked_bug_project", "blocked_bug_subspace"]
+__all__ = [
+    "augmented_bug_step",
+    "blocked_bug_project",
+    "blocked_bug_subspace",
+    "eff_rank",
+    "isvd_step",
+    "orth_error",
+    "reorthonormalize",
+]
+
+
+def orth_error(u: Tensor) -> float:
+    """Departure of ``u`` from orthonormality: ``‖UᵀU - I‖_F`` (0 for an exact basis).
+
+    The divergence monitor (CODE_AUDIT Part A §Q4): the tracked basis has no
+    orthonormality guarantee of its own, and every quantity the cache derives from it
+    -- coordinates, reconstruction, the Pythagoras identity behind the surprise scores
+    -- assumes ``UᵀU = I``. Computed in ``u``'s own dtype (no promotion), and outside
+    autograd: it is a measurement, and the caller may well be inside a grad-enabled
+    forward (nothing can differentiate through the returned float anyway).
+    """
+    with torch.no_grad():
+        eye = torch.eye(u.shape[1], dtype=u.dtype, device=u.device)
+        return float(torch.linalg.norm(u.mT @ u - eye))
+
+
+def reorthonormalize(u: Tensor, c: Tensor, b: Tensor) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    """Restore orthonormality of ``u`` while preserving what it represents.
+
+    Thin QR ``u = q r``, then re-diagonalize the core: the returned basis is orthonormal,
+    ``u @ c == u_new @ c_new`` exactly (to roundoff) for stored coordinates ``c``
+    ``(r, cols)``, ``b_new`` is diagonal (the core's *stored* form -- the accounting bills
+    its ``r`` diagonal entries, not ``r²``), and the second moment is carried exactly:
+    ``u_new b_new b_newᵀ u_newᵀ == u b bᵀ uᵀ``.
+
+    Returns ``(u_new, c_new, b_new, rot)`` where ``rot`` maps old coordinates to new
+    (``rot @ c == c_new``) -- the same contract as the step's own ``rot``, so callers
+    rotate every other coordinate tier (e.g. the quantized one) with it.
+    """
+    q, r = torch.linalg.qr(u, mode="reduced")
+    u_loc, sigma, _ = torch.linalg.svd(r @ b, full_matrices=False)  # (r, r), cheap
+    rot = u_loc.mT @ r
+    return (q @ u_loc).contiguous(), rot @ c, torch.diag(sigma), rot
+
+
+def eff_rank(b: Tensor, rel: float = 1e-6) -> int:
+    """Live directions in a diagonal core ``b``: diagonal entries above ``rel`` times the
+    leading one. A basis padded to ``rank_cap`` with near-null tail directions (the
+    high-rank divergence substrate) reports an effective rank far below its stored one."""
+    with torch.no_grad():  # a measurement, like orth_error: never part of a graph
+        d = torch.diagonal(b).abs()
+        if d.numel() == 0 or float(d.max()) == 0.0:
+            return 0
+        return int((d > rel * d.max()).sum().item())
 
 
 def _truncation_rank(sigma: Tensor, theta: float) -> int:
@@ -208,6 +261,11 @@ def augmented_bug_step(
     b_new = torch.diag(sigma[:keep])  # (keep, keep)
     rot = u_loc[:r_old, :keep].mT  # (keep, r_old)
     return u_new, b_new, rot
+
+
+# The step IS block incremental SVD at the shipped settings, and ``isvd_step`` is the name
+# new code uses; the old name stays an alias for one release.
+isvd_step = augmented_bug_step
 
 
 def blocked_bug_subspace(

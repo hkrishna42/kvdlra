@@ -133,11 +133,27 @@ from transformers.cache_utils import Cache, CacheLayerMixin, LinearAttentionCach
 from transformers.models.llama.modeling_llama import rotate_half
 
 from kvdlra.quant import PolarQuant
-from kvdlra.tracker.isvd import augmented_bug_step, fd_step, oja_step
+from kvdlra.tracker.isvd import (
+    augmented_bug_step,
+    eff_rank,
+    fd_step,
+    oja_step,
+    orth_error,
+    reorthonormalize,
+)
 
-__all__ = ["BugStreamingCache", "BugStreamingLayer"]
+__all__ = ["BugStreamingCache", "BugStreamingLayer", "OrthonormalityError"]
 
 RETENTION_MODES = ("fifo", "lowrank_surprise")
+
+
+class OrthonormalityError(RuntimeError):
+    """The tracked basis lost orthonormality beyond ``orth_abort_tol``.
+
+    Divergence of this cache *is* loss of orthonormality (CODE_AUDIT Part A §Q4: 6e-4 at
+    8K -> 35.1 at 36K on Qwen r256, ending in four-digit perplexity). Past the abort
+    tolerance the stored gist no longer represents the keys it was built from, so the
+    trial is failed loudly rather than silently reported as a number."""
 
 
 class _RopeAngles:
@@ -223,6 +239,11 @@ class _QuantBank:
         return total
 
 
+def _running_min(current: int | None, value: int) -> int:
+    """Running minimum of a diagnostic window (``None`` == nothing recorded yet)."""
+    return value if current is None else min(current, value)
+
+
 def _rope_apply(x_htd: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
     """Apply RoPE to ``(H, T, D)`` given ``(T, D)`` cos/sin (broadcast over heads)."""
     rot: Tensor = rotate_half(x_htd)  # type: ignore[no-untyped-call]
@@ -269,6 +290,11 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         hh_retain: bool = True,
         score_rank: int | None = None,
         seed_hh_warmup: bool = False,
+        orth_fix_tol: float | None = 1e-3,
+        orth_abort_tol: float | None = 1e-1,
+        qr_every: int | None = None,
+        diag_every: int = 64,
+        layer_idx: int = 0,
     ) -> None:
         super().__init__()  # type: ignore[no-untyped-call]
         if rank < 0 or coord_budget < 0:
@@ -346,6 +372,14 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
                 )
         if not 0.0 <= min_sv_frac < 1.0:
             raise ValueError(f"min_sv_frac must be in [0, 1), got {min_sv_frac}")
+        if orth_fix_tol is not None and orth_fix_tol <= 0.0:
+            raise ValueError(f"orth_fix_tol must be > 0 (None disables), got {orth_fix_tol}")
+        if orth_abort_tol is not None and orth_abort_tol <= 0.0:
+            raise ValueError(f"orth_abort_tol must be > 0 (None disables), got {orth_abort_tol}")
+        if qr_every is not None and qr_every < 1:
+            raise ValueError(f"qr_every must be >= 1 (None disables), got {qr_every}")
+        if diag_every < 1:
+            raise ValueError(f"diag_every must be >= 1, got {diag_every}")
         if tracker not in ("bug", "oja", "fd"):
             raise ValueError(f"tracker must be 'bug' | 'oja' | 'fd', got {tracker!r}")
         # Week-20 tracker-swap ablation: the gist tracker. "bug" = the rank-adaptive
@@ -374,6 +408,25 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         # (default off). Only fires under chunked ingest (self._mode == "ingest") so
         # single-shot prefill keeps the tier empty, matching the deployed contract.
         self.seed_hh_warmup = seed_hh_warmup
+        # Orthonormality guard (CODE_AUDIT Part A §Q4). Divergence of this cache is loss
+        # of orthonormality of the tracked basis, and nothing used to watch for it. Every
+        # absorb measures ``‖UᵀU - I‖`` on the STORED basis of each stream: above
+        # ``orth_abort_tol`` the trial is failed loudly; above ``orth_fix_tol`` the basis
+        # is re-orthonormalized in place (coordinates and the quantized tier carried
+        # exactly, so the retained history survives the repair). ``qr_every`` is the
+        # experimental factor: re-orthonormalize unconditionally every k absorbs and after
+        # every rank change, whatever the measurement says. The measured ceiling on a
+        # benign stream is ~7e-4 over 1400 adversarial steps (and 6e-5 over the r64
+        # golden), so at the defaults the fix never fires and behaviour is bit-identical.
+        self.orth_fix_tol = orth_fix_tol
+        self.orth_abort_tol = orth_abort_tol
+        self.qr_every = qr_every
+        self.diag_every = diag_every
+        self.layer_idx = layer_idx
+        # Per-layer diagnostic rows, drained by ``BugStreamingCache.drain_diag()``. Not
+        # cleared by ``reset()``: a drained-once contract must not lose a finished
+        # stream's measurements to the next stream's setup.
+        self.diag: list[dict[str, object]] = []
         # rank=0 / coord_budget=0 => no low-rank middle => StreamingLLM baseline.
         self.lowrank_enabled = rank >= 1 and coord_budget >= 1
         if quant_budget > 0 and not self.lowrank_enabled:
@@ -434,6 +487,15 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.hh_pos: Tensor | None = None  # (hh_len,) int64 true positions
         self._mid_k_cache: Tensor | None = None  # (n, mid_len) storage dtype, post-RoPE
         self._mid_v_cache: Tensor | None = None
+        # Orthonormality guard bookkeeping: absorbs so far and the current diag window
+        # (max orth_error / min effective rank per stream since the last emitted row).
+        self._absorbs = 0
+        self._diag_max_err_k = 0.0
+        self._diag_max_err_v = 0.0
+        self._diag_min_rank_k: int | None = None
+        self._diag_min_rank_v: int | None = None
+        self._diag_fixed_k = False
+        self._diag_fixed_v = False
         # Week-10 harness mode (default "normal" preserves every existing call
         # site / the q_len==1 decode invariant). "score": non-mutating frozen
         # continuation-window forward (Phase 1b). "ingest": chunked pre-fill
@@ -626,6 +688,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         surprise: Tensor | None = None
         if self.track_surprise:
             surprise = self._surprise_scores(block_k)
+        r_old_k = 0 if self.u_k is None else int(self.u_k.shape[1])
+        r_old_v = 0 if self.u_v is None else int(self.u_v.shape[1])
         if self.tracker == "oja":  # Week-20 swap: Oja's rule, validated Week-2 schedule
             n_seen = (self.c_k.shape[1] if self.c_k is not None else 0) + self._q_len()
             self.u_k, self.b_k, rot_k = oja_step(
@@ -663,6 +727,11 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         # (dequantize -> rot @ -> requantize, the compounding path).
         if self._q_len() > 0:
             self._rotate_quant_tier(rot_k, rot_v)
+        # Orthonormality tripwire + guard, BEFORE the new coordinates are taken: they must
+        # be measured in the basis the repair leaves behind, not in the broken one.
+        self._guard_orthonormality(
+            rank_changed=int(self.u_k.shape[1]) != r_old_k or int(self.u_v.shape[1]) != r_old_v
+        )
         # Append the graduating block's coordinates (fp32 tier).
         new_ck = self.u_k.mT @ block_k
         new_cv = self.u_v.mT @ block_v
@@ -676,6 +745,78 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
                 surprise if self.mid_surprise is None else torch.cat([self.mid_surprise, surprise])
             )
         self._enforce_budgets()
+
+    def _guard_orthonormality(self, rank_changed: bool) -> None:
+        """One absorb's orthonormality tripwire, guard and diagnostic row.
+
+        ``‖UᵀU - I‖`` is measured on the *stored* basis of each stream (in its own dtype).
+        Above ``orth_abort_tol`` the trial fails loudly; above ``orth_fix_tol`` -- or
+        whenever ``qr_every`` says so -- the offending stream is re-orthonormalized, its
+        coordinates and (once, for both streams together) its quantized tier carried into
+        the repaired basis. Every ``diag_every`` absorbs one row per layer records the
+        window's worst error, its lowest effective rank, the live rank and whether a
+        repair fired; ``BugStreamingCache.drain_diag()`` collects them.
+        """
+        assert self.u_k is not None and self.u_v is not None
+        assert self.b_k is not None and self.b_v is not None
+        self._absorbs += 1
+        err_k = orth_error(self.u_k)
+        err_v = orth_error(self.u_v)
+        if self.orth_abort_tol is not None and max(err_k, err_v) > self.orth_abort_tol:
+            raise OrthonormalityError(
+                f"layer={self.layer_idx} orth_err={max(err_k, err_v):.3e} > "
+                f"abort_tol={self.orth_abort_tol} at absorb {self._absorbs}"
+            )
+        # ``qr_every`` (the experimental factor) repairs unconditionally every k absorbs
+        # and after any rank change, whatever the measurement says.
+        forced = self.qr_every is not None and (self._absorbs % self.qr_every == 0 or rank_changed)
+        fixed_k = forced or (self.orth_fix_tol is not None and err_k > self.orth_fix_tol)
+        fixed_v = forced or (self.orth_fix_tol is not None and err_v > self.orth_fix_tol)
+        rot_fix_k: Tensor | None = None
+        rot_fix_v: Tensor | None = None
+        if fixed_k:
+            # Before the first graduating block there are no coordinates to carry yet.
+            c_k = self.c_k if self.c_k is not None else self.u_k.new_zeros(self.u_k.shape[1], 0)
+            self.u_k, c_k, self.b_k, rot_fix_k = reorthonormalize(self.u_k, c_k, self.b_k)
+            if self.c_k is not None:
+                self.c_k = c_k
+        if fixed_v:
+            c_v = self.c_v if self.c_v is not None else self.u_v.new_zeros(self.u_v.shape[1], 0)
+            self.u_v, c_v, self.b_v, rot_fix_v = reorthonormalize(self.u_v, c_v, self.b_v)
+            if self.c_v is not None:
+                self.c_v = c_v
+        if (fixed_k or fixed_v) and self._q_len() > 0:
+            # One rotation for both streams. The unfixed side passes ``None``: an identity
+            # rotation is not a no-op through the quantizer, it re-codes and injects
+            # distortion the tier never had to take.
+            self._rotate_quant_tier(rot_fix_k, rot_fix_v)
+        self._diag_max_err_k = max(self._diag_max_err_k, err_k)
+        self._diag_max_err_v = max(self._diag_max_err_v, err_v)
+        self._diag_fixed_k = self._diag_fixed_k or fixed_k
+        self._diag_fixed_v = self._diag_fixed_v or fixed_v
+        self._diag_min_rank_k = _running_min(self._diag_min_rank_k, eff_rank(self.b_k))
+        self._diag_min_rank_v = _running_min(self._diag_min_rank_v, eff_rank(self.b_v))
+        if self._absorbs % self.diag_every == 0:
+            self.diag.append(
+                {
+                    "layer": self.layer_idx,
+                    "absorbs": self._absorbs,
+                    # The cache's own token counter, which single-shot pre-fill advances
+                    # only after its absorbs -- so those rows report 0.
+                    "tokens_seen": self.cumulative_length,
+                    "orth_err_k": self._diag_max_err_k,
+                    "orth_err_v": self._diag_max_err_v,
+                    "eff_rank_k": self._diag_min_rank_k,
+                    "eff_rank_v": self._diag_min_rank_v,
+                    "rank_k": int(self.u_k.shape[1]),
+                    "rank_v": int(self.u_v.shape[1]),
+                    "fixed_k": self._diag_fixed_k,
+                    "fixed_v": self._diag_fixed_v,
+                }
+            )
+            self._diag_max_err_k = self._diag_max_err_v = 0.0
+            self._diag_min_rank_k = self._diag_min_rank_v = None
+            self._diag_fixed_k = self._diag_fixed_v = False
 
     def _surprise_scores(self, block_k: Tensor, cap: int | None = None) -> Tensor:
         """Low-rank surprise of pre-RoPE K columns ``block_k`` ``(n, m)``: the
@@ -852,7 +993,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
                 surprise if self.q_surprise is None else torch.cat([self.q_surprise, surprise])
             )
 
-    def _rotate_quant_tier(self, rot_k: Tensor, rot_v: Tensor) -> None:
+    def _rotate_quant_tier(self, rot_k: Tensor | None, rot_v: Tensor | None) -> None:
         """Carry the quantized tier across a basis update: dequantize -> ``rot @``
         -> requantize. Column *norms* are carried exactly (:meth:`_dequantize`
         renormalizes the decoded direction, so the requantized norm is
@@ -860,13 +1001,19 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         with no quantizer-induced drift). The *direction* is re-coded each
         absorb with error bounded by the one-shot PolarQuant distortion per
         event; whether that per-event jitter compounds visibly over deep
-        horizons is exactly what the Week-7 bin curves falsify."""
+        horizons is exactly what the Week-7 bin curves falsify.
+
+        ``None`` leaves that stream's tier untouched (the orthonormality guard can repair
+        one stream and not the other): passing an identity rotation instead would still
+        dequantize and re-code the tier, i.e. spend a re-coding event on nothing."""
         assert self.qk_codes is not None and self.qk_norm is not None
         assert self.qv_codes is not None and self.qv_norm is not None
-        ck = rot_k @ self._dequantize(self.qk_codes, self.qk_norm)
-        cv = rot_v @ self._dequantize(self.qv_codes, self.qv_norm)
-        self.qk_codes, self.qk_norm = self._quantize_cols(ck, "K")
-        self.qv_codes, self.qv_norm = self._quantize_cols(cv, "V")
+        if rot_k is not None:
+            ck = rot_k @ self._dequantize(self.qk_codes, self.qk_norm)
+            self.qk_codes, self.qk_norm = self._quantize_cols(ck, "K")
+        if rot_v is not None:
+            cv = rot_v @ self._dequantize(self.qv_codes, self.qv_norm)
+            self.qv_codes, self.qv_norm = self._quantize_cols(cv, "V")
 
     # -------------------------------------------------------------- update
 
@@ -1182,6 +1329,16 @@ class BugStreamingCache(Cache):
         scoring to the leading ``score_rank`` basis columns (``1 <= score_rank
         <= rank``; requires ``hh_select='surprise'`` and ``hh_budget >= 1``).
         Storage rank, tail-retention snapshots and accounting are unchanged.
+    orth_fix_tol, orth_abort_tol, qr_every, diag_every:
+        Orthonormality guard (CODE_AUDIT Part A §Q4). Each absorb measures
+        ``‖UᵀU - I‖`` on both stored bases: above ``orth_abort_tol`` (default 1e-1) it
+        raises :class:`OrthonormalityError`; above ``orth_fix_tol`` (default 1e-3, well
+        above the ~7e-4 a benign stream reaches over 1400 adversarial steps, so the
+        defaults are bit-identical) it re-orthonormalizes the basis in place, carrying
+        coordinates and the quantized tier. ``None`` disables either. ``qr_every``
+        (default ``None``) repairs unconditionally every k absorbs and after any rank
+        change. ``diag_every`` (default 64) sets the diagnostic window; see
+        :meth:`drain_diag`.
     recent_window, absorb_block, n_sink, theta, min_sv_frac, prefill_block_size:
         See :class:`BugStreamingLayer`.
     """
@@ -1208,6 +1365,10 @@ class BugStreamingCache(Cache):
         hh_retain: bool = True,
         score_rank: int | None = None,
         seed_hh_warmup: bool = False,
+        orth_fix_tol: float | None = 1e-3,
+        orth_abort_tol: float | None = 1e-1,
+        qr_every: int | None = None,
+        diag_every: int = 64,
     ) -> None:
         base = getattr(model, "model", model)
         rotary = getattr(base, "rotary_emb", None)
@@ -1242,6 +1403,11 @@ class BugStreamingCache(Cache):
                 hh_retain=hh_retain,
                 score_rank=score_rank,
                 seed_hh_warmup=seed_hh_warmup,
+                orth_fix_tol=orth_fix_tol,
+                orth_abort_tol=orth_abort_tol,
+                qr_every=qr_every,
+                diag_every=diag_every,
+                layer_idx=layer_idx,
             )
             for layer_idx in range(n_layers)
         ]
@@ -1295,6 +1461,20 @@ class BugStreamingCache(Cache):
         """Run each BUG layer's deferred absorb after a chunked-ingest forward."""
         for layer in self._bug_layers():
             layer.consolidate()
+
+    def drain_diag(self) -> list[dict[str, object]]:
+        """Every layer's diagnostic rows since the last drain, and clear them.
+
+        One row per layer per ``diag_every`` absorbs: ``{layer, absorbs, tokens_seen,
+        orth_err_k, orth_err_v, eff_rank_k, eff_rank_v, rank_k, rank_v, fixed_k,
+        fixed_v}`` -- the orthonormality window maxima, the effective-rank window minima,
+        the live rank and whether the guard repaired that stream. Draining is what a
+        runner does once per trial to write them out."""
+        rows: list[dict[str, object]] = []
+        for layer in self._bug_layers():
+            rows.extend(layer.diag)
+            layer.diag.clear()
+        return rows
 
     def stored_state_numel(self) -> int:
         """Total stored float-equivalents across layers (the constant-memory

@@ -30,6 +30,7 @@ from transformers.cache_utils import Cache, DynamicCache
 from kvdlra import accounting as acc
 from kvdlra.cache import BugStreamingCache, ShadowKVCache
 from kvdlra.eval.config import ArmCfg, arm_kwargs
+from kvdlra.eval.records import emit_diag
 from kvdlra.quant.kivi_cache import aux_words, flush, make_quant_cache
 
 N_SINK = 4
@@ -103,7 +104,12 @@ def score_streaming(
         else:
             model(ctx, past_key_values=cache, use_cache=True, logits_to_keep=1)
     with cache.frozen_scoring():
-        return _score_window(model, cache, ctx_len, win_ids)
+        scored = _score_window(model, cache, ctx_len, win_ids)
+    # The tripwire's rows leave the library here -- drained after the sample and before
+    # the cache is dropped, since nothing else ever reads them again.
+    if isinstance(cache, BugStreamingCache):
+        emit_diag(cache.drain_diag(), model=str(model.name_or_path), source="ppl")
+    return scored
 
 
 @torch.no_grad()

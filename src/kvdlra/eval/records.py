@@ -389,13 +389,41 @@ def parse_diag_lines(text: str, model: str, source: str) -> tuple[list[dict[str,
     return out, skipped
 
 
+# The diagnostic rows the eval axes have drained from the caches of THIS process, each
+# stamped with its model and the axis that drained it. `kvdlra.eval.runner` writes them
+# to ``results/<pod>/diag.jsonl`` at the end of the pod and clears the list; the printed
+# ``[diag]`` line carries the same payload, so `pod.py harvest` recovers the same rows
+# from a `vastai logs` capture when the results directory never left the instance.
+DIAG_ROWS: list[dict[str, object]] = []
+
+
+def emit_diag(rows: list[dict[str, object]], *, model: str, source: str) -> None:
+    """Print one ``[diag] {json}`` line per row, and buffer the rows for the runner.
+
+    The two artifacts every record type leaves, from one call: the log line (which
+    :func:`parse_diag_lines` reads back, stamping the model and the line it came from)
+    and the in-process row (which lands in ``diag.jsonl`` directly). The payload is the
+    cache's row verbatim -- the 11 fields of
+    :meth:`kvdlra.cache.BugStreamingCache.drain_diag`, ~200 chars -- so it stays inside
+    the ~400-char budget a log fetch leaves and never needs the ``part=i/N`` splitting
+    the ``[pplw]`` contract falls back on.
+
+    ``source`` is the axis that produced the rows (``ppl`` / ``ruler`` / ``longbench``),
+    which is what tells two sets of diagnostics in one pod apart.
+    """
+    for row in rows:
+        print("[diag] " + json.dumps(row, sort_keys=True, separators=(",", ":")), flush=True)
+        DIAG_ROWS.append({**row, "model": model, "source": source})
+
+
 def write_jsonl(
     path: Path,
     rows: list[TrialRecord]
     | list[CellRecord]
     | list[PplRecord]
     | list[PplwRecord]
-    | list[LatencyRecord],
+    | list[LatencyRecord]
+    | list[dict[str, object]],  # the diagnostics, carried through unparsed
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as f:

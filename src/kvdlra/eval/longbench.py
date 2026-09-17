@@ -30,8 +30,10 @@ import torch
 from datasets import load_dataset
 from transformers.cache_utils import Cache, DynamicCache
 
+from kvdlra.cache import BugStreamingCache
 from kvdlra.eval.config import TaskCfg
 from kvdlra.eval.frontier import _footprint, _prefill_chunked
+from kvdlra.eval.records import emit_diag
 from kvdlra.eval.ruler import _decode, prompt_sha256
 
 # One templated example: (prompt ids, reference answers).
@@ -142,6 +144,8 @@ def generate(
             model(pre, past_key_values=cache, use_cache=True, logits_to_keep=1)
         fp = _footprint(arm, cache, ctx_len, n, h_kv)
         text = _decode(model, tok, cache, last, ctx_len, device, block=True, max_new=max_new)
+    if isinstance(cache, BugStreamingCache):  # the tripwire's rows, before the cache goes
+        emit_diag(cache.drain_diag(), model=str(model.name_or_path), source="longbench")
     del cache
     gc.collect()
     return text, fp.ratio_fp16(ctx_len, n), fp.ratio_stored_bits(ctx_len, n)

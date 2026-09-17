@@ -32,9 +32,11 @@ from typing import Any, cast
 import torch
 from transformers.cache_utils import Cache, DynamicCache
 
+from kvdlra.cache import BugStreamingCache
 from kvdlra.eval.config import TaskCfg
 from kvdlra.eval.data import FILLER, LABELS
 from kvdlra.eval.frontier import _footprint, _prefill_chunked, _prefill_plain
+from kvdlra.eval.records import emit_diag
 
 _TAIL_K = 48  # FLOOR for the decoded query tail (question + assistant header, as in
 # w4/w5); the actual tail is template-derived per family (see _templated) and never
@@ -346,6 +348,8 @@ def retrieve(
         )
     frac = sum(t in text for t in targets) / len(targets)
     hit = frac >= 1.0
+    if isinstance(cache, BugStreamingCache):  # the tripwire's rows, before the cache goes
+        emit_diag(cache.drain_diag(), model=str(model.name_or_path), source="ruler")
     del cache
     gc.collect()
     return hit, fp.ratio_fp16(ctx_len, n), frac, fp.ratio_stored_bits(ctx_len, n)

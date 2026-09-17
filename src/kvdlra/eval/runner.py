@@ -38,6 +38,7 @@ from kvdlra.eval import frontier, latency, longbench, official_ruler, ruler
 from kvdlra.eval.config import PodCfg, TaskCfg, load_arm, load_task
 from kvdlra.eval.data import load_corpus_ids, load_corpus_sentences
 from kvdlra.eval.records import (
+    DIAG_ROWS,
     LatencyRecord,
     PplRecord,
     PplwRecord,
@@ -339,7 +340,17 @@ def _pplw_records(pod: PodCfg, row: dict[str, Any]) -> list[PplwRecord]:
 
 
 def _finish(out: Path, records: dict[str, int], errors: int, wall_clock_s: float) -> None:
-    """Fold what the run produced into the manifest `pod.py run` wrote at launch."""
+    """Fold what the run produced into the manifest `pod.py run` wrote at launch.
+
+    The diagnostics the axes drained from their caches (`records.emit_diag`) are written
+    here, the pod's last act, so ``diag.jsonl`` lands beside the other records whether
+    the harvest reads this directory or replays the log. The buffer is cleared: it is
+    process-global, and a second pod in one process must not inherit the first's rows.
+    """
+    if DIAG_ROWS:
+        write_jsonl(out / "diag.jsonl", DIAG_ROWS)
+        records["diag.jsonl"] = len(DIAG_ROWS)
+        DIAG_ROWS.clear()
     path = out / "manifest.json"
     m = json.loads(path.read_text()) if path.is_file() else {"pod": out.name}
     m["records"] = records

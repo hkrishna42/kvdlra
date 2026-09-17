@@ -19,7 +19,9 @@ the guard measures the cache's stored basis rather than the bare tracker.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
+from itertools import pairwise
 from typing import Any
 
 import pytest
@@ -187,17 +189,27 @@ def test_cache_tripwire_records_and_aborts(tiny_model: LlamaForCausalLM) -> None
         assert not row["fixed_k"] and not row["fixed_v"]  # benign stream: the guard sleeps
         assert row["orth_err_k"] < 1e-3 and row["orth_err_v"] < 1e-3
         assert 1 <= row["eff_rank_k"] <= row["rank_k"]
-        assert row["absorbs"] > 0 and row["tokens_seen"] >= 0
-    # ``tokens_seen`` is the cache's token counter, which single-shot pre-fill advances
-    # only after its absorbs -- so the pre-fill rows read 0 and the decode rows do not.
-    assert rows[-1]["tokens_seen"] > 0
+        assert row["absorbs"] > 0
+        # positions-derived (fix1 Important #1): real even for pre-fill's own rows, not
+        # just decode's -- the cache's counter alone would read 0 for every pre-fill row.
+        assert row["tokens_seen"] > 0
 
     # Force an abort: corrupt U and absorb once more.
     layer = cache._bug_layers()[0]
     assert layer.u_k is not None
     layer.u_k = layer.u_k * 3.0
-    with pytest.raises(OrthonormalityError, match="orth_err="):
+    pattern = r"layer=(\d+) orth_err=(\S+) > abort_tol=(\S+) at absorb (\d+)"
+    with pytest.raises(OrthonormalityError, match=pattern) as excinfo:
         _decode_steps(tiny_model, cache, layer.absorb_block + 1)
+    matched = re.search(pattern, str(excinfo.value))
+    assert matched is not None
+    # fix1 Minor #3: the window the trial died in is still in the drained rows, not lost.
+    fatal_rows: list[dict[str, Any]] = [row for row in cache.drain_diag() if row["layer"] == 0]
+    assert fatal_rows
+    fatal = fatal_rows[-1]
+    assert int(fatal["absorbs"]) == int(matched.group(4))
+    reported = max(float(fatal["orth_err_k"]), float(fatal["orth_err_v"]))
+    assert f"{reported:.3e}" == matched.group(2)
 
 
 def test_qr_every_forces_fixes_and_keeps_the_basis_orthonormal(
@@ -249,3 +261,103 @@ def test_orth_knobs_validate(tiny_model: LlamaForCausalLM) -> None:
     for kw in ({"orth_fix_tol": 0.0}, {"orth_abort_tol": -1.0}, {"qr_every": 0}, {"diag_every": 0}):
         with pytest.raises(ValueError):
             BugStreamingCache(tiny_model, rank=8, coord_budget=16, **kw)
+
+
+# ------------------------------------------------------- fix round 1 coverage
+
+
+def test_tokens_seen_from_positions_during_prefill(tiny_model: LlamaForCausalLM) -> None:
+    """fix1 Important #1: single-shot pre-fill's absorb loop runs entirely before
+    ``cumulative_length`` is advanced (``_prefill``), so ``tokens_seen`` must come from
+    each block's own ``positions`` -- not the still-zero counter -- or every pre-fill row
+    would plot at x=0 in a committed ``diag.jsonl``."""
+    cache = BugStreamingCache(
+        tiny_model,
+        rank=8,
+        coord_budget=64,
+        recent_window=8,
+        absorb_block=4,
+        prefill_block_size=32,
+        diag_every=1,
+    )
+    _drive(tiny_model, cache, t=200, n_new=0)  # prefill-only
+    rows: list[dict[str, Any]] = [row for row in cache.drain_diag() if row["layer"] == 0]
+    assert len(rows) > 1  # several absorbs inside the one prefill call
+    seen = [int(row["tokens_seen"]) for row in rows]
+    assert all(v > 0 for v in seen)
+    assert all(b > a for a, b in pairwise(seen))  # strictly increasing
+
+
+def test_rank_changed_is_per_stream(tiny_model: LlamaForCausalLM) -> None:
+    """fix1 Minor #2: a V-side-only rank change must not force a K-side repair -- forced
+    repairs under ``qr_every`` are attributable per stream."""
+    cache = BugStreamingCache(
+        tiny_model,
+        rank=8,
+        coord_budget=64,
+        recent_window=8,
+        absorb_block=4,
+        qr_every=10_000,  # so the periodic trigger cannot fire on its own here
+        diag_every=1,
+    )
+    _drive(tiny_model, cache)
+    cache.drain_diag()  # discard the drive's own rows
+    layer = cache._bug_layers()[0]
+    layer._guard_orthonormality(
+        rank_changed_k=False, rank_changed_v=True, positions=torch.tensor([0])
+    )
+    rows = [row for row in cache.drain_diag() if row["layer"] == 0]
+    assert rows and rows[-1]["fixed_v"] and not rows[-1]["fixed_k"]
+
+
+def test_orth_fix_tol_none_disables_repair(tiny_model: LlamaForCausalLM) -> None:
+    """fix1 Minor #6: ``orth_fix_tol=None`` must never repair, however divergent the
+    basis -- ``fixed_k`` stays False and the corrupted ``u_k`` is left untouched."""
+    cache = BugStreamingCache(
+        tiny_model,
+        rank=8,
+        coord_budget=64,
+        recent_window=8,
+        absorb_block=4,
+        orth_fix_tol=None,
+        orth_abort_tol=None,
+        diag_every=1,
+    )
+    _drive(tiny_model, cache)
+    cache.drain_diag()
+    layer = cache._bug_layers()[0]
+    assert layer.u_k is not None
+    corrupted = layer.u_k * 3.0
+    layer.u_k = corrupted
+    layer._guard_orthonormality(
+        rank_changed_k=False, rank_changed_v=False, positions=torch.tensor([0])
+    )
+    assert torch.equal(layer.u_k, corrupted)  # never repaired
+    rows = [row for row in cache.drain_diag() if row["layer"] == 0]
+    assert rows and not rows[-1]["fixed_k"]
+
+
+def test_orth_abort_tol_none_disables_the_raise(tiny_model: LlamaForCausalLM) -> None:
+    """fix1 Minor #6: ``orth_abort_tol=None`` must never raise, however divergent the
+    basis -- the ordinary repair still runs (``orth_fix_tol`` stays at its default)."""
+    cache = BugStreamingCache(
+        tiny_model,
+        rank=8,
+        coord_budget=64,
+        recent_window=8,
+        absorb_block=4,
+        orth_abort_tol=None,
+        diag_every=1,
+    )
+    _drive(tiny_model, cache)
+    cache.drain_diag()
+    layer = cache._bug_layers()[0]
+    assert layer.u_k is not None
+    layer.u_k = layer.u_k * 3.0
+    assert orth_error(layer.u_k) > 1e-1  # would abort at the default orth_abort_tol
+    layer._guard_orthonormality(  # must not raise
+        rank_changed_k=False, rank_changed_v=False, positions=torch.tensor([0])
+    )
+    assert orth_error(layer.u_k) < ROUNDOFF  # repaired instead of aborting
+    rows = [row for row in cache.drain_diag() if row["layer"] == 0]
+    assert rows and rows[-1]["fixed_k"]

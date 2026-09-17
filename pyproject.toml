@@ -79,4 +79,4 @@ markers = ["slow: loads a model or runs a long sweep; deselect with -m 'not slow
 # is dropped by an env re-sync. No-op when the package is properly installed.
 # scripts/ is on the path so the entrypoint tests can `import pod` / `import tables`
 # and exercise the modules directly rather than through a subprocess.
-pythonpath = ["src", "scripts"]
+pythonpath = ["src", "scripts", "."]

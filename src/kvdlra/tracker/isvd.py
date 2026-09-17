@@ -94,6 +94,7 @@ def orth_error(u: Tensor) -> float:
         return float(torch.linalg.norm(u.mT @ u - eye))
 
 
+@torch.no_grad()
 def reorthonormalize(u: Tensor, c: Tensor, b: Tensor) -> tuple[Tensor, Tensor, Tensor, Tensor]:
     """Restore orthonormality of ``u`` while preserving what it represents.
 
@@ -263,8 +264,9 @@ def augmented_bug_step(
     return u_new, b_new, rot
 
 
-# The step IS block incremental SVD at the shipped settings, and ``isvd_step`` is the name
-# new code uses; the old name stays an alias for one release.
+# ``isvd_step`` is an alias for ``augmented_bug_step`` (the function keeps its original
+# name, defined above -- the step IS block incremental SVD at the shipped settings); new
+# code should call it by the new name, ``isvd_step``.
 isvd_step = augmented_bug_step
 
 

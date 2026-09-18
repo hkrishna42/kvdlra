@@ -46,6 +46,14 @@ def test_config_schedule_reaches_oja_step(
     assert seen and all(s == (20.0, 0.03) for s in seen)
 
 
+def test_tuned_arm_carries_the_k_pre_schedule_from_the_recon_study() -> None:
+    """``oja_r64_h256_seed_tuned`` (L1.4b) replaces the void Week-2 (20.0, 0.03) pair with
+    the schedule ``kvdlra.eval.recon.tune_oja`` found on the 1B stored-representation study
+    (``results/recon_1b/provenance.json``, ``oja_tuning.k_pre``)."""
+    kw = arm_kwargs(load_arm("oja_r64_h256_seed_tuned"), t=1024)
+    assert kw["tracker"] == "oja" and (kw["oja_eta0"], kw["oja_decay"]) == (5.0, 0.3)
+
+
 def test_oja_n_seen_keeps_growing_after_the_tiers_saturate(
     monkeypatch: pytest.MonkeyPatch, tiny_model: LlamaForCausalLM
 ) -> None:

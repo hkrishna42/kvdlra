@@ -42,9 +42,11 @@ PARAMS = sorted(k for k, v in GOLDEN.items() if "params" in v)
 # Arm stems the golden does not hold, and why each one is absent rather than missed.
 # `kivi2_singleshot` is v1's single-shot control: the legacy quant branch always set
 # chunkable=True and the pod forced single-shot with `--chunk 0`, so there is no legacy
-# dict to freeze. The rest are the L1.6 Table-4 guard/floor cells
+# dict to freeze. The Table-4 cells are the L1.6 guard/floor arms
 # (`prereg/hygiene_table4.md`) -- post-v1 arms, no `legacy_name`, nothing to be parity
-# with. A plain set on purpose: the next lane's arm is one line here.
+# with. `oja_r64_h256_seed_tuned` (L1.4b) is the Week-2 Oja arm's schedule re-tuned on
+# the 1B stored-representation study (`results/recon_1b/`); it is a new arm, not a
+# rebuild of the legacy one. A plain set on purpose: the next lane's arm is one line here.
 POST_V1 = {
     "kivi2_singleshot",
     "isvd_r128_noguard",
@@ -57,6 +59,7 @@ POST_V1 = {
     "isvd_r256_qr64",
     "isvd_r256_f0.01_tol",
     "isvd_r256_f0.01_qr64",
+    "oja_r64_h256_seed_tuned",
 }
 
 

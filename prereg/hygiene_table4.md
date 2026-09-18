@@ -498,15 +498,15 @@ remainder up to the bar.
 | --- | --- | --- | --- |
 | `hygiene_table4_llama` | 3 × 16 = 48 at 5.2 min | 4.2 h + `full` + boot ≈ **4.7 h** | 5.0 |
 | `hygiene_table4_qwen_r256` | 5 × 16 = 80 at ≈ 4.6 min | 6.1 h + `full` + boot ≈ **6.5 h** | 7.0 |
-| `hygiene_table4_qwen_r128` | 5 × 16 = 80 at ≈ 2.3 min | 3.1 h + `full` + boot ≈ **3.5 h** | 4.0 |
-| **total** | | **≈ 15 GPU-h ≈ $6** at $0.40/h | **16.0 h ≈ $6.5** |
+| `hygiene_table4_qwen_r128` | 5 × 16 = 80 at ≈ 2.3 min | 3.1 h + `full` + boot ≈ **3.5 h** | 7.0 (see below) |
+| **total** | | **≈ 15 GPU-h ≈ $6** at $0.40/h | **19.0 h ≈ $7.6** |
 
 **The one rate here that is not measured is r128's.** Its core SVD is 144×144 against r256's
 272×272; the cube of the dimension ratio would say ~7× faster, but a matrix this small is
 latency-bound on an A100, so the table assumes only ~2×. If r128 in fact runs at the r256 rate,
-that pod needs ≈ 6.1 h, overruns its 4.0 h bar and is killed under §9 having spent ≈ $1.6 — which
-is the designed behaviour, not a surprise: the remedy is a re-size under a further amendment, not
-a silent extension. The r256 and Llama bars carry no such assumption.
+that pod needs ≈ 6.1 h. Its bar is therefore set at 7.0 h — the expected cost stays ≈ 3.5 h, only the
+ceiling moves — so that this one unmeasured assumption cannot by itself trigger a §9 kill (orchestrator
+ruling R-L1-22, 2026-09-18, before the relaunch). The r256 and Llama bars carry no such assumption.
 
 The three pods run on three instances in parallel, so the wall clock is the longest of them, not
 the sum; the GPU-hours are what is billed.

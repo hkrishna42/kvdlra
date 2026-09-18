@@ -22,4 +22,4 @@ arms: ["isvd_r128_noguard", "isvd_r128_tol", "isvd_r128_qr64", "isvd_r128_f0.01_
        "isvd_r128_f0.01_qr64", "full"]
 tasks: ["ppl_16k_pg19val_w16"]
 image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
-gpu_budget_h: 4.0
+gpu_budget_h: 7.0

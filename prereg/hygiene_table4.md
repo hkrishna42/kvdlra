@@ -1,6 +1,6 @@
 # Pre-registration — `hygiene_table4_qwen` + `hygiene_table4_llama`
 
-> **Amended 2026-09-18 — read [Amendment 1](#amendment-1-2026-09-18-before-the-relaunch-committed-strictly-before-the-relaunch-commits) at the end of this file before reading anything below it: the first launch was killed over budget, n is now 16 windows, the Qwen pod is split in two, the retrieval secondary is deferred, and the STATUS line immediately below is superseded there. §1–§11 are left exactly as they were written before the first launch.**
+> **Amended 2026-09-18 — read [Amendment 1](#amendment-1-2026-09-18-before-the-relaunch-committed-strictly-before-the-relaunch-commits) and then [Amendment 2](#amendment-2-2026-09-18-before-the-second-relaunch) at the end of this file before reading anything below it: the first launch was killed over budget, n is now 16 windows, the Qwen pod is split in two, the retrieval secondary is deferred, and the STATUS line immediately below is superseded there; Amendment 2 voids the second launch's guarded-arm cells (a harness defect) and states the guard's repaired meaning. §1–§11 are left exactly as they were written before the first launch.**
 
 **STATUS: awaiting owner go.** Written before either pod is launched. Launch is authorized in
 principle (`docs/plan/DECISIONS.md` D-011) but is a separate, later commit: `scripts/pod.py
@@ -554,3 +554,104 @@ moved); §10's provenance and ordering rules; §11.
 `ppl_16k_pg19val` at ≈ 30 GPU-h, or narrowed to whichever member A1.2's read-back left undecided.
 Nothing in this amendment forecloses it, and no result from the 16-window run is to be described
 as having settled a question that its own interval left open.
+
+---
+
+## Amendment 2 (2026-09-18, before the second relaunch)
+
+**STATUS: the second launch's guarded-arm cells are VOID (harness defect); relaunching the same
+three pod configs under the same authorization (D-011).** This amendment is committed **before**
+the relaunch commits, as §10 requires of the original and A1 was of the first relaunch.
+
+§1–§11 and Amendment 1 are left untouched. **The decision rule of §4 is unchanged**, branch for
+branch and threshold for threshold; the arms, the cells, the cache knobs, the Holm family of §6,
+the budgets and bars of A1.6 and the three pod configs of A1.3 are unchanged. What changed is a
+defect in the harness that ran them.
+
+### A2.1 What happened: every guarded arm aborted at its first absorbs
+
+The three pods of A1.3 were launched on 2026-09-18 (`docs/plan/DECISIONS.md` D-011 addenda 3–4:
+`hygiene_table4_llama` 51415024, `hygiene_table4_qwen_r256` 51408903, `hygiene_table4_qwen_r128`
+51415044). On every one of them each **guarded** arm raised `OrthonormalityError` almost
+immediately:
+
+| pod | arm | aborted at | `‖UᵀU − I‖_F` reported |
+| --- | --- | --- | --- |
+| `hygiene_table4_llama` (51415024) | `isvd_r256_tol` | absorb 1, sample idx 1, layer 0 | **0.921** (V side; K side 2.2e-4) |
+| `hygiene_table4_llama` (51415024) | `isvd_r256_qr64` | absorb 1, sample idx 1, layer 0 | **0.921** |
+| `hygiene_table4_qwen_r256` (51408903) | `isvd_r256_tol`, `isvd_r256_qr64` | absorb 1 | **0.506** |
+| `hygiene_table4_qwen_r128` (51415044) | `isvd_r128_tol` | absorb 1 | **0.506** |
+| `hygiene_table4_qwen_r128` (51415044) | `isvd_r128_qr64` | absorb 4 | **0.141** |
+
+Evidence: `results/hygiene_table4_llama_v2_aborted_51415024/diag.jsonl` (the rows with
+`"absorbs": 1` for the two guarded arms carry `orth_err_v` 0.9212 with **`eff_rank_v` 93 of a
+128-column block**) and the two Qwen instances' raw logs.
+
+**The cause is the harness, not the tracker.** The first 128-token block of that sample is
+rank-deficient on one stream — duplicate value vectors at the start of a PG-19 excerpt — the GPU
+SVD of the seeding core returns non-orthonormal columns for the null space that carries no data,
+and `BugStreamingLayer._guard_orthonormality` checked `orth_abort_tol` **before** attempting the
+repair. A single-step numerical event that a thin QR fixes exactly therefore failed the arm, and
+`run_ppl`'s per-arm catch skipped that arm's remaining windows. It is a *defect in the tripwire's
+order of operations*; it is not the orthonormality ratchet of §1–§2, and it is not evidence
+either way on the question §1 asks.
+
+### A2.2 What is void, and what is kept
+
+**VOID — not to be cited, not counted in any n:** every **guarded** cell of the second launch
+(`isvd_r256_tol`, `isvd_r256_qr64`, `isvd_r128_tol`, `isvd_r128_qr64`, `isvd_r*_f0.01_*` where
+reached) on all three pods. They measured the defect, not the arm. §5's "abort is a possible
+outcome, not an accident" rule applies to a guard that **could not hold the basis** — not to a
+guard that aborted a basis it had not yet tried to repair, which is the case here — so the
+abort-as-outcome reading of §5 is **not** triggered by these cells.
+
+**KEPT as evidence, and not re-run for its own sake:** the unguarded and `full` records of the
+Llama pod, harvested at `results/hygiene_table4_llama_v2_aborted_51415024/` (no `manifest.json`,
+so `scripts/pod.py check` ignores the directory; the launch-time manifest is kept beside it as
+`manifest.aborted.json`). Over the full 16 windows of `ppl_16k_pg19val_w16`:
+
+| arm | bits/token | vs `full` |
+| --- | --- | --- |
+| `full` | 3.400 | — |
+| `isvd_r256_noguard` | 3.422 | **+0.022** (paired per-window mean +0.0219, range +0.0044…+0.0364) |
+
+with the unguarded arm's own diagnostic trace showing the basis losing orthonormality anyway
+(512 rows, max `‖UᵀU − I‖_F` = **2.884**). On Qwen r256 the same unguarded arm gives
+`nll/token = 10.221` nats (`ppl = 19939.26`) — the divergence of §2. Both observations are
+*pre-fix* and are recorded here as context for the relaunch, not as a result: the §4 contrast
+needs the guarded arm that never ran.
+
+### A2.3 The fix, and what the guard now means
+
+Lane commit `abf603d` (branch `lane/L1-harness-hygiene`), landing before the relaunch:
+
+1. **`_guard_orthonormality` repairs first.** It measures both stored bases, folds the
+   **pre-repair** error into the diagnostic window exactly as before (the ratchet trace stays the
+   raw measurement), performs whatever repair `orth_fix_tol`/`qr_every` call for, and only then
+   re-measures the repaired streams. `OrthonormalityError` is raised on the **post-repair** error.
+   `orth_abort_tol < orth_fix_tol` is rejected in the constructor, so a stream the repair
+   threshold leaves alone can never trip the abort threshold.
+2. **`_svd_core` verifies its left factor.** Above `‖u_locᵀu_loc − I‖_F = 1e-4` it re-orthonormalizes
+   with a thin QR and prints one `[diag] {"event":"svd_nonorthonormal",…}` line per process. The
+   check is read-only on CPU LAPACK output, so the default numeric path (and the committed r64
+   golden) is bit-identical.
+
+**The guard's pre-registered meaning is therefore: repair, and abort only when a repair cannot
+restore orthonormality.** §5's abort-as-outcome rule is read against that meaning from here on —
+an abort in the relaunch means the basis was **unrepairable**, which is a stronger and narrower
+claim than the one the aborted cells made. The tolerances themselves (`orth_fix_tol = 1e-3`,
+`orth_abort_tol = 1e-1`) are unchanged, `scripts/pod.py check` still FAILS a pod on a recorded
+`error` (Ruling R29, no tolerance knob), and no arm is re-run with the tripwire disabled.
+
+### A2.4 What this amendment does not change
+
+The question of §1; the measured baseline of §2; the ten cells, their arm files and every cache
+knob of §3; **the decision rule of §4, branch for branch**; the predictions of §5 and its
+abort-as-outcome rule (read per A2.3); the Holm family of §6; the secondary outcomes of §7 and
+A1.4's deferral; §8 as recomputed in A1.7 (the new `svd_nonorthonormal` line is at most one per
+process and does not change the row budget); §9's overrun rule; the budgets, bars and three pod
+configs of A1.3/A1.6 — the third launch is the same three pods at the same bars; §10's provenance
+and ordering rules; §11.
+
+Spend so far against those budgets is sunk, not credited back: ≈ $5.6 across the two killed Qwen
+instances and the harvested Llama one (D-011 addendum 5).

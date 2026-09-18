@@ -563,13 +563,19 @@ def test_harvest_counts_a_diag_line_the_fetch_cut_in_half(dry_pod: Path, tmp_pat
 
 # --- L1.6: the Table-4 pods (prereg/hygiene_table4.md) ------------------------
 
-TABLE4 = ("hygiene_table4_qwen", "hygiene_table4_llama")
+TABLE4 = ("hygiene_table4_qwen_r128", "hygiene_table4_qwen_r256", "hygiene_table4_llama")
 
 
 def test_the_table4_pods_resolve_end_to_end() -> None:
-    """Both pods load, hash, name the shared prereg, and every arm and task they
+    """All three pods load, hash, name the shared prereg, and every arm and task they
     reference loads. In-process on purpose: `run --dry-run` spawns a torch-importing
-    subprocess, and this asserts the same resolution for a tenth of the wall clock."""
+    subprocess, and this asserts the same resolution for a tenth of the wall clock.
+
+    The two Qwen halves share a model, so all that separates their hashes is the arm
+    list Amendment 1 split them on. Each pod also carries `full` and exactly the one
+    re-sized perplexity task: every paired statistic is computed inside a single pod,
+    and a half that lost its uncompressed reference -- or drifted off the 16 windows the
+    amendment pre-registered -- could not produce the numbers the decision rule reads."""
     hashes = set()
     for name in TABLE4:
         p = load_pod(name)
@@ -580,8 +586,12 @@ def test_the_table4_pods_resolve_end_to_end() -> None:
             assert load_arm(a).name == a
         for t in p.tasks:
             assert load_task(t).name == t
+        assert "full" in p.arms, f"{name}: no uncompressed reference to pair against"
+        ppl = [t for t in p.tasks if load_task(t).generator == "ppl"]
+        assert ppl == ["ppl_16k_pg19val_w16"], f"{name}: perplexity tasks {ppl}"
+        assert load_task(ppl[0]).n_samples == 16, f"{name}: not the pre-registered n"
         hashes.add(config_hash(p))
-    assert len(hashes) == len(TABLE4)  # two models, two hashes
+    assert len(hashes) == len(TABLE4)  # three pods, three hashes
 
 
 def test_the_table4_gist_arms_cap_the_diag_volume_the_log_can_carry() -> None:
@@ -589,11 +599,14 @@ def test_the_table4_gist_arms_cap_the_diag_volume_the_log_can_carry() -> None:
 
     The log is the only channel back from a vast.ai instance. A 16K sample runs ~1024
     absorbs per layer; at the 64 default that is ~17 `[diag]` rows per layer per sample
-    -- the Qwen pod alone would print ~380,000 of them over the run, none of them a
-    clean summary. `diag_every: 4096` fixes the data shape, not a fetch budget: no
-    diagnostic window ever completes, so the only row is `drain_diag`'s end-of-sample
-    flush -- one per layer per sample, 33 rows/sample at most (32 diag + one `[pplw]`
-    line) against the watchdog's 150s/30000-line poll (prereg/hygiene_table4.md §8)."""
+    -- one Qwen half alone would print ~38,000 of them over its 5 gist arms x 16
+    windows, none of them a clean summary. `diag_every: 4096` fixes the data shape, not
+    a fetch budget: no diagnostic window ever completes, so the only row is
+    `drain_diag`'s end-of-sample flush -- one per layer per sample, as the killed run
+    measured (320 rows over 10 samples on 32 Llama layers,
+    results/hygiene_table4_llama_killed_51394691/diag.jsonl). That is 33 rows/sample at
+    most (32 diag + one `[pplw]` line) against the watchdog's 150s/30000-line poll
+    (prereg/hygiene_table4.md §8 and Amendment 1)."""
     for name in TABLE4:
         for a in load_pod(name).arms:
             cfg = load_arm(a)

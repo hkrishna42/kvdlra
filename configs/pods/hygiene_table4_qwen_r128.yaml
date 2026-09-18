@@ -1,0 +1,25 @@
+name: hygiene_table4_qwen_r128
+model: "Qwen/Qwen2.5-7B-Instruct"
+dtype: bfloat16
+doc: >-
+  The rank-128 half of the Table-4 matrix on the model whose r=256 cell diverged:
+  orthonormality guard in {off, tolerance, thin QR every 64 absorbs} x singular-value floor
+  in {off, 1e-2}, minus the floor-on unguarded cells, plus the uncompressed reference, on
+  PG-19 validation perplexity at 16K over 16 non-overlapping windows. This is the rank where
+  the tracked basis is not expected to reach the repair threshold, so the rows are
+  descriptive -- they carry no member of the Holm family -- and they answer two questions the
+  r256 half cannot: whether the repair costs accuracy where there is nothing to repair, and
+  whether a relative floor collapses the tracked rank on a Qwen spectrum (eff_rank in
+  diag.jsonl). Split out of the single Qwen pod so the two ranks run in parallel after the
+  first launch was killed over its budget; `full` is in both halves so every pairing stays
+  inside one pod (prereg/hygiene_table4.md Amendment 1, DECISIONS D-011 addendum 2). The
+  retrieval task is not here: the neutrality secondary is deferred to a follow-up pod. Every
+  gist arm sets diag_every 4096, so each sample leaves one summary [diag] row per layer --
+  the arithmetic is in the prereg. Launch is the owner's call (DECISIONS D-011) and must be a
+  commit that descends from the prereg's.
+prereg: prereg/hygiene_table4.md
+arms: ["isvd_r128_noguard", "isvd_r128_tol", "isvd_r128_qr64", "isvd_r128_f0.01_tol",
+       "isvd_r128_f0.01_qr64", "full"]
+tasks: ["ppl_16k_pg19val_w16"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+gpu_budget_h: 4.0

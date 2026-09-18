@@ -1,0 +1,22 @@
+{
+  "command_line": "vastai create instance 51163391 --image pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel --disk 80 --env '-e POD=hygiene_table4_llama -e SHA=ce48b293210d935a5192ae835e2d96cd64d47d09 -e MODEL=unsloth/Meta-Llama-3.1-8B-Instruct -e DTYPE=bfloat16' --onstart scripts/pod/boot.sh --label kvdlra-hygiene_table4_llama",
+  "config_hash": "e362203c2be142769f9a7f5154a695bf1c972562b414462851ce79e5d9a507c4",
+  "cuda": "none",
+  "dataset_sha256": {},
+  "dry_run": false,
+  "errors": 0,
+  "git_sha": "ce48b293210d935a5192ae835e2d96cd64d47d09",
+  "gpu": "none",
+  "harvested_at": null,
+  "kvpress": "0.5.1",
+  "launched_at": "2026-09-18T06:21:37+00:00",
+  "model": "unsloth/Meta-Llama-3.1-8B-Instruct",
+  "model_revision": null,
+  "pod": "hygiene_table4_llama",
+  "records": {},
+  "status": null,
+  "torch": "2.11.0",
+  "transformers": "5.8.0",
+  "triton": "none",
+  "wall_clock_s": null
+}

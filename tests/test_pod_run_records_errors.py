@@ -18,6 +18,7 @@ from typing import Any
 
 import pod
 import pytest
+import torch
 
 from kvdlra.eval.config import PodCfg, load_pod, load_task
 from kvdlra.eval.records import parse_cell_lines, parse_error_lines
@@ -142,7 +143,9 @@ def test_a_perplexity_arm_that_raises_is_logged_and_counted(
     from kvdlra.eval import frontier
 
     failed = [{"method": "full", "T": 16384, "status": "error", "error": "RuntimeError: boom"}]
-    monkeypatch.setattr("kvdlra.eval.runner.load_corpus_ids", lambda *a, **k: "ids")
+    # A tensor, not a sentinel: the runner digests the ids into the manifest's
+    # dataset_sha256 before it cuts windows out of them.
+    monkeypatch.setattr("kvdlra.eval.runner.load_corpus_ids", lambda *a, **k: torch.arange(4))
     monkeypatch.setattr(frontier, "windows", lambda *a, **k: [("ctx", "win")])
     monkeypatch.setattr(frontier, "run_ppl", lambda *a, **k: failed)
     cfg = _cfg("ppl_16k")

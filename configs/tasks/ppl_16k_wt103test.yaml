@@ -1,0 +1,16 @@
+name: ppl_16k_wt103test
+generator: ppl
+ctx: 16384
+doc: >-
+  Teacher-forced perplexity at 16K on the WikiText-103 TEST split: same protocol as
+  ppl_16k_pg19val (2048-token continuation window, non-overlapping spans), on the held-out
+  split of the corpus v1 scored the TRAIN split of. Second corpus, not a second sample of the
+  first: absolute perplexity is not comparable across corpora, only the method ordering within
+  one is. CEILING: the split is ~289K tokens = 15 windows of 16384+2048, and config.CORPUS_TOKENS
+  floors that to 14 so a model whose tokenizer is a few percent denser still has the windows the
+  pod gate demands. 32 windows at this context length need PG-19 validation.
+n_trials: 1
+seeds: [0]
+corpus: wikitext-103-test
+window: 2048
+n_samples: 14

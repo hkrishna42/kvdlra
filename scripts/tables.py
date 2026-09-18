@@ -15,19 +15,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import shutil
 import subprocess
+from collections import defaultdict
 from collections.abc import Callable, Sequence
 from functools import cache
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, TypedDict, cast
 
 import _paths  # noqa: F401
 
 from kvdlra.eval.records import (
     CellRecord,
     PplRecord,
+    PplwRecord,
     TrialRecord,
     parse_cell_lines,
     parse_ppl_lines,
@@ -35,7 +38,7 @@ from kvdlra.eval.records import (
     read_jsonl,
     write_jsonl,
 )
-from kvdlra.eval.stats import Key, McNemar, mcnemar_exact, wilson
+from kvdlra.eval.stats import Key, McNemar, mcnemar_exact, paired_bootstrap, tost, wilson
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MODEL_BY_TAG = {  # the exact HF ids the Week-18/19 pods ran
@@ -604,6 +607,138 @@ def build(out: Path) -> None:
         (out / f"table{n}.tex").write_text(tex)
 
 
+# ------------------------------------------------------------------ perplexity
+
+
+class PplStat(TypedDict):
+    """One arm's perplexity at one context length, on its STORED representation.
+
+    ``bits`` is bits/token; ``d_bits`` its paired difference from the baseline arm with
+    a bootstrap 95% CI, and ``p_tost`` the equivalence test against the margin. The four
+    are ``None`` on the baseline row itself -- it has nothing to be paired against.
+    """
+
+    arm: str
+    ctx: int
+    n_windows: int
+    bits: float
+    d_bits: float | None
+    lo: float | None
+    hi: float | None
+    p_tost: float | None
+    equivalent: bool | None
+
+
+def ppl_stats(
+    rows: Sequence[PplwRecord], baseline: str = "full", delta: float = 0.05
+) -> list[PplStat]:
+    """Per-window NLL rows -> bits/token per (arm, ctx), paired against ``baseline``.
+
+    Windows are paired by ``window_idx`` -- every arm scored the same slices of the same
+    corpus, and the per-window spread across a corpus dwarfs the difference between two
+    arms, so an unpaired comparison of pooled numbers hides the effect it is measuring.
+    Both the interval and TOST run on those per-window differences, never on the pooled
+    value: pooling first throws away the pairing and leaves one number with no spread.
+    """
+    bits: dict[tuple[str, int], dict[int, float]] = defaultdict(dict)
+    for r in rows:
+        bits[(r["arm"], r["ctx"])][r["window_idx"]] = r["nll_sum_nats"] / (r["ntok"] * math.log(2))
+    out: list[PplStat] = []
+    for ctx in sorted({c for _, c in bits}):
+        arms = sorted(a for a, c in bits if c == ctx)
+        if baseline not in arms:
+            raise SystemExit(f"ppl: no {baseline!r} arm at ctx={ctx} -- nothing to pair against")
+        base = bits[(baseline, ctx)]
+        for arm in [baseline] + [a for a in arms if a != baseline]:
+            w = bits[(arm, ctx)]
+            mean_bits = sum(w.values()) / len(w)
+            if arm == baseline:
+                out.append(
+                    {
+                        "arm": arm,
+                        "ctx": ctx,
+                        "n_windows": len(w),
+                        "bits": mean_bits,
+                        "d_bits": None,
+                        "lo": None,
+                        "hi": None,
+                        "p_tost": None,
+                        "equivalent": None,
+                    }
+                )
+                continue
+            if set(w) != set(base):
+                raise SystemExit(
+                    f"ppl: {arm} ctx={ctx} scored windows {sorted(set(w) ^ set(base))}"
+                    f" that {baseline} did not (or the reverse) -- the pairing is broken"
+                )
+            d = [w[i] - base[i] for i in sorted(w)]
+            mean_d, lo, hi = paired_bootstrap(d)
+            p_lo, p_hi, equivalent = tost(d, delta)
+            out.append(
+                {
+                    "arm": arm,
+                    "ctx": ctx,
+                    "n_windows": len(w),
+                    "bits": mean_bits,
+                    "d_bits": mean_d,
+                    "lo": lo,
+                    "hi": hi,
+                    "p_tost": max(p_lo, p_hi),
+                    "equivalent": equivalent,
+                }
+            )
+    return out
+
+
+def ppl_table(results: Path, out: Path, baseline: str = "full", delta: float = 0.05) -> None:
+    """The perplexity table for one pod's run directory, written as markdown.
+
+    NOT a numbered `TABLES` entry and never named ``table*.md``: `make tables` concatenates
+    those and diffs the result against the frozen paper-v1 golden, which this is not part
+    of. It reads `pplw.jsonl` -- the per-window rows -- because the pooled `ppl.jsonl`
+    number cannot produce an interval.
+    """
+    src = results / "pplw.jsonl"
+    if not src.is_file():
+        raise SystemExit(f"ppl: no per-window records at {src}")
+    rows = [cast(PplwRecord, r) for r in read_jsonl(src)]
+    corpora = sorted({str(r.get("corpus")) for r in rows})
+    stats = ppl_stats(rows, baseline, delta)
+    try:  # cite the repo-relative path, as `_emit` does -- a local absolute one cites nothing
+        cite = str(src.relative_to(REPO_ROOT))
+    except ValueError:
+        cite = str(src)
+    notes = [
+        f"source: {cite} ({len(rows)} per-window rows; corpus: {', '.join(corpora)})",
+        "cell: bits/token = mean over windows of nll_sum_nats / (ntok * ln 2)",
+        f"delta: paired per window against `{baseline}`, mean [bootstrap 95% CI, 10k resamples]",
+        f"TOST: two one-sided t-tests at +/-{delta} bits/token on the per-window differences;"
+        " p is the larger one-sided p-value, equivalent at p < 0.05",
+    ]
+    header = ["arm", "ctx", "windows", "bits/token", "delta bits [95% CI]", "TOST p", "equivalent"]
+    body = []
+    for s in stats:
+        d, lo, hi, p = s["d_bits"], s["lo"], s["hi"], s["p_tost"]
+        body.append(
+            [
+                s["arm"],
+                str(s["ctx"]),
+                str(s["n_windows"]),
+                f"{s['bits']:.4f}",
+                "--" if d is None else f"{d:+.4f} [{lo:+.4f}, {hi:+.4f}]",
+                "--" if p is None else f"{p:.3g}",
+                "--" if s["equivalent"] is None else ("yes" if s["equivalent"] else "no"),
+            ]
+        )
+    md = [f"## Perplexity — {results.name}"]
+    md += [f"<!-- {x} -->" for x in notes]
+    md += ["", "| " + " | ".join(header) + " |", "|" + " --- |" * len(header)]
+    md += ["| " + " | ".join(r) + " |" for r in body]
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(md) + "\n")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -616,10 +751,22 @@ def main() -> None:
     c.add_argument("--out", default=None, help="default: <repo_root>/results/paper-v1")
     b = sub.add_parser("build", help="regenerate the paper-v1 tables from results/paper-v1")
     b.add_argument("--out", default="docs/paper/tables")
+    p = sub.add_parser(
+        "ppl",
+        help="bits/token per arm with a paired 95% CI and TOST vs `full`, from one pod's"
+        " pplw.jsonl; written outside the `table*.md` set `build` pins",
+    )
+    p.add_argument("--pod", required=True, help="a directory name under results/")
+    p.add_argument("--out", default=None, help="default: docs/paper/tables/ppl_<pod>.md")
+    p.add_argument("--baseline", default="full", help="the arm every other is paired against")
+    p.add_argument("--delta", type=float, default=0.05, help="TOST margin, bits/token")
     a = ap.parse_args()
     if a.cmd == "convert-v1":
         out = Path(a.out) if a.out else REPO_ROOT / "results" / "paper-v1"
         convert_v1(out)
+    elif a.cmd == "ppl":
+        out = Path(a.out) if a.out else REPO_ROOT / "docs/paper/tables" / f"ppl_{a.pod}.md"
+        ppl_table(REPO_ROOT / "results" / a.pod, out, a.baseline, a.delta)
     else:
         build(Path(a.out))
 

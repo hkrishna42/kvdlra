@@ -63,7 +63,12 @@ PPL_RE = re.compile(
 # splits into ``part=i/N`` fragments of 8 values, because `vastai logs` truncates a line
 # at ~500 chars. Dropping the fragments -- which is what the first harvest did -- loses
 # the whole sweep silently.
-PPLW_RE = re.compile(r"^\[pplw\] T=(\d+) (\S+) ntok=(\d+)(?: part=(\d+)/(\d+))? nlls=([0-9.,]+)$")
+# `corpus=` is appended LAST (frontier._log_pplw) and is OPTIONAL: no paper-v1 log has
+# it -- v1 scored one corpus and never said so -- and an archived sweep must keep parsing.
+PPLW_RE = re.compile(
+    r"^\[pplw\] T=(\d+) (\S+) ntok=(\d+)(?: part=(\d+)/(\d+))? nlls=([0-9.,]+)"
+    r"(?: corpus=(\S+))?$"
+)
 # `kvdlra.eval.latency.run_latency`'s own print. `weights_gb=` sits between `peak_gb=`
 # and `kv_peak_gb=` but is not part of `LatencyRecord` -- it is the subtrahend the
 # kv_*_gb figures already removed, not a KV-attributable number of its own -- so it is
@@ -116,7 +121,11 @@ class PplwRecord(TypedDict):
 
     ``nll_sum_nats`` is the window's total NLL in nats: the emitter prints a per-token
     MEAN over ``ntok`` tokens, and the sum is the quantity that pools without carrying
-    the weights around (``ppl == exp(sum(nll_sum_nats) / sum(ntok))``)."""
+    the weights around (``ppl == exp(sum(nll_sum_nats) / sum(ntok))``).
+
+    ``corpus`` is the held-out text the window came from -- absolute perplexity is not
+    comparable across corpora, so a row that does not carry its own is not poolable with
+    another. ``None`` on the archived rows: v1 printed no corpus."""
 
     model: str
     arm: str
@@ -124,6 +133,7 @@ class PplwRecord(TypedDict):
     window_idx: int
     ntok: int
     nll_sum_nats: float
+    corpus: str | None
     source: str
 
 
@@ -135,6 +145,7 @@ class PplRecord(TypedDict):
     ratio: float
     sbits: float | None
     tok_eq: float | None
+    corpus: str | None
     source: str
 
 
@@ -271,6 +282,9 @@ def parse_ppl_lines(text: str, model: str, source: str) -> list[PplRecord]:
                 "ratio": float(ratio),
                 "sbits": float(sbits) if sbits is not None else None,
                 "tok_eq": float(tok_eq) if tok_eq is not None else None,
+                # The pooled line does not print the corpus; the per-window group for
+                # the same (arm, ctx) does, and that is the file the `ppl` table reads.
+                "corpus": None,
                 "source": f"{source}:{i}",
             }
         )
@@ -288,7 +302,9 @@ def parse_pplw_lines(text: str, model: str, source: str) -> list[PplwRecord]:
     out: list[PplwRecord] = []
     pending: dict[tuple[str, int], tuple[int, int, int, dict[int, list[float]]]] = {}
 
-    def emit(arm: str, ctx: int, ntok: int, line: int, vals: list[float]) -> None:
+    def emit(
+        arm: str, ctx: int, ntok: int, line: int, vals: list[float], corpus: str | None
+    ) -> None:
         out.extend(
             {
                 "model": model,
@@ -297,6 +313,7 @@ def parse_pplw_lines(text: str, model: str, source: str) -> list[PplwRecord]:
                 "window_idx": j,
                 "ntok": ntok,
                 "nll_sum_nats": v * ntok,
+                "corpus": corpus,
                 "source": f"{source}:{line}",
             }
             for j, v in enumerate(vals)
@@ -306,16 +323,18 @@ def parse_pplw_lines(text: str, model: str, source: str) -> list[PplwRecord]:
         m = PPLW_RE.match(line)
         if not m:
             continue
-        ctx, arm, ntok, part, n_parts, nlls = m.groups()
+        ctx, arm, ntok, part, n_parts, nlls, corpus = m.groups()
         vals = [float(x) for x in nlls.split(",") if x]
         if part is None:
-            emit(arm, int(ctx), int(ntok), i, vals)
+            emit(arm, int(ctx), int(ntok), i, vals, corpus)
             continue
         key = (arm, int(ctx))
         n, tok, first, parts = pending.setdefault(key, (int(n_parts), int(ntok), i, {}))
         parts[int(part)] = vals
         if len(parts) == n:
-            emit(arm, key[1], tok, first, [v for j in sorted(parts) for v in parts[j]])
+            # One `_log_pplw` call prints a whole group, so every fragment of it carries
+            # the same corpus -- the one on the fragment that completes it will do.
+            emit(arm, key[1], tok, first, [v for j in sorted(parts) for v in parts[j]], corpus)
             del pending[key]
     if pending:
         missing = {

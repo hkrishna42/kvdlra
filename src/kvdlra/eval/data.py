@@ -105,21 +105,33 @@ def load_corpus_ids(
     * ``"pg19"`` -- PG19 test (long Project-Gutenberg books). Needs
       ``trust_remote_code=True`` (legacy loader); kept as an option but not the
       default (fragile on a fresh pod). Same streaming/concatenation.
+    * ``"wikitext-103-test"`` -- the WikiText-103 raw **test** split (~290K tokens),
+      loaded whole like ``wikitext-2``. The held-out half of the fix recorded in
+      ``docs/plan/CODE_AUDIT.md``: same corpus as ``"wikitext-103"``, a split no
+      model trained on. Small -- see ``config.CORPUS_TOKENS`` for the window ceiling
+      it supports at each context length.
+    * ``"pg19-val"`` -- the PG19 **validation** split, the other held-out corpus
+      (long books, out of domain for a WikiText-tuned comparison); streamed and
+      concatenated like ``"pg19"`` and long enough for 32 windows at 32K.
 
     Absolute ppl is not comparable across corpora -- only the relative method
     frontier within one corpus is.
     """
-    if corpus == "wikitext-2":
-        ds = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="test")
+    if corpus in ("wikitext-2", "wikitext-103-test"):
+        name = "wikitext-2-raw-v1" if corpus == "wikitext-2" else "wikitext-103-raw-v1"
+        ds = load_dataset("Salesforce/wikitext", name, split="test")
         text = "\n\n".join(line for line in ds["text"] if line.strip())
-    elif corpus in ("wikitext-103", "pg19"):
+    elif corpus in ("wikitext-103", "pg19", "pg19-val"):
         if corpus == "wikitext-103":
             stream = load_dataset(
                 "Salesforce/wikitext", "wikitext-103-raw-v1", split="train", streaming=True
             )
         else:
             stream = load_dataset(
-                "deepmind/pg19", split="test", streaming=True, trust_remote_code=True
+                "deepmind/pg19",
+                split="test" if corpus == "pg19" else "validation",
+                streaming=True,
+                trust_remote_code=True,
             )
         parts: list[str] = []
         approx_tokens = 0
@@ -133,7 +145,10 @@ def load_corpus_ids(
                 break
         text = "\n\n".join(parts)
     else:
-        raise ValueError(f"unknown corpus {corpus!r} (use 'wikitext-2', 'wikitext-103', 'pg19')")
+        raise ValueError(
+            f"unknown corpus {corpus!r} (use 'wikitext-2', 'wikitext-103',"
+            " 'wikitext-103-test', 'pg19', 'pg19-val')"
+        )
     ids = tokenizer(text, return_tensors="pt").input_ids.to(device)[0]
     if ids.shape[0] > max_tokens:
         ids = ids[:max_tokens]

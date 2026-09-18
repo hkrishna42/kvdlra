@@ -1,0 +1,13 @@
+name: ppl_32k_wt103test
+generator: ppl
+ctx: 32768
+doc: >-
+  Teacher-forced perplexity at 32K on the WikiText-103 TEST split: the ppl_16k_wt103test
+  protocol at twice the context. CEILING: ~289K tokens is 8 windows of 32768+2048, floored to 7
+  by config.CORPUS_TOKENS for tokenizer margin -- this corpus cannot carry a 32-window claim at
+  32K, which is what ppl_32k_pg19val is for.
+n_trials: 1
+seeds: [0]
+corpus: wikitext-103-test
+window: 2048
+n_samples: 7

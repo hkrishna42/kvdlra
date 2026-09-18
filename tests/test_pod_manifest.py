@@ -150,7 +150,9 @@ def test_harvest_parses_a_log_into_records(dry_pod: Path, tmp_path: Path) -> Non
     ]  # fmt: skip
     assert pplw[0] == {
         "model": load_pod("w18_g1").model, "arm": "bugSseed-r64-h256", "ctx": 16384,
-        "window_idx": 0, "ntok": 511, "nll_sum_nats": 1.573386 * 511, "source": f"{log}:7",
+        "window_idx": 0, "ntok": 511, "nll_sum_nats": 1.573386 * 511,
+        "corpus": None,  # an archived-format [pplw] line: no corpus= field to recover
+        "source": f"{log}:7",
     }  # fmt: skip
     assert [w["nll_sum_nats"] for w in pplw[2:]] == [v * 255 for v in (1.0, 2.0, 3.0, 4.0, 5.0)]
 

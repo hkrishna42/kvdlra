@@ -38,11 +38,10 @@ PPL_RE = re.compile(records.PPL_RE.pattern, re.M)
 
 # The documented [pplw] harvest regex (frontier._log_pplw):
 #   [pplw] T=<T> <method> ntok=<per-window scored tokens> [part=<i>/<N>]
-#   nlls=<comma-joined per-window mean NLLs, 6 decimals>
-PPLW_RE = re.compile(
-    r"^\[pplw\] T=(\d+) (\S+) ntok=(\d+)(?: part=(\d+)/(\d+))? nlls=([0-9.,]+)$",
-    re.M,
-)
+#   nlls=<comma-joined per-window mean NLLs, 6 decimals> [corpus=<name>]
+# Taken from `records` rather than restated, the way PPL_RE above is: a second copy of
+# the pattern pins a format nobody reads with.
+PPLW_RE = re.compile(records.PPLW_RE.pattern, re.M)
 
 
 def _tiny_model() -> LlamaForCausalLM:

@@ -432,8 +432,14 @@ def run_ppl(
     n: int,
     h_kv: int,
     device: str,
+    corpus: str = "wikitext-103",
 ) -> list[dict[str, Any]]:
     """Score every arm on the same windows at context length ``t``; one row per arm.
+
+    ``corpus`` only labels: the windows are already cut, and it rides onto the row and
+    the ``[pplw]`` line so a pooled number can never be read as belonging to a corpus it
+    was not measured on. The default is `config.TaskCfg.corpus`'s -- what v1 scored --
+    and `kvdlra.eval.runner` always passes the task's.
 
     An arm that raises does not take the sweep down with it: its row carries
     ``status`` OOM/error and the loop moves on, which is the same rule the trial runner
@@ -488,12 +494,13 @@ def run_ppl(
             # ADDITION so error bars exist (Week-15 intervals); the
             # pin: ppl == exp(sum(nll_i*tok_i)/sum(tok_i)) recomputed from them.
             ppl = float(torch.tensor(total_nll / total_tok).exp())
-            _log_pplw(t, arm["name"], window_nlls, window_toks[0])
+            _log_pplw(t, arm["name"], window_nlls, window_toks[0], corpus)
             row = {
                 "method": arm["name"],
                 "kind": arm["kind"],
                 "rank": arm["rank"],
                 "T": t,
+                "corpus": corpus,
                 "ppl": ppl,
                 "window_nlls": window_nlls,
                 "window_toks": window_toks,
@@ -533,7 +540,7 @@ def run_ppl(
     return rows
 
 
-def _log_pplw(t: int, name: str, window_nlls: list[float], ntok: int) -> None:
+def _log_pplw(t: int, name: str, window_nlls: list[float], ntok: int, corpus: str) -> None:
     """The ``[pplw]`` per-window NLL line -- one per (arm, T), greppable ``^\\[pplw``.
 
     `vastai logs` truncates a line at ~500 chars, so a would-be >400-char line splits
@@ -542,17 +549,23 @@ def _log_pplw(t: int, name: str, window_nlls: list[float], ntok: int) -> None:
     Windows are uniform-length by construction (exact slices), so one ``ntok`` covers
     the group. Format (the harvest regex, `records.PPLW_RE`)::
 
-        ^\\[pplw\\] T=(\\d+) (\\S+) ntok=(\\d+)(?: part=(\\d+)/(\\d+))? nlls=([0-9.,]+)$
+        ^\\[pplw\\] T=(\\d+) (\\S+) ntok=(\\d+)(?: part=(\\d+)/(\\d+))? nlls=([0-9.,]+)
+        (?: corpus=(\\S+))?$          # one pattern; wrapped here only to fit the line limit
+
+    ``corpus=`` goes LAST and every fragment repeats it, so the group is self-describing
+    however the log was truncated -- and so the archived lines, which have none, keep
+    matching (`records.PPLW_RE` takes it as an optional trailing group).
     """
     vals = [f"{v:.6f}" for v in window_nlls]
     head = f"[pplw] T={t} {name} ntok={ntok}"
-    line = f"{head} nlls={','.join(vals)}"
+    tail = f" corpus={corpus}"
+    line = f"{head} nlls={','.join(vals)}{tail}"
     if len(line) <= 400:
         print(line, flush=True)
         return
     groups = [vals[i : i + 8] for i in range(0, len(vals), 8)]
     for pi, grp in enumerate(groups, 1):
-        print(f"{head} part={pi}/{len(groups)} nlls={','.join(grp)}", flush=True)
+        print(f"{head} part={pi}/{len(groups)} nlls={','.join(grp)}{tail}", flush=True)
 
 
 def _log_row(row: dict[str, Any]) -> None:

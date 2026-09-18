@@ -26,6 +26,7 @@ directory never made it off the instance.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -55,9 +56,6 @@ GENERATORS = {
     "official_ruler": official_ruler,
     "longbench": longbench,
 }
-# v1's perplexity corpus. WikiText-103 TRAIN is a known defect (docs/plan/CODE_AUDIT.md,
-# CLAUDE.md); switching it moves every archived ppl number, so L2 owns that change.
-PPL_CORPUS = "wikitext-103"
 
 
 def run_pod(pod: PodCfg, out: Path, model: Any, dry_model: bool = False) -> None:
@@ -96,6 +94,7 @@ def run_pod(pod: PodCfg, out: Path, model: Any, dry_model: bool = False) -> None
     ppl: list[PplRecord] = []
     pplw: list[PplwRecord] = []
     lat: list[LatencyRecord] = []
+    corpora: dict[str, str] = {}  # corpus name -> sha256 of the exact token stream
     for tname in pod.tasks:
         task = load_task(tname)
         if task.generator == "latency":
@@ -105,7 +104,7 @@ def run_pod(pod: PodCfg, out: Path, model: Any, dry_model: bool = False) -> None
             continue
         arms = [_build(a, mdl, task.ctx) for a in pod.arms]
         if task.generator == "ppl":
-            rows = _ppl_rows(arms, mdl, tok, task, device=device, n=n, h_kv=h_kv)
+            rows = _ppl_rows(arms, mdl, tok, task, device=device, n=n, h_kv=h_kv, sha=corpora)
             ppl += [_ppl_record(pod, r) for r in rows if r["status"] == "ok"]
             pplw += [w for r in rows if r["status"] == "ok" for w in _pplw_records(pod, r)]
             n_err += _log_ppl_errors([r for r in rows if r["status"] != "ok"])
@@ -124,7 +123,7 @@ def run_pod(pod: PodCfg, out: Path, model: Any, dry_model: bool = False) -> None
     if lat:
         write_jsonl(out / "latency.jsonl", lat)
         records["latency.jsonl"] = len(lat)
-    _finish(out, records, n_err, time.perf_counter() - t0)
+    _finish(out, records, n_err, time.perf_counter() - t0, corpora)
 
 
 def _log_ppl_errors(rows: list[dict[str, Any]]) -> int:
@@ -302,15 +301,35 @@ def _ppl_rows(
     device: str,
     n: int,
     h_kv: int,
+    sha: dict[str, str],
 ) -> list[dict[str, Any]]:
-    ids = load_corpus_ids(tok, device, corpus=PPL_CORPUS)
+    """One perplexity sweep, on the corpus the TASK names (`config.TaskCfg.corpus`).
+
+    ``sha`` collects ``corpus -> sha256(token ids)``: which text was scored is half of
+    what a perplexity number means, and the digest is over the exact ids the windows
+    were cut from, so a corpus that silently changed upstream cannot pass for the one
+    the manifest cites. `_finish` writes it to `manifest.json`.
+    """
+    ids = load_corpus_ids(tok, device, corpus=task.corpus)
+    sha[task.corpus] = hashlib.sha256(ids.cpu().numpy().tobytes()).hexdigest()
     samples = frontier.windows(ids, task.ctx, task.window, task.n_samples)
     if not samples:
         print(f"[T={task.ctx}] corpus too short for {task.n_samples} windows", flush=True)
         return []
-    print(f"[T={task.ctx}] {len(samples)} window(s) of {task.ctx}+{task.window}", flush=True)
+    print(
+        f"[T={task.ctx}] {len(samples)} window(s) of {task.ctx}+{task.window} on {task.corpus}",
+        flush=True,
+    )
     return frontier.run_ppl(
-        arms, model, samples, task.ctx, chunk=task.chunk, n=n, h_kv=h_kv, device=device
+        arms,
+        model,
+        samples,
+        task.ctx,
+        chunk=task.chunk,
+        n=n,
+        h_kv=h_kv,
+        device=device,
+        corpus=task.corpus,
     )
 
 
@@ -323,6 +342,7 @@ def _ppl_record(pod: PodCfg, row: dict[str, Any]) -> PplRecord:
         "ratio": float(row["ratio_fp16"]),
         "sbits": float(row["ratio_stored_bits"]),
         "tok_eq": float(row["tok_equiv_per_layer"]),
+        "corpus": str(row["corpus"]),
         "source": f"{pod.name}:run",
     }
 
@@ -337,13 +357,20 @@ def _pplw_records(pod: PodCfg, row: dict[str, Any]) -> list[PplwRecord]:
             "window_idx": i,
             "ntok": int(ntok),
             "nll_sum_nats": float(v) * int(ntok),
+            "corpus": str(row["corpus"]),
             "source": f"{pod.name}:run",
         }
         for i, (v, ntok) in enumerate(zip(row["window_nlls"], row["window_toks"], strict=True))
     ]
 
 
-def _finish(out: Path, records: dict[str, int], errors: int, wall_clock_s: float) -> None:
+def _finish(
+    out: Path,
+    records: dict[str, int],
+    errors: int,
+    wall_clock_s: float,
+    corpora: dict[str, str] | None = None,
+) -> None:
     """Fold what the run produced into the manifest `pod.py run` wrote at launch.
 
     The diagnostics the axes drained from their caches (`records.emit_diag`) are written
@@ -356,7 +383,9 @@ def _finish(out: Path, records: dict[str, int], errors: int, wall_clock_s: float
         records["diag.jsonl"] = len(DIAG_ROWS)
         DIAG_ROWS.clear()
     path = out / "manifest.json"
-    m = json.loads(path.read_text()) if path.is_file() else {"pod": out.name}
+    m: dict[str, Any] = json.loads(path.read_text()) if path.is_file() else {"pod": out.name}
+    if corpora:  # the launch-time manifest leaves `dataset_sha256` empty for the run
+        m["dataset_sha256"] = {**m.get("dataset_sha256", {}), **corpora}
     m["records"] = records
     m["errors"] = errors
     m["wall_clock_s"] = wall_clock_s

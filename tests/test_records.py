@@ -182,6 +182,7 @@ def test_parse_ppl_lines_schema() -> None:
             "ratio": 0.085,
             "sbits": 0.150,
             "tok_eq": 1377.7,
+            "corpus": None,  # the pooled line never prints one; pplw.jsonl carries it
             "source": "f.txt:1",
         }
     ]
@@ -350,16 +351,17 @@ def test_v1_archive_manifests_add_up_and_match_jsonl() -> None:
 
 def test_parse_pplw_lines_schema() -> None:
     """One row per window, carrying the window's NLL SUM: the printed value is a
-    per-token mean over `ntok` tokens, and a sum is what pools without re-weighting."""
+    per-token mean over `ntok` tokens, and a sum is what pools without re-weighting.
+    ``corpus`` is None here: PPLW is an ARCHIVED line, printed before the field existed."""
     rows = parse_pplw_lines(PPLW, model="M", source="f.txt")
     assert rows == [
         {
             "model": "M", "arm": "bugSseed-r64-h256", "ctx": 16384, "window_idx": 0,
-            "ntok": 511, "nll_sum_nats": 1.573386 * 511, "source": "f.txt:1",
+            "ntok": 511, "nll_sum_nats": 1.573386 * 511, "corpus": None, "source": "f.txt:1",
         },
         {
             "model": "M", "arm": "bugSseed-r64-h256", "ctx": 16384, "window_idx": 1,
-            "ntok": 511, "nll_sum_nats": 1.236791 * 511, "source": "f.txt:1",
+            "ntok": 511, "nll_sum_nats": 1.236791 * 511, "corpus": None, "source": "f.txt:1",
         },
     ]  # fmt: skip
 

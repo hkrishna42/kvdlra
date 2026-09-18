@@ -246,6 +246,13 @@ def _rope_unapply(x_htd: Tensor, cos: Tensor, sin: Tensor, scale_sq: float) -> T
     return (x_htd * cos - rot * sin) / scale_sq
 
 
+def _nan_max(a: float, b: float) -> float:
+    """NaN-sticky ``max``: plain ``max(a, b)`` silently drops a NaN landing in the
+    SECOND argument (``max(0.0, nan) == 0.0``) -- once either reading is NaN the fold
+    stays NaN, the way a window's worst-case error should when it is fed one."""
+    return float("nan") if (a != a or b != b) else max(a, b)
+
+
 class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
     """One layer's constant-memory streaming-BUG KV state (see module docstring).
 
@@ -846,9 +853,11 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         # path (fix1 Minor #3, fix1 A2): the ratchet trace is the raw measurement, not
         # what a repair leaves behind -- the pods' own defect showed up as a pre-repair
         # `eff_rank_v` 93 of 128, and a repair that re-derives the core from a fresh SVD
-        # can read back as full rank with nothing about the defect having changed.
-        self._diag_max_err_k = max(self._diag_max_err_k, err_k)
-        self._diag_max_err_v = max(self._diag_max_err_v, err_v)
+        # can read back as full rank with nothing about the defect having changed. The
+        # fold is NaN-sticky (fix2, ``_nan_max``): plain ``max`` drops a NaN landing in
+        # the second argument, losing it from the window instead of reporting it.
+        self._diag_max_err_k = _nan_max(self._diag_max_err_k, err_k)
+        self._diag_max_err_v = _nan_max(self._diag_max_err_v, err_v)
         self._diag_min_rank_k = min(self._diag_min_rank_k, eff_rank(self.b_k))
         self._diag_min_rank_v = min(self._diag_min_rank_v, eff_rank(self.b_v))
         # ``qr_every`` (the experimental factor) repairs unconditionally every k absorbs
@@ -887,17 +896,18 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             # Only a repaired stream is re-measured: an untouched one still carries the
             # error measured above, and (``orth_abort_tol >= orth_fix_tol``, validated in
             # the constructor) it cannot be over the abort tolerance without a repair.
-            post = max(
-                orth_error(self.u_k) if fixed_k else err_k,
-                orth_error(self.u_v) if fixed_v else err_v,
-            )
+            post_k = orth_error(self.u_k) if fixed_k else err_k
+            post_v = orth_error(self.u_v) if fixed_v else err_v
             # NaN is never "at or below" the abort tolerance either (fix1 A3): a
             # repair whose OWN post-measurement comes back NaN must abort, not be read as
-            # silently within bounds.
-            if not (post <= self.orth_abort_tol):
+            # silently within bounds. Checked per stream, not aggregated by ``max()``
+            # (fix2): ``max(post_k, post_v)`` silently drops a NaN landing in the second
+            # argument (``max(0.0, nan) == 0.0``), so a NaN-V reading next to a finite K
+            # never aborted.
+            if any(not (e <= self.orth_abort_tol) for e in (post_k, post_v)):
                 self._flush_diag_window()
                 raise OrthonormalityError(
-                    f"layer={self.layer_idx} orth_err={post:.3e} > "
+                    f"layer={self.layer_idx} orth_err_k={post_k:.3e} orth_err_v={post_v:.3e} > "
                     f"abort_tol={self.orth_abort_tol} at absorb {self._absorbs}"
                 )
         if self._absorbs % self.diag_every == 0:

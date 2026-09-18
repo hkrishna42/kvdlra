@@ -19,6 +19,7 @@ the guard measures the cache's stored basis rather than the bare tracker.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable
 from itertools import pairwise
@@ -251,7 +252,7 @@ def test_cache_tripwire_records_and_aborts(
     layer = cache._bug_layers()[0]
     assert layer.u_k is not None
     layer.u_k = layer.u_k * 3.0
-    pattern = r"layer=(\d+) orth_err=(\S+) > abort_tol=(\S+) at absorb (\d+)"
+    pattern = r"layer=(\d+) orth_err_k=(\S+) orth_err_v=(\S+) > abort_tol=(\S+) at absorb (\d+)"
     with pytest.raises(OrthonormalityError, match=pattern) as excinfo:
         _decode_steps(tiny_model, cache, layer.absorb_block + 1)
     matched = re.search(pattern, str(excinfo.value))
@@ -260,13 +261,16 @@ def test_cache_tripwire_records_and_aborts(
     fatal_rows: list[dict[str, Any]] = [row for row in cache.drain_diag() if row["layer"] == 0]
     assert fatal_rows
     fatal = fatal_rows[-1]
-    assert int(fatal["absorbs"]) == int(matched.group(4))
+    assert int(fatal["absorbs"]) == int(matched.group(5))
     assert fatal["fixed_k"]  # the repair was attempted -- it just did not restore anything
     # The message reports the POST-repair error (what the repair could not fix); the diag
     # window keeps the PRE-repair error, so the ratchet trace is the raw measurement.
     assert float(matched.group(2)) == pytest.approx(orth_error(layer.u_k), rel=1e-3)
     window = max(float(fatal["orth_err_k"]), float(fatal["orth_err_v"]))
-    assert window > 1.5 * float(matched.group(2))
+    # fix2: the message now reports the two streams separately instead of one combined
+    # max -- the diag-row cross-check compares against the max of the two, the same
+    # quantity the old single "post" value was.
+    assert window > 1.5 * max(float(matched.group(2)), float(matched.group(3)))
 
 
 def test_qr_every_forces_fixes_and_keeps_the_basis_orthonormal(
@@ -584,7 +588,93 @@ def test_nan_post_repair_error_aborts(
         return orth_error(u) if calls == 1 else float("nan")
 
     monkeypatch.setattr("kvdlra.cache.bug_cache.orth_error", nan_after_repair)
-    with pytest.raises(OrthonormalityError, match=r"orth_err=nan"):
+    with pytest.raises(OrthonormalityError, match=r"orth_err_k=nan orth_err_v=nan"):
         layer._guard_orthonormality(
             rank_changed_k=False, rank_changed_v=False, positions=torch.tensor([0])
         )
+
+
+# --------------------------------------------------------------- fix2 items
+
+
+def test_nan_v_only_still_aborts(
+    tiny_model: LlamaForCausalLM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """fix2: the abort must check each stream independently -- the old
+    ``max(post_k, post_v)`` silently dropped a NaN landing in the SECOND argument
+    (``max(0.0, nan) == 0.0``), so a NaN-V reading next to a finite K never aborted."""
+    cache = BugStreamingCache(
+        tiny_model, rank=8, coord_budget=64, recent_window=8, absorb_block=4, diag_every=1
+    )
+    _drive(tiny_model, cache)
+    cache.drain_diag()
+    layer = cache._bug_layers()[0]
+
+    def nan_for_v(u: Tensor) -> float:
+        return float("nan") if u is layer.u_v else orth_error(u)
+
+    monkeypatch.setattr("kvdlra.cache.bug_cache.orth_error", nan_for_v)
+    with pytest.raises(OrthonormalityError, match=r"orth_err_v=nan"):
+        layer._guard_orthonormality(
+            rank_changed_k=False, rank_changed_v=False, positions=torch.tensor([0])
+        )
+
+
+def test_nan_k_only_still_aborts(
+    tiny_model: LlamaForCausalLM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """fix2 mirror: a NaN-K reading next to a finite V must abort too -- the old
+    aggregation happened to catch this direction (a NaN FIRST argument to ``max`` is not
+    dropped), but the fix checks both streams the same way regardless of order."""
+    cache = BugStreamingCache(
+        tiny_model, rank=8, coord_budget=64, recent_window=8, absorb_block=4, diag_every=1
+    )
+    _drive(tiny_model, cache)
+    cache.drain_diag()
+    layer = cache._bug_layers()[0]
+
+    def nan_for_k(u: Tensor) -> float:
+        return float("nan") if u is layer.u_k else orth_error(u)
+
+    monkeypatch.setattr("kvdlra.cache.bug_cache.orth_error", nan_for_k)
+    with pytest.raises(OrthonormalityError, match=r"orth_err_k=nan"):
+        layer._guard_orthonormality(
+            rank_changed_k=False, rank_changed_v=False, positions=torch.tensor([0])
+        )
+
+
+def test_nan_reading_survives_the_window_fold(
+    tiny_model: LlamaForCausalLM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """fix2: the diag window fold must not drop a NaN either -- the old
+    ``max(self._diag_max_err_v, err_v)`` has the same second-argument blind spot as the
+    abort aggregation. A NaN on one absorb, followed by ordinary finite absorbs in the
+    same window, must still read back as NaN in the drained row for that stream; the
+    other stream, never NaN, stays finite."""
+    cache = BugStreamingCache(
+        tiny_model,
+        rank=8,
+        coord_budget=64,
+        recent_window=8,
+        absorb_block=4,
+        diag_every=1000,  # nothing periodic fires; drain_diag()'s own partial flush does
+    )
+    _drive(tiny_model, cache)
+    cache.drain_diag()
+    layer = cache._bug_layers()[0]
+    calls = 0
+
+    def nan_on_v_once(u: Tensor) -> float:
+        nonlocal calls
+        calls += 1
+        return float("nan") if calls == 2 else orth_error(u)  # call 2 is always err_v
+
+    monkeypatch.setattr("kvdlra.cache.bug_cache.orth_error", nan_on_v_once)
+    for i in range(3):  # one NaN-V absorb, then two ordinary finite absorbs
+        layer._guard_orthonormality(
+            rank_changed_k=False, rank_changed_v=False, positions=torch.tensor([i])
+        )
+
+    (row,) = [r for r in cache.drain_diag() if r["layer"] == 0]
+    assert math.isnan(float(row["orth_err_v"]))  # type: ignore[arg-type]
+    assert not math.isnan(float(row["orth_err_k"]))  # type: ignore[arg-type]

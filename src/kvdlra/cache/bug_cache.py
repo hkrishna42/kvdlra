@@ -121,6 +121,7 @@ Zandieh et al., arXiv:2504.19874 (TurboQuant/PolarQuant; the quantized tier).
 from __future__ import annotations
 
 import math
+import warnings
 from collections import OrderedDict
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -133,14 +134,8 @@ from transformers.cache_utils import Cache, CacheLayerMixin, LinearAttentionCach
 from transformers.models.llama.modeling_llama import rotate_half
 
 from kvdlra.quant import PolarQuant
-from kvdlra.tracker.isvd import (
-    augmented_bug_step,
-    eff_rank,
-    fd_step,
-    oja_step,
-    orth_error,
-    reorthonormalize,
-)
+from kvdlra.tracker import TRACKERS
+from kvdlra.tracker.isvd import eff_rank, orth_error, reorthonormalize
 
 __all__ = ["BugStreamingCache", "BugStreamingLayer", "OrthonormalityError"]
 
@@ -278,7 +273,9 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         n_sink: int = 4,
         theta: float | None = None,
         min_sv_frac: float = 0.0,
-        tracker: str = "bug",
+        tracker: str = "isvd",
+        oja_eta0: float = 20.0,
+        oja_decay: float = 0.03,
         prefill_block_size: int = 128,
         retention: str = "fifo",
         quant_bits: int | None = None,
@@ -380,13 +377,23 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             raise ValueError(f"qr_every must be >= 1 (None disables), got {qr_every}")
         if diag_every < 1:
             raise ValueError(f"diag_every must be >= 1, got {diag_every}")
-        if tracker not in ("bug", "oja", "fd"):
-            raise ValueError(f"tracker must be 'bug' | 'oja' | 'fd', got {tracker!r}")
-        # Week-20 tracker-swap ablation: the gist tracker. "bug" = the rank-adaptive
-        # augmented BUG step (bit-identical to before this knob; at theta=None and
-        # min_sv_frac=0 it IS fixed-rank incremental SVD); "oja" = Oja's rule (the OjaKV
-        # baseline); "fd" = Frequent Directions. Everything else in the cache is fixed.
+        if tracker == "bug":
+            warnings.warn(
+                "tracker='bug' is deprecated; the shipped step is block incremental SVD, "
+                "so its name is 'isvd'. The alias will be removed.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            tracker = "isvd"
+        if tracker not in TRACKERS:
+            raise ValueError(f"tracker must be one of {sorted(TRACKERS)}, got {tracker!r}")
+        # The gist tracker (Week-20 swap ablation). "isvd" = the shipped augmented step,
+        # which at theta=None and min_sv_frac=0 IS fixed-rank incremental SVD; "oja" =
+        # Oja's rule (the OjaKV baseline), whose schedule the two knobs below set; "fd" =
+        # Frequent Directions. Everything else in the cache is held fixed across the three.
         self.tracker = tracker
+        self.oja_eta0 = oja_eta0
+        self.oja_decay = oja_decay
         self.rope = rope
         self.rank = rank
         self.coord_budget = coord_budget
@@ -693,19 +700,39 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             surprise = self._surprise_scores(block_k)
         r_old_k = 0 if self.u_k is None else int(self.u_k.shape[1])
         r_old_v = 0 if self.u_v is None else int(self.u_v.shape[1])
-        if self.tracker == "oja":  # Week-20 swap: Oja's rule, validated Week-2 schedule
-            n_seen = (self.c_k.shape[1] if self.c_k is not None else 0) + self._q_len()
-            self.u_k, self.b_k, rot_k = oja_step(
-                self.u_k, self.b_k, block_k, self.rank, n_seen=n_seen
+        # Looked up in TRACKERS at call time, not bound at import: the dispatch table is
+        # the seam the reconstruction study and the tests substitute a step through.
+        if self.tracker == "oja":  # Oja's rule, on the arm's own schedule
+            # The decay needs TOKENS SEEN, which only grows. Deriving it from the
+            # coordinate tiers' occupancy froze it the moment they hit their budget, so
+            # eta stopped decaying for the whole saturated tail of every long context.
+            n_seen = self._tokens_seen(positions)
+            step = TRACKERS["oja"]
+            self.u_k, self.b_k, rot_k = step(
+                self.u_k,
+                self.b_k,
+                block_k,
+                self.rank,
+                n_seen=n_seen,
+                eta0=self.oja_eta0,
+                decay=self.oja_decay,
             )
-            self.u_v, self.b_v, rot_v = oja_step(
-                self.u_v, self.b_v, block_v, self.rank, n_seen=n_seen
+            self.u_v, self.b_v, rot_v = step(
+                self.u_v,
+                self.b_v,
+                block_v,
+                self.rank,
+                n_seen=n_seen,
+                eta0=self.oja_eta0,
+                decay=self.oja_decay,
             )
-        elif self.tracker == "fd":  # Week-20 swap: Frequent Directions shrinkage
-            self.u_k, self.b_k, rot_k = fd_step(self.u_k, self.b_k, block_k, self.rank)
-            self.u_v, self.b_v, rot_v = fd_step(self.u_v, self.b_v, block_v, self.rank)
-        else:  # the BUG step -- unchanged, bit-identical
-            self.u_k, self.b_k, rot_k = augmented_bug_step(
+        elif self.tracker == "fd":  # Frequent Directions shrinkage
+            step = TRACKERS["fd"]
+            self.u_k, self.b_k, rot_k = step(self.u_k, self.b_k, block_k, self.rank)
+            self.u_v, self.b_v, rot_v = step(self.u_v, self.b_v, block_v, self.rank)
+        else:  # the incremental-SVD step -- unchanged, bit-identical
+            step = TRACKERS["isvd"]
+            self.u_k, self.b_k, rot_k = step(
                 self.u_k,
                 self.b_k,
                 block_k,
@@ -713,7 +740,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
                 theta=self.theta,
                 min_sv_frac=self.min_sv_frac,
             )
-            self.u_v, self.b_v, rot_v = augmented_bug_step(
+            self.u_v, self.b_v, rot_v = step(
                 self.u_v,
                 self.b_v,
                 block_v,
@@ -751,6 +778,19 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             )
         self._enforce_budgets()
 
+    def _tokens_seen(self, positions: Tensor) -> int:
+        """Monotone tokens-seen frontier at the absorb of ``positions``: the larger of the
+        cache's own counter and this block's own positions (L1.1 fix1 Important #1).
+
+        Single-shot pre-fill only advances the counter after its whole absorb loop, so the
+        counter alone reads 0 there and ``positions`` is what is exact; on the heavy-hitter
+        demote path a demoted token's position can be OLDER than the counter, so the counter
+        wins instead of regressing the frontier. Both the diagnostic row's ``tokens_seen``
+        and Oja's learning-rate decay read it -- one expression, so a schedule and the row
+        that reports it cannot disagree.
+        """
+        return max(self.cumulative_length, int(positions.max()) + 1)
+
     def _guard_orthonormality(
         self, rank_changed_k: bool, rank_changed_v: bool, positions: Tensor
     ) -> None:
@@ -777,7 +817,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         err_k = orth_error(self.u_k)
         err_v = orth_error(self.u_v)
         self._diag_window += 1
-        self._diag_tokens = max(self.cumulative_length, int(positions.max()) + 1)
+        self._diag_tokens = self._tokens_seen(positions)
         if self.orth_abort_tol is not None and max(err_k, err_v) > self.orth_abort_tol:
             self._diag_max_err_k = max(self._diag_max_err_k, err_k)
             self._diag_max_err_v = max(self._diag_max_err_v, err_v)
@@ -1379,6 +1419,10 @@ class BugStreamingCache(Cache):
         :meth:`drain_diag`.
     recent_window, absorb_block, n_sink, theta, min_sv_frac, prefill_block_size:
         See :class:`BugStreamingLayer`.
+    tracker, oja_eta0, oja_decay:
+        Which gist tracker the layers run (a key of :data:`kvdlra.tracker.TRACKERS`;
+        ``"bug"`` is a deprecated alias for ``"isvd"``) and, for ``"oja"``, its learning-rate
+        schedule ``eta0 / (1 + decay * tokens_seen)``. See :class:`BugStreamingLayer`.
     """
 
     def __init__(
@@ -1391,7 +1435,9 @@ class BugStreamingCache(Cache):
         n_sink: int = 4,
         theta: float | None = None,
         min_sv_frac: float = 0.0,
-        tracker: str = "bug",
+        tracker: str = "isvd",
+        oja_eta0: float = 20.0,
+        oja_decay: float = 0.03,
         prefill_block_size: int = 128,
         retention: str = "fifo",
         quant_bits: int | None = None,
@@ -1430,6 +1476,8 @@ class BugStreamingCache(Cache):
                 theta=theta,
                 min_sv_frac=min_sv_frac,
                 tracker=tracker,
+                oja_eta0=oja_eta0,
+                oja_decay=oja_decay,
                 prefill_block_size=prefill_block_size,
                 retention=retention,
                 quant_bits=quant_bits,

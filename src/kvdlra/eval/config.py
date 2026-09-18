@@ -131,8 +131,6 @@ def arm_kwargs(arm: ArmCfg, t: int) -> dict[str, Any]:
     for k in ("coord_budget", "quant_budget"):
         if k in kw and kw[k] is None:
             kw[k] = cb
-    if "tracker" in kw:  # the shipped step's legacy string, until L1 renames it in-cache
-        kw["tracker"] = {"isvd": "bug"}.get(kw["tracker"], kw["tracker"])
     return kw
 
 

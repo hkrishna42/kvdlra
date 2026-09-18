@@ -9,6 +9,12 @@ arm's YAML must resolve to the exact keyword set the legacy ``make`` lambda pass
 press/quant arm must carry every identifying field the legacy arm dict did, and no
 others. ``make`` is never called -- the kwargs are the contract, and comparing them
 needs no model.
+
+L1.3b renamed the cache's tracker string from ``bug`` to ``isvd``; the eight ``tracker``
+values were rewritten by hand, and the Oja arm gained the two schedule knobs its config now
+names (``oja_eta0``/``oja_decay``) because that arm deliberately is no longer the legacy arm
+-- the Week-20 cell it froze ran the library defaults and is void. Nothing else in the
+golden changed.
 """
 
 from __future__ import annotations

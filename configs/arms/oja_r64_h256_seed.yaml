@@ -3,8 +3,9 @@ legacy_name: "bugSseed-r64-h256-oja"
 kind: bug
 chunkable: true
 doc: >-
-  Tracker-swap ablation: the r64 arm with the gist tracked by Oja's rule instead of the
-  incremental-SVD step. Week-20 ran it at library defaults (untuned).
+  Tracker-swap ablation: the r64 arm with the gist tracked by Oja's rule. Schedule (20.0,
+  0.03) = the Week-2 validated pre-RoPE schedule; the Week-20 swap ran the library defaults
+  (1.0, 1e-3) and is void.
 cache:
   rank: 64
   coord_budget: null
@@ -20,5 +21,7 @@ cache:
   score_rank: null
   min_sv_frac: 0.0
   tracker: "oja"
+  oja_eta0: 20.0
+  oja_decay: 0.03
   quant_bits: null
   quant_budget: 0

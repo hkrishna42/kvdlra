@@ -204,9 +204,9 @@ def _svd_core(b_fac: Tensor) -> tuple[Tensor, Tensor]:
     precision -- it squares the condition number -- which is why it is a fallback and not
     the path); a second failure retries it once on a jittered Gram, and a third re-raises.
 
-    ``b_fac`` is never wider than it is tall at any call site (``m <= b``), so the Gram's
-    ``r + m`` eigenpairs are exactly the ``min(rows, cols)`` factors ``full_matrices=False``
-    returns.
+    ``b_fac`` is never TALLER than it is wide at any call site -- it is ``(r + m, r + b)``
+    with ``m <= b`` -- so the Gram's ``r + m`` eigenpairs are exactly the ``min(rows, cols)``
+    factors ``full_matrices=False`` returns.
     """
     try:
         u_loc, sigma, _ = torch.linalg.svd(b_fac, full_matrices=False)
@@ -431,17 +431,32 @@ def oja_step(
     rank_cap: int,
     *,
     n_seen: int = 0,
-    eta0: float = 1.0,
-    decay: float = 1e-3,
+    eta0: float,
+    decay: float,
 ) -> tuple[Tensor, Tensor, Tensor]:
     """Oja's-rule subspace tracker (the OjaKV baseline), one block of columns.
 
     Oja's rule as the tracker's drop-in alternative (Week-20 swap): each
     column is L2-normalized and applied sequentially,
     ``U <- orth(U + eta_t * c (c^T U))`` with ``eta_t = eta0 / (1 + decay * t)``
-    (``t`` = tokens seen so far, the validated Week-2 schedule). Seeding is the
-    reduced QR of the first block (as BUG), so the two trackers start identical
-    and differ only in how they advance. Rank is fixed at ``rank_cap`` once seeded.
+    (``t = n_seen`` at the block's first column, advancing one per column).
+    Seeding is the reduced QR of the first block (as the incremental-SVD step),
+    so the two trackers start identical and differ only in how they advance.
+
+    ``eta0`` and ``decay`` are REQUIRED: the schedule is the whole content of the
+    arm, and the Week-20 swap pod ran whatever defaults this signature happened to
+    carry (``1.0, 1e-3``), which is why its cell is void. There is no schedule to
+    fall back on -- an arm names one or the call fails.
+
+    The basis GROWS to ``rank_cap`` instead of being pinned at the seeding block's
+    width. Oja's update spans nothing new (it re-weights directions already in
+    ``U``), so a basis seeded from a 16-column block and then only re-orthonormalized
+    stayed rank 16 forever while the accounting billed ``rank_cap`` -- the Week-20
+    arm tracked a rank-16 gist billed as rank 64. Each block therefore first takes
+    the leading out-of-basis directions from :func:`_augment` (ordered by residual
+    singular value) up to ``rank_cap`` columns, and the Oja updates run on the grown
+    basis. The rank the arm is billed for is the rank it tracks: ``min(rank_cap, n)``
+    once enough columns have been seen.
     """
     if (u is None) != (b_core is None):
         raise ValueError("u and b_core must be provided together (or both None)")
@@ -454,11 +469,13 @@ def oja_step(
         return u_new, b_new, u_new.new_zeros((k, 0))
     assert b_core is not None
     u_cur = u
+    if u_cur.shape[1] < rank_cap:  # grow first, then learn in the grown basis
+        u_cur = _augment(u_cur, b_core, block)[0][:, :rank_cap]
     t = n_seen
     for j in range(block.shape[1]):
         c = block[:, j : j + 1]
         norm = torch.linalg.vector_norm(c)
-        if float(norm) > 1e-12:
+        if float(norm.detach()) > 1e-12:  # detach: a measurement, never a graph node
             c = c / norm
             eta = eta0 / (1.0 + decay * t)
             u_cur = torch.linalg.qr(u_cur + eta * (c @ (c.mT @ u_cur)), mode="reduced")[0]

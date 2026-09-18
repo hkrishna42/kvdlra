@@ -3,8 +3,9 @@ legacy_name: "bugSseed-r64-h256-fd"
 kind: bug
 chunkable: true
 doc: >-
-  Tracker-swap ablation: the r64 arm with a Frequent-Directions tracker. The Week-20 run
-  crashed; the cell is unmeasured.
+  Tracker-swap ablation: the r64 arm with a Frequent-Directions tracker at sketch size
+  l = r = 64, so it stores exactly what the incremental-SVD arm stores and the two cells
+  are bytes-matched. The Week-20 run crashed in the core SVD; the cell is unmeasured.
 cache:
   rank: 64
   coord_budget: null

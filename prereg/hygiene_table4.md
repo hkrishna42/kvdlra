@@ -655,3 +655,47 @@ and ordering rules; §11.
 
 Spend so far against those budgets is sunk, not credited back: ≈ $5.6 across the two killed Qwen
 instances and the harvested Llama one (D-011 addendum 5).
+
+### A2.5 Fix round 1 (2026-09-18): the tracker-level repair covers every arm; Qwen v2 evidence committed
+
+Review of `abf603d`/`7e60619` (one Critical, one Important, four minors); the code fix landed as
+`L1.7 fix1`.
+
+**The `_svd_core` left-factor repair (`isvd.py:_orthonormal_left`) sits BELOW the cache's own
+knobs.** It runs inside the tracker step itself, before `_guard_orthonormality` ever sees a
+basis — so it applies to every arm on all three pods, `isvd_r256_noguard` and `isvd_r128_noguard`
+included, not only the guarded arms A2.1–A2.4 discuss. Its tolerance (`1e-2`, fix1 A1) sits far
+above the measured drift floor (CPU fp32 ~2e-5 at r=256; the pods' own healthy GPU errors ~18x
+that), so only a driver fault of the kind D-011 addendum 5 recorded (0.5–0.92) trips it. When it
+does, it prints one `[diag] {"event":"svd_nonorthonormal",…}` line per process (mirroring
+`svd_fallback`), so a harvest shows whether a control arm's basis was ever touched by the
+tracker-level repair, independent of the cache-level guard. **A2.4's "unchanged" statement is
+qualified accordingly:** the decision rule, arms, knobs and budgets of §4/A1.3/A1.6 stay
+unchanged, but a control arm whose harvested log carries a `svd_nonorthonormal` event is reported
+as such alongside its §4 outcome, not silently as if the tracker never touched its basis.
+
+**Qwen v2 evidence, cited in A2.2 as "the two Qwen instances' raw logs", is now committed**
+(parsed with `kvdlra.eval.records.parse_pplw_lines`/`parse_ppl_lines`/`parse_diag_lines` from the
+saved raw logs; no `manifest.json` — both instances were destroyed unharvested, D-011 addendum 5,
+so `scripts/pod.py check` ignores both directories):
+
+- `results/hygiene_table4_qwen_r256_v2_aborted_51408903/{pplw,ppl,diag}.jsonl`
+- `results/hygiene_table4_qwen_r128_v2_aborted_51415044/{pplw,ppl,diag}.jsonl`
+
+The `noguard` arm's bits/token, recomputed here from the committed `pplw.jsonl` (mean nats/token
+over its 16 `ppl_16k_pg19val_w16` windows, divided by ln 2) and cross-checked against
+`ppl.jsonl`'s own `ppl` value (`log2(ppl)` agrees to 4 decimals on both pods):
+
+| pod | arm | nats/token | bits/token | `ppl` |
+| --- | --- | --- | --- | --- |
+| `hygiene_table4_qwen_r256` (51408903) | `isvd_r256_noguard` | 9.900 | **14.283** | 19939.26 |
+| `hygiene_table4_qwen_r128` (51415044) | `isvd_r128_noguard` | 2.779 | **4.010** | 16.108 |
+
+The r256 figure corrects A2.2's `nll/token = 10.221` nats: that number is the FIRST of the 16
+windows (`10.221485`), not their mean (`9.900446`, which is what agrees with the pod's own
+`ppl = 19939.26` line via `ln(ppl)`); A2.2 is left as written (this file is append-only), and
+9.900 nats / 14.283 bits/token is the citable aggregate from here on. The r128 pod's `noguard`
+arm was not previously reported in this file. Both remain pre-fix, divergence-regime numbers, not
+results: the §4 contrast still needs the guarded arm that never ran.
+
+Spend: no further pod spend against the budgets of A1.6 (evidence commit only).

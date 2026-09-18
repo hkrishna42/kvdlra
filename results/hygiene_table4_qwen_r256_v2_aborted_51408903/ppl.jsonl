@@ -1,0 +1,1 @@
+{"arm": "isvd_r256_noguard", "corpus": "pg19-val", "ctx": 16384, "model": "Qwen/Qwen2.5-7B-Instruct", "ppl": 19939.26, "ratio": 0.517, "sbits": 1.031, "source": "/private/tmp/claude-501/-Users-hari-Desktop-kv-dlra/94e8fd8d-a5d7-4f92-bc54-464b7847145a/scratchpad/qwen-51408903-final-log.txt:581", "tok_eq": 8466.5}

@@ -208,11 +208,12 @@ FALLBACKS = 0
 # Left factors this process had to re-orthonormalize (same contract as FALLBACKS).
 NONORTHONORMAL = 0
 
-# ``‖u_locᵀ u_loc - I‖_F`` above which the returned left factor is repaired. Two decades
-# above what a driver leaves on a core of these sizes in fp32 (~1e-6), so the check is
-# read-only on the path every committed number came from -- and two decades below the
-# 0.5-0.92 the pods measured.
-_LEFT_ORTH_TOL = 1e-4
+# ``‖u_locᵀ u_loc - I‖_F`` above which the returned left factor is repaired. Measured CPU
+# fp32 floor at r=256 is ~2e-5; the pods' own diag rows put the GPU's healthy floor at
+# ~18x that (~3.6e-4). 1e-2 sits ~30x above the inferred GPU floor and ~50x below the
+# observed pathology (0.5-0.9), and above the cache guard's own benign threshold (1e-3)
+# -- read-only on every healthy core, GPU included, and only a driver fault trips it.
+_LEFT_ORTH_TOL = 1e-2
 
 
 def _orthonormal_left(u_loc: Tensor) -> Tensor:

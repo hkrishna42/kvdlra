@@ -98,6 +98,18 @@ def _failed_repair(u: Tensor, c: Tensor, b: Tensor) -> tuple[Tensor, Tensor, Ten
     return u * 0.5, c, b, eye
 
 
+def _rank_inflating_repair(
+    u: Tensor, c: Tensor, b: Tensor
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    """A ``reorthonormalize`` whose repaired core reports a FULL effective rank -- the
+    opposite of the deficient one that made the repair fire in the first place -- so a
+    diag row read AFTER the repair would show a rank that never identified anything."""
+    q: Tensor = torch.linalg.qr(u, mode="reduced")[0]
+    full_rank_core = torch.eye(b.shape[0], dtype=b.dtype, device=b.device)
+    rot = torch.eye(u.shape[1], dtype=u.dtype, device=u.device)
+    return q, c, full_rank_core, rot
+
+
 def _pre_w7_step(
     u: Tensor | None, b: Tensor | None, block: Tensor, cap: int
 ) -> tuple[Tensor, Tensor]:
@@ -493,3 +505,86 @@ def test_rank_deficient_seeding_block_survives_a_garbage_driver(
     (row,) = [r for r in cache.drain_diag() if r["layer"] == 0]
     assert not row["fixed_v"]
     assert float(row["orth_err_v"]) < ROUNDOFF  # type: ignore[arg-type]
+
+
+# --------------------------------------------------------------- fix1 (round 1) items
+
+
+def test_fatal_row_keeps_the_pre_repair_effective_rank(
+    tiny_model: LlamaForCausalLM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """fix1 A2: ``eff_rank`` must be folded into the diag window BEFORE the repair, the
+    same rule the pre-repair error already follows -- a repair that re-derives the core
+    from a fresh SVD can read back as full rank even when the defect that triggered it
+    was a rank deficiency (the pods' own ``eff_rank_v`` 93 of 128)."""
+    cache = BugStreamingCache(
+        tiny_model, rank=8, coord_budget=64, recent_window=8, absorb_block=4, diag_every=1
+    )
+    _drive(tiny_model, cache)
+    cache.drain_diag()
+    layer = cache._bug_layers()[0]
+    assert layer.u_k is not None
+    layer.b_k = torch.diag(torch.tensor([5.0, 3.0] + [1e-9] * 6))  # eff_rank 2 of 8
+    layer.u_k = layer.u_k * 3.0  # forces the repair (same injection as elsewhere)
+    monkeypatch.setattr("kvdlra.cache.bug_cache.reorthonormalize", _rank_inflating_repair)
+
+    layer._guard_orthonormality(
+        rank_changed_k=False, rank_changed_v=False, positions=torch.tensor([0])
+    )
+
+    rows = [row for row in cache.drain_diag() if row["layer"] == 0]
+    assert rows and rows[-1]["fixed_k"]
+    assert int(rows[-1]["eff_rank_k"]) == 2  # type: ignore[call-overload]  # pre-repair, not 8
+
+
+def test_nan_orth_error_forces_a_repair(
+    tiny_model: LlamaForCausalLM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """fix1 A3: a NaN measurement must not slip past a plain ``>`` comparison (``NaN >
+    tol`` is always False) -- treated as "not below tolerance", it has to repair."""
+    cache = BugStreamingCache(
+        tiny_model, rank=8, coord_budget=64, recent_window=8, absorb_block=4, diag_every=1
+    )
+    _drive(tiny_model, cache)
+    cache.drain_diag()
+    layer = cache._bug_layers()[0]
+    calls = 0
+
+    def nan_once(u: Tensor) -> float:
+        nonlocal calls
+        calls += 1
+        return float("nan") if calls == 1 else orth_error(u)
+
+    monkeypatch.setattr("kvdlra.cache.bug_cache.orth_error", nan_once)
+    layer._guard_orthonormality(  # must not raise: the repaired basis is clean
+        rank_changed_k=False, rank_changed_v=False, positions=torch.tensor([0])
+    )
+    rows = [row for row in cache.drain_diag() if row["layer"] == 0]
+    assert rows and rows[-1]["fixed_k"]  # the NaN measurement was treated as "repair"
+
+
+def test_nan_post_repair_error_aborts(
+    tiny_model: LlamaForCausalLM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """fix1 A3: a repair whose OWN post-measurement comes back NaN must abort -- NaN is
+    never "at or below" any tolerance, so it can never be silently accepted as fixed."""
+    cache = BugStreamingCache(
+        tiny_model, rank=8, coord_budget=64, recent_window=8, absorb_block=4, diag_every=1
+    )
+    _drive(tiny_model, cache)
+    cache.drain_diag()
+    layer = cache._bug_layers()[0]
+    assert layer.u_k is not None
+    layer.u_k = layer.u_k * 3.0  # real corruption: forces the repair without a stub
+    calls = 0
+
+    def nan_after_repair(u: Tensor) -> float:
+        nonlocal calls
+        calls += 1
+        return orth_error(u) if calls == 1 else float("nan")
+
+    monkeypatch.setattr("kvdlra.cache.bug_cache.orth_error", nan_after_repair)
+    with pytest.raises(OrthonormalityError, match=r"orth_err=nan"):
+        layer._guard_orthonormality(
+            rank_changed_k=False, rank_changed_v=False, positions=torch.tensor([0])
+        )

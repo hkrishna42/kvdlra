@@ -173,6 +173,18 @@ def test_svd_core_reorthonormalizes_a_nonorthonormal_left_factor(
     assert rows[0]["event"] == "svd_nonorthonormal" and rows[0]["shape"] == [40, 40]
 
 
+def test_left_orth_tol_has_headroom_over_the_cpu_floor() -> None:
+    """fix1 A1 (Critical): the tolerance must sit far above what a healthy CPU fp32 core
+    this size actually leaves, or the check trips -- and silently re-orthonormalizes --
+    every arm including ``isvd_r256_noguard``, the paper's baseline. Pin >=10x headroom
+    so the constant cannot drift back down toward the noise floor (it was 1e-4, ~5x the
+    measured ~2e-5 floor, before fix1)."""
+    g = torch.Generator().manual_seed(9)
+    b = torch.randn(272, 272, generator=g)  # r=256, block=16: the (r+m, r+b) core shape
+    u_loc, _, _ = torch.linalg.svd(b, full_matrices=False)
+    assert orth_error(u_loc) * 10 < isvd._LEFT_ORTH_TOL
+
+
 def test_svd_core_leaves_a_clean_left_factor_bit_identical(monkeypatch: pytest.MonkeyPatch) -> None:
     """The check is read-only on the default path: what CPU LAPACK returns -- for a
     well-conditioned core AND for a rank-deficient one, whose null space it still spans

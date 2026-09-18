@@ -430,6 +430,9 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         # an unrepairable basis, not a numerical event a thin QR fixes (D-011 addendum 5).
         # ``qr_every`` is the experimental factor: re-orthonormalize unconditionally every
         # k absorbs and after that stream's own rank change, whatever the measurement says.
+        # ``orth_fix_tol=None`` with ``orth_abort_tol`` set (and ``qr_every`` unset): measure
+        # and abort without ever repairing -- the repair branch cannot fire with no finite
+        # fix threshold, so the abort check sees the raw, unrepaired error (fix1 A4).
         # The measured ceiling on a benign stream is ~7e-4 over 1400 adversarial steps (and
         # 6e-5 over the r64 golden), so at the defaults the fix never fires and behaviour
         # is bit-identical.
@@ -839,20 +842,27 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         err_v = orth_error(self.u_v)
         self._diag_window += 1
         self._diag_tokens = self._tokens_seen(positions)
-        # The PRE-repair error is what the window carries on every path (fix1 Minor #3):
-        # the ratchet trace is the raw measurement, not what is left after a repair.
+        # The PRE-repair error AND effective rank are what the window carries on every
+        # path (fix1 Minor #3, fix1 A2): the ratchet trace is the raw measurement, not
+        # what a repair leaves behind -- the pods' own defect showed up as a pre-repair
+        # `eff_rank_v` 93 of 128, and a repair that re-derives the core from a fresh SVD
+        # can read back as full rank with nothing about the defect having changed.
         self._diag_max_err_k = max(self._diag_max_err_k, err_k)
         self._diag_max_err_v = max(self._diag_max_err_v, err_v)
+        self._diag_min_rank_k = min(self._diag_min_rank_k, eff_rank(self.b_k))
+        self._diag_min_rank_v = min(self._diag_min_rank_v, eff_rank(self.b_v))
         # ``qr_every`` (the experimental factor) repairs unconditionally every k absorbs
-        # and after that stream's own rank change, whatever the measurement says.
+        # and after that stream's own rank change, whatever the measurement says. NaN is
+        # never "at or below" a tolerance (fix1 A3): ``not (err <= tol)`` repairs on
+        # a NaN measurement, where the old ``err > tol`` would have silently let it pass.
         forced_k = self.qr_every is not None and (
             self._absorbs % self.qr_every == 0 or rank_changed_k
         )
         forced_v = self.qr_every is not None and (
             self._absorbs % self.qr_every == 0 or rank_changed_v
         )
-        fixed_k = forced_k or (self.orth_fix_tol is not None and err_k > self.orth_fix_tol)
-        fixed_v = forced_v or (self.orth_fix_tol is not None and err_v > self.orth_fix_tol)
+        fixed_k = forced_k or (self.orth_fix_tol is not None and not (err_k <= self.orth_fix_tol))
+        fixed_v = forced_v or (self.orth_fix_tol is not None and not (err_v <= self.orth_fix_tol))
         rot_fix_k: Tensor | None = None
         rot_fix_v: Tensor | None = None
         if fixed_k:
@@ -873,8 +883,6 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             self._rotate_quant_tier(rot_fix_k, rot_fix_v)
         self._diag_fixed_k = self._diag_fixed_k or fixed_k
         self._diag_fixed_v = self._diag_fixed_v or fixed_v
-        self._diag_min_rank_k = min(self._diag_min_rank_k, eff_rank(self.b_k))
-        self._diag_min_rank_v = min(self._diag_min_rank_v, eff_rank(self.b_v))
         if self.orth_abort_tol is not None:
             # Only a repaired stream is re-measured: an untouched one still carries the
             # error measured above, and (``orth_abort_tol >= orth_fix_tol``, validated in
@@ -883,7 +891,10 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
                 orth_error(self.u_k) if fixed_k else err_k,
                 orth_error(self.u_v) if fixed_v else err_v,
             )
-            if post > self.orth_abort_tol:
+            # NaN is never "at or below" the abort tolerance either (fix1 A3): a
+            # repair whose OWN post-measurement comes back NaN must abort, not be read as
+            # silently within bounds.
+            if not (post <= self.orth_abort_tol):
                 self._flush_diag_window()
                 raise OrthonormalityError(
                     f"layer={self.layer_idx} orth_err={post:.3e} > "
@@ -1439,10 +1450,11 @@ class BugStreamingCache(Cache):
         defaults are bit-identical) it re-orthonormalizes the basis in place, carrying
         coordinates and the quantized tier; if the repaired basis is STILL above
         ``orth_abort_tol`` (default 1e-1, and never below ``orth_fix_tol``) it raises
-        :class:`OrthonormalityError`. ``None`` disables either. ``qr_every``
-        (default ``None``) repairs unconditionally every k absorbs and after that stream's
-        own rank change. ``diag_every`` (default 64) sets the diagnostic window; see
-        :meth:`drain_diag`.
+        :class:`OrthonormalityError`. ``None`` disables either; ``orth_fix_tol=None`` with
+        ``orth_abort_tol`` set measures and aborts without ever repairing (fix1 A4).
+        ``qr_every`` (default ``None``) repairs unconditionally every k absorbs and after
+        that stream's own rank change. ``diag_every`` (default 64) sets the diagnostic
+        window; see :meth:`drain_diag`.
     recent_window, absorb_block, n_sink, theta, min_sv_frac, prefill_block_size:
         See :class:`BugStreamingLayer`.
     tracker, oja_eta0, oja_decay:

@@ -1,0 +1,22 @@
+{
+  "command_line": "vastai create instance 50937088 --image pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel --disk 80 --env '-e POD=hygiene_table4_qwen_r128 -e SHA=a5f02c2c0bced3fa49486d17cd2dc134cc5721dd -e MODEL=Qwen/Qwen2.5-7B-Instruct -e DTYPE=bfloat16' --onstart scripts/pod/boot.sh --label kvdlra-hygiene_table4_qwen_r128",
+  "config_hash": "5c2e547562140ca721584b5847a6d8c1dacb3792db6117060e9c5a206fcc3500",
+  "cuda": "none",
+  "dataset_sha256": {},
+  "dry_run": false,
+  "errors": 0,
+  "git_sha": "a5f02c2c0bced3fa49486d17cd2dc134cc5721dd",
+  "gpu": "none",
+  "harvested_at": null,
+  "kvpress": "0.5.1",
+  "launched_at": "2026-09-18T08:56:15+00:00",
+  "model": "Qwen/Qwen2.5-7B-Instruct",
+  "model_revision": null,
+  "pod": "hygiene_table4_qwen_r128",
+  "records": {},
+  "status": null,
+  "torch": "2.11.0",
+  "transformers": "5.8.0",
+  "triton": "none",
+  "wall_clock_s": null
+}

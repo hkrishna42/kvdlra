@@ -48,6 +48,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.artist import Artist
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.ticker import NullFormatter
@@ -360,9 +361,23 @@ def fig_rank_sweep(src: Path, out: Path, block: int | None = None) -> None:
     One panel per kv, one line per method, mean +- SE over documents: the document is the
     sampling unit, so a document's layers -- and both block sizes, unless `--block` pins
     one -- are averaged before the spread over documents is taken. x is the stored width
-    (`stored_rank`), not the nominal rank, because FD at l=2r stores twice as much.
+    (`stored_rank`), not the nominal rank, because FD at l=2r stores twice as much. The
+    `random_basis` control shares ONE Haar draw (`seed=0`) across every cell, so its band
+    is document variation, not draw-to-draw noise.
+
+    Exits non-zero when the file has nothing to draw, or when any series in `RECON_STYLE`
+    has no rows at all: a study run without `min_sv_frac=(0.0, 0.01)` has no `isvd_f0.01`
+    rows, and a silently absent line is an omission no reader can see.
     """
     rows = [r for r in read_jsonl(src) if block is None or r["block"] == block]
+    if not rows:
+        raise SystemExit(f"no rows for {src}" + ("" if block is None else f" at block={block}"))
+    missing = [k for k in RECON_STYLE if not any(_recon_key(r) == k for r in rows)]
+    if missing:
+        raise SystemExit(
+            f"{src}: no rows for {', '.join(missing)} -- rerun the study with every method "
+            "(`isvd_f0.01` is `min_sv_frac=(0.0, 0.01)`), or drop the series from RECON_STYLE"
+        )
     kvs = sorted({str(r["kv"]) for r in rows})
     fig, axes = plt.subplots(1, len(kvs), figsize=(3.7 * len(kvs), 2.9), sharey=True, squeeze=False)
     for ax, kv in zip(axes[0], kvs, strict=True):
@@ -393,9 +408,14 @@ def fig_rank_sweep(src: Path, out: Path, block: int | None = None) -> None:
         ax.set_xlabel("stored width (columns of U)", fontsize=8)
     axes[0][0].set_ylabel("||M - UC||_F / ||M||_F", fontsize=8)
     # Below the panels, not inside one: the curves fall left-to-right and would sit under
-    # an in-axes legend at any rank grid narrower than the study's.
+    # an in-axes legend at any rank grid narrower than the study's. Merged over every
+    # panel, not read off the first: a method whose rows cover only one kv is labelled too.
+    legend: dict[str, Artist] = {}
+    for ax in axes[0]:
+        handles, labels = ax.get_legend_handles_labels()
+        legend.update(zip(labels, handles, strict=True))
     fig.legend(
-        *axes[0][0].get_legend_handles_labels(),
+        list(legend.values()), list(legend.keys()),
         loc="lower center", ncol=4, fontsize=7, bbox_to_anchor=(0.5, -0.02),
     )  # fmt: skip
     ndocs = len({str(r["doc"]) for r in rows})

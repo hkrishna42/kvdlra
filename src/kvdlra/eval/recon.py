@@ -11,10 +11,12 @@ cache with no exact tier, no sinks and no ring -- GATES G1 line 3 pins the two t
 
 The controls answer "does the tracking do anything?": ``frozen_prefill_svd`` is the best
 fixed basis a prefill window can give (no tracking), ``random_basis`` is no information at
-all, and ``svd_oracle`` is the per-sequence offline bound. ``fd2`` is Frequent Directions
-at ``ell = 2r``: its stored representation is ``2r`` wide, so its bound is the rank-``2r``
-oracle, not the rank-``r`` one -- every row carries ``stored_rank = u.shape[1]`` for
-exactly that reason and the figure plots by stored width.
+all, and ``svd_oracle`` is the per-sequence offline bound. Every cell of the study shares
+one Haar draw for ``random_basis`` (``seed=0``), so the spread around that line is document
+variation and not draw-to-draw noise. ``fd2`` is Frequent Directions at ``ell = 2r``: its
+stored representation is ``2r`` wide, so its bound is the rank-``2r`` oracle, not the
+rank-``r`` one -- every row carries ``stored_rank = u.shape[1]`` for exactly that reason
+and the figure plots by stored width.
 """
 
 from __future__ import annotations
@@ -25,8 +27,9 @@ import time
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from hashlib import sha256
+from itertools import product
 from pathlib import Path
-from typing import Literal, get_args
+from typing import Any, Literal, get_args
 
 import torch
 from torch import Tensor
@@ -52,7 +55,7 @@ OJA_GRID: dict[str, list[float]] = {
     "eta0": [0.6, 1.25, 2.5, 5.0, 10.0],
     "decay": [0.03, 0.1, 0.3, 1.0],
 }
-TUNE_RANK, TUNE_LAYER = 16, 8  # Oja's schedule is tuned once, here, and reused at every rank
+TUNE_RANK, TUNE_LAYER = 16, 8  # where Oja's schedule is tuned: once per kv, reused at every rank
 
 
 def load_stream(layer_pt: Path, kv: str) -> tuple[Tensor, str]:
@@ -64,7 +67,7 @@ def load_stream(layer_pt: Path, kv: str) -> tuple[Tensor, str]:
     across heads (the Week-2 convention, CODE_AUDIT.md:185); the sink columns are dropped
     because no arm ever compresses them.
     """
-    blob: dict[str, Tensor] = torch.load(layer_pt, map_location="cpu")
+    blob: dict[str, Tensor] = torch.load(layer_pt, map_location="cpu", weights_only=True)
     if kv == "v":
         key = "V"
     else:
@@ -85,67 +88,59 @@ def _stored(
     prefill: float = PREFILL,
     seed: int = 0,
     min_sv_frac: float = 0.0,
-) -> tuple[Tensor, Tensor]:
-    """The stored pair ``(u, c)`` -- basis and coordinates -- a method ends the stream with."""
-    n, t = m.shape
-    if method == "svd_oracle":
-        u, s, vh = torch.linalg.svd(m, full_matrices=False)
-        k = min(r, int(s.shape[0]))
-        return u[:, :k], s[:k].unsqueeze(1) * vh[:k]
-    if method == "random_basis":
-        g = torch.Generator().manual_seed(seed)
-        u = torch.linalg.qr(torch.randn(n, min(r, n), generator=g))[0].to(m)
-        return u, u.mT @ m
-    if method == "frozen_prefill_svd":
-        p = max(1, min(t, round(prefill * t)))
-        u = torch.linalg.svd(m[:, :p], full_matrices=False)[0][:, :r]
-        return u, u.mT @ m
-    if method == "oja" and oja is None:
-        raise ValueError("method 'oja' has no default schedule: pass oja=(eta0, decay)")
-    step = TRACKERS["fd" if method == "fd2" else method]
-    cap = 2 * r if method == "fd2" else r
-    u = b = c = None
-    seen = 0
-    for start in range(0, t, block):
-        blk = m[:, start : start + block]
-        if method == "oja":
-            assert oja is not None
-            u, b, rot = step(u, b, blk, cap, n_seen=seen, eta0=oja[0], decay=oja[1])
-        elif method == "isvd":
-            u, b, rot = step(u, b, blk, cap, theta=None, min_sv_frac=min_sv_frac)
-        else:
-            u, b, rot = step(u, b, blk, cap)
-        c = u.mT @ blk if c is None else torch.cat([rot @ c, u.mT @ blk], dim=1)
-        seen += int(blk.shape[1])
-    assert u is not None and c is not None  # t >= 1, so the loop ran
-    return u, c
-
-
-def _rel_err(m: Tensor, u: Tensor, c: Tensor) -> float:
-    return float(torch.linalg.norm(m - u @ c) / torch.linalg.norm(m))
-
-
-def stored_error(
-    m: Tensor,
-    method: Method,
-    r: int,
-    block: int = 16,
-    *,
-    oja: tuple[float, float] | None = None,
-    prefill: float = PREFILL,
-    seed: int = 0,
-    min_sv_frac: float = 0.0,
-) -> float:
-    """``||m - u c||_F / ||m||_F`` for one method on one ``(n, T)`` stream.
+) -> tuple[float, Tensor]:
+    """``(||m - u c||_F / ||m||_F, u)`` -- the relative error of the pair ``(u, c)`` a
+    method ends the stream with, and the basis it stored it in (``u.shape[1]`` is the
+    stored width, which ``fd2`` doubles and the ``min_sv_frac`` floor can shrink).
 
     ``prefill`` is a FRACTION of ``T`` (the frozen control's window); ``min_sv_frac`` is
     the ``isvd`` singular-value floor; ``oja`` is that tracker's ``(eta0, decay)``, which
-    it has no default for.
+    it has no default for; ``seed`` draws ``random_basis``.
     """
-    u, c = _stored(
-        m, method, r, block, oja=oja, prefill=prefill, seed=seed, min_sv_frac=min_sv_frac
-    )
-    return _rel_err(m, u, c)
+    n, t = m.shape
+    u: Tensor | None = None
+    c: Tensor | None = None
+    if method == "svd_oracle":
+        left, s, vh = torch.linalg.svd(m, full_matrices=False)
+        k = min(r, int(s.shape[0]))
+        u, c = left[:, :k], s[:k].unsqueeze(1) * vh[:k]
+    elif method == "random_basis":
+        g = torch.Generator().manual_seed(seed)
+        u = torch.linalg.qr(torch.randn(n, min(r, n), generator=g))[0].to(m)
+        c = u.mT @ m
+    elif method == "frozen_prefill_svd":
+        p = max(1, min(t, round(prefill * t)))
+        u = torch.linalg.svd(m[:, :p], full_matrices=False)[0][:, :r]
+        c = u.mT @ m
+    else:
+        if method == "oja" and oja is None:
+            raise ValueError("method 'oja' has no default schedule: pass oja=(eta0, decay)")
+        step = TRACKERS["fd" if method == "fd2" else method]
+        cap = 2 * r if method == "fd2" else r
+        b = None
+        seen = 0
+        for start in range(0, t, block):
+            blk = m[:, start : start + block]
+            if method == "oja":
+                assert oja is not None
+                u, b, rot = step(u, b, blk, cap, n_seen=seen, eta0=oja[0], decay=oja[1])
+            elif method == "isvd":
+                u, b, rot = step(u, b, blk, cap, theta=None, min_sv_frac=min_sv_frac)
+            else:
+                u, b, rot = step(u, b, blk, cap)
+            c = u.mT @ blk if c is None else torch.cat([rot @ c, u.mT @ blk], dim=1)
+            seen += int(blk.shape[1])
+    assert u is not None and c is not None  # every branch assigns; t >= 1, so the loop ran
+    return float(torch.linalg.norm(m - u @ c) / torch.linalg.norm(m)), u
+
+
+def stored_error(m: Tensor, method: Method, r: int, block: int = 16, **kw: Any) -> float:
+    """``||m - u c||_F / ||m||_F`` for one method on one ``(n, T)`` stream.
+
+    The scalar half of :func:`_stored`, whose keyword options (``oja``, ``prefill``,
+    ``seed``, ``min_sv_frac``) this forwards.
+    """
+    return _stored(m, method, r, block, **kw)[0]
 
 
 def tune_oja(docs: list[Tensor], r: int, grid: dict[str, list[float]]) -> tuple[float, float]:
@@ -170,8 +165,9 @@ def tune_oja(docs: list[Tensor], r: int, grid: dict[str, list[float]]) -> tuple[
 
 def _doc_dirs(d: Path) -> list[Path]:
     """One doc dump, or every doc dump under a model directory."""
-    subdirs = sorted(p.parent for p in d.glob("*/layer_00.pt"))
-    return [d] if (d / "layer_00.pt").is_file() else subdirs
+    if (d / "layer_00.pt").is_file():
+        return [d]
+    return sorted(p.parent for p in d.glob("*/layer_00.pt"))
 
 
 def run_study(
@@ -190,27 +186,35 @@ def run_study(
     """Score every method on every cell of the grid into ``out/recon.jsonl`` (+ provenance).
 
     ``dump_dir`` is one doc dump, a directory of them, or an explicit list. ``oja`` pins
-    the schedule; without it, one is tuned on ``tune_docs`` at rank ``TUNE_RANK`` / layer
-    ``TUNE_LAYER`` and reused at every rank. ``min_sv_frac`` sweeps the ``isvd`` floor only.
+    one schedule for every kv; without it, one is tuned PER KV on ``tune_docs`` at rank
+    ``TUNE_RANK`` / layer ``TUNE_LAYER`` and reused at every rank -- keys and values are
+    different matrix families and Oja's optimum moves between them (CODE_AUDIT.md Q5).
+    ``min_sv_frac`` sweeps the ``isvd`` floor only.
     """
     t0, started = time.perf_counter(), datetime.now(UTC).isoformat(timespec="seconds")
     # str included: iterating one as a Sequence[Path] would silently walk its characters.
     docs = _doc_dirs(Path(dump_dir)) if isinstance(dump_dir, str | Path) else [*map(Path, dump_dir)]
-    tuning: dict[str, object] = {"schedule_given": oja is not None}
-    if "oja" in methods and oja is None:
+    schedules: dict[str, tuple[float, float]] = {}
+    for want in kv if "oja" in methods else ():
+        if oja is not None:
+            schedules[want] = oja
+            continue
         if not tune_docs:
             raise ValueError("method 'oja' needs oja=(eta0, decay) or tune_docs to tune it on")
-        mats = [load_stream(p / f"layer_{TUNE_LAYER:02d}.pt", kv[0])[0] for p in tune_docs]
-        oja = tune_oja(mats, TUNE_RANK, OJA_GRID)
-        tuning = {
-            "docs": [p.name for p in tune_docs],
+        mats = [load_stream(p / f"layer_{TUNE_LAYER:02d}.pt", want)[0] for p in tune_docs]
+        schedules[want] = tune_oja(mats, TUNE_RANK, OJA_GRID)
+    tuning = {
+        w: {
+            "eta0": sched[0],
+            "decay": sched[1],
+            "schedule_given": oja is not None,
+            "docs": [] if oja is not None else [p.name for p in tune_docs],
             "rank": TUNE_RANK,
             "layer": TUNE_LAYER,
-            "kv": kv[0],
-            "eta0": oja[0],
-            "decay": oja[1],
             "reused_at_every_rank": True,
         }
+        for w, sched in schedules.items()
+    }
 
     specs = [(me, f) for me in methods for f in (min_sv_frac if me == "isvd" else (0.0,))]
     rows: list[dict[str, object]] = []
@@ -225,26 +229,25 @@ def run_study(
         for li in idx:
             for want in kv:
                 m, got = load_stream(doc / f"layer_{li:02d}.pt", want)
-                for block in blocks:
-                    for r in ranks:
-                        for method, msf in specs:
-                            u, c = _stored(m, method, r, block, oja=oja, min_sv_frac=msf)
-                            rows.append(
-                                {
-                                    "model": model,
-                                    "doc": doc.name,
-                                    "layer": li,
-                                    "kv": got,
-                                    "method": method,
-                                    "rank": r,
-                                    "stored_rank": int(u.shape[1]),
-                                    "block": block,
-                                    "err": _rel_err(m, u, c),
-                                    "min_sv_frac": msf,
-                                    "oja_eta0": oja[0] if method == "oja" and oja else None,
-                                    "oja_decay": oja[1] if method == "oja" and oja else None,
-                                }
-                            )
+                sched = schedules.get(want)
+                for block, r, (method, msf) in product(blocks, ranks, specs):
+                    err, u = _stored(m, method, r, block, oja=sched, min_sv_frac=msf)
+                    rows.append(
+                        {
+                            "model": model,
+                            "doc": doc.name,
+                            "layer": li,
+                            "kv": got,
+                            "method": method,
+                            "rank": r,
+                            "stored_rank": int(u.shape[1]),
+                            "block": block,
+                            "err": err,
+                            "min_sv_frac": msf,
+                            "oja_eta0": sched[0] if method == "oja" and sched else None,
+                            "oja_decay": sched[1] if method == "oja" and sched else None,
+                        }
+                    )
         # Rewritten after every document, not once at the end: the full grid is hours of
         # CPU and a crash in the last one would otherwise discard every finished document.
         # provenance.json is written only on a clean finish, so a partial file is visibly
@@ -261,6 +264,7 @@ def run_study(
                     ["git", "-C", str(Path(__file__).resolve().parents[3]), "rev-parse", "HEAD"],
                     capture_output=True,
                     text=True,
+                    check=True,  # a study whose provenance says `git_sha: ""` is not provenance
                 ).stdout.strip(),
                 "dump_sha256_manifest": {
                     "path": str(manifest),

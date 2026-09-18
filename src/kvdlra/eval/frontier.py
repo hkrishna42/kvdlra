@@ -574,13 +574,16 @@ def _log_row(row: dict[str, Any]) -> None:
         return
     # `sbits=` appended after `ratio=` -- records.PPL_RE captures ratio= and ignores the
     # tail, so archived ppl lines keep parsing unchanged.
-    # `eff_rank=` (bug arms only) goes LAST: records.PPL_RE is a prefix match, so a
+    # `eff_rank=` (bug arms only) goes next: records.PPL_RE is a prefix match, so a
     # field appended after `sbits=` leaves every archived and new line parsing the same.
+    # `corpus=` goes LAST, same rule as `_log_pplw`'s -- records.PPL_RE takes it as an
+    # optional trailing group, so archived lines (neither field) keep parsing too.
     eff = row.get("eff_rank")
     print(
         f"  {row['method']:14s} [T={row['T']}] ppl={row['ppl']:.3f} "
         f"tok_eq/layer={row['tok_equiv_per_layer']:.1f} ratio={row['ratio_fp16']:.3f} "
         f"sbits={row.get('ratio_stored_bits', float('nan')):.3f}"
-        f"{'' if eff is None else f' eff_rank={eff}'}",
+        f"{'' if eff is None else f' eff_rank={eff}'}"
+        f" corpus={row['corpus']}",
         flush=True,
     )

@@ -146,7 +146,31 @@ def load_task(name: str) -> TaskCfg:
 
 
 def load_pod(name: str) -> PodCfg:
-    return _load("pods", name, PodCfg)  # type: ignore[no-any-return]
+    """The pod config, refusing two ``ppl`` tasks at the same context length that read
+    different corpora (Ruling PR-32).
+
+    `scripts/pod.py`'s pod gate (``_ppl_fails`` / ``_pplw_fails``) counts records per
+    (arm, ctx), blind to corpus, and ``ppl.jsonl``/``pplw.jsonl`` carry one row per
+    (arm, ctx) each -- so two ppl tasks sharing a ctx but not a corpus would let one
+    corpus's windows silently fill the other's slot in that count instead of failing
+    loud. Rather than teach every per-(arm, ctx) reader a corpus axis, it is refused
+    here, at load time, naming both task files.
+    """
+    p: PodCfg = _load("pods", name, PodCfg)
+    by_ctx: dict[int, list[tuple[str, str]]] = {}
+    for task_name in p.tasks:
+        t = load_task(task_name)
+        if t.generator == "ppl":
+            by_ctx.setdefault(t.ctx, []).append((task_name, t.corpus))
+    bad = []
+    for ctx, entries in sorted(by_ctx.items()):
+        corpora = {c for _, c in entries}
+        if len(corpora) > 1:
+            named = ", ".join(f"{ROOT / 'tasks' / f'{tn}.yaml'} (corpus={c})" for tn, c in entries)
+            bad.append(f"ppl tasks at ctx={ctx} disagree on corpus: {named}")
+    if bad:
+        raise ValueError(f"{ROOT / 'pods' / f'{name}.yaml'}: " + "; ".join(bad))
+    return p
 
 
 def arm_kwargs(arm: ArmCfg, t: int) -> dict[str, Any]:

@@ -29,7 +29,7 @@ import pytest
 import tables
 
 from kvdlra.eval import config, frontier
-from kvdlra.eval.config import CORPUS_TOKENS, load_task
+from kvdlra.eval.config import CORPUS_TOKENS, load_pod, load_task
 from kvdlra.eval.records import PplwRecord, parse_pplw_lines, write_jsonl
 
 NTOK = 2048
@@ -88,7 +88,10 @@ def test_the_paired_interval_brackets_the_true_shift(shift: float) -> None:
     true_d = float((other - base).mean())
     assert s["d_bits"] == pytest.approx(true_d, abs=1e-12)
     assert s["lo"] is not None and s["hi"] is not None
-    assert s["lo"] <= true_d <= s["hi"]
+    # Against the INJECTED shift, not the sample's own mean (which the CI always
+    # brackets almost tautologically, since it is centered on that same mean) -- and
+    # excluding zero, so this also confirms the interval resolves a real effect.
+    assert s["lo"] <= shift <= s["hi"] and s["lo"] > 0
 
 
 def test_tost_separates_an_equivalent_shift_from_a_material_one() -> None:
@@ -116,6 +119,82 @@ def test_ppl_table_writes_one_markdown_row_per_arm(tmp_path: Path) -> None:
     assert sum(1 for ln in md.splitlines() if ln.startswith("| full ")) == 1
     assert sum(1 for ln in md.splitlines() if ln.startswith("| bug-r64 ")) == 1
     assert "+/-0.05" in md
+
+
+def test_ppl_table_keeps_two_corpora_at_one_ctx_separate(tmp_path: Path) -> None:
+    """Two ppl tasks can share a ctx with different corpora (PG-19 val + WikiText-103
+    test both ship a 16K task) inside one pod's `pplw.jsonl`. `ppl_stats` used to key
+    by (arm, ctx) alone, so the second corpus's windows would silently overwrite the
+    first's; each must come back as its own row, with its own bits/token, never
+    pooled together."""
+    rows: list[PplwRecord] = [
+        {
+            "model": "tiny",
+            "arm": "full",
+            "ctx": 16384,
+            "window_idx": i,
+            "ntok": NTOK,
+            "nll_sum_nats": bits * NTOK * math.log(2.0),
+            "corpus": corpus,
+            "source": "synthetic:1",
+        }
+        for corpus, bits_list in (("pg19-val", [3.0, 3.2]), ("wikitext-103-test", [5.0, 5.4]))
+        for i, bits in enumerate(bits_list)
+    ]
+    stats = {s["corpus"]: s for s in tables.ppl_stats(rows)}
+    assert len(stats) == 2
+    assert stats["pg19-val"]["bits"] == pytest.approx(3.1)
+    assert stats["wikitext-103-test"]["bits"] == pytest.approx(5.2)
+    assert stats["pg19-val"]["n_windows"] == stats["wikitext-103-test"]["n_windows"] == 2
+
+    d = tmp_path / "results" / "w99_twocorpus"
+    d.mkdir(parents=True)
+    write_jsonl(d / "pplw.jsonl", cast(list[Any], rows))
+    tables.ppl_table(d, tmp_path / "ppl_w99_twocorpus.md")
+    md = (tmp_path / "ppl_w99_twocorpus.md").read_text()
+    header = next(ln for ln in md.splitlines() if ln.startswith("| arm"))
+    assert "corpus" in header
+    assert sum(1 for ln in md.splitlines() if ln.startswith("| full ")) == 2  # one per corpus
+
+
+def test_ppl_table_fails_loud_on_an_empty_but_present_pplw_file(tmp_path: Path) -> None:
+    """A zero-byte `pplw.jsonl` is as fatal as a missing one -- previously it silently
+    produced a table with no rows instead of refusing."""
+    d = tmp_path / "results" / "w99_empty"
+    d.mkdir(parents=True)
+    (d / "pplw.jsonl").write_text("")
+    with pytest.raises(SystemExit, match="no per-window rows"):
+        tables.ppl_table(d, tmp_path / "out.md")
+
+
+def test_load_pod_refuses_two_ppl_tasks_at_one_ctx_with_different_corpora(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ruling PR-32: `scripts/pod.py`'s pod gate counts pplw/ppl records per (arm, ctx),
+    blind to corpus, so a pod naming two ppl tasks at the same ctx with different
+    corpora would let one corpus's windows silently fill the other's slot in that
+    count. Refused at load, naming both task files."""
+    (tmp_path / "tasks").mkdir()
+    (tmp_path / "pods").mkdir()
+    head = "generator: ppl\nctx: 16384\nwindow: 2048\nn_samples: 4\n"
+    (tmp_path / "tasks" / "a.yaml").write_text(f"name: a\n{head}corpus: pg19-val\n")
+    (tmp_path / "tasks" / "b.yaml").write_text(f"name: b\n{head}corpus: wikitext-103-test\n")
+    (tmp_path / "pods" / "mixed.yaml").write_text(
+        "name: mixed\nmodel: m\narms: []\ntasks: [a, b]\n"
+    )
+    monkeypatch.setattr("kvdlra.eval.config.ROOT", tmp_path)
+    with pytest.raises(ValueError, match=r"mixed\.yaml") as e:
+        load_pod("mixed")
+    assert "a.yaml" in str(e.value) and "b.yaml" in str(e.value)
+
+
+def test_every_shipped_pod_still_loads() -> None:
+    """The PR-32 guard now runs inside every `load_pod` call -- no existing pod, none
+    of which mixes corpora at one ctx, may regress."""
+    pods = sorted((config.ROOT / "pods").glob("*.yaml"))
+    assert pods  # the loop below would pass vacuously over an empty directory
+    for p in pods:
+        load_pod(p.stem)
 
 
 def test_a_ppl_task_asking_for_more_windows_than_the_corpus_holds_is_refused(

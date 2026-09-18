@@ -620,6 +620,7 @@ class PplStat(TypedDict):
 
     arm: str
     ctx: int
+    corpus: str | None
     n_windows: int
     bits: float
     d_bits: float | None
@@ -632,31 +633,42 @@ class PplStat(TypedDict):
 def ppl_stats(
     rows: Sequence[PplwRecord], baseline: str = "full", delta: float = 0.05
 ) -> list[PplStat]:
-    """Per-window NLL rows -> bits/token per (arm, ctx), paired against ``baseline``.
+    """Per-window NLL rows -> bits/token per (arm, ctx, corpus), paired against
+    ``baseline`` within the same corpus.
 
     Windows are paired by ``window_idx`` -- every arm scored the same slices of the same
     corpus, and the per-window spread across a corpus dwarfs the difference between two
     arms, so an unpaired comparison of pooled numbers hides the effect it is measuring.
     Both the interval and TOST run on those per-window differences, never on the pooled
     value: pooling first throws away the pairing and leaves one number with no spread.
+
+    Keyed by ``(arm, ctx, corpus)``, not just ``(arm, ctx)``: two ppl tasks can share a
+    ctx with different corpora (PG-19 validation + WikiText-103 test both ship a 16K
+    task), and pairing across them would average two different texts' perplexity into
+    one number instead of keeping each corpus's own comparison intact.
     """
-    bits: dict[tuple[str, int], dict[int, float]] = defaultdict(dict)
+    bits: dict[tuple[str, int, str | None], dict[int, float]] = defaultdict(dict)
     for r in rows:
-        bits[(r["arm"], r["ctx"])][r["window_idx"]] = r["nll_sum_nats"] / (r["ntok"] * math.log(2))
+        key = (r["arm"], r["ctx"], r.get("corpus"))
+        bits[key][r["window_idx"]] = r["nll_sum_nats"] / (r["ntok"] * math.log(2))
     out: list[PplStat] = []
-    for ctx in sorted({c for _, c in bits}):
-        arms = sorted(a for a, c in bits if c == ctx)
+    groups = sorted({(c, corpus) for _, c, corpus in bits}, key=lambda x: (x[0], x[1] or ""))
+    for ctx, corpus in groups:
+        arms = sorted(a for a, c, cp in bits if c == ctx and cp == corpus)
         if baseline not in arms:
-            raise SystemExit(f"ppl: no {baseline!r} arm at ctx={ctx} -- nothing to pair against")
-        base = bits[(baseline, ctx)]
+            raise SystemExit(
+                f"ppl: no {baseline!r} arm at ctx={ctx} corpus={corpus} -- nothing to pair against"
+            )
+        base = bits[(baseline, ctx, corpus)]
         for arm in [baseline] + [a for a in arms if a != baseline]:
-            w = bits[(arm, ctx)]
+            w = bits[(arm, ctx, corpus)]
             mean_bits = sum(w.values()) / len(w)
             if arm == baseline:
                 out.append(
                     {
                         "arm": arm,
                         "ctx": ctx,
+                        "corpus": corpus,
                         "n_windows": len(w),
                         "bits": mean_bits,
                         "d_bits": None,
@@ -669,8 +681,9 @@ def ppl_stats(
                 continue
             if set(w) != set(base):
                 raise SystemExit(
-                    f"ppl: {arm} ctx={ctx} scored windows {sorted(set(w) ^ set(base))}"
-                    f" that {baseline} did not (or the reverse) -- the pairing is broken"
+                    f"ppl: {arm} ctx={ctx} corpus={corpus} scored windows"
+                    f" {sorted(set(w) ^ set(base))} that {baseline} did not (or the reverse)"
+                    " -- the pairing is broken"
                 )
             d = [w[i] - base[i] for i in sorted(w)]
             mean_d, lo, hi = paired_bootstrap(d)
@@ -679,6 +692,7 @@ def ppl_stats(
                 {
                     "arm": arm,
                     "ctx": ctx,
+                    "corpus": corpus,
                     "n_windows": len(w),
                     "bits": mean_bits,
                     "d_bits": mean_d,
@@ -703,6 +717,8 @@ def ppl_table(results: Path, out: Path, baseline: str = "full", delta: float = 0
     if not src.is_file():
         raise SystemExit(f"ppl: no per-window records at {src}")
     rows = [cast(PplwRecord, r) for r in read_jsonl(src)]
+    if not rows:
+        raise SystemExit(f"ppl: no per-window rows in {src}")
     corpora = sorted({str(r.get("corpus")) for r in rows})
     stats = ppl_stats(rows, baseline, delta)
     try:  # cite the repo-relative path, as `_emit` does -- a local absolute one cites nothing
@@ -716,7 +732,16 @@ def ppl_table(results: Path, out: Path, baseline: str = "full", delta: float = 0
         f"TOST: two one-sided t-tests at +/-{delta} bits/token on the per-window differences;"
         " p is the larger one-sided p-value, equivalent at p < 0.05",
     ]
-    header = ["arm", "ctx", "windows", "bits/token", "delta bits [95% CI]", "TOST p", "equivalent"]
+    header = [
+        "arm",
+        "ctx",
+        "corpus",
+        "windows",
+        "bits/token",
+        "delta bits [95% CI]",
+        "TOST p",
+        "equivalent",
+    ]
     body = []
     for s in stats:
         d, lo, hi, p = s["d_bits"], s["lo"], s["hi"], s["p_tost"]
@@ -724,6 +749,7 @@ def ppl_table(results: Path, out: Path, baseline: str = "full", delta: float = 0
             [
                 s["arm"],
                 str(s["ctx"]),
+                str(s["corpus"]),
                 str(s["n_windows"]),
                 f"{s['bits']:.4f}",
                 "--" if d is None else f"{d:+.4f} [{lo:+.4f}, {hi:+.4f}]",

@@ -54,9 +54,13 @@ ERROR_RE = re.compile(r"^\[error\] axis=(\S+) arm=(\S+) ctx=(\d+)(?: batch=(\d+)
 # (175/175 match) -- see results/w11-table-ppl-lines.txt (no leading space, no sbits),
 # results/w17-qwen-lines.txt (2-space, no sbits) and results/w18-*-ppl-lines.txt
 # (2-space, with sbits).
+# `corpus=` is appended LAST by `frontier._log_row` (after the optional `eff_rank=`) and
+# is OPTIONAL, on the same basis as `sbits=`/`eff_rank=`: no archived line has it, and
+# PPL_RE is a prefix match with no `$` anchor, so a trailing field never stops a line
+# from parsing. `.*?` before it skips over `eff_rank=` when present.
 PPL_RE = re.compile(
     r"^\s*(\S+)\s+\[T=(\d+)\] ppl=([0-9.]+)(?: tok_eq/layer=([0-9.]+))? .*?ratio=([0-9.]+)"
-    r"(?: sbits=([0-9.]+))?"
+    r"(?: sbits=([0-9.]+))?(?:.*? corpus=(\S+))?"
 )
 # The emitter's own documented format (frontier._log_pplw, pinned by
 # tests/test_w15_pplw.py): one line per (arm, T), except that a would-be >400-char line
@@ -272,7 +276,7 @@ def parse_ppl_lines(text: str, model: str, source: str) -> list[PplRecord]:
         m = PPL_RE.match(line)
         if not m:
             continue
-        arm, ctx, ppl, tok_eq, ratio, sbits = m.groups()
+        arm, ctx, ppl, tok_eq, ratio, sbits, corpus = m.groups()
         out.append(
             {
                 "model": model,
@@ -282,9 +286,8 @@ def parse_ppl_lines(text: str, model: str, source: str) -> list[PplRecord]:
                 "ratio": float(ratio),
                 "sbits": float(sbits) if sbits is not None else None,
                 "tok_eq": float(tok_eq) if tok_eq is not None else None,
-                # The pooled line does not print the corpus; the per-window group for
-                # the same (arm, ctx) does, and that is the file the `ppl` table reads.
-                "corpus": None,
+                # `None` on an archived line, which printed no `corpus=` at all.
+                "corpus": corpus,
                 "source": f"{source}:{i}",
             }
         )

@@ -130,8 +130,9 @@ def test_tracked_rank_reads_the_basis_and_is_zero_without_one(
 def test_eff_rank_on_the_ppl_row_appends_without_breaking_the_harvest(
     tiny_model: LlamaForCausalLM, capsys: Any
 ) -> None:
-    """``eff_rank=`` is appended at the END of the pooled ppl line. ``records.PPL_RE``
-    is a prefix match, so the harvest reads the line exactly as before."""
+    """``eff_rank=`` is appended after ``sbits=``, and ``corpus=`` after that -- the true
+    end of the pooled ppl line. ``records.PPL_RE`` is a prefix match with the trailing
+    fields optional, so the harvest reads the line exactly as before."""
     t, window = 64, 16
     model = _low_rank_kv_model(tiny_model)
     cfg = ArmCfg(
@@ -151,7 +152,7 @@ def test_eff_rank_on_the_ppl_row_appends_without_breaking_the_harvest(
 
     out = capsys.readouterr().out
     (line,) = [ln for ln in out.splitlines() if " ppl=" in ln]
-    assert line.endswith(f" eff_rank={eff}")
+    assert line.endswith(f" eff_rank={eff} corpus={row['corpus']}")
     m = records.PPL_RE.match(line)
     assert m is not None and m.group(1) == "bug-r32" and m.group(3) == f"{row['ppl']:.3f}"
     (parsed,) = records.parse_ppl_lines(out, model="M", source="log")

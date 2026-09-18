@@ -27,35 +27,15 @@ from typing import cast
 import pytest
 import torch
 from torch import nn
-from transformers import LlamaConfig, LlamaForCausalLM
+from transformers import LlamaForCausalLM
 
 from kvdlra.cache import BugStreamingCache
 from kvdlra.cache.bug_cache import BugStreamingLayer, _RopeAngles
 
 H, D = 2, 16
 N_FEATURES = H * D
-
-
-def _tiny_config() -> LlamaConfig:
-    return LlamaConfig(
-        vocab_size=256,
-        hidden_size=64,
-        intermediate_size=128,
-        num_hidden_layers=2,
-        num_attention_heads=4,
-        num_key_value_heads=H,
-        head_dim=D,
-        max_position_embeddings=4096,
-    )
-
-
-@pytest.fixture(scope="module")
-def tiny_model() -> LlamaForCausalLM:
-    torch.manual_seed(0)
-    model = LlamaForCausalLM(_tiny_config())  # type: ignore[no-untyped-call]
-    model.config._attn_implementation = "sdpa"
-    model.eval()  # type: ignore[no-untyped-call]
-    return model
+# The shared `tiny_model` fixture (tests/conftest.py) at this module's config.
+TINY_MPE, TINY_SDPA = 4096, True
 
 
 def _pos(start: int, n: int) -> torch.Tensor:

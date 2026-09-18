@@ -55,6 +55,17 @@ def test_oja_n_seen_keeps_growing_after_the_tiers_saturate(
     -- so on any context longer than the budget the decay froze and the arm ran the rest of
     the stream at a constant learning rate. Here the budget (8) saturates long before the
     200-token prefill ends.
+
+    ``hh_budget`` + ``seed_hh_warmup`` (the shipped Oja arm's own heavy-hitter config) also
+    puts the WHOLE single-shot prefill through the SLASH path (``cache.ingesting()`` makes
+    ``_prefill``'s ``seed`` flag true for this one call): each ``prefill_block_size``
+    sub-block re-scores the exact-tier candidate pool by surprise, and once the tracked
+    basis is no longer empty a low-surprise OLD resident can be demoted after a more recent
+    sub-block was demoted instead -- a real dip, measured at this rank/budget/seed, in the
+    positions a demote batch carries. ``cumulative_length`` stays 0 for every one of these
+    absorbs (it is only set once, after the whole prefill loop returns). That is the fix1 R2
+    scenario: ``_tokens_seen`` must be a running maximum across absorbs, not just this call's
+    own ``max(cumulative_length, positions.max() + 1)``.
     """
     budget, seen = 8, []
     real = TRACKERS["oja"]
@@ -64,14 +75,24 @@ def test_oja_n_seen_keeps_growing_after_the_tiers_saturate(
         return real(u, b, block, cap, n_seen=n_seen, **kw)
 
     monkeypatch.setitem(TRACKERS, "oja", spy)
-    cache = _cache(tiny_model, coord_budget=budget, prefill_block_size=16, tracker="oja", rank=4)
-    g = torch.Generator().manual_seed(1)
-    with torch.no_grad(), cache.attach(tiny_model):
+    cache = _cache(
+        tiny_model,
+        coord_budget=budget,
+        prefill_block_size=2,
+        tracker="oja",
+        rank=2,
+        hh_budget=2,
+        hh_select="surprise",
+        seed_hh_warmup=True,
+    )
+    g = torch.Generator().manual_seed(0)
+    with torch.no_grad(), cache.attach(tiny_model), cache.ingesting():
         tiny_model(torch.randint(0, 256, (1, 200), generator=g), past_key_values=cache)
     # A single-shot prefill runs each layer's whole chunk loop before the next layer's, so
-    # the first half of the record is layer 0's (K and V per absorb). Within a layer the
-    # frontier only moves forward -- and past what the saturated tiers can report.
-    layer0 = seen[: len(seen) // 2]
+    # the first `1 / len(_bug_layers())` share of the record is layer 0's (K and V per
+    # absorb) -- not necessarily half (R4). Within a layer the frontier only moves forward
+    # -- past what the saturated tiers can report, and past the demote path's older ones.
+    layer0 = seen[: len(seen) // len(cache._bug_layers())]
     assert layer0 == sorted(layer0) and len(set(layer0)) > 4
     assert max(seen) > budget + cache._bug_layers()[0]._q_len()
 

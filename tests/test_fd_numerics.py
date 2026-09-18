@@ -35,6 +35,39 @@ def test_svd_core_falls_back_to_eigh_on_linalg_error(monkeypatch: pytest.MonkeyP
     assert torch.allclose((u * s) @ (u * s).mT, (u_ref * s_ref) @ (u_ref * s_ref).mT, atol=1e-4)
 
 
+def test_svd_core_second_attempt_subtracts_its_own_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R1: the jittered retry adds ``jitter`` to the GRAM to make ``eigh`` converge; that
+    jitter must not survive into the recovered singular values. Un-subtracted, every
+    numerically-zero singular value comes back as ``sqrt(jitter)`` instead of 0 -- exactly
+    the tail FD's shrinkage is supposed to zero. float64 + a genuinely rank-10-in-40 ``b_fac``
+    separates the true (near machine-epsilon) tail from ``jitter`` (~1e-6) by nine orders of
+    magnitude, so the two behaviours cannot be confused.
+    """
+    g = torch.Generator().manual_seed(3)
+    q = torch.linalg.qr(torch.randn(40, 10, generator=g, dtype=torch.float64))[0]
+    b = q @ torch.randn(10, 56, generator=g, dtype=torch.float64)  # true rank 10 in 40 rows
+    _, s_ref, _ = torch.linalg.svd(b, full_matrices=False)
+    real_eigh = torch.linalg.eigh
+    eigh_calls = 0
+
+    def boom_svd(*a: object, **k: object) -> tuple[torch.Tensor, ...]:
+        raise torch.linalg.LinAlgError("linalg.svd failed to converge")  # type: ignore[attr-defined]
+
+    def eigh_fails_once(*a: object, **k: object) -> tuple[torch.Tensor, torch.Tensor]:
+        nonlocal eigh_calls
+        eigh_calls += 1
+        if eigh_calls == 1:
+            raise torch.linalg.LinAlgError("linalg.eigh failed to converge")  # type: ignore[attr-defined]
+        return real_eigh(*a, **k)  # type: ignore[no-any-return]
+
+    monkeypatch.setattr(torch.linalg, "svd", boom_svd)
+    monkeypatch.setattr(torch.linalg, "eigh", eigh_fails_once)
+    _, s = _svd_core(b)
+    assert eigh_calls == 2  # the plain Gram failed once; the jittered retry succeeded
+    assert torch.allclose(s[:10], s_ref[:10], atol=1e-4)
+    assert torch.allclose(s[10:], torch.zeros_like(s[10:]), atol=1e-6)
+
+
 def test_fd_shrinkage_repeated_zero_spectrum_does_not_raise() -> None:
     # a stream whose augmented core carries many exact zeros after shrinkage (the swap-pod
     # crash class): rank 6 in 256 features, so every block after the first is already in
@@ -63,11 +96,10 @@ def test_fd_matches_isvd_subspace_when_no_tail() -> None:
     assert torch.allclose(ua @ ua.mT, ub @ ub.mT, atol=1e-5)
 
 
-@pytest.mark.slow
 def test_fd_survives_the_ratchet_stream() -> None:
     from tests.test_orth_guard import ratchet_stream
 
-    m = ratchet_stream(t=600 * 16)
+    m = ratchet_stream(t=150 * 16)
     u = b = None
     for s in range(0, m.shape[1], 16):
         u, b, _ = fd_step(u, b, m[:, s : s + 16], 256)

@@ -506,6 +506,9 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self._diag_min_rank_v: int | None = None
         self._diag_fixed_k = False
         self._diag_fixed_v = False
+        # Running maximum behind ``_tokens_seen`` (fix1 R2): reset with the rest of the
+        # layer's state so a new stream starts its own frontier at 0.
+        self._tokens_seen_max = 0
         # Week-10 harness mode (default "normal" preserves every existing call
         # site / the q_len==1 decode invariant). "score": non-mutating frozen
         # continuation-window forward (Phase 1b). "ingest": chunked pre-fill
@@ -730,8 +733,10 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             step = TRACKERS["fd"]
             self.u_k, self.b_k, rot_k = step(self.u_k, self.b_k, block_k, self.rank)
             self.u_v, self.b_v, rot_v = step(self.u_v, self.b_v, block_v, self.rank)
-        else:  # the incremental-SVD step -- unchanged, bit-identical
-            step = TRACKERS["isvd"]
+        else:  # "isvd" today -- unchanged, bit-identical; looked up by name (fix1 R3) so a
+            # fourth TRACKERS entry lands here and fails loudly on theta=/min_sv_frac=
+            # instead of silently running the incremental-SVD step.
+            step = TRACKERS[self.tracker]
             self.u_k, self.b_k, rot_k = step(
                 self.u_k,
                 self.b_k,
@@ -779,17 +784,23 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self._enforce_budgets()
 
     def _tokens_seen(self, positions: Tensor) -> int:
-        """Monotone tokens-seen frontier at the absorb of ``positions``: the larger of the
-        cache's own counter and this block's own positions (L1.1 fix1 Important #1).
+        """Monotone tokens-seen frontier at the absorb of ``positions``: a per-layer running
+        maximum of the cache's own counter and this block's own positions (L1.1 fix1
+        Important #1; made a running maximum in fix1 R2).
 
         Single-shot pre-fill only advances the counter after its whole absorb loop, so the
-        counter alone reads 0 there and ``positions`` is what is exact; on the heavy-hitter
-        demote path a demoted token's position can be OLDER than the counter, so the counter
-        wins instead of regressing the frontier. Both the diagnostic row's ``tokens_seen``
-        and Oja's learning-rate decay read it -- one expression, so a schedule and the row
-        that reports it cannot disagree.
+        counter alone reads 0 for every absorb inside that loop and ``positions`` is what is
+        exact there; on the heavy-hitter demote path a demoted token's position can be OLDER
+        than every position absorbed so far in the SAME prefill call (a later sub-block can
+        demote a now-unsurprising resident that arrived before the previous sub-block's own
+        demotees), so ``max(cumulative_length, positions.max() + 1)`` alone can dip between
+        two calls within one prefill. The running maximum is what never dips. Both the
+        diagnostic row's ``tokens_seen`` and Oja's learning-rate decay read this method -- one
+        expression, so a schedule and the row that reports it cannot disagree.
         """
-        return max(self.cumulative_length, int(positions.max()) + 1)
+        candidate = max(self.cumulative_length, int(positions.max()) + 1)
+        self._tokens_seen_max = max(self._tokens_seen_max, candidate)
+        return self._tokens_seen_max
 
     def _guard_orthonormality(
         self, rank_changed_k: bool, rank_changed_v: bool, positions: Tensor

@@ -213,6 +213,7 @@ def _svd_core(b_fac: Tensor) -> tuple[Tensor, Tensor]:
         return u_loc, sigma
     except _LinAlgError:
         gram = b_fac @ b_fac.mT
+        jitter: Tensor | float = 0.0  # 0.0 on the first attempt: nothing was added to the Gram
         try:
             evals, evecs = torch.linalg.eigh(gram)
         except _LinAlgError:
@@ -220,8 +221,10 @@ def _svd_core(b_fac: Tensor) -> tuple[Tensor, Tensor]:
             jitter = 1e-7 * torch.diagonal(gram).sum() / dim
             eye = torch.eye(dim, dtype=gram.dtype, device=gram.device)
             evals, evecs = torch.linalg.eigh(gram + jitter * eye)  # a third failure raises
-        # eigh returns ascending eigenvalues; svd returns descending singular values.
-        sigma = torch.sqrt(torch.clamp(torch.flip(evals, (0,)), min=0.0))
+        # eigh returns ascending eigenvalues; svd returns descending singular values. Subtract
+        # the jitter added to the Gram (0.0 unless the second attempt fired) so a numerically
+        # zero singular value is recovered as exactly 0, not sqrt(jitter).
+        sigma = torch.sqrt(torch.clamp(torch.flip(evals, (0,)) - jitter, min=0.0))
         return torch.flip(evecs, (1,)), sigma
 
 
@@ -501,12 +504,16 @@ def fd_step(
     Seeding = reduced QR of the first block. No ``theta`` and no ``min_sv_frac``:
     FD's rank is its own, fixed at ``rank_cap``.
 
-    The Week-20 arm crashed here. It kept its own augmentation, whose plain QR of
-    the residual admits ``b`` junk directions per step once the block already lies
-    in the tracked subspace; the shrinkage then zeroed their whole spectrum, and
-    LAPACK's divide-and-conquer SVD refused the resulting core ("too many repeated
-    singular values"). The shared rank-revealing ``_augment`` keeps them out, and
-    ``_svd_core``'s eigh fallback catches what still reaches it.
+    The Week-20 arm crashed here. Recorded (results/w19_harvest/swap-llama.raw:69-71, kept
+    locally, not in the paper-v1 archive): the pod's log reads ``linalg.svd: The algorithm
+    failed to converge because the input matrix is ill-conditioned or has too many repeated
+    singular values``. Reproduced (tests/test_fd_numerics.py): a rank-deficient augmented
+    core after shrinkage -- the arm's own augmentation kept the residual's plain QR,
+    admitting ``b`` junk directions per step once the block already lay in the tracked
+    subspace, and the shrinkage then zeroed their whole spectrum before the next core SVD.
+    That is the same CLASS of failure as the recorded one, not a verified-identical trace;
+    no more than that is claimed. The shared rank-revealing ``_augment`` keeps the junk
+    directions out, and ``_svd_core``'s eigh fallback catches what still reaches it.
     """
     if (u is None) != (b_core is None):
         raise ValueError("u and b_core must be provided together (or both None)")

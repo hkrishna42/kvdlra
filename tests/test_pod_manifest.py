@@ -587,11 +587,13 @@ def test_the_table4_pods_resolve_end_to_end() -> None:
 def test_the_table4_gist_arms_cap_the_diag_volume_the_log_can_carry() -> None:
     """`diag_every` is the one knob standing between this pod and a lost result.
 
-    The log is the only channel back from a vast.ai instance and the watchdog fetches
-    its last 30000 lines, while a 16K sample runs ~1024 absorbs per layer. At the 64
-    default that is ~17 `[diag]` rows per layer per sample -- the Qwen pod alone would
-    print ~380,000 of them and the fetch would hold only the tail. 4096 never completes
-    a window, so the only row is `drain_diag`'s end-of-sample flush: one per layer."""
+    The log is the only channel back from a vast.ai instance. A 16K sample runs ~1024
+    absorbs per layer; at the 64 default that is ~17 `[diag]` rows per layer per sample
+    -- the Qwen pod alone would print ~380,000 of them over the run, none of them a
+    clean summary. `diag_every: 4096` fixes the data shape, not a fetch budget: no
+    diagnostic window ever completes, so the only row is `drain_diag`'s end-of-sample
+    flush -- one per layer per sample, 33 rows/sample at most (32 diag + one `[pplw]`
+    line) against the watchdog's 150s/30000-line poll (prereg/hygiene_table4.md §8)."""
     for name in TABLE4:
         for a in load_pod(name).arms:
             cfg = load_arm(a)
@@ -616,3 +618,28 @@ def test_the_table4_control_arms_are_free_to_diverge() -> None:
     for a in {x for x in arms if x.endswith("_tol")}:
         c = load_arm(a).cache
         assert not {"orth_fix_tol", "orth_abort_tol", "qr_every"} & set(c)  # the defaults
+
+
+def test_the_table4_arms_equal_the_plain_cache_outside_the_named_knobs() -> None:
+    """Every Table-4 cell's `cache:` is `isvd_r128` / `isvd_r256` / `isvd_r256_f0.01` at the
+    shipped defaults, plus exactly the guard/floor/diag knobs this prereg varies -- a pin
+    against a quiet drift in `rank`, `recent_window`, `absorb_block`, `n_sink` or `retention`
+    that no other test here would catch."""
+    source = {
+        "isvd_r128_noguard": "isvd_r128",
+        "isvd_r128_tol": "isvd_r128",
+        "isvd_r128_qr64": "isvd_r128",
+        "isvd_r128_f0.01_tol": "isvd_r128",
+        "isvd_r128_f0.01_qr64": "isvd_r128",
+        "isvd_r256_noguard": "isvd_r256",
+        "isvd_r256_tol": "isvd_r256",
+        "isvd_r256_qr64": "isvd_r256",
+        "isvd_r256_f0.01_tol": "isvd_r256_f0.01",
+        "isvd_r256_f0.01_qr64": "isvd_r256_f0.01",
+    }
+    guard_knobs = {"orth_fix_tol", "orth_abort_tol", "qr_every", "diag_every"}
+    for arm, plain in source.items():
+        drop = guard_knobs | ({"min_sv_frac"} if "f0.01" in arm else set())
+        got = {k: v for k, v in load_arm(arm).cache.items() if k not in drop}
+        want = {k: v for k, v in load_arm(plain).cache.items() if k not in drop}
+        assert got == want, f"{arm}: drifted from {plain} outside the guard knobs"

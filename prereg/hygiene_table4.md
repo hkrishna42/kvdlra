@@ -42,8 +42,10 @@ include an unguarded control rather than assuming the divergence reproduces.
   crossing the 1e-3 repair threshold. The pre-Week-7 augmentation (plain residual QR, no
   re-orthogonalization) reaches 44–45 within 60 blocks on the same stream, so the probe is
   sensitive; the shipped step simply already defends against the mechanism *inside* the step.
-  Write-up: L1 Task 1 (`.superpowers/sdd/.../task-1-ratchet-findings.md`), recorded as a
-  DECISIONS finding at merge.
+  Write-up: L1 Task 1's ratchet-tracking findings, recorded as **DECISIONS D-012** and copied
+  into **`docs/plan/cleanup/l1-ledger.md`**, both written at merge (the pattern
+  `docs/plan/cleanup/l0-ledger.md` already follows for L0); the measured numbers above stand
+  regardless of when either lands.
 - **The production layer does ratchet.** Through `BugStreamingLayer` (bf16 storage, RoPE round
   trip, chunked prefill, rank 256, floor off), `‖UᵀU − I‖_F` measured
   **6.0e-4 (8K) → 1.5e-3 (16K) → 3.7e-3 (32K) → 35.1 (36K)**
@@ -91,7 +93,10 @@ the unguarded arms, so the ratchet is *measured* where it is not *corrected*.
 Every other cache knob is the plain r128/r256 arm's, unchanged: `recent_window` 32,
 `absorb_block` 16, `n_sink` 4, `retention` fifo, coordinate tier sized to the whole prefill, no
 exact tier, no quantization. The three guard/floor knobs and `diag_every` are the only
-differences between the cells, which is what makes the contrast a contrast.
+differences between the cells, which is what makes the contrast a contrast. `qr_every: 64` fires
+on two triggers, not one: every 64 absorbs unconditionally, and immediately after that stream's
+own tracked rank changes (`bug_cache.py:844-848`) — the `_qr64` arms are "periodic + rank-change
+repair", not periodic alone.
 
 The three `_tol` cells are the shipped arms `isvd_r128`, `isvd_r256` and `isvd_r256_f0.01` at
 their default knobs; they are separate files only because those three arms are frozen against
@@ -129,22 +134,36 @@ scripts/tables.py ppl --pod hygiene_table4_qwen --baseline full
 
 **Decision rule, fixed now:**
 
-1. **Ratchet.** If `isvd_r256_tol` is equivalent to `isvd_r256_f0.01_tol` within **±0.05
-   bits/token** (TOST on the paired per-window differences, p < 0.05 after the Holm correction
-   of §6) → the mechanism the paper reports is the **orthonormality ratchet**; the singular-value
-   floor becomes optional and stays a default-off knob; §3.4 states the guard as the fix.
+1. **Ratchet.** Requires **both**: (a) `isvd_r256_tol` is equivalent to `isvd_r256_f0.01_tol`
+   within **±0.05 bits/token** (TOST on the paired per-window differences, p < 0.05 after the
+   Holm correction of §6 — `tables.py ppl` itself applies no family correction; §6 says how the
+   four members are combined by hand); **and** (b) `isvd_r256_f0.01_tol` itself is within **1.0
+   bit/token of `full`**. (a) alone is not enough: if the floor has collapsed the tracked rank
+   (§5's `isvd_r128_f0.01_tol` caveat applies just as well at r256; §7 "Effective rank under the
+   floor"), `isvd_r256_tol` could match a *bad* reference within 0.05 bits for the wrong reason.
+   Both true → the mechanism the paper reports is the **orthonormality ratchet**; the
+   singular-value floor becomes optional and stays a default-off knob; §3.4 states the guard as
+   the fix.
 2. **Floor required.** If `isvd_r256_tol` still exceeds `full` by **more than 1.0 bit/token**
    (equivalently, more than 2x the full-KV perplexity), lower CI bound above that threshold →
    the floor is **required**; the paper keeps both and names the ratchet as the substrate.
-3. **Neither** (the guard reduces the divergence by orders of magnitude but does not reach
-   equivalence, and the residual gap is under 1 bit/token) → reported as measured: the ratchet is
-   the substrate, the floor is the fix, and the guard is the diagnostic that proves it. The
-   paper keeps both and reports the gap with its interval. No third run is pre-authorized.
+3. **Neither** → reported as measured, both kept, no third run pre-authorized, for either of two
+   readings: (a) fails on its own — the guard narrows the gap by orders of magnitude but the
+   residual gap to `isvd_r256_f0.01_tol` is above the ±0.05 margin while still under 1 bit/token
+   — the ratchet is the substrate, the floor is the fix, and the guard is the diagnostic that
+   proves it; **or** (b) fails — `isvd_r256_f0.01_tol` itself sits more than 1.0 bit/token from
+   `full` — **the floor arm collapsed** (`eff_rank` in `diag.jsonl` is the read), branch 1 cannot
+   fire on a collapsed reference regardless of (a), and the paper reports neither mechanism as
+   settled from this pod.
 
-Outcomes 1 and 2 are mutually exclusive; outcome 3 is everything else, including the case where
-`isvd_r256_noguard` does **not** reproduce the divergence at 16K. That last case is a live
-possibility (see §5) and is not a failure of the pod: it would mean the 27,531 cell depends on
-something outside the guard/floor factor, and §3.4 would then say so and cite this pod.
+These three outcomes partition every result. 1 and 2 are mutually exclusive by construction: 1
+needs `isvd_r256_f0.01_tol` within 1.0 bit of `full` and `isvd_r256_tol` within 0.05 bits of
+that (so `isvd_r256_tol` is itself close to `full`); 2 needs `isvd_r256_tol` to be *more* than
+1.0 bit from `full`. 3 is everything else, including both the case where `isvd_r256_noguard`
+does **not** reproduce the divergence at 16K and the case where the reference itself collapsed
+(condition (b)). The first of those is a live possibility (see §5) and is not a failure of the
+pod: it would mean the 27,531 cell depends on something outside the guard/floor factor, and
+§3.4 would then say so and cite this pod.
 
 ## 5. Prediction per arm, written before the run
 
@@ -182,8 +201,23 @@ repeated with the abort understood. It is *not* to be re-run with the tripwire d
 
 1. `isvd_r256_tol` vs `isvd_r256_noguard` — Qwen 16K, paired (the primary contrast).
 2. `isvd_r256_tol` vs `isvd_r256_f0.01_tol` — Qwen 16K, TOST at ±0.05 bits (outcome 1 above).
-3. `isvd_r256_qr64` vs `isvd_r256_tol` — Qwen 16K, paired (periodic vs tolerance form).
+3. `isvd_r256_qr64` vs `isvd_r256_tol` — Qwen 16K, paired (periodic + rank-change repair vs
+   tolerance-only).
 4. `isvd_r256_tol` vs `isvd_r256_noguard` — Llama 16K, paired (the replicate).
+
+**How the correction is actually computed.** `scripts/tables.py ppl --pod P --baseline B`
+computes one TOST p-value per call — the `p_tost` field on the non-baseline arm's row, at the
+tool's default **±0.05 bits/token** margin — and applies **no family correction of its own**;
+each invocation is independent of the others. The Holm step is applied **by hand**, once all
+four numbers exist, over the four raw p-values via `kvdlra.eval.stats.holm` (shipped, tested in
+`tests/test_stats.py`, not otherwise called by this pod). Every member's p-value is that same
+`p_tost`, whatever the member's own reading is — for members 1 and 4 it is bookkeeping for the
+family, not the basis of their own decision (the paired CI is, per §4 and the replicate check in
+§7): member 1 is `isvd_r256_tol`'s `p_tost` from `--pod hygiene_table4_qwen --baseline
+isvd_r256_noguard`; member 2 is the same row's `p_tost` from `--baseline isvd_r256_f0.01_tol`
+(the call §4 outcome 1 already needs); member 3 is `isvd_r256_qr64`'s `p_tost` from `--baseline
+isvd_r256_tol`; member 4 is `isvd_r256_tol`'s `p_tost` from `--pod hygiene_table4_llama --baseline
+isvd_r256_noguard`. Four calls, four `p_tost` values, one `holm([p1, p2, p3, p4])`.
 
 Everything else on this page is **descriptive** and carries no p-value: the r128 rows, the
 `diag.jsonl` traces, and the retrieval neutrality check. 12 records per retrieval cell cannot
@@ -205,13 +239,16 @@ way to turn a hygiene pod into an overclaim.
   needles survive, which would need its own investigation before the guard's default changes.
 - **The Llama replicate** — whether the guard costs anything where it has nothing to repair.
 
-## 8. Log volume, and what counts as a complete fetch
+## 8. Log volume, and what counts as a complete `<label>.log`
 
-The pod log is the only channel back from a vast.ai instance and the watchdog fetches its last
-30000 lines (`scripts/pod/watchdog.sh:38`). At 16K a sample runs ~1022 absorbs per layer, so the
-64-absorb `diag_every` default would print ~17 `[diag]` rows per layer per sample. Every gist arm
-here therefore sets **`diag_every: 4096`**: no diagnostic window ever completes, and the only row
-is `drain_diag`'s end-of-sample flush — exactly one per layer per sample.
+The pod log is the only channel back from a vast.ai instance. At 16K a sample runs ~1022 absorbs
+per layer, so the 64-absorb `diag_every` default would print ~17 `[diag]` rows per layer per
+sample. Every gist arm here therefore sets **`diag_every: 4096`**, larger than any sample's
+absorb count: no diagnostic window ever completes, so `drain_diag`'s end-of-sample flush is the
+only row emitted, exactly one per layer per sample. That choice is about the **data shape** —
+guaranteeing one summary row instead of several thousand — not about the watchdog's fetch size;
+what that volume costs against the watchdog's log-carrying capacity is a separate, downstream
+question, worked out below.
 
 Expected `[diag]` volume (28 layers on Qwen2.5-7B, 32 on Llama-3.1-8B; `full` emits none):
 
@@ -220,15 +257,42 @@ Expected `[diag]` volume (28 layers on Qwen2.5-7B, 32 on Llama-3.1-8B; `full` em
 | `hygiene_table4_qwen` | 10 arms x 32 windows x 28 = 8,960 | 10 x 48 x 28 = 13,440 | 22,400 | ~600 (`[trial]`, `[pplw]`, `ppl=`, banners) | **≈ 23,000** |
 | `hygiene_table4_llama` | 3 arms x 32 x 32 = 3,072 | — | 3,072 | ~70 | **≈ 3,150** |
 
-The Qwen pod sits ~23% under the fetch limit. A fetch is complete only if it contains **both**
-the `===RUN_SHA_<sha>===` header (`scripts/pod/boot.sh:53`, printed before anything else) and
-the terminating `===ALL_DONE_<pod>_<sha>===` marker; a fetch missing the header has lost its
-head and must not be harvested as final, whatever `harvest` would accept. A completed Qwen fetch
-under ~20,000 lines is short by construction and is the same failure. Harvest refuses to shrink
-an existing `trials.jsonl`, which is the second line of defence, not the first.
+**What the watchdog can and cannot lose.** `scripts/pod/watchdog.sh` polls every 150 s
+(`:64`); each poll runs `vastai logs --tail 30000` (`:38`) — the *current* tail of the whole
+instance log at that moment, not a whole-run ceiling — greps it for the `ROWS` pattern (`:28`),
+and **appends** the matches to `<label>.raw` (`:43`). Because every poll appends rather than
+overwrites, `<label>.raw` accumulates the *union* of every fetch across the run's ~hundreds of
+polls; only when a poll's fetch contains the terminal marker (`===ALL_DONE_<pod>_<sha>===`, or a
+failure marker) does the watchdog dedupe it with `sort -u` into `<label>.log` (`:49-50`), which
+`pod.py harvest` reads. So **30000 is a per-poll window, not a whole-run cap**: the run's ≈23,000
+expected Qwen rows never have to fit inside any one fetch, only inside the deduped union of
+~hundreds of them.
+
+The only way a row is lost for good is a **poll-to-poll gap**: if the raw log — matched rows plus
+every banner, download-progress and warning line the harness never filters — grows past 30000
+lines between two consecutive 150 s polls, the earliest of those lines scroll out of the tail
+before either poll's fetch captures them. The worst-case *rate* that has to stay under that: each
+sample contributes at most 32 `[diag]` rows (Llama's per-layer count, the larger of the two
+pods) plus one `[pplw]` line per arm per sample — **33 rows/sample**. The Qwen budget (§9: 4.0
+GPU-h over 11 arms x 80 samples) implies ~16 s/sample on average, so even a generous twenty
+samples finishing inside one 150 s poll is ~660 rows — two orders of magnitude under the
+30000-line window.
+
+**The completeness test is therefore on the deduped `<label>.log`, not on any one fetch.** A
+`.log` file is written only once a poll's fetch has captured a terminal marker, so its mere
+existence already implies `===ALL_DONE_<pod>_<sha>===` (or a failure marker) was seen —
+independently re-checking for the `===RUN_SHA_<sha>===` boot header *inside a fetch* adds
+nothing on top of that: the header is emitted once, near the start of the run
+(`scripts/pod/boot.sh:53`), gets captured on the *first* poll while the whole log is still far
+under 30000 lines, and then lives in `.raw`/`.log` permanently (append-only, deduped, never
+truncated) — a *later* fetch that does not happen to contain it is normal, not a sign of loss.
+What a poll-to-poll gap actually leaves behind is a **short `.log`**: expect ≈23,000 rows for
+Qwen and ≈3,150 for Llama (table above); a completed Qwen `.log` under ~20,000 rows is short by
+construction and must not be harvested as final. Harvest refusing to shrink an existing
+`trials.jsonl` is the second line of defence, not the first.
 
 If the layer counts above turn out wrong for these checkpoints, the multiplier is the only thing
-that changes; recompute before concluding a fetch was truncated.
+that changes; recompute before concluding a `.log` was truncated.
 
 ## 9. Budget
 

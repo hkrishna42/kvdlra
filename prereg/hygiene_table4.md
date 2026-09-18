@@ -441,7 +441,7 @@ image, same dtype, same prereg:
 
 | pod | arms | ppl task | `gpu_budget_h` |
 | --- | --- | --- | --- |
-| `hygiene_table4_qwen_r128` | `isvd_r128_noguard`, `isvd_r128_tol`, `isvd_r128_qr64`, `isvd_r128_f0.01_tol`, `isvd_r128_f0.01_qr64`, `full` | `ppl_16k_pg19val_w16` | 4.0 |
+| `hygiene_table4_qwen_r128` | `isvd_r128_noguard`, `isvd_r128_tol`, `isvd_r128_qr64`, `isvd_r128_f0.01_tol`, `isvd_r128_f0.01_qr64`, `full` | `ppl_16k_pg19val_w16` | 7.0 |
 | `hygiene_table4_qwen_r256` | `isvd_r256_noguard`, `isvd_r256_tol`, `isvd_r256_qr64`, `isvd_r256_f0.01_tol`, `isvd_r256_f0.01_qr64`, `full` | `ppl_16k_pg19val_w16` | 7.0 |
 
 The ten cells of §3 are the same ten cells, on the same eleven arm files; only the packaging

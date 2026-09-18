@@ -32,6 +32,14 @@ ROOT = Path(__file__).resolve().parents[3] / "configs"
 # APPROXIMATE -- another model's tokenizer moves them a few percent -- which is why the
 # ceiling below floors the division instead of counting the slices `frontier.windows`
 # would cut: it leaves one window of margin rather than promising an exact count.
+#
+# That margin is all the wikitext-103-test tasks have: both sit ON their ceilings (14
+# windows at 16K, 7 at 32K out of 288,937 tokens), so a tokenizer that cuts this text
+# into fewer tokens than Llama-3.2's makes `load_task` refuse them -- loudly, at load,
+# which is the intended failure and not a silently shorter sweep. `pg19-val` is immune:
+# its count is the loader's 3M cap, which any tokenizer reaches, and 32 windows sit far
+# below the 160 that cap supplies.
+
 CORPUS_TOKENS = {"wikitext-103-test": 288_937, "pg19-val": 2_968_224}
 
 

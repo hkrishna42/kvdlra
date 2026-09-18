@@ -31,7 +31,7 @@ from transformers import LlamaForCausalLM
 
 from kvdlra.cache import BugStreamingCache
 from kvdlra.eval import frontier, longbench, records, ruler
-from kvdlra.eval.config import ArmCfg, PodCfg, load_pod
+from kvdlra.eval.config import ArmCfg, PodCfg, load_pod, load_task
 from kvdlra.eval.records import DIAG_ROWS, emit_diag, parse_diag_lines
 from kvdlra.eval.runner import _log_ppl_errors, run_pod
 from tests.conftest import N_FEATURES
@@ -212,6 +212,47 @@ def test_retrieval_and_longbench_axes_drain_too(
     assert all(r["task"] == "qasper" and r["idx"] == 1 for r in DIAG_ROWS[n_ruler:])
     assert len(DIAG_ROWS) > n_ruler
     assert capsys.readouterr().out.count("[diag] ") == len(DIAG_ROWS)
+
+
+def test_the_official_ruler_axis_labels_its_rows_too(
+    tiny_model: LlamaForCausalLM, tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The official-RULER generator builds its own trials, so it is the one caller of
+    `ruler.retrieve` that has to hand the stamp down itself: without it a pod running the
+    thirteen official sub-tasks emits one undifferentiated stream of ranks, and no row can
+    be assigned to the task or the trial that produced it."""
+    from kvdlra.eval import official_ruler as official
+    from tests.test_w19_official_ruler import NIAH, NIAH_PREFIX, _FakeTok
+
+    data = tmp_path / "niah_single_2"
+    data.mkdir()
+    rec = {"index": 11779, "input": NIAH, "outputs": ["7"], "answer_prefix": NIAH_PREFIX}
+    (data / "validation.jsonl").write_text(json.dumps(rec) + "\n")
+    monkeypatch.setattr(official, "DATA_DIR", tmp_path)
+    official.load_records.cache_clear()
+
+    task = load_task("ruler_official_16k")
+    task.ctx = 64
+    cfg = ArmCfg(
+        name="bug-r8",
+        kind="bug",
+        cache={
+            "rank": 8,
+            "coord_budget": 24,
+            "recent_window": 8,
+            "absorb_block": 4,
+            "n_sink": 4,
+            "diag_every": 2,
+        },
+    )
+    arm = frontier.build_arm(cfg, tiny_model, task.ctx)
+    official.run_trial(
+        arm, tiny_model, _FakeTok(), task, "niah_single_2", 42, 0,
+        device="cpu", chunk=0, n=N_FEATURES, h_kv=2,
+    )  # fmt: skip
+    assert DIAG_ROWS and all(
+        (r["source"], r["task"], r["idx"]) == ("ruler", "niah_single_2", 0) for r in DIAG_ROWS
+    )
 
 
 def test_full_arm_emits_no_diag_rows(

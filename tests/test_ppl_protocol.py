@@ -104,6 +104,16 @@ def test_tost_separates_an_equivalent_shift_from_a_material_one() -> None:
     assert large["p_tost"] > 0.05
 
 
+def test_a_window_scored_twice_is_refused_not_silently_overwritten() -> None:
+    """Two rows for one (arm, ctx, corpus, window_idx) -- a re-harvested log appended to
+    an existing `pplw.jsonl`, or a re-run of half a sweep -- used to overwrite silently,
+    so the mean was taken over fewer windows than the file held and the pairing check
+    could not see it (both arms still have the same window SET). Fail loud instead."""
+    rows, _, _ = _rows(0.01)
+    with pytest.raises(SystemExit, match=r"window_idx=0 twice"):
+        tables.ppl_stats([*rows, rows[0]])
+
+
 def test_ppl_table_writes_one_markdown_row_per_arm(tmp_path: Path) -> None:
     """The subcommand's file: `ppl_<pod>.md`, never `table*.md` -- `make tables`
     concatenates `table*.md` and diffs it against the paper-v1 golden."""

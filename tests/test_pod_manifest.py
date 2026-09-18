@@ -639,7 +639,14 @@ def test_the_table4_arms_equal_the_plain_cache_outside_the_named_knobs() -> None
     }
     guard_knobs = {"orth_fix_tol", "orth_abort_tol", "qr_every", "diag_every"}
     for arm, plain in source.items():
+        cache = load_arm(arm).cache
         drop = guard_knobs | ({"min_sv_frac"} if "f0.01" in arm else set())
-        got = {k: v for k, v in load_arm(arm).cache.items() if k not in drop}
+        got = {k: v for k, v in cache.items() if k not in drop}
         want = {k: v for k, v in load_arm(plain).cache.items() if k not in drop}
         assert got == want, f"{arm}: drifted from {plain} outside the guard knobs"
+        # ...and the floor the NAME promises is the floor the arm carries. Dropped from
+        # the comparison above (it is the knob the cell varies), so without this the four
+        # `f0.01` cells could run any floor at all -- including the r256 arm's own, which
+        # is where the prereg's branch-2 reference number comes from.
+        if "f0.01" in arm:
+            assert cache["min_sv_frac"] == 0.01, f"{arm}: not the floor its name claims"

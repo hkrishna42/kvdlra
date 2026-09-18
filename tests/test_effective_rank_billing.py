@@ -65,6 +65,19 @@ def _bill(layer: BugStreamingLayer, rank: float, **kw: Any) -> acc.Footprint:
     )
 
 
+def _mean_stored(cache: BugStreamingCache) -> float:
+    """The measured per-layer state averaged over the layers -- what ONE `_footprint`
+    stands for, since every axis multiplies it by the layer count."""
+    layers = cache._bug_layers()
+    return sum(la.stored_state_numel() for la in layers) / len(layers)
+
+
+def _mean_rank(cache: BugStreamingCache) -> float:
+    """The live rank averaged over both streams of every layer."""
+    layers = cache._bug_layers()
+    return sum(_tracked_rank(la.u_k) + _tracked_rank(la.u_v) for la in layers) / (2 * len(layers))
+
+
 def test_collapsed_layer_bills_the_tracked_rank(tiny_model: LlamaForCausalLM) -> None:
     """Floor on: the arm is billed for the columns the bases hold, not the cap."""
     cache = _driven(_low_rank_kv_model(tiny_model), min_sv_frac=MIN_SV_FRAC)
@@ -80,12 +93,31 @@ def test_collapsed_layer_bills_the_tracked_rank(tiny_model: LlamaForCausalLM) ->
     tracked = (rank_k + rank_v) / 2
 
     fp = _footprint(ARM, cache, t=200, n=N_FEATURES, h_kv=H_KV)
-    # `_footprint` bills LAYER 0 only, so the cache total over its layers is not this
-    # number (each layer is billed on its own bases).
-    assert fp.float_equiv() == layer.stored_state_numel()
-    assert fp == _bill(layer, tracked, u_present=True)
+    # One `_footprint` is the per-layer bill every axis multiplies by the layer count,
+    # so it is the MEAN over the layers it must reproduce. Here the structural stream
+    # collapses every layer to the same two widths, so that mean is also layer 0's.
+    assert fp.float_equiv() == _mean_stored(cache) == layer.stored_state_numel()
+    assert fp == _bill(layer, tracked, u_present=True) and tracked == _mean_rank(cache)
     # ...and the configured cap over-bills it: the defect this closes.
     assert fp.float_equiv() < _bill(layer, int(ARM["rank"]), u_present=True).float_equiv()
+
+
+def test_layers_that_collapsed_to_different_widths_bill_their_mean(
+    tiny_model: LlamaForCausalLM,
+) -> None:
+    """Review Important #1: the floor collapses each LAYER's streams independently too,
+    so layer 0's own rank is not the model's. Driven on the plain tiny model, whose
+    layers have their own singular tails (measured 21/23 and 20/23 at this floor), the
+    layer-0 bill over-counts the model by half their difference on every axis."""
+    cache = _driven(tiny_model, min_sv_frac=0.3)
+    layers = cache._bug_layers()
+    widths = [(_tracked_rank(la.u_k), _tracked_rank(la.u_v)) for la in layers]
+    assert len(set(widths)) > 1, f"the layers must differ for this to prove anything: {widths}"
+
+    fp = _footprint(ARM, cache, t=200, n=N_FEATURES, h_kv=H_KV)
+    assert fp.float_equiv() == _mean_stored(cache)
+    assert fp == _bill(layers[0], _mean_rank(cache), u_present=True)
+    assert fp.float_equiv() != layers[0].stored_state_numel()  # what layer 0 alone billed
 
 
 def test_floor_off_billing_is_unchanged(tiny_model: LlamaForCausalLM) -> None:
@@ -97,7 +129,7 @@ def test_floor_off_billing_is_unchanged(tiny_model: LlamaForCausalLM) -> None:
     assert layer.u_k.shape[1] == layer.u_v.shape[1] == int(ARM["rank"])  # padded to the cap
     fp = _footprint(ARM, cache, t=200, n=N_FEATURES, h_kv=H_KV)
     assert fp == _bill(layer, int(ARM["rank"]), u_present=True)
-    assert fp.float_equiv() == layer.stored_state_numel()
+    assert fp.float_equiv() == _mean_stored(cache) == layer.stored_state_numel()
 
 
 def test_layer_with_no_basis_bills_rank_zero_and_no_basis(tiny_model: LlamaForCausalLM) -> None:
@@ -112,7 +144,7 @@ def test_layer_with_no_basis_bills_rank_zero_and_no_basis(tiny_model: LlamaForCa
 
     fp = _footprint(ARM, cache, t=12, n=N_FEATURES, h_kv=H_KV)
     assert fp == _bill(layer, 0, u_present=False)
-    assert fp.float_equiv() == layer.stored_state_numel()
+    assert fp.float_equiv() == _mean_stored(cache) == layer.stored_state_numel()
 
 
 def test_tracked_rank_reads_the_basis_and_is_zero_without_one(

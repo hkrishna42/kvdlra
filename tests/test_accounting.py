@@ -195,7 +195,12 @@ def test_bug_footprint_matches_stored_state_numel_at_a_collapsed_rank(
         "u_present": True,
     }
     fp = acc.bug_footprint(N_FEATURES, rank=tracked, **counts)
-    assert fp.float_equiv() == layer.stored_state_numel()
+    # The structural stream collapses every layer to the same two widths, so the mean
+    # over the layers -- what `frontier._footprint` bills for the model -- is layer 0's
+    # own measurement here; the two are asserted together so neither can drift alone.
+    layers = cache._bug_layers()
+    mean_stored = sum(la.stored_state_numel() for la in layers) / len(layers)
+    assert fp.float_equiv() == mean_stored == layer.stored_state_numel()
     assert acc.bug_footprint(N_FEATURES, rank=32, **counts).float_equiv() > fp.float_equiv()
 
 

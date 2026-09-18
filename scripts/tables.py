@@ -650,7 +650,17 @@ def ppl_stats(
     bits: dict[tuple[str, int, str | None], dict[int, float]] = defaultdict(dict)
     for r in rows:
         key = (r["arm"], r["ctx"], r.get("corpus"))
+        # A window scored twice would overwrite its own entry and shrink the mean's
+        # denominator without shrinking the window SET -- so the pairing check below,
+        # which compares the two arms' sets, cannot see it. The usual cause is a second
+        # harvest appended to an existing `pplw.jsonl`.
+        if r["window_idx"] in bits[key]:
+            raise SystemExit(
+                f"ppl: {r['arm']} ctx={r['ctx']} corpus={r.get('corpus')} carries"
+                f" window_idx={r['window_idx']} twice -- the records are duplicated"
+            )
         bits[key][r["window_idx"]] = r["nll_sum_nats"] / (r["ntok"] * math.log(2))
+
     out: list[PplStat] = []
     groups = sorted({(c, corpus) for _, c, corpus in bits}, key=lambda x: (x[0], x[1] or ""))
     for ctx, corpus in groups:

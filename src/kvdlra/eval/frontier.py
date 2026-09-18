@@ -327,14 +327,27 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
     kind = arm["kind"]
     if kind == "bug":
         assert isinstance(cache, BugStreamingCache)
-        layer = cache._bug_layers()[0]
+        layers = cache._bug_layers()
+        layer = layers[0]
         # The LIVE tracked rank, never arm["rank"]. Every rank term in `bug_footprint`
         # is `2*rank*x` -- symmetric in the two streams -- so where the floor collapsed
         # K and V to different widths (measured 21 vs 23 on one tiny-model layer) their
         # MEAN is what reproduces the measured `stored_state_numel` exactly, and it can
         # be a half-integer. No basis yet => rank 0, billed with u_present=False so the
         # basis and core terms drop out together.
-        rank = (_tracked_rank(layer.u_k) + _tracked_rank(layer.u_v)) / 2
+        #
+        # Averaged over ALL the layers, not read off layer 0: the floor collapses every
+        # layer's streams independently (measured 21/23 and 20/23 on the two tiny-model
+        # layers), and this one footprint is what every axis multiplies by the layer
+        # count. Every other term below is layer-invariant (the tier lengths are driven
+        # by the token count, which every layer shares), so the mean rank is exactly the
+        # mean of the per-layer `stored_state_numel()` -- pinned in
+        # tests/test_effective_rank_billing.py. Floor off, every layer sits at the cap
+        # and the bill is byte-identical to the one-layer read.
+        rank = sum(_tracked_rank(la.u_k) + _tracked_rank(la.u_v) for la in layers) / (
+            2 * len(layers)
+        )
+
         # Thread the arm's retention + hh_select so surprise arms count their
         # position/surprise buffers too (fifo default keeps existing arms
         # byte-identical); the anti-drift pin guards this against drift.

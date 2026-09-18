@@ -14,6 +14,8 @@ from __future__ import annotations
 import pytest
 import torch
 
+from kvdlra.eval.records import parse_diag_lines
+from kvdlra.tracker import isvd
 from kvdlra.tracker.isvd import _svd_core, fd_step, isvd_step, orth_error
 
 
@@ -33,6 +35,42 @@ def test_svd_core_falls_back_to_eigh_on_linalg_error(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(torch.linalg, "svd", real_svd)
     assert torch.allclose(s, s_ref, atol=1e-5)
     assert torch.allclose((u * s) @ (u * s).mT, (u_ref * s_ref) @ (u_ref * s_ref).mT, atol=1e-4)
+
+
+def test_the_eigh_fallback_leaves_one_line_the_harvest_can_read(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A fallback that says nothing is a number with no provenance: the Gram path halves
+    the precision, so a run that took it has to be able to say so. ONE line per process
+    (a per-step log would drown the `[diag]` channel the pod harvests), on the `[diag]`
+    prefix the watchdog's ROWS filter already matches, and `parse_diag_lines` carries it
+    through like any other row -- a payload with no ``layer`` is not a parse failure."""
+    monkeypatch.setattr(isvd, "FALLBACKS", 0)
+
+    def boom(*a: object, **k: object) -> tuple[torch.Tensor, ...]:
+        raise torch.linalg.LinAlgError("linalg.svd failed to converge")  # type: ignore[attr-defined]
+
+    g = torch.Generator().manual_seed(0)
+    b = torch.randn(40, 56, generator=g)
+    monkeypatch.setattr(torch.linalg, "svd", boom)
+    _svd_core(b)
+    _svd_core(b)  # counted, not printed again
+    out = capsys.readouterr().out
+    assert isvd.FALLBACKS == 2
+
+    (line,) = [ln for ln in out.splitlines() if ln.startswith("[diag]")]
+    assert len(line) < 400
+    rows, skipped = parse_diag_lines(out, model="M", source="pod.log")
+    assert skipped == 0
+    assert rows == [
+        {
+            "model": "M",
+            "event": "svd_fallback",
+            "attempt": 1,
+            "shape": [40, 56],
+            "source": "pod.log:1",
+        }
+    ]
 
 
 def test_svd_core_second_attempt_subtracts_its_own_jitter(monkeypatch: pytest.MonkeyPatch) -> None:

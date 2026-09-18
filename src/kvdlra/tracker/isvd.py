@@ -65,6 +65,8 @@ stored in bf16 (PLAN §8 pitfall #4).
 
 from __future__ import annotations
 
+import json
+
 import torch
 from torch import Tensor
 
@@ -117,7 +119,13 @@ def reorthonormalize(u: Tensor, c: Tensor, b: Tensor) -> tuple[Tensor, Tensor, T
 def eff_rank(b: Tensor, rel: float = 1e-6) -> int:
     """Live directions in a diagonal core ``b``: diagonal entries above ``rel`` times the
     leading one. A basis padded to ``rank_cap`` with near-null tail directions (the
-    high-rank divergence substrate) reports an effective rank far below its stored one."""
+    high-rank divergence substrate) reports an effective rank far below its stored one.
+
+    Diagonal is the incremental-SVD and FD contract, not a universal one: the Oja
+    tracker's ``_carry_core`` returns a triangular R-factor, whose diagonal entries are
+    not its singular values, so on that tracker this counts the diagonal it is given and
+    only bounds the live rank. It is a diagnostic either way -- nothing is billed or
+    truncated from it (``stored_state_numel`` counts the stored ``r``)."""
     with torch.no_grad():  # a measurement, like orth_error: never part of a graph
         d = torch.diagonal(b).abs()
         if d.numel() == 0 or float(d.max()) == 0.0:
@@ -193,34 +201,55 @@ def _augment(u: Tensor | None, b_core: Tensor | None, block: Tensor) -> tuple[Te
 _LinAlgError: type[Exception] = torch.linalg.LinAlgError  # type: ignore[attr-defined]
 
 
+# Gram-path entries this process has taken. Counted for the tests; the first one also
+# prints the ``[diag]`` line below, once, so a run that fell back says so in its log.
+FALLBACKS = 0
+
+
 def _svd_core(b_fac: Tensor) -> tuple[Tensor, Tensor]:
     """Left factors and singular values of the augmented core, untruncated.
 
     ``torch.linalg.svd(b_fac, full_matrices=False)`` with a fallback: LAPACK's divide-and-
     conquer driver raises ``LinAlgError`` ("too many repeated singular values") on cores
     whose spectrum carries repeated exact zeros -- which is what killed the Week-20 FD arm,
-    whose shrinkage zeroes the whole tail. The eigendecomposition of the Gram
-    ``b_fac b_facᵀ`` computes the same factors by a different driver (at half the
-    precision -- it squares the condition number -- which is why it is a fallback and not
-    the path); a second failure retries it once on a jittered Gram, and a third re-raises.
+    whose shrinkage zeroes the whole tail. On CUDA the first retry is cuSOLVER's ``gesvd``
+    driver, which converges on spectra its default (``gesvdj``/DC) refuses; CPU LAPACK
+    takes no ``driver`` argument, so that branch is unreachable -- and untested -- here.
+    Then the eigendecomposition of the Gram ``b_fac b_facᵀ``, which computes the same
+    factors by a different driver (at half the precision -- it squares the condition
+    number -- which is why it is a fallback and not the path); a second failure retries it
+    once on a jittered Gram, and a third re-raises.
 
     ``b_fac`` is never TALLER than it is wide at any call site -- it is ``(r + m, r + b)``
     with ``m <= b`` -- so the Gram's ``r + m`` eigenpairs are exactly the ``min(rows, cols)``
     factors ``full_matrices=False`` returns.
     """
+    global FALLBACKS
     try:
         u_loc, sigma, _ = torch.linalg.svd(b_fac, full_matrices=False)
         return u_loc, sigma
     except _LinAlgError:
+        if b_fac.is_cuda:  # a second driver before a second algorithm: full precision
+            try:
+                u_loc, sigma, _ = torch.linalg.svd(b_fac, full_matrices=False, driver="gesvd")
+                return u_loc, sigma
+            except _LinAlgError:
+                pass
         gram = b_fac @ b_fac.mT
         jitter: Tensor | float = 0.0  # 0.0 on the first attempt: nothing was added to the Gram
+        attempt = 1
         try:
             evals, evecs = torch.linalg.eigh(gram)
         except _LinAlgError:
+            attempt = 2
             dim = gram.shape[0]
             jitter = 1e-7 * torch.diagonal(gram).sum() / dim
             eye = torch.eye(dim, dtype=gram.dtype, device=gram.device)
             evals, evecs = torch.linalg.eigh(gram + jitter * eye)  # a third failure raises
+        FALLBACKS += 1
+        if FALLBACKS == 1:  # once per process: the trace, not a per-step log
+            payload = {"event": "svd_fallback", "attempt": attempt, "shape": list(b_fac.shape)}
+            print("[diag] " + json.dumps(payload, sort_keys=True), flush=True)
         # eigh returns ascending eigenvalues; svd returns descending singular values. Subtract
         # the jitter added to the Gram (0.0 unless the second attempt fired) so a numerically
         # zero singular value is recovered as exactly 0, not sqrt(jitter).

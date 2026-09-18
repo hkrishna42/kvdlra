@@ -147,6 +147,11 @@ scripts/tables.py ppl --pod hygiene_table4_qwen --baseline full
 2. **Floor required.** If `isvd_r256_tol` still exceeds `full` by **more than 1.0 bit/token**
    (equivalently, more than 2x the full-KV perplexity), lower CI bound above that threshold →
    the floor is **required**; the paper keeps both and names the ratchet as the substrate.
+   If `isvd_r256_f0.01_tol` is **also** more than 1.0 bit/token from `full`, the floor did not
+   close the gap either: this branch still fires (it is the guard arm's distance to `full` that
+   defines it), the paper still keeps both, **and it says so** — "required" then means required
+   and not sufficient at r256, and neither knob is reported as the fix.
+
 3. **Neither** → reported as measured, both kept, no third run pre-authorized, for either of two
    readings: (a) fails on its own — the guard narrows the gap by orders of magnitude but the
    residual gap to `isvd_r256_f0.01_tol` is above the ±0.05 margin while still under 1 bit/token

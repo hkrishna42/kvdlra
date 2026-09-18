@@ -205,6 +205,37 @@ _LinAlgError: type[Exception] = torch.linalg.LinAlgError  # type: ignore[attr-de
 # prints the ``[diag]`` line below, once, so a run that fell back says so in its log.
 FALLBACKS = 0
 
+# Left factors this process had to re-orthonormalize (same contract as FALLBACKS).
+NONORTHONORMAL = 0
+
+# ``‖u_locᵀ u_loc - I‖_F`` above which the returned left factor is repaired. Two decades
+# above what a driver leaves on a core of these sizes in fp32 (~1e-6), so the check is
+# read-only on the path every committed number came from -- and two decades below the
+# 0.5-0.92 the pods measured.
+_LEFT_ORTH_TOL = 1e-4
+
+
+def _orthonormal_left(u_loc: Tensor) -> Tensor:
+    """``u_loc`` as the driver returned it, unless it is not orthonormal -- then its thin QR.
+
+    cuSOLVER returned non-orthonormal null-space columns for the rank-deficient seeding
+    core of a PG-19 excerpt on all three Table-4 pods (D-011 addendum 5: ‖UᵀU - I‖ 0.5-0.92
+    at absorb 1, ``eff_rank_v`` 93 of 128), and the step multiplies them straight into the
+    tracked basis as ``u_aug @ u_loc``. The check is a measurement -- one ``(r+m)²`` Gram --
+    and the repair is a thin QR, which leaves the leading columns' span (and so the
+    singular values that go with them) unchanged.
+    """
+    global NONORTHONORMAL
+    err = orth_error(u_loc)
+    if err <= _LEFT_ORTH_TOL:
+        return u_loc
+    NONORTHONORMAL += 1
+    if NONORTHONORMAL == 1:  # once per process: the trace, not a per-step log
+        payload = {"event": "svd_nonorthonormal", "err": err, "shape": list(u_loc.shape)}
+        print("[diag] " + json.dumps(payload, sort_keys=True), flush=True)
+    q: Tensor = torch.linalg.qr(u_loc, mode="reduced")[0]
+    return q
+
 
 def _svd_core(b_fac: Tensor) -> tuple[Tensor, Tensor]:
     """Left factors and singular values of the augmented core, untruncated.
@@ -223,16 +254,20 @@ def _svd_core(b_fac: Tensor) -> tuple[Tensor, Tensor]:
     ``b_fac`` is never TALLER than it is wide at any call site -- it is ``(r + m, r + b)``
     with ``m <= b`` -- so the Gram's ``r + m`` eigenpairs are exactly the ``min(rows, cols)``
     factors ``full_matrices=False`` returns.
+
+    Whichever path returns, the left factor is checked for orthonormality and repaired if a
+    driver broke it (:func:`_orthonormal_left`) -- every caller multiplies it into the
+    tracked basis, so a driver's garbage null-space columns are a divergence at absorb 1.
     """
     global FALLBACKS
     try:
         u_loc, sigma, _ = torch.linalg.svd(b_fac, full_matrices=False)
-        return u_loc, sigma
+        return _orthonormal_left(u_loc), sigma
     except _LinAlgError:
         if b_fac.is_cuda:  # a second driver before a second algorithm: full precision
             try:
                 u_loc, sigma, _ = torch.linalg.svd(b_fac, full_matrices=False, driver="gesvd")
-                return u_loc, sigma
+                return _orthonormal_left(u_loc), sigma
             except _LinAlgError:
                 pass
         gram = b_fac @ b_fac.mT
@@ -254,7 +289,7 @@ def _svd_core(b_fac: Tensor) -> tuple[Tensor, Tensor]:
         # the jitter added to the Gram (0.0 unless the second attempt fired) so a numerically
         # zero singular value is recovered as exactly 0, not sqrt(jitter).
         sigma = torch.sqrt(torch.clamp(torch.flip(evals, (0,)) - jitter, min=0.0))
-        return torch.flip(evecs, (1,)), sigma
+        return _orthonormal_left(torch.flip(evecs, (1,))), sigma
 
 
 def augmented_bug_step(

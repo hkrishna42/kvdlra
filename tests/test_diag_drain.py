@@ -313,7 +313,11 @@ def test_orthonormality_abort_is_recorded_as_an_error(
             "recent_window": 8,
             "absorb_block": 4,
             "n_sink": 4,
-            "orth_abort_tol": 1e-12,  # below the fp32 QR floor: the first absorb aborts
+            # Below the fp32 QR floor, with the repair off so nothing can clear it: the
+            # first absorb aborts. (The guard repairs before it aborts now, so an abort
+            # tolerance below the repair threshold is rejected -- L1.7 / D-011 addendum 5.)
+            "orth_abort_tol": 1e-12,
+            "orth_fix_tol": None,
         },
     )
     arm = frontier.build_arm(cfg, tiny_model, t)

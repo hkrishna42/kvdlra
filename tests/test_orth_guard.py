@@ -30,7 +30,9 @@ from torch import Tensor
 from transformers import LlamaForCausalLM
 
 from kvdlra.cache import BugStreamingCache, OrthonormalityError
+from kvdlra.tracker import isvd
 from kvdlra.tracker.isvd import eff_rank, isvd_step, orth_error, reorthonormalize
+from tests.conftest import N_FEATURES
 from tests.test_accounting import _drive
 
 # ``‖QᵀQ - I‖_F`` after an fp32 thin QR sits at ~r x eps (~8e-6 at r=64) -- two decades
@@ -60,6 +62,40 @@ def ratchet_stream(n: int = 512, t: int = 200 * 16, seed: int = 0) -> Tensor:
     m[:4] *= 1e3  # four massive-activation channels
     out: Tensor = m.to(torch.bfloat16).to(torch.float32)  # bf16-rounded, fp32 core (pod path)
     return out
+
+
+def rank_deficient_block(cols: int = 24, rank: int = 10, seed: int = 5) -> Tensor:
+    """A seeding block of ``cols`` columns spanning only ``rank`` directions -- the pods'
+    trigger, a PG-19 excerpt's opening whose repeated tokens give duplicate value vectors
+    (D-011 addendum 5: ``eff_rank_v`` 93 of 128 columns)."""
+    g = torch.Generator().manual_seed(seed)
+    base = torch.randn(N_FEATURES, rank, generator=g)
+    return torch.cat([base, base[:, :1].expand(-1, cols - rank)], dim=1)
+
+
+def null_space_garbage_svd(rank: int) -> Callable[..., tuple[Tensor, Tensor, Tensor]]:
+    """``torch.linalg.svd`` as the pods' GPU driver returned it for a rank-deficient
+    matrix: the left columns beyond ``rank`` -- the null space, which no data pins down --
+    come back duplicated instead of orthonormal (‖UᵀU - I‖ 0.5-0.9 on the three pods).
+    CPU LAPACK does not do this, so a stub is the only way to run that failure here."""
+    real = torch.linalg.svd
+
+    def patched(mat: Tensor, *args: Any, **kwargs: Any) -> tuple[Tensor, Tensor, Tensor]:
+        u, s, vh = real(mat, *args, **kwargs)
+        u = u.clone()
+        u[:, rank:] = u[:, :1]
+        return u, s, vh
+
+    return patched
+
+
+def _failed_repair(u: Tensor, c: Tensor, b: Tensor) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    """A ``reorthonormalize`` that does not repair: the basis comes back merely rescaled,
+    still non-orthonormal. An unrepairable basis is the only thing that aborts a trial now,
+    and half-scaling makes the POST-repair error it is judged on measurably smaller than
+    the PRE-repair error the diagnostic window keeps."""
+    eye = torch.eye(u.shape[1], dtype=u.dtype, device=u.device)
+    return u * 0.5, c, b, eye
 
 
 def _pre_w7_step(
@@ -169,7 +205,9 @@ def test_defaults_are_bit_identical_on_benign_stream() -> None:
 # ----------------------------------------------------------------- the cache
 
 
-def test_cache_tripwire_records_and_aborts(tiny_model: LlamaForCausalLM) -> None:
+def test_cache_tripwire_records_and_aborts(
+    tiny_model: LlamaForCausalLM, monkeypatch: pytest.MonkeyPatch
+) -> None:
     cache = BugStreamingCache(
         tiny_model,
         rank=8,
@@ -194,7 +232,10 @@ def test_cache_tripwire_records_and_aborts(tiny_model: LlamaForCausalLM) -> None
         # just decode's -- the cache's counter alone would read 0 for every pre-fill row.
         assert row["tokens_seen"] > 0
 
-    # Force an abort: corrupt U and absorb once more.
+    # Force an abort: corrupt U, make the repair fail, and absorb once more. A repair that
+    # WORKS no longer aborts (see ``test_guard_repairs_before_it_aborts``), so an
+    # unrepairable basis is the only way into this path.
+    monkeypatch.setattr("kvdlra.cache.bug_cache.reorthonormalize", _failed_repair)
     layer = cache._bug_layers()[0]
     assert layer.u_k is not None
     layer.u_k = layer.u_k * 3.0
@@ -208,8 +249,12 @@ def test_cache_tripwire_records_and_aborts(tiny_model: LlamaForCausalLM) -> None
     assert fatal_rows
     fatal = fatal_rows[-1]
     assert int(fatal["absorbs"]) == int(matched.group(4))
-    reported = max(float(fatal["orth_err_k"]), float(fatal["orth_err_v"]))
-    assert f"{reported:.3e}" == matched.group(2)
+    assert fatal["fixed_k"]  # the repair was attempted -- it just did not restore anything
+    # The message reports the POST-repair error (what the repair could not fix); the diag
+    # window keeps the PRE-repair error, so the ratchet trace is the raw measurement.
+    assert float(matched.group(2)) == pytest.approx(orth_error(layer.u_k), rel=1e-3)
+    window = max(float(fatal["orth_err_k"]), float(fatal["orth_err_v"]))
+    assert window > 1.5 * float(matched.group(2))
 
 
 def test_qr_every_forces_fixes_and_keeps_the_basis_orthonormal(
@@ -258,7 +303,15 @@ def test_quant_tier_rotation_skips_the_untouched_side(tiny_model: LlamaForCausal
 
 
 def test_orth_knobs_validate(tiny_model: LlamaForCausalLM) -> None:
-    for kw in ({"orth_fix_tol": 0.0}, {"orth_abort_tol": -1.0}, {"qr_every": 0}, {"diag_every": 0}):
+    for kw in (
+        {"orth_fix_tol": 0.0},
+        {"orth_abort_tol": -1.0},
+        {"qr_every": 0},
+        {"diag_every": 0},
+        # A stream below the repair threshold is never repaired, so an abort threshold
+        # below it could only fire on a basis the guard had decided not to touch.
+        {"orth_abort_tol": 1e-4, "orth_fix_tol": 1e-3},
+    ):
         with pytest.raises(ValueError):
             BugStreamingCache(tiny_model, rank=8, coord_budget=16, **kw)
 
@@ -361,3 +414,82 @@ def test_orth_abort_tol_none_disables_the_raise(tiny_model: LlamaForCausalLM) ->
     assert orth_error(layer.u_k) < ROUNDOFF  # repaired instead of aborting
     rows = [row for row in cache.drain_diag() if row["layer"] == 0]
     assert rows and rows[-1]["fixed_k"]
+
+
+# ------------------------------------------- repair before abort (D-011 addendum 5)
+
+
+def test_guard_repairs_before_it_aborts(tiny_model: LlamaForCausalLM) -> None:
+    """The harness defect that failed every guarded arm on three Table-4 pods: the guard
+    checked ``orth_abort_tol`` BEFORE it tried the thin QR that fixes a one-step numerical
+    event, so a repairable basis aborted the arm at absorb 1. At the DEFAULT knobs a basis
+    far above the abort tolerance is now repaired, the absorb completes, and the window
+    still carries the raw pre-repair error."""
+    cache = BugStreamingCache(
+        tiny_model, rank=8, coord_budget=64, recent_window=8, absorb_block=4, diag_every=1
+    )
+    _drive(tiny_model, cache)
+    cache.drain_diag()
+    layer = cache._bug_layers()[0]
+    assert layer.u_k is not None
+    layer.u_k = layer.u_k * 3.0
+    assert orth_error(layer.u_k) > 1e-1  # the default orth_abort_tol
+
+    _decode_steps(tiny_model, cache, layer.absorb_block + 1)  # must not raise
+
+    assert layer.u_k is not None and orth_error(layer.u_k) < ROUNDOFF
+    rows: list[dict[str, Any]] = cache.drain_diag()
+    repaired = [row for row in rows if row["layer"] == 0 and row["fixed_k"]]
+    assert repaired
+    assert float(repaired[-1]["orth_err_k"]) > 1e-1  # pre-repair: the ratchet trace
+
+
+def test_rank_deficient_seeding_block_absorbs_and_stays_orthonormal(
+    tiny_model: LlamaForCausalLM,
+) -> None:
+    """The pods' trigger through the cache: a seeding block that spans fewer directions
+    than the rank cap (theirs: ``eff_rank_v`` 93 of a 128-column block at rank 256). On CPU
+    the SVD of that block's core comes back orthonormal, so this pins the CACHE path -- the
+    seeding absorb with an empty coordinate buffer, the guard, the effective-rank row --
+    not the CUDA driver failure, which needs the stub the next test installs."""
+    cache = BugStreamingCache(
+        tiny_model, rank=16, coord_budget=64, recent_window=8, absorb_block=4, diag_every=1
+    )
+    layer = cache._bug_layers()[0]
+    block_v = rank_deficient_block()
+    g = torch.Generator().manual_seed(6)
+    block_k = torch.randn(N_FEATURES, block_v.shape[1], generator=g)
+
+    layer._absorb_columns(block_k, block_v, torch.arange(block_v.shape[1]))
+
+    assert layer.u_v is not None and orth_error(layer.u_v) < ROUNDOFF
+    assert layer.b_v is not None and eff_rank(layer.b_v) < int(layer.u_v.shape[1])  # deficient
+    (row,) = [r for r in cache.drain_diag() if r["layer"] == 0]
+    assert float(row["orth_err_v"]) < ROUNDOFF  # type: ignore[arg-type]
+
+
+def test_rank_deficient_seeding_block_survives_a_garbage_driver(
+    tiny_model: LlamaForCausalLM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pod failure end to end (D-011 addendum 5): a rank-deficient seeding block plus a
+    driver whose null-space left columns are not orthonormal put ‖UᵀU - I‖ = 0.921 into the
+    stored V basis at absorb 1, and the guard aborted the arm before trying the repair.
+    ``_svd_core`` now hands the step an orthonormal left factor, so the garbage never
+    reaches the basis and there is nothing to repair or abort."""
+    monkeypatch.setattr(isvd, "NONORTHONORMAL", 0)
+    cache = BugStreamingCache(
+        tiny_model, rank=16, coord_budget=64, recent_window=8, absorb_block=4, diag_every=1
+    )
+    layer = cache._bug_layers()[0]
+    block_v = rank_deficient_block()
+    g = torch.Generator().manual_seed(6)
+    block_k = torch.randn(N_FEATURES, block_v.shape[1], generator=g)
+    monkeypatch.setattr(torch.linalg, "svd", null_space_garbage_svd(10))
+
+    layer._absorb_columns(block_k, block_v, torch.arange(block_v.shape[1]))
+
+    assert layer.u_v is not None and orth_error(layer.u_v) < ROUNDOFF
+    assert isvd.NONORTHONORMAL > 0  # the core caught the driver, not the guard
+    (row,) = [r for r in cache.drain_diag() if r["layer"] == 0]
+    assert not row["fixed_v"]
+    assert float(row["orth_err_v"]) < ROUNDOFF  # type: ignore[arg-type]

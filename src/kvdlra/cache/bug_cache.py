@@ -368,6 +368,17 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             raise ValueError(f"orth_fix_tol must be > 0 (None disables), got {orth_fix_tol}")
         if orth_abort_tol is not None and orth_abort_tol <= 0.0:
             raise ValueError(f"orth_abort_tol must be > 0 (None disables), got {orth_abort_tol}")
+        if (
+            orth_abort_tol is not None
+            and orth_fix_tol is not None
+            and orth_abort_tol < orth_fix_tol
+        ):
+            # The guard repairs first and judges the REPAIRED basis, so a stream the repair
+            # threshold leaves alone must be below the abort threshold too -- otherwise the
+            # only way to abort is a basis nothing ever tried to fix.
+            raise ValueError(
+                f"orth_abort_tol ({orth_abort_tol}) must be >= orth_fix_tol ({orth_fix_tol})"
+            )
         if qr_every is not None and qr_every < 1:
             raise ValueError(f"qr_every must be >= 1 (None disables), got {qr_every}")
         if diag_every < 1:
@@ -413,14 +424,15 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         # Orthonormality guard (CODE_AUDIT Part A §Q4). Divergence of this cache is loss
         # of orthonormality of the tracked basis, and nothing used to watch for it. Every
         # absorb measures ``‖UᵀU - I‖`` on the STORED basis of each stream: above
-        # ``orth_abort_tol`` the trial is failed loudly; above ``orth_fix_tol`` the basis
-        # is re-orthonormalized in place (coordinates and the quantized tier carried
-        # exactly, so the retained history survives the repair). ``qr_every`` is the
-        # experimental factor: re-orthonormalize unconditionally every k absorbs and after
-        # that stream's own rank change, whatever the measurement says. The measured
-        # ceiling on a benign stream is ~7e-4 over 1400 adversarial steps (and 6e-5 over
-        # the r64 golden), so at the defaults the fix never fires and behaviour is
-        # bit-identical.
+        # ``orth_fix_tol`` the basis is re-orthonormalized in place (coordinates and the
+        # quantized tier carried exactly, so the retained history survives the repair), and
+        # only a basis still above ``orth_abort_tol`` AFTER that repair fails the trial --
+        # an unrepairable basis, not a numerical event a thin QR fixes (D-011 addendum 5).
+        # ``qr_every`` is the experimental factor: re-orthonormalize unconditionally every
+        # k absorbs and after that stream's own rank change, whatever the measurement says.
+        # The measured ceiling on a benign stream is ~7e-4 over 1400 adversarial steps (and
+        # 6e-5 over the r64 golden), so at the defaults the fix never fires and behaviour
+        # is bit-identical.
         self.orth_fix_tol = orth_fix_tol
         self.orth_abort_tol = orth_abort_tol
         self.qr_every = qr_every
@@ -805,13 +817,17 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         """One absorb's orthonormality tripwire, guard and diagnostic row.
 
         ``‖UᵀU - I‖`` is measured on the *stored* basis of each stream (in its own dtype).
-        Above ``orth_abort_tol`` the trial fails loudly -- but this absorb's error is folded
-        into the window and flushed FIRST, so a failed trial's drained rows still contain the
-        fatal window (fix1 Minor #3) rather than a gap. Above ``orth_fix_tol`` -- or whenever
-        ``qr_every`` says so for that stream -- the offending stream is re-orthonormalized, its
-        coordinates and (once, for both streams together) its quantized tier carried into the
-        repaired basis. Every ``diag_every`` absorbs one row per layer records the window's
-        worst error, its lowest effective rank, the live rank and whether a repair fired;
+        Above ``orth_fix_tol`` -- or whenever ``qr_every`` says so for that stream -- the
+        offending stream is re-orthonormalized, its coordinates and (once, for both streams
+        together) its quantized tier carried into the repaired basis. The trial fails loudly
+        only if the REPAIRED basis is still above ``orth_abort_tol``: a rank-deficient block
+        whose SVD came back non-orthonormal is a one-step numerical event a thin QR fixes,
+        and checking the abort tolerance first failed every guarded arm on three Table-4
+        pods at absorb 1 (D-011 addendum 5). The window keeps the PRE-repair error, so the
+        ratchet trace is the raw measurement, and the fatal window is flushed BEFORE the
+        raise, so a failed trial's drained rows contain it (fix1 Minor #3) rather than a gap.
+        Every ``diag_every`` absorbs one row per layer records the window's worst error, its
+        lowest effective rank, the live rank and whether a repair fired;
         ``BugStreamingCache.drain_diag()`` collects them. ``tokens_seen`` is
         :meth:`_tokens_seen` of this absorb -- see its docstring for why the cache's own
         counter is not it.
@@ -823,20 +839,10 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         err_v = orth_error(self.u_v)
         self._diag_window += 1
         self._diag_tokens = self._tokens_seen(positions)
-        # Folded before the abort check, so the fatal window carries this absorb's error
-        # on both paths (fix1 Minor #3) from ONE pair of lines. The rank folds below stay
-        # below it: they are deliberately measured AFTER a repair, which the abort path
-        # never reaches.
+        # The PRE-repair error is what the window carries on every path (fix1 Minor #3):
+        # the ratchet trace is the raw measurement, not what is left after a repair.
         self._diag_max_err_k = max(self._diag_max_err_k, err_k)
         self._diag_max_err_v = max(self._diag_max_err_v, err_v)
-        if self.orth_abort_tol is not None and max(err_k, err_v) > self.orth_abort_tol:
-            self._diag_min_rank_k = min(self._diag_min_rank_k, eff_rank(self.b_k))
-            self._diag_min_rank_v = min(self._diag_min_rank_v, eff_rank(self.b_v))
-            self._flush_diag_window()
-            raise OrthonormalityError(
-                f"layer={self.layer_idx} orth_err={max(err_k, err_v):.3e} > "
-                f"abort_tol={self.orth_abort_tol} at absorb {self._absorbs}"
-            )
         # ``qr_every`` (the experimental factor) repairs unconditionally every k absorbs
         # and after that stream's own rank change, whatever the measurement says.
         forced_k = self.qr_every is not None and (
@@ -869,6 +875,20 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self._diag_fixed_v = self._diag_fixed_v or fixed_v
         self._diag_min_rank_k = min(self._diag_min_rank_k, eff_rank(self.b_k))
         self._diag_min_rank_v = min(self._diag_min_rank_v, eff_rank(self.b_v))
+        if self.orth_abort_tol is not None:
+            # Only a repaired stream is re-measured: an untouched one still carries the
+            # error measured above, and (``orth_abort_tol >= orth_fix_tol``, validated in
+            # the constructor) it cannot be over the abort tolerance without a repair.
+            post = max(
+                orth_error(self.u_k) if fixed_k else err_k,
+                orth_error(self.u_v) if fixed_v else err_v,
+            )
+            if post > self.orth_abort_tol:
+                self._flush_diag_window()
+                raise OrthonormalityError(
+                    f"layer={self.layer_idx} orth_err={post:.3e} > "
+                    f"abort_tol={self.orth_abort_tol} at absorb {self._absorbs}"
+                )
         if self._absorbs % self.diag_every == 0:
             self._flush_diag_window()
 
@@ -1414,11 +1434,12 @@ class BugStreamingCache(Cache):
         Storage rank, tail-retention snapshots and accounting are unchanged.
     orth_fix_tol, orth_abort_tol, qr_every, diag_every:
         Orthonormality guard (CODE_AUDIT Part A §Q4). Each absorb measures
-        ``‖UᵀU - I‖`` on both stored bases: above ``orth_abort_tol`` (default 1e-1) it
-        raises :class:`OrthonormalityError`; above ``orth_fix_tol`` (default 1e-3, well
+        ``‖UᵀU - I‖`` on both stored bases: above ``orth_fix_tol`` (default 1e-3, well
         above the ~7e-4 a benign stream reaches over 1400 adversarial steps, so the
         defaults are bit-identical) it re-orthonormalizes the basis in place, carrying
-        coordinates and the quantized tier. ``None`` disables either. ``qr_every``
+        coordinates and the quantized tier; if the repaired basis is STILL above
+        ``orth_abort_tol`` (default 1e-1, and never below ``orth_fix_tol``) it raises
+        :class:`OrthonormalityError`. ``None`` disables either. ``qr_every``
         (default ``None``) repairs unconditionally every k absorbs and after that stream's
         own rank change. ``diag_every`` (default 64) sets the diagnostic window; see
         :meth:`drain_diag`.

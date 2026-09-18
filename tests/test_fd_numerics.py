@@ -17,6 +17,7 @@ import torch
 from kvdlra.eval.records import parse_diag_lines
 from kvdlra.tracker import isvd
 from kvdlra.tracker.isvd import _svd_core, fd_step, isvd_step, orth_error
+from tests.test_orth_guard import ROUNDOFF, null_space_garbage_svd
 
 
 def test_svd_core_falls_back_to_eigh_on_linalg_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -142,3 +143,47 @@ def test_fd_survives_the_ratchet_stream() -> None:
     for s in range(0, m.shape[1], 16):
         u, b, _ = fd_step(u, b, m[:, s : s + 16], 256)
     assert u is not None and torch.isfinite(u).all()
+
+
+def test_svd_core_reorthonormalizes_a_nonorthonormal_left_factor(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """D-011 addendum 5: on three pods the GPU SVD of a rank-deficient seeding core came
+    back with non-orthonormal null-space columns, and the step multiplied them straight
+    into the tracked basis (‖UᵀU - I‖ 0.5-0.92 at absorb 1). The core checks its own left
+    factor now -- a thin QR when it fails, and one ``[diag]`` line per process, like the
+    Gram fallback above."""
+    monkeypatch.setattr(isvd, "NONORTHONORMAL", 0)
+    g = torch.Generator().manual_seed(4)
+    q = torch.linalg.qr(torch.randn(40, 12, generator=g))[0]
+    b = q @ torch.randn(12, 40, generator=g)  # rank 12 of 40: 28 null directions
+    _, s_ref, _ = torch.linalg.svd(b, full_matrices=False)
+    monkeypatch.setattr(torch.linalg, "svd", null_space_garbage_svd(12))
+
+    u, s = _svd_core(b)
+    assert orth_error(u) < ROUNDOFF  # the fp32 thin-QR floor, ~r x eps
+    assert torch.equal(s, s_ref)  # singular values kept exactly as the driver returned them
+    _svd_core(b)  # counted, not printed again
+    assert isvd.NONORTHONORMAL == 2
+
+    (line,) = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("[diag]")]
+    assert len(line) < 400
+    rows, skipped = parse_diag_lines(line, model="M", source="pod.log")
+    assert skipped == 0
+    assert rows[0]["event"] == "svd_nonorthonormal" and rows[0]["shape"] == [40, 40]
+
+
+def test_svd_core_leaves_a_clean_left_factor_bit_identical(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The check is read-only on the default path: what CPU LAPACK returns -- for a
+    well-conditioned core AND for a rank-deficient one, whose null space it still spans
+    orthonormally -- comes back bit-for-bit, with no repair counted."""
+    monkeypatch.setattr(isvd, "NONORTHONORMAL", 0)
+    g = torch.Generator().manual_seed(5)
+    b = torch.randn(40, 56, generator=g)
+    u_ref, s_ref, _ = torch.linalg.svd(b, full_matrices=False)
+    u, s = _svd_core(b)
+    assert torch.equal(u, u_ref) and torch.equal(s, s_ref)
+
+    q = torch.linalg.qr(torch.randn(40, 12, generator=g))[0]
+    _svd_core(q @ torch.randn(12, 56, generator=g))
+    assert isvd.NONORTHONORMAL == 0

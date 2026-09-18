@@ -39,6 +39,26 @@ IGNORED = {"name", "kind", "rank", "rank_s", "chunkable", "kwargs", "press_type"
 CACHE = sorted(k for k, v in GOLDEN.items() if "kwargs" in v)
 PARAMS = sorted(k for k, v in GOLDEN.items() if "params" in v)
 
+# Arm stems the golden does not hold, and why each one is absent rather than missed.
+# `kivi2_singleshot` is v1's single-shot control: the legacy quant branch always set
+# chunkable=True and the pod forced single-shot with `--chunk 0`, so there is no legacy
+# dict to freeze. The rest are the L1.6 Table-4 guard/floor cells
+# (`prereg/hygiene_table4.md`) -- post-v1 arms, no `legacy_name`, nothing to be parity
+# with. A plain set on purpose: the next lane's arm is one line here.
+POST_V1 = {
+    "kivi2_singleshot",
+    "isvd_r128_noguard",
+    "isvd_r128_tol",
+    "isvd_r128_qr64",
+    "isvd_r128_f0.01_tol",
+    "isvd_r128_f0.01_qr64",
+    "isvd_r256_noguard",
+    "isvd_r256_tol",
+    "isvd_r256_qr64",
+    "isvd_r256_f0.01_tol",
+    "isvd_r256_f0.01_qr64",
+}
+
 
 @pytest.mark.parametrize("t", [16384, 32768], ids=["16k", "32k"])
 @pytest.mark.parametrize("legacy", CACHE)
@@ -76,7 +96,7 @@ def test_the_golden_covers_every_arm_config_with_a_legacy_name() -> None:
     twin instead (below)."""
     named = {load_arm(p.stem).legacy_name for p in (ROOT / "arms").glob("*.yaml")} - {None}
     assert named - set(GOLDEN) == {"quant-2bit-kivi#chunk0"}
-    assert {v["config"] for v in GOLDEN.values()} | {"kivi2_singleshot"} == {
+    assert {v["config"] for v in GOLDEN.values()} | POST_V1 == {
         p.stem for p in (ROOT / "arms").glob("*.yaml")
     }
 

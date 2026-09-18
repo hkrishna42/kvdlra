@@ -14,7 +14,7 @@ from pathlib import Path
 import pod
 import pytest
 
-from kvdlra.eval.config import config_hash, load_pod
+from kvdlra.eval.config import config_hash, load_arm, load_pod, load_task
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -559,3 +559,60 @@ def test_harvest_counts_a_diag_line_the_fetch_cut_in_half(dry_pod: Path, tmp_pat
     c = _run("check", str(tmp_path))
     assert c.returncode == 1
     assert "CHECK FAIL diag: 1 [diag] line(s) were unparseable" in c.stdout + c.stderr
+
+
+# --- L1.6: the Table-4 pods (prereg/hygiene_table4.md) ------------------------
+
+TABLE4 = ("hygiene_table4_qwen", "hygiene_table4_llama")
+
+
+def test_the_table4_pods_resolve_end_to_end() -> None:
+    """Both pods load, hash, name the shared prereg, and every arm and task they
+    reference loads. In-process on purpose: `run --dry-run` spawns a torch-importing
+    subprocess, and this asserts the same resolution for a tenth of the wall clock."""
+    hashes = set()
+    for name in TABLE4:
+        p = load_pod(name)
+        assert p.prereg == "prereg/hygiene_table4.md"
+        assert (REPO_ROOT / p.prereg).is_file(), "the prereg must be in the launch's ancestry"
+        assert p.gpu_budget_h > 0, f"{name}: a pod to be launched needs a pre-registered budget"
+        for a in p.arms:
+            assert load_arm(a).name == a
+        for t in p.tasks:
+            assert load_task(t).name == t
+        hashes.add(config_hash(p))
+    assert len(hashes) == len(TABLE4)  # two models, two hashes
+
+
+def test_the_table4_gist_arms_cap_the_diag_volume_the_log_can_carry() -> None:
+    """`diag_every` is the one knob standing between this pod and a lost result.
+
+    The log is the only channel back from a vast.ai instance and the watchdog fetches
+    its last 30000 lines, while a 16K sample runs ~1024 absorbs per layer. At the 64
+    default that is ~17 `[diag]` rows per layer per sample -- the Qwen pod alone would
+    print ~380,000 of them and the fetch would hold only the tail. 4096 never completes
+    a window, so the only row is `drain_diag`'s end-of-sample flush: one per layer."""
+    for name in TABLE4:
+        for a in load_pod(name).arms:
+            cfg = load_arm(a)
+            if cfg.kind == "bug":
+                assert cfg.cache.get("diag_every") == 4096, f"{a}: would flood the log"
+
+
+def test_the_table4_control_arms_are_free_to_diverge() -> None:
+    """The guard is the DEFAULT, so an arm that merely leaves `qr_every` unset is still
+    guarded and the contrast would compare two guarded arms. The `_noguard` control has
+    to switch BOTH tolerances off to be the v1 behaviour that produced the divergence --
+    the tripwire still records its `orth_err` trace, which is the point."""
+    arms = {a for name in TABLE4 for a in load_pod(name).arms}
+    noguard = {a for a in arms if a.endswith("_noguard")}
+    assert noguard, "the pods must carry the unguarded control"
+    for a in noguard:
+        c = load_arm(a).cache
+        assert c["orth_fix_tol"] is None and c["orth_abort_tol"] is None
+        assert "qr_every" not in c
+    for a in {x for x in arms if x.endswith("_qr64")}:
+        assert load_arm(a).cache["qr_every"] == 64
+    for a in {x for x in arms if x.endswith("_tol")}:
+        c = load_arm(a).cache
+        assert not {"orth_fix_tol", "orth_abort_tol", "qr_every"} & set(c)  # the defaults

@@ -1,0 +1,16 @@
+name: isvd_r128_qr64
+kind: bug
+chunkable: true
+doc: >-
+  Rank-128 gist with a thin QR of the basis every 64 absorbs, on top of the tolerance guard:
+  the periodic form of the repair. Table-4 cell, prereg/hygiene_table4.md.
+cache:
+  rank: 128
+  coord_budget: null
+  recent_window: 32
+  absorb_block: 16
+  n_sink: 4
+  retention: "fifo"
+  min_sv_frac: 0.0
+  qr_every: 64
+  diag_every: 4096

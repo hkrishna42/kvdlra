@@ -14,14 +14,15 @@ G0  cleanup + reproducibility
     ✔ G0 PASSED 2026-09-14 at week7 10c19ac — evidence per line in docs/plan/STATE.md (L0 Phase B entry); ledger docs/plan/cleanup/l0-ledger.md.
 
 G1  harness hygiene
-    [ ] guard + tripwire merged; ratchet regression test passes in both directions
-    [ ] effective-rank billing test passes
-    [ ] recon.py scores from stored(); test: isvd stored error == cache rot-carried error (1e-6)
-    [ ] FD step runs on the block that crashed the swap pod; no `--` arms
-    [ ] Oja eta0/decay reach oja_step from config; tuned config committed
-    [ ] rank-sweep figure regenerates from local 1B dumps (Week 1) and 8B dumps (Week 3)
-    [ ] perplexity on TEST/PG-19 val, per-window NLL, paired CI + TOST
+    [x] guard + tripwire merged; ratchet regression test passes in both directions
+    [x] effective-rank billing test passes
+    [x] recon.py scores from stored(); test: isvd stored error == cache rot-carried error (1e-6)
+    [x] FD step runs on the block that crashed the swap pod; no `--` arms
+    [x] Oja eta0/decay reach oja_step from config; tuned config committed
+    [~] rank-sweep figure regenerates from local 1B dumps (Week 1) and 8B dumps (Week 3)
+    [x] perplexity on TEST/PG-19 val, per-window NLL, paired CI + TOST
     [ ] Table-4 cells re-run under prereg; DECISIONS.md: guard alone removes divergence? y/n
+    ✔ G1 2026-09-18 on lane/L1-harness-hygiene: lines 1–5, 7 met (4 as amended: crash class, D-012); 6 = 1B half (8B open); 8 open until the Table-4 pods harvest. Evidence: docs/plan/STATE.md (L1 entry), docs/plan/cleanup/l1-ledger.md.
 
 G2  generator v2 + baselines
     [ ] filler-realism diagnostic harvested; DECISIONS.md: in-house generator retained/retired

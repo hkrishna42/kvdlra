@@ -165,19 +165,18 @@ def load_pod(name: str) -> PodCfg:
     here, at load time, naming both task files.
     """
     p: PodCfg = _load("pods", name, PodCfg)
-    by_ctx: dict[int, list[tuple[str, str]]] = {}
+    seen: dict[int, tuple[str, str]] = {}
     for task_name in p.tasks:
         t = load_task(task_name)
-        if t.generator == "ppl":
-            by_ctx.setdefault(t.ctx, []).append((task_name, t.corpus))
-    bad = []
-    for ctx, entries in sorted(by_ctx.items()):
-        corpora = {c for _, c in entries}
-        if len(corpora) > 1:
-            named = ", ".join(f"{ROOT / 'tasks' / f'{tn}.yaml'} (corpus={c})" for tn, c in entries)
-            bad.append(f"ppl tasks at ctx={ctx} disagree on corpus: {named}")
-    if bad:
-        raise ValueError(f"{ROOT / 'pods' / f'{name}.yaml'}: " + "; ".join(bad))
+        if t.generator != "ppl":
+            continue
+        first = seen.setdefault(t.ctx, (task_name, t.corpus))
+        if first[1] != t.corpus:
+            raise ValueError(
+                f"{ROOT / 'pods' / f'{name}.yaml'}: ppl tasks at ctx={t.ctx} disagree on"
+                f" corpus: {ROOT / 'tasks' / f'{first[0]}.yaml'} (corpus={first[1]}),"
+                f" {ROOT / 'tasks' / f'{task_name}.yaml'} (corpus={t.corpus})"
+            )
     return p
 
 

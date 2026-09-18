@@ -32,11 +32,10 @@ from typing import Any, cast
 import torch
 from transformers.cache_utils import Cache, DynamicCache
 
-from kvdlra.cache import BugStreamingCache
 from kvdlra.eval.config import TaskCfg
 from kvdlra.eval.data import FILLER, LABELS
 from kvdlra.eval.frontier import _footprint, _prefill_chunked, _prefill_plain
-from kvdlra.eval.records import emit_diag
+from kvdlra.eval.records import drained
 
 _TAIL_K = 48  # FLOOR for the decoded query tail (question + assistant header, as in
 # w4/w5); the actual tail is template-derived per family (see _templated) and never
@@ -303,38 +302,35 @@ def retrieve(
         # ShadowKV's pre-attention selection hook never ran at decode and
         # _selected_chunks fell back to the most-recent chunks -- excluding the
         # mid-context needle by construction (the published 0/0/0/0 rows are VOID).
-        try:
-            with cache.attach(model):  # type: ignore[attr-defined]
-                if 0 < chunk < ctx_len:
-                    _prefill_chunked(model, cache, hay, chunk)
-                else:
-                    model(hay, past_key_values=cache, use_cache=True, logits_to_keep=1)
-                fp = _footprint(arm, cache, ctx_len, n, h_kv)
-                text = _decode(
-                    model,
-                    tok,
-                    cache,
-                    query.to(device),
-                    ctx_len,
-                    device,
-                    block=False,
-                    max_new=max_new,
-                )
-        finally:
-            # The tripwire's rows, before the cache goes -- in a `finally` so an
-            # `OrthonormalityError` still delivers the window the cache flushed before
-            # raising (the trial is recorded as an error either way). `cache` is bound
-            # inside this branch, so the try/finally is here and not around the chain.
-            if isinstance(cache, BugStreamingCache):
-                emit_diag(
-                    cache.drain_diag(),
-                    model=str(model.name_or_path),
-                    source="ruler",
-                    arm=str(arm["name"]),
-                    ctx=ctx_len,
-                    task=task,
-                    idx=idx,
-                )
+        with (
+            # The tripwire's rows, before the cache goes -- `records.drained` says why in
+            # a `finally`. `cache` is bound inside this branch, so the wrapper is here.
+            drained(
+                cache,
+                model,
+                source="ruler",
+                arm=str(arm["name"]),
+                ctx=ctx_len,
+                task=task,
+                idx=idx,
+            ),
+            cache.attach(model),  # type: ignore[attr-defined]
+        ):
+            if 0 < chunk < ctx_len:
+                _prefill_chunked(model, cache, hay, chunk)
+            else:
+                model(hay, past_key_values=cache, use_cache=True, logits_to_keep=1)
+            fp = _footprint(arm, cache, ctx_len, n, h_kv)
+            text = _decode(
+                model,
+                tok,
+                cache,
+                query.to(device),
+                ctx_len,
+                device,
+                block=False,
+                max_new=max_new,
+            )
     elif arm["kind"] == "quant":
         # KIVI-style QuantizedCache baseline (Week-18/19): the arm supplies its OWN cache
         # object (not a press over a DynamicCache); prefill honors --chunk (Week-19: the

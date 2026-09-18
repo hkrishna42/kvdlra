@@ -672,46 +672,38 @@ def ppl_stats(
         base = bits[(baseline, ctx, corpus)]
         for arm in [baseline] + [a for a in arms if a != baseline]:
             w = bits[(arm, ctx, corpus)]
-            mean_bits = sum(w.values()) / len(w)
-            if arm == baseline:
-                out.append(
-                    {
-                        "arm": arm,
-                        "ctx": ctx,
-                        "corpus": corpus,
-                        "n_windows": len(w),
-                        "bits": mean_bits,
-                        "d_bits": None,
-                        "lo": None,
-                        "hi": None,
-                        "p_tost": None,
-                        "equivalent": None,
-                    }
-                )
-                continue
-            if set(w) != set(base):
-                raise SystemExit(
-                    f"ppl: {arm} ctx={ctx} corpus={corpus} scored windows"
-                    f" {sorted(set(w) ^ set(base))} that {baseline} did not (or the reverse)"
-                    " -- the pairing is broken"
-                )
-            d = [w[i] - base[i] for i in sorted(w)]
-            mean_d, lo, hi = paired_bootstrap(d)
-            p_lo, p_hi, equivalent = tost(d, delta)
-            out.append(
-                {
-                    "arm": arm,
-                    "ctx": ctx,
-                    "corpus": corpus,
-                    "n_windows": len(w),
-                    "bits": mean_bits,
+            # The baseline row has nothing to be paired against, so its five comparison
+            # fields stay None; every other arm fills them in on the same row.
+            stat: PplStat = {
+                "arm": arm,
+                "ctx": ctx,
+                "corpus": corpus,
+                "n_windows": len(w),
+                "bits": sum(w.values()) / len(w),
+                "d_bits": None,
+                "lo": None,
+                "hi": None,
+                "p_tost": None,
+                "equivalent": None,
+            }
+            if arm != baseline:
+                if set(w) != set(base):
+                    raise SystemExit(
+                        f"ppl: {arm} ctx={ctx} corpus={corpus} scored windows"
+                        f" {sorted(set(w) ^ set(base))} that {baseline} did not (or the reverse)"
+                        " -- the pairing is broken"
+                    )
+                d = [w[i] - base[i] for i in sorted(w)]
+                mean_d, lo, hi = paired_bootstrap(d)
+                p_lo, p_hi, equivalent = tost(d, delta)
+                stat |= {
                     "d_bits": mean_d,
                     "lo": lo,
                     "hi": hi,
                     "p_tost": max(p_lo, p_hi),
                     "equivalent": equivalent,
                 }
-            )
+            out.append(stat)
     return out
 
 

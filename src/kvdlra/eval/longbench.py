@@ -30,10 +30,9 @@ import torch
 from datasets import load_dataset
 from transformers.cache_utils import Cache, DynamicCache
 
-from kvdlra.cache import BugStreamingCache
 from kvdlra.eval.config import TaskCfg
 from kvdlra.eval.frontier import _footprint, _prefill_chunked
-from kvdlra.eval.records import emit_diag
+from kvdlra.eval.records import drained
 from kvdlra.eval.ruler import _decode, prompt_sha256
 
 # One templated example: (prompt ids, reference answers).
@@ -127,30 +126,26 @@ def generate(
         # streaming arms) -- decode outside attach left ShadowKV's selection hook
         # unregistered, silently degrading it to most-recent-chunks retention
         # (the same defect as the RULER harness; those published rows are VOID).
-        try:
-            with cache.attach(model):  # type: ignore[attr-defined]
-                if 0 < chunk < ctx_len:
-                    _prefill_chunked(model, cache, pre, chunk)
-                else:
-                    model(pre, past_key_values=cache, use_cache=True, logits_to_keep=1)
-                fp = _footprint(arm, cache, ctx_len, n, h_kv)
-                text = _decode(
-                    model, tok, cache, last, ctx_len, device, block=False, max_new=max_new
-                )
-        finally:
-            # The tripwire's rows, before the cache goes -- in a `finally` so an
-            # `OrthonormalityError` still delivers the window the cache flushed before
-            # raising. `cache` is bound inside this branch, so the try/finally is here.
-            if isinstance(cache, BugStreamingCache):
-                emit_diag(
-                    cache.drain_diag(),
-                    model=str(model.name_or_path),
-                    source="longbench",
-                    arm=str(arm["name"]),
-                    ctx=ctx_len,
-                    task=task,
-                    idx=idx,
-                )
+        with (
+            # The tripwire's rows, before the cache goes -- `records.drained` says why in
+            # a `finally`. `cache` is bound inside this branch, so the wrapper is here.
+            drained(
+                cache,
+                model,
+                source="longbench",
+                arm=str(arm["name"]),
+                ctx=ctx_len,
+                task=task,
+                idx=idx,
+            ),
+            cache.attach(model),  # type: ignore[attr-defined]
+        ):
+            if 0 < chunk < ctx_len:
+                _prefill_chunked(model, cache, pre, chunk)
+            else:
+                model(pre, past_key_values=cache, use_cache=True, logits_to_keep=1)
+            fp = _footprint(arm, cache, ctx_len, n, h_kv)
+            text = _decode(model, tok, cache, last, ctx_len, device, block=False, max_new=max_new)
     else:
         cache = DynamicCache()
         press = arm["make"]()

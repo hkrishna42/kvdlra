@@ -30,7 +30,7 @@ from transformers.cache_utils import Cache, DynamicCache
 from kvdlra import accounting as acc
 from kvdlra.cache import BugStreamingCache, ShadowKVCache
 from kvdlra.eval.config import ArmCfg, arm_kwargs
-from kvdlra.eval.records import emit_diag
+from kvdlra.eval.records import drained
 from kvdlra.quant.kivi_cache import aux_words, flush, make_quant_cache
 
 N_SINK = 4
@@ -101,7 +101,7 @@ def score_streaming(
     ingest; otherwise single-shot. ``arm`` / ``idx`` only label the diagnostics."""
     ctx = ctx_ids.unsqueeze(0)
     ctx_len = int(ctx_ids.shape[0])
-    try:
+    with drained(cache, model, source="ppl", arm=arm, ctx=ctx_len, idx=idx):
         with cache.attach(model):
             if 0 < chunk < ctx_len:
                 _prefill_chunked(model, cache, ctx, chunk)
@@ -109,22 +109,6 @@ def score_streaming(
                 model(ctx, past_key_values=cache, use_cache=True, logits_to_keep=1)
         with cache.frozen_scoring():
             scored = _score_window(model, cache, ctx_len, win_ids)
-    finally:
-        # The tripwire's rows leave the library here -- drained after the sample and
-        # before the cache is dropped, since nothing else ever reads them again. In a
-        # `finally` because the window worth reading most is the last one before an
-        # `OrthonormalityError`: the cache flushes it before raising (L1.1), and an emit
-        # on the success path alone would let it die with the cache, leaving the trial
-        # recorded as an error with no diagnostics behind it.
-        if isinstance(cache, BugStreamingCache):
-            emit_diag(
-                cache.drain_diag(),
-                model=str(model.name_or_path),
-                source="ppl",
-                arm=arm,
-                ctx=ctx_len,
-                idx=idx,
-            )
     return scored
 
 

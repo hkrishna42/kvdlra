@@ -27,8 +27,10 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import TypedDict
+from typing import Any, TypedDict
 
 # `generator=` and `error=` are appended by `kvdlra.eval.runner` (in that order); no v1
 # log has either, so both are optional -- the harvest fills the generator from the pod's
@@ -451,6 +453,46 @@ def emit_diag(
         payload = {**row, **stamp}
         print("[diag] " + json.dumps(payload, sort_keys=True, separators=(",", ":")), flush=True)
         DIAG_ROWS.append({**payload, "model": model, "source": source})
+
+
+@contextmanager
+def drained(
+    cache: object,
+    model: Any,
+    *,
+    source: str,
+    arm: str,
+    ctx: int,
+    task: str | None = None,
+    idx: int | None = None,
+) -> Iterator[None]:
+    """Run one streaming measurement and emit the tripwire's rows when it ends.
+
+    The rows leave the library here -- drained after the sample and before the cache is
+    dropped, since nothing else ever reads them again -- and in a ``finally``, because the
+    window worth reading most is the last one before an ``OrthonormalityError``: the cache
+    flushes it before raising (L1.1), and an emit on the success path alone would let it
+    die with the cache, leaving the trial recorded as an error with no diagnostics behind
+    it. A cache of any other kind has nothing to drain, so the three axes wrap every arm.
+    """
+    # Imported HERE, not at module scope: `scripts/pod.py` imports this module for the
+    # parsers alone, and `kvdlra.cache` pulls in torch + transformers -- ~6 s of import
+    # on every `pod.py check` subprocess the tests spawn, for a path they never run.
+    from kvdlra.cache import BugStreamingCache
+
+    try:
+        yield
+    finally:
+        if isinstance(cache, BugStreamingCache):
+            emit_diag(
+                cache.drain_diag(),
+                model=str(model.name_or_path),
+                source=source,
+                arm=arm,
+                ctx=ctx,
+                task=task,
+                idx=idx,
+            )
 
 
 def write_jsonl(

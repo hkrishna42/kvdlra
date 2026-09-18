@@ -86,7 +86,6 @@ def _stored(
     *,
     oja: tuple[float, float] | None = None,
     prefill: float = PREFILL,
-    seed: int = 0,
     min_sv_frac: float = 0.0,
 ) -> tuple[float, Tensor]:
     """``(||m - u c||_F / ||m||_F, u)`` -- the relative error of the pair ``(u, c)`` a
@@ -95,7 +94,9 @@ def _stored(
 
     ``prefill`` is a FRACTION of ``T`` (the frozen control's window); ``min_sv_frac`` is
     the ``isvd`` singular-value floor; ``oja`` is that tracker's ``(eta0, decay)``, which
-    it has no default for; ``seed`` draws ``random_basis``.
+    it has no default for. ``random_basis`` is ONE Haar draw at seed 0, shared by every
+    rank and document -- that is the control's design (module docstring), so the draw is
+    not a knob.
     """
     n, t = m.shape
     u: Tensor | None = None
@@ -105,7 +106,7 @@ def _stored(
         k = min(r, int(s.shape[0]))
         u, c = left[:, :k], s[:k].unsqueeze(1) * vh[:k]
     elif method == "random_basis":
-        g = torch.Generator().manual_seed(seed)
+        g = torch.Generator().manual_seed(0)
         u = torch.linalg.qr(torch.randn(n, min(r, n), generator=g))[0].to(m)
         c = u.mT @ m
     elif method == "frozen_prefill_svd":
@@ -138,7 +139,7 @@ def stored_error(m: Tensor, method: Method, r: int, block: int = 16, **kw: Any) 
     """``||m - u c||_F / ||m||_F`` for one method on one ``(n, T)`` stream.
 
     The scalar half of :func:`_stored`, whose keyword options (``oja``, ``prefill``,
-    ``seed``, ``min_sv_frac``) this forwards.
+    ``min_sv_frac``) this forwards.
     """
     return _stored(m, method, r, block, **kw)[0]
 

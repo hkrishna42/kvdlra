@@ -234,11 +234,6 @@ class _QuantBank:
         return total
 
 
-def _running_min(current: int | None, value: int) -> int:
-    """Running minimum of a diagnostic window (``None`` == nothing recorded yet)."""
-    return value if current is None else min(current, value)
-
-
 def _rope_apply(x_htd: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
     """Apply RoPE to ``(H, T, D)`` given ``(T, D)`` cos/sin (broadcast over heads)."""
     rot: Tensor = rotate_half(x_htd)  # type: ignore[no-untyped-call]
@@ -502,8 +497,10 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self._diag_tokens = 0  # ``tokens_seen`` of the last absorb in the open window
         self._diag_max_err_k = 0.0
         self._diag_max_err_v = 0.0
-        self._diag_min_rank_k: int | None = None
-        self._diag_min_rank_v: int | None = None
+        # Seeded at the cap: ``eff_rank`` counts the diagonal of an ``(r, r)`` core, so
+        # the configured rank is an exact upper bound and plain ``min`` is the fold.
+        self._diag_min_rank_k = self.rank
+        self._diag_min_rank_v = self.rank
         self._diag_fixed_k = False
         self._diag_fixed_v = False
         # Running maximum behind ``_tokens_seen`` (fix1 R2): reset with the rest of the
@@ -815,12 +812,9 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         coordinates and (once, for both streams together) its quantized tier carried into the
         repaired basis. Every ``diag_every`` absorbs one row per layer records the window's
         worst error, its lowest effective rank, the live rank and whether a repair fired;
-        ``BugStreamingCache.drain_diag()`` collects them. ``tokens_seen`` is the larger of the
-        cache's own counter and this block's own ``positions`` (fix1 Important #1):
-        single-shot pre-fill only advances the counter after its whole absorb loop, so the
-        counter alone would read 0 for every pre-fill row; ``positions`` is exact there, and
-        never regresses the frontier on the heavy-hitter demote path, where a demoted token's
-        position can be older than it.
+        ``BugStreamingCache.drain_diag()`` collects them. ``tokens_seen`` is
+        :meth:`_tokens_seen` of this absorb -- see its docstring for why the cache's own
+        counter is not it.
         """
         assert self.u_k is not None and self.u_v is not None
         assert self.b_k is not None and self.b_v is not None
@@ -829,11 +823,15 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         err_v = orth_error(self.u_v)
         self._diag_window += 1
         self._diag_tokens = self._tokens_seen(positions)
+        # Folded before the abort check, so the fatal window carries this absorb's error
+        # on both paths (fix1 Minor #3) from ONE pair of lines. The rank folds below stay
+        # below it: they are deliberately measured AFTER a repair, which the abort path
+        # never reaches.
+        self._diag_max_err_k = max(self._diag_max_err_k, err_k)
+        self._diag_max_err_v = max(self._diag_max_err_v, err_v)
         if self.orth_abort_tol is not None and max(err_k, err_v) > self.orth_abort_tol:
-            self._diag_max_err_k = max(self._diag_max_err_k, err_k)
-            self._diag_max_err_v = max(self._diag_max_err_v, err_v)
-            self._diag_min_rank_k = _running_min(self._diag_min_rank_k, eff_rank(self.b_k))
-            self._diag_min_rank_v = _running_min(self._diag_min_rank_v, eff_rank(self.b_v))
+            self._diag_min_rank_k = min(self._diag_min_rank_k, eff_rank(self.b_k))
+            self._diag_min_rank_v = min(self._diag_min_rank_v, eff_rank(self.b_v))
             self._flush_diag_window()
             raise OrthonormalityError(
                 f"layer={self.layer_idx} orth_err={max(err_k, err_v):.3e} > "
@@ -867,41 +865,37 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             # rotation is not a no-op through the quantizer, it re-codes and injects
             # distortion the tier never had to take.
             self._rotate_quant_tier(rot_fix_k, rot_fix_v)
-        self._diag_max_err_k = max(self._diag_max_err_k, err_k)
-        self._diag_max_err_v = max(self._diag_max_err_v, err_v)
         self._diag_fixed_k = self._diag_fixed_k or fixed_k
         self._diag_fixed_v = self._diag_fixed_v or fixed_v
-        self._diag_min_rank_k = _running_min(self._diag_min_rank_k, eff_rank(self.b_k))
-        self._diag_min_rank_v = _running_min(self._diag_min_rank_v, eff_rank(self.b_v))
+        self._diag_min_rank_k = min(self._diag_min_rank_k, eff_rank(self.b_k))
+        self._diag_min_rank_v = min(self._diag_min_rank_v, eff_rank(self.b_v))
         if self._absorbs % self.diag_every == 0:
             self._flush_diag_window()
-
-    def _diag_row(self) -> dict[str, object]:
-        """One diagnostic row built from the current (open) window; does not reset it."""
-        assert self.u_k is not None and self.u_v is not None
-        return {
-            "layer": self.layer_idx,
-            "absorbs": self._absorbs,
-            "tokens_seen": self._diag_tokens,
-            "orth_err_k": self._diag_max_err_k,
-            "orth_err_v": self._diag_max_err_v,
-            "eff_rank_k": self._diag_min_rank_k,
-            "eff_rank_v": self._diag_min_rank_v,
-            "rank_k": int(self.u_k.shape[1]),
-            "rank_v": int(self.u_v.shape[1]),
-            "fixed_k": self._diag_fixed_k,
-            "fixed_v": self._diag_fixed_v,
-        }
 
     def _flush_diag_window(self) -> None:
         """Append one row from the current window and reset it -- shared by the periodic
         (``diag_every``) flush, the abort path (fix1 Minor #3) and the partial-window
         flush :meth:`BugStreamingCache.drain_diag` does, so there is exactly one place
         that resets the window counters."""
-        self.diag.append(self._diag_row())
+        assert self.u_k is not None and self.u_v is not None
+        self.diag.append(
+            {
+                "layer": self.layer_idx,
+                "absorbs": self._absorbs,
+                "tokens_seen": self._diag_tokens,
+                "orth_err_k": self._diag_max_err_k,
+                "orth_err_v": self._diag_max_err_v,
+                "eff_rank_k": self._diag_min_rank_k,
+                "eff_rank_v": self._diag_min_rank_v,
+                "rank_k": int(self.u_k.shape[1]),
+                "rank_v": int(self.u_v.shape[1]),
+                "fixed_k": self._diag_fixed_k,
+                "fixed_v": self._diag_fixed_v,
+            }
+        )
         self._diag_window = 0
         self._diag_max_err_k = self._diag_max_err_v = 0.0
-        self._diag_min_rank_k = self._diag_min_rank_v = None
+        self._diag_min_rank_k = self._diag_min_rank_v = self.rank
         self._diag_fixed_k = self._diag_fixed_v = False
 
     def _surprise_scores(self, block_k: Tensor, cap: int | None = None) -> Tensor:

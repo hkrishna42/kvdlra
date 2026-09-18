@@ -109,6 +109,13 @@ def _cache(model: LlamaForCausalLM, **kw: Any) -> BugStreamingCache:
         n_sink=1,
         retention="lowrank_surprise",
         hh_budget=2,
+        # The 48-token prefill must take MORE THAN ONE augmented step: every tracker keeps
+        # the same ``u_aug @ u_loc[:, :k]`` on a seeding block, so what distinguishes FD --
+        # the shrinkage, which only touches the core -- reaches the basis on the next step
+        # or not at all. At the default 128 the prefill is one block and the "must change
+        # the gist" pin below passes only while FD's seeding differs, which it no longer
+        # does (it shares ``_augment``/``_svd_core`` with the incremental-SVD step).
+        prefill_block_size=16,
         hh_select="surprise",
         **kw,
     )

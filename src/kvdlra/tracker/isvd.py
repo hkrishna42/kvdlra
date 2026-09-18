@@ -139,6 +139,92 @@ def _truncation_rank(sigma: Tensor, theta: float) -> int:
     return max(1, int(idx[0].item()))
 
 
+def _augment(u: Tensor | None, b_core: Tensor | None, block: Tensor) -> tuple[Tensor, Tensor, int]:
+    """Range-augment ``u`` by the block's out-of-basis residual: steps 1-3 of the
+    blocked step, shared by every tracker that augments before it truncates.
+
+    Returns ``(u_aug, b_fac, r_old)`` -- the grown orthonormal basis ``(n, r + m)``, the
+    grown square-root core ``(r + m, r + b)`` and the incoming rank, so the caller's own
+    truncation can build ``rot = u_loc[:r_old, :keep].mT``. ``u is None`` seeds from the
+    block's reduced QR. The admitted directions ``u_aug[:, r_old:]`` are the residual's
+    left singular vectors, ordered by singular value.
+
+    The residual is re-orthogonalized against ``u`` once ("twice is enough",
+    Parlett/Kahan) and rank-revealed by SVD: only directions with singular value above
+    ``100 * eps(dtype) * ||block||_F`` are admitted, and at most ``n - r`` of them so the
+    augmented basis still fits in ``R^n``. Without the rank-revealing admission a
+    numerically null residual (the block already lies in the tracked subspace) makes the
+    plain QR hand back junk directions whose orthogonality against ``u`` cancellation has
+    destroyed -- the Week-7 fix, and the defect that crashed the Week-20 FD arm.
+    """
+    n = block.shape[0]
+    if u is None:
+        # Seeding step: the basis is the reduced QR of the first block.
+        q, r = torch.linalg.qr(block, mode="reduced")
+        return q, r, 0
+    assert b_core is not None  # callers check the pairing
+    r_old = u.shape[1]
+    a = u.mT @ block  # (r, b)
+    r_perp = block - u @ a  # (n, b)
+    # Re-orthogonalize once: removes the O(eps * ||block||) component of
+    # r_perp along span(u) that cancellation leaves behind (and refines the
+    # coordinates a accordingly), so admitted directions are orthogonal to
+    # u at machine level even when the true residual is tiny.
+    a2 = u.mT @ r_perp
+    r_perp = r_perp - u @ a2
+    a = a + a2
+    # Rank-revealing factorization of the residual: admit only directions
+    # that carry genuine new energy (and at most n - r_old of them).
+    q, s, vh = torch.linalg.svd(r_perp, full_matrices=False)
+    tol = 100.0 * torch.finfo(block.dtype).eps * torch.linalg.norm(block)
+    m = int((s > tol).sum().item())
+    m = min(m, max(0, n - r_old))
+    q = q[:, :m]
+    u_aug = torch.cat([u, q], dim=1)  # (n, r+m)
+    top = torch.cat([b_core, a], dim=1)  # (r, r+b)
+    zeros = torch.zeros(m, r_old, dtype=block.dtype, device=block.device)
+    bot = torch.cat([zeros, s[:m].unsqueeze(1) * vh[:m]], dim=1)  # (m, r+b)
+    b_fac = torch.cat([top, bot], dim=0)  # (r+m, r+b)
+    return u_aug, b_fac, r_old
+
+
+# ``torch.linalg`` re-exports the C++ exception under a different name
+# (``_LinAlgError as LinAlgError``), which mypy does not count as an explicit export.
+_LinAlgError: type[Exception] = torch.linalg.LinAlgError  # type: ignore[attr-defined]
+
+
+def _svd_core(b_fac: Tensor) -> tuple[Tensor, Tensor]:
+    """Left factors and singular values of the augmented core, untruncated.
+
+    ``torch.linalg.svd(b_fac, full_matrices=False)`` with a fallback: LAPACK's divide-and-
+    conquer driver raises ``LinAlgError`` ("too many repeated singular values") on cores
+    whose spectrum carries repeated exact zeros -- which is what killed the Week-20 FD arm,
+    whose shrinkage zeroes the whole tail. The eigendecomposition of the Gram
+    ``b_fac b_facᵀ`` computes the same factors by a different driver (at half the
+    precision -- it squares the condition number -- which is why it is a fallback and not
+    the path); a second failure retries it once on a jittered Gram, and a third re-raises.
+
+    ``b_fac`` is never wider than it is tall at any call site (``m <= b``), so the Gram's
+    ``r + m`` eigenpairs are exactly the ``min(rows, cols)`` factors ``full_matrices=False``
+    returns.
+    """
+    try:
+        u_loc, sigma, _ = torch.linalg.svd(b_fac, full_matrices=False)
+        return u_loc, sigma
+    except _LinAlgError:
+        gram = b_fac @ b_fac.mT
+        try:
+            evals, evecs = torch.linalg.eigh(gram)
+        except _LinAlgError:
+            dim = gram.shape[0]
+            jitter = 1e-7 * torch.diagonal(gram).sum() / dim
+            eye = torch.eye(dim, dtype=gram.dtype, device=gram.device)
+            evals, evecs = torch.linalg.eigh(gram + jitter * eye)  # a third failure raises
+        # eigh returns ascending eigenvalues; svd returns descending singular values.
+        sigma = torch.sqrt(torch.clamp(torch.flip(evals, (0,)), min=0.0))
+        return torch.flip(evecs, (1,)), sigma
+
+
 def augmented_bug_step(
     u: Tensor | None,
     b_core: Tensor | None,
@@ -197,57 +283,26 @@ def augmented_bug_step(
     numerically null and the clamp is exact up to roundoff.
 
     Additionally (Week-7 fix), the residual is **re-orthogonalized** against
-    ``u`` once ("twice is enough", Parlett/Kahan) and rank-revealed by SVD:
-    only directions with singular value above ``100 * eps(dtype) * ||block||_F``
-    are admitted. Without this, a *numerically null* residual (the incoming
-    block already lies in the tracked subspace -- e.g. data of effective
-    dimension < ``rank_cap``) makes the plain QR return junk directions whose
-    orthogonality against ``u`` is destroyed by cancellation, silently breaking
-    the basis (found by the Week-7 full-rank parity tests on a tiny model; the
-    pathology never fired at r=128 on real KV, so the *archived* Week-3..6
-    results stand as-is). Note the change applies on every step, so reruns of
-    older configs are **fp-equivalent, not bit-identical** (QR -> SVD residual
-    factorization + the coordinate refinement term) -- compare methods within
-    one run, never fresh curves against archived JSON at bit level.
+    ``u`` once and rank-revealed by SVD (see :func:`_augment`, which holds the
+    augmentation this step shares with :func:`fd_step`). Without this, a
+    *numerically null* residual (the incoming block already lies in the tracked
+    subspace -- e.g. data of effective dimension < ``rank_cap``) makes the plain
+    QR return junk directions whose orthogonality against ``u`` is destroyed by
+    cancellation, silently breaking the basis (found by the Week-7 full-rank
+    parity tests on a tiny model; the pathology never fired at r=128 on real KV,
+    so the *archived* Week-3..6 results stand as-is). Note the change applies on
+    every step, so reruns of older configs are **fp-equivalent, not
+    bit-identical** (QR -> SVD residual factorization + the coordinate
+    refinement term) -- compare methods within one run, never fresh curves
+    against archived JSON at bit level.
     """
     if (u is None) != (b_core is None):
         raise ValueError("u and b_core must be provided together (or both None)")
     if rank_cap < 1:
         raise ValueError(f"rank_cap must be >= 1, got {rank_cap}")
 
-    n = block.shape[0]
-    if u is None:
-        # Seeding step: the basis is the reduced QR of the first block.
-        q, r = torch.linalg.qr(block, mode="reduced")
-        u_aug = q
-        b_fac = r
-        r_old = 0
-    else:
-        assert b_core is not None  # by the pairing check above
-        r_old = u.shape[1]
-        a = u.mT @ block  # (r, b)
-        r_perp = block - u @ a  # (n, b)
-        # Re-orthogonalize once: removes the O(eps * ||block||) component of
-        # r_perp along span(u) that cancellation leaves behind (and refines the
-        # coordinates a accordingly), so admitted directions are orthogonal to
-        # u at machine level even when the true residual is tiny.
-        a2 = u.mT @ r_perp
-        r_perp = r_perp - u @ a2
-        a = a + a2
-        # Rank-revealing factorization of the residual: admit only directions
-        # that carry genuine new energy (and at most n - r_old of them).
-        q, s, vh = torch.linalg.svd(r_perp, full_matrices=False)
-        tol = 100.0 * torch.finfo(block.dtype).eps * torch.linalg.norm(block)
-        m = int((s > tol).sum().item())
-        m = min(m, max(0, n - r_old))
-        q = q[:, :m]
-        u_aug = torch.cat([u, q], dim=1)  # (n, r+m)
-        top = torch.cat([b_core, a], dim=1)  # (r, r+b)
-        zeros = torch.zeros(m, r_old, dtype=block.dtype, device=block.device)
-        bot = torch.cat([zeros, s[:m].unsqueeze(1) * vh[:m]], dim=1)  # (m, r+b)
-        b_fac = torch.cat([top, bot], dim=0)  # (r+m, r+b)
-
-    u_loc, sigma, _ = torch.linalg.svd(b_fac, full_matrices=False)
+    u_aug, b_fac, r_old = _augment(u, b_core, block)
+    u_loc, sigma = _svd_core(b_fac)
     keep = min(rank_cap, int(sigma.shape[0]))
     if theta is not None:
         keep = max(1, min(keep, _truncation_rank(sigma, theta)))
@@ -420,36 +475,32 @@ def fd_step(
 ) -> tuple[Tensor, Tensor, Tensor]:
     """Frequent Directions (Liberty 2013) on the column stream, one block.
 
-    Identical augmentation to the BUG step (range-augment by the residual's QR,
-    SVD the grown core), but the truncation is FD's *shrinkage*: subtract the
-    ``(rank_cap+1)``-th squared singular value from every kept one before
-    dropping the tail. That shrinkage is the one algorithmic difference from
-    fixed-rank incremental SVD, so this arm isolates it. Seeding = reduced QR.
+    Exactly the incremental-SVD step's augmentation (:func:`_augment`) and core
+    factorization (:func:`_svd_core`); the one algorithmic difference is the
+    truncation, which is FD's *shrinkage*: subtract the ``(rank_cap+1)``-th
+    squared singular value from every kept one before dropping the tail. So this
+    arm isolates the shrinkage and nothing else -- with ``rank_cap`` at the
+    feature count there is no tail, and the two steps track the same subspace.
+    Seeding = reduced QR of the first block. No ``theta`` and no ``min_sv_frac``:
+    FD's rank is its own, fixed at ``rank_cap``.
+
+    The Week-20 arm crashed here. It kept its own augmentation, whose plain QR of
+    the residual admits ``b`` junk directions per step once the block already lies
+    in the tracked subspace; the shrinkage then zeroed their whole spectrum, and
+    LAPACK's divide-and-conquer SVD refused the resulting core ("too many repeated
+    singular values"). The shared rank-revealing ``_augment`` keeps them out, and
+    ``_svd_core``'s eigh fallback catches what still reaches it.
     """
     if (u is None) != (b_core is None):
         raise ValueError("u and b_core must be provided together (or both None)")
     if rank_cap < 1:
         raise ValueError(f"rank_cap must be >= 1, got {rank_cap}")
-    if u is None:
-        q, r = torch.linalg.qr(block, mode="reduced")
-        k = min(rank_cap, q.shape[1])
-        u_new, b_new = q[:, :k].contiguous(), r[:k, :k].contiguous()
-        return u_new, b_new, u_new.new_zeros((k, 0))
-    assert b_core is not None
-    r_old = u.shape[1]
-    coords = u.mT @ block
-    resid = block - u @ coords
-    resid = resid - u @ (u.mT @ resid)  # re-orthogonalize once (Parlett/Kahan)
-    q, rr = torch.linalg.qr(resid, mode="reduced")
-    u_aug = torch.cat([u, q], dim=1)
-    top = torch.cat([b_core, coords], dim=1)
-    bot = torch.cat([rr.new_zeros((rr.shape[0], r_old)), rr], dim=1)
-    b_aug = torch.cat([top, bot], dim=0)
-    u_loc, s, _vh = torch.linalg.svd(b_aug, full_matrices=False)
-    k = min(rank_cap, s.shape[0])
+    u_aug, b_fac, r_old = _augment(u, b_core, block)
+    u_loc, s = _svd_core(b_fac)
+    k = min(rank_cap, int(s.shape[0]))
     # FD shrinkage: delta = sigma_{k+1}^2 (0 if the augmented core has no tail).
     delta = s[k] ** 2 if s.shape[0] > k else s.new_zeros(())
     s_new = torch.sqrt(torch.clamp(s[:k] ** 2 - delta, min=0.0))
     u_new = (u_aug @ u_loc[:, :k]).contiguous()
     b_new = torch.diag(s_new).contiguous()
-    return u_new, b_new, u_new.mT @ u
+    return u_new, b_new, u_loc[:r_old, :k].mT  # == u_new^T u, and (k, 0) when seeding

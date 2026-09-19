@@ -5,7 +5,7 @@ Streaming low-rank KV-cache compression: a rank-r gist tracked online by a block
 incremental-SVD step (`isvd`; the shipped "BUG step" at theta=None, min_sv_frac=0
 IS Brand-2006 incremental SVD — src/kvdlra/tracker/isvd.py:296-298), a surprise-selected
 exact tier, sinks, a recent ring, a warm-up seed. From Week 1: a fused
-factored-attention kernel. Target: ICML 2027. Working branch: week7.
+factored-attention kernel. Target: ICML 2027. Working branch: main (week7 retired 2026-09-19; one branch).
 
 ## Read before touching anything
 docs/plan/ICML2027_PLAN.md · docs/plan/CODE_AUDIT.md · docs/plan/PC_REVIEW.md ·

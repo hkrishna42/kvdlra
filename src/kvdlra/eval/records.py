@@ -27,8 +27,10 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import TypedDict
+from typing import Any, TypedDict
 
 # `generator=` and `error=` are appended by `kvdlra.eval.runner` (in that order); no v1
 # log has either, so both are optional -- the harvest fills the generator from the pod's
@@ -54,16 +56,25 @@ ERROR_RE = re.compile(r"^\[error\] axis=(\S+) arm=(\S+) ctx=(\d+)(?: batch=(\d+)
 # (175/175 match) -- see results/w11-table-ppl-lines.txt (no leading space, no sbits),
 # results/w17-qwen-lines.txt (2-space, no sbits) and results/w18-*-ppl-lines.txt
 # (2-space, with sbits).
+# `corpus=` is appended LAST by `frontier._log_row` (after the optional `eff_rank=`) and
+# is OPTIONAL, on the same basis as `sbits=`/`eff_rank=`: no archived line has it, and
+# PPL_RE is a prefix match with no `$` anchor, so a trailing field never stops a line
+# from parsing. `.*?` before it skips over `eff_rank=` when present.
 PPL_RE = re.compile(
     r"^\s*(\S+)\s+\[T=(\d+)\] ppl=([0-9.]+)(?: tok_eq/layer=([0-9.]+))? .*?ratio=([0-9.]+)"
-    r"(?: sbits=([0-9.]+))?"
+    r"(?: sbits=([0-9.]+))?(?:.*? corpus=(\S+))?"
 )
 # The emitter's own documented format (frontier._log_pplw, pinned by
 # tests/test_w15_pplw.py): one line per (arm, T), except that a would-be >400-char line
 # splits into ``part=i/N`` fragments of 8 values, because `vastai logs` truncates a line
 # at ~500 chars. Dropping the fragments -- which is what the first harvest did -- loses
 # the whole sweep silently.
-PPLW_RE = re.compile(r"^\[pplw\] T=(\d+) (\S+) ntok=(\d+)(?: part=(\d+)/(\d+))? nlls=([0-9.,]+)$")
+# `corpus=` is appended LAST (frontier._log_pplw) and is OPTIONAL: no paper-v1 log has
+# it -- v1 scored one corpus and never said so -- and an archived sweep must keep parsing.
+PPLW_RE = re.compile(
+    r"^\[pplw\] T=(\d+) (\S+) ntok=(\d+)(?: part=(\d+)/(\d+))? nlls=([0-9.,]+)"
+    r"(?: corpus=(\S+))?$"
+)
 # `kvdlra.eval.latency.run_latency`'s own print. `weights_gb=` sits between `peak_gb=`
 # and `kv_peak_gb=` but is not part of `LatencyRecord` -- it is the subtrahend the
 # kv_*_gb figures already removed, not a KV-attributable number of its own -- so it is
@@ -116,7 +127,11 @@ class PplwRecord(TypedDict):
 
     ``nll_sum_nats`` is the window's total NLL in nats: the emitter prints a per-token
     MEAN over ``ntok`` tokens, and the sum is the quantity that pools without carrying
-    the weights around (``ppl == exp(sum(nll_sum_nats) / sum(ntok))``)."""
+    the weights around (``ppl == exp(sum(nll_sum_nats) / sum(ntok))``).
+
+    ``corpus`` is the held-out text the window came from -- absolute perplexity is not
+    comparable across corpora, so a row that does not carry its own is not poolable with
+    another. ``None`` on the archived rows: v1 printed no corpus."""
 
     model: str
     arm: str
@@ -124,6 +139,7 @@ class PplwRecord(TypedDict):
     window_idx: int
     ntok: int
     nll_sum_nats: float
+    corpus: str | None
     source: str
 
 
@@ -135,6 +151,7 @@ class PplRecord(TypedDict):
     ratio: float
     sbits: float | None
     tok_eq: float | None
+    corpus: str | None
     source: str
 
 
@@ -261,7 +278,7 @@ def parse_ppl_lines(text: str, model: str, source: str) -> list[PplRecord]:
         m = PPL_RE.match(line)
         if not m:
             continue
-        arm, ctx, ppl, tok_eq, ratio, sbits = m.groups()
+        arm, ctx, ppl, tok_eq, ratio, sbits, corpus = m.groups()
         out.append(
             {
                 "model": model,
@@ -271,6 +288,8 @@ def parse_ppl_lines(text: str, model: str, source: str) -> list[PplRecord]:
                 "ratio": float(ratio),
                 "sbits": float(sbits) if sbits is not None else None,
                 "tok_eq": float(tok_eq) if tok_eq is not None else None,
+                # `None` on an archived line, which printed no `corpus=` at all.
+                "corpus": corpus,
                 "source": f"{source}:{i}",
             }
         )
@@ -288,7 +307,9 @@ def parse_pplw_lines(text: str, model: str, source: str) -> list[PplwRecord]:
     out: list[PplwRecord] = []
     pending: dict[tuple[str, int], tuple[int, int, int, dict[int, list[float]]]] = {}
 
-    def emit(arm: str, ctx: int, ntok: int, line: int, vals: list[float]) -> None:
+    def emit(
+        arm: str, ctx: int, ntok: int, line: int, vals: list[float], corpus: str | None
+    ) -> None:
         out.extend(
             {
                 "model": model,
@@ -297,6 +318,7 @@ def parse_pplw_lines(text: str, model: str, source: str) -> list[PplwRecord]:
                 "window_idx": j,
                 "ntok": ntok,
                 "nll_sum_nats": v * ntok,
+                "corpus": corpus,
                 "source": f"{source}:{line}",
             }
             for j, v in enumerate(vals)
@@ -306,16 +328,18 @@ def parse_pplw_lines(text: str, model: str, source: str) -> list[PplwRecord]:
         m = PPLW_RE.match(line)
         if not m:
             continue
-        ctx, arm, ntok, part, n_parts, nlls = m.groups()
+        ctx, arm, ntok, part, n_parts, nlls, corpus = m.groups()
         vals = [float(x) for x in nlls.split(",") if x]
         if part is None:
-            emit(arm, int(ctx), int(ntok), i, vals)
+            emit(arm, int(ctx), int(ntok), i, vals, corpus)
             continue
         key = (arm, int(ctx))
         n, tok, first, parts = pending.setdefault(key, (int(n_parts), int(ntok), i, {}))
         parts[int(part)] = vals
         if len(parts) == n:
-            emit(arm, key[1], tok, first, [v for j in sorted(parts) for v in parts[j]])
+            # One `_log_pplw` call prints a whole group, so every fragment of it carries
+            # the same corpus -- the one on the fragment that completes it will do.
+            emit(arm, key[1], tok, first, [v for j in sorted(parts) for v in parts[j]], corpus)
             del pending[key]
     if pending:
         missing = {
@@ -389,13 +413,96 @@ def parse_diag_lines(text: str, model: str, source: str) -> tuple[list[dict[str,
     return out, skipped
 
 
+# The diagnostic rows the eval axes have drained from the caches of THIS process, each
+# stamped with its model and the axis that drained it. `kvdlra.eval.runner` writes them
+# to ``results/<pod>/diag.jsonl`` at the end of the pod and clears the list; the printed
+# ``[diag]`` line carries the same payload, so `pod.py harvest` recovers the same rows
+# from a `vastai logs` capture when the results directory never left the instance.
+DIAG_ROWS: list[dict[str, object]] = []
+
+
+def emit_diag(
+    rows: list[dict[str, object]],
+    *,
+    model: str,
+    source: str,
+    arm: str,
+    ctx: int,
+    task: str | None = None,
+    idx: int | None = None,
+) -> None:
+    """Print one ``[diag] {json}`` line per row, and buffer the rows for the runner.
+
+    The two artifacts every record type leaves, from one call: the log line (which
+    :func:`parse_diag_lines` reads back, stamping the model and the line it came from)
+    and the in-process row (which lands in ``diag.jsonl`` directly).
+
+    The payload is the cache's row (the 11 fields of
+    :meth:`kvdlra.cache.BugStreamingCache.drain_diag`) plus the four fields that say
+    WHICH measurement it is: ``arm``, ``ctx``, ``task`` and ``idx`` (the sample or trial
+    the surrounding loop is on). They go into the printed line as well as the buffered
+    row, so a harvest off the log rebuilds exactly the same record -- without them a
+    pod running eleven arms emits one undifferentiated stream of ranks and
+    orthonormality errors that no row can be assigned to an arm. ~260 chars, still
+    inside the ~400-char budget a log fetch leaves, so no ``part=i/N`` splitting.
+
+    ``source`` is the axis that produced the rows (``ppl`` / ``ruler`` / ``longbench``).
+    """
+    stamp: dict[str, object] = {"arm": arm, "ctx": ctx, "task": task, "idx": idx}
+    for row in rows:
+        payload = {**row, **stamp}
+        print("[diag] " + json.dumps(payload, sort_keys=True, separators=(",", ":")), flush=True)
+        DIAG_ROWS.append({**payload, "model": model, "source": source})
+
+
+@contextmanager
+def drained(
+    cache: object,
+    model: Any,
+    *,
+    source: str,
+    arm: str,
+    ctx: int,
+    task: str | None = None,
+    idx: int | None = None,
+) -> Iterator[None]:
+    """Run one streaming measurement and emit the tripwire's rows when it ends.
+
+    The rows leave the library here -- drained after the sample and before the cache is
+    dropped, since nothing else ever reads them again -- and in a ``finally``, because the
+    window worth reading most is the last one before an ``OrthonormalityError``: the cache
+    flushes it before raising (L1.1), and an emit on the success path alone would let it
+    die with the cache, leaving the trial recorded as an error with no diagnostics behind
+    it. A cache of any other kind has nothing to drain, so the three axes wrap every arm.
+    """
+    # Imported HERE, not at module scope: `scripts/pod.py` imports this module for the
+    # parsers alone, and `kvdlra.cache` pulls in torch + transformers -- ~6 s of import
+    # on every `pod.py check` subprocess the tests spawn, for a path they never run.
+    from kvdlra.cache import BugStreamingCache
+
+    try:
+        yield
+    finally:
+        if isinstance(cache, BugStreamingCache):
+            emit_diag(
+                cache.drain_diag(),
+                model=str(model.name_or_path),
+                source=source,
+                arm=arm,
+                ctx=ctx,
+                task=task,
+                idx=idx,
+            )
+
+
 def write_jsonl(
     path: Path,
     rows: list[TrialRecord]
     | list[CellRecord]
     | list[PplRecord]
     | list[PplwRecord]
-    | list[LatencyRecord],
+    | list[LatencyRecord]
+    | list[dict[str, object]],  # the diagnostics, carried through unparsed
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as f:

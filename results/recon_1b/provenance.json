@@ -1,0 +1,90 @@
+{
+  "dump_sha256_manifest": {
+    "path": "dumps/llama3.2-1b.sha256",
+    "sha256": "b53487ba8d79dc607065da01a5f91b2b489bf2f748e423bf45a1118833983485"
+  },
+  "git_sha": "410c06f56ec55731ff62fcbe46ff9e5783862bac",
+  "grid": {
+    "blocks": [
+      16,
+      128
+    ],
+    "docs": [
+      "doc411_047d060d_len4096_rope-both",
+      "doc454_5c3fc14e_len4096_rope-both",
+      "doc637_59ede36c_len4096_rope-both",
+      "doc63_40468cde_len4096_rope-both",
+      "doc718_5270bf79_len4096_rope-both"
+    ],
+    "kv": [
+      "k_pre",
+      "v"
+    ],
+    "layers": "all",
+    "methods": [
+      "svd_oracle",
+      "isvd",
+      "fd",
+      "fd2",
+      "oja",
+      "frozen_prefill_svd",
+      "random_basis"
+    ],
+    "min_sv_frac": [
+      0.0,
+      0.01
+    ],
+    "oja_grid": {
+      "decay": [
+        0.03,
+        0.1,
+        0.3,
+        1.0
+      ],
+      "eta0": [
+        0.6,
+        1.25,
+        2.5,
+        5.0,
+        10.0
+      ]
+    },
+    "prefill": 0.25,
+    "ranks": [
+      16,
+      32,
+      64,
+      128,
+      256
+    ]
+  },
+  "oja_tuning": {
+    "k_pre": {
+      "decay": 0.3,
+      "docs": [
+        "doc63_40468cde_len4096_rope-both",
+        "doc718_5270bf79_len4096_rope-both"
+      ],
+      "eta0": 5.0,
+      "layer": 8,
+      "rank": 16,
+      "reused_at_every_rank": true,
+      "schedule_given": false
+    },
+    "v": {
+      "decay": 0.1,
+      "docs": [
+        "doc63_40468cde_len4096_rope-both",
+        "doc718_5270bf79_len4096_rope-both"
+      ],
+      "eta0": 5.0,
+      "layer": 8,
+      "rank": 16,
+      "reused_at_every_rank": true,
+      "schedule_given": false
+    }
+  },
+  "rows": 12800,
+  "started_at": "2026-09-18T02:05:33+00:00",
+  "wall_clock_s": 11095.2
+}

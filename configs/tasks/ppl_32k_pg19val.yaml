@@ -1,0 +1,14 @@
+name: ppl_32k_pg19val
+generator: ppl
+ctx: 32768
+doc: >-
+  Teacher-forced perplexity at 32K on PG-19 validation: the 16K protocol at twice the context --
+  a frozen 2048-token continuation window scored against the compressed cache, over 32
+  NON-OVERLAPPING windows. The corpus supplies 84 windows at this span, so 32 is well inside
+  its ceiling; WikiText-103 test supplies only 7 here, which is why PG-19 validation carries
+  the 32-window claim at both context lengths.
+n_trials: 1
+seeds: [0]
+corpus: pg19-val
+window: 2048
+n_samples: 32

@@ -22,6 +22,26 @@ from omegaconf import DictConfig, OmegaConf
 
 ROOT = Path(__file__).resolve().parents[3] / "configs"
 
+# What `data.load_corpus_ids` returns for each HELD-OUT perplexity corpus, so
+# `load_task` can refuse a sweep the corpus cannot supply. Measured 2026-09-17 with the
+# `unsloth/Llama-3.2-1B-Instruct` tokenizer::
+#
+#     load_corpus_ids(AutoTokenizer.from_pretrained(DEFAULT_MODEL), "cpu", corpus=c)
+#
+# `pg19-val` is the loader's default 3M-token cap, not the whole split. Both counts are
+# APPROXIMATE -- another model's tokenizer moves them a few percent -- which is why the
+# ceiling below floors the division instead of counting the slices `frontier.windows`
+# would cut: it leaves one window of margin rather than promising an exact count.
+#
+# That margin is all the wikitext-103-test tasks have: both sit ON their ceilings (14
+# windows at 16K, 7 at 32K out of 288,937 tokens), so a tokenizer that cuts this text
+# into fewer tokens than Llama-3.2's makes `load_task` refuse them -- loudly, at load,
+# which is the intended failure and not a silently shorter sweep. `pg19-val` is immune:
+# its count is the loader's 3M cap, which any tokenizer reaches, and 32 windows sit far
+# below the 160 that cap supplies.
+
+CORPUS_TOKENS = {"wikitext-103-test": 288_937, "pg19-val": 2_968_224}
+
 
 @dataclass
 class ArmCfg:
@@ -53,6 +73,11 @@ class TaskCfg:
     chunk: int = 4096
     window: int = 512
     n_samples: int = 4
+    # `ppl` only: which corpus `data.load_corpus_ids` scores. The default is the one v1
+    # ran (WikiText-103 TRAIN -- the defect recorded in docs/plan/CODE_AUDIT.md), so an
+    # archived task config resolves to exactly the run it describes; the held-out
+    # replacements name `wikitext-103-test` / `pg19-val` explicitly.
+    corpus: str = "wikitext-103"
     # `latency` only. That axis is one measurement per (arm, context, batch) rather than
     # a set of trials, and it sweeps context lengths WITHIN one task -- each one rebuilds
     # the arms, because a cache arm's budgets resolve against the context length. `ctx`
@@ -97,6 +122,13 @@ def load_task(name: str) -> TaskCfg:
     rule that asks for nothing -- the one shape in which an empty pod passes its own gate.
     A non-positive context length is the same failure one step earlier: there is no prompt
     to build. Refused at load time, where the file can still be named.
+
+    A ppl sweep has one more way to ask for records nobody can produce: `frontier.windows`
+    cuts NON-OVERLAPPING ``ctx + window`` spans (overlapping ones would break the paired
+    bootstrap), so a corpus holds a fixed number of them and `check` still demands exactly
+    ``n_samples``. Refused here too, against `CORPUS_TOKENS` -- hours before the pod finds
+    out. A corpus that table does not name is not guarded: an unmeasured ceiling is not a
+    ceiling, and v1's `wikitext-103` is capped by the loader, not by the corpus.
     """
     t: TaskCfg = _load("tasks", name, TaskCfg)
     bad = []
@@ -108,13 +140,44 @@ def load_task(name: str) -> TaskCfg:
         bad.append(f"ctx must be positive (ctx={t.ctx}, ctxs={t.ctxs})")
     if t.generator == "ppl" and t.n_samples < 1:
         bad.append(f"n_samples={t.n_samples} must be >= 1 for a ppl task")
+    if t.generator == "ppl" and t.corpus in CORPUS_TOKENS:
+        span = t.ctx + t.window
+        ceiling = (CORPUS_TOKENS[t.corpus] - span) // span
+        if t.n_samples > ceiling:
+            bad.append(
+                f"n_samples={t.n_samples} exceeds the {ceiling} non-overlapping "
+                f"{t.ctx}+{t.window} windows {t.corpus} supplies"
+            )
     if bad:
         raise ValueError(f"{ROOT / 'tasks' / f'{name}.yaml'}: " + "; ".join(bad))
     return t
 
 
 def load_pod(name: str) -> PodCfg:
-    return _load("pods", name, PodCfg)  # type: ignore[no-any-return]
+    """The pod config, refusing two ``ppl`` tasks at the same context length that read
+    different corpora (Ruling PR-32).
+
+    `scripts/pod.py`'s pod gate (``_ppl_fails`` / ``_pplw_fails``) counts records per
+    (arm, ctx), blind to corpus, and ``ppl.jsonl``/``pplw.jsonl`` carry one row per
+    (arm, ctx) each -- so two ppl tasks sharing a ctx but not a corpus would let one
+    corpus's windows silently fill the other's slot in that count instead of failing
+    loud. Rather than teach every per-(arm, ctx) reader a corpus axis, it is refused
+    here, at load time, naming both task files.
+    """
+    p: PodCfg = _load("pods", name, PodCfg)
+    seen: dict[int, tuple[str, str]] = {}
+    for task_name in p.tasks:
+        t = load_task(task_name)
+        if t.generator != "ppl":
+            continue
+        first = seen.setdefault(t.ctx, (task_name, t.corpus))
+        if first[1] != t.corpus:
+            raise ValueError(
+                f"{ROOT / 'pods' / f'{name}.yaml'}: ppl tasks at ctx={t.ctx} disagree on"
+                f" corpus: {ROOT / 'tasks' / f'{first[0]}.yaml'} (corpus={first[1]}),"
+                f" {ROOT / 'tasks' / f'{task_name}.yaml'} (corpus={t.corpus})"
+            )
+    return p
 
 
 def arm_kwargs(arm: ArmCfg, t: int) -> dict[str, Any]:
@@ -131,8 +194,6 @@ def arm_kwargs(arm: ArmCfg, t: int) -> dict[str, Any]:
     for k in ("coord_budget", "quant_budget"):
         if k in kw and kw[k] is None:
             kw[k] = cb
-    if "tracker" in kw:  # the shipped step's legacy string, until L1 renames it in-cache
-        kw["tracker"] = {"isvd": "bug"}.get(kw["tracker"], kw["tracker"])
     return kw
 
 

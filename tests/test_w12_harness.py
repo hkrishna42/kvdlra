@@ -10,14 +10,15 @@ of ``bugSdrop-r...`` and vice versa).
 
 from __future__ import annotations
 
-import torch
-from transformers import LlamaConfig, LlamaForCausalLM
+from transformers import LlamaForCausalLM
 
 from kvdlra.cache import BugStreamingCache
 from kvdlra.cache.bug_cache import BugStreamingLayer
 from kvdlra.eval.config import ArmCfg
 from kvdlra.eval.frontier import build_arm
 
+# The shared `tiny_model` fixture (tests/conftest.py) at this module's config.
+TINY_MPE = 4096
 CACHE = {
     "rank": 8,
     "coord_budget": None,
@@ -33,45 +34,27 @@ CACHE = {
 }
 
 
-def _tiny_model() -> LlamaForCausalLM:
-    torch.manual_seed(0)
-    model = LlamaForCausalLM(  # type: ignore[no-untyped-call]
-        LlamaConfig(
-            vocab_size=256,
-            hidden_size=64,
-            intermediate_size=128,
-            num_hidden_layers=2,
-            num_attention_heads=4,
-            num_key_value_heads=2,
-            head_dim=16,
-            max_position_embeddings=4096,
-        )
-    )
-    model.eval()  # type: ignore[no-untyped-call]
-    return model
-
-
-def _layer(name: str, **over: object) -> BugStreamingLayer:
+def _layer(model: LlamaForCausalLM, name: str, **over: object) -> BugStreamingLayer:
     cfg = ArmCfg(name=name, kind="bug", cache={**CACHE, **over})
-    cache = build_arm(cfg, _tiny_model(), t=64)["make"]()
+    cache = build_arm(cfg, model, t=64)["make"]()
     assert isinstance(cache, BugStreamingCache)
     return next(ly for ly in cache.layers if isinstance(ly, BugStreamingLayer))
 
 
-def test_hh_retain_false_builds_a_select_and_discard_tier() -> None:
-    layer = _layer("bugSdrop-r8-h4", hh_retain=False)
+def test_hh_retain_false_builds_a_select_and_discard_tier(tiny_model: LlamaForCausalLM) -> None:
+    layer = _layer(tiny_model, "bugSdrop-r8-h4", hh_retain=False)
     assert layer.hh_retain is False
     assert layer.hh_budget == 4 and layer.hh_select == "surprise"
 
 
-def test_seed_hh_warmup_reaches_the_layer() -> None:
-    layer = _layer("bugSseed-r8-h4", seed_hh_warmup=True)
+def test_seed_hh_warmup_reaches_the_layer(tiny_model: LlamaForCausalLM) -> None:
+    layer = _layer(tiny_model, "bugSseed-r8-h4", seed_hh_warmup=True)
     assert layer.seed_hh_warmup is True
     assert layer.hh_retain is True and layer.hh_select == "surprise"
 
 
-def test_the_default_retains_the_tier() -> None:
-    assert _layer("bugS-r8-h4").hh_retain is True
+def test_the_default_retains_the_tier(tiny_model: LlamaForCausalLM) -> None:
+    assert _layer(tiny_model, "bugS-r8-h4").hh_retain is True
 
 
 def test_arm_families_are_not_cross_greppable() -> None:

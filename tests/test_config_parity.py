@@ -9,6 +9,12 @@ arm's YAML must resolve to the exact keyword set the legacy ``make`` lambda pass
 press/quant arm must carry every identifying field the legacy arm dict did, and no
 others. ``make`` is never called -- the kwargs are the contract, and comparing them
 needs no model.
+
+L1.3b renamed the cache's tracker string from ``bug`` to ``isvd``; the eight ``tracker``
+values were rewritten by hand, and the Oja arm gained the two schedule knobs its config now
+names (``oja_eta0``/``oja_decay``) because that arm deliberately is no longer the legacy arm
+-- the Week-20 cell it froze ran the library defaults and is void. Nothing else in the
+golden changed.
 """
 
 from __future__ import annotations
@@ -32,6 +38,29 @@ IGNORED = {"name", "kind", "rank", "rank_s", "chunkable", "kwargs", "press_type"
 
 CACHE = sorted(k for k, v in GOLDEN.items() if "kwargs" in v)
 PARAMS = sorted(k for k, v in GOLDEN.items() if "params" in v)
+
+# Arm stems the golden does not hold, and why each one is absent rather than missed.
+# `kivi2_singleshot` is v1's single-shot control: the legacy quant branch always set
+# chunkable=True and the pod forced single-shot with `--chunk 0`, so there is no legacy
+# dict to freeze. The Table-4 cells are the L1.6 guard/floor arms
+# (`prereg/hygiene_table4.md`) -- post-v1 arms, no `legacy_name`, nothing to be parity
+# with. `oja_r64_h256_seed_tuned` (L1.4b) is the Week-2 Oja arm's schedule re-tuned on
+# the 1B stored-representation study (`results/recon_1b/`); it is a new arm, not a
+# rebuild of the legacy one. A plain set on purpose: the next lane's arm is one line here.
+POST_V1 = {
+    "kivi2_singleshot",
+    "isvd_r128_noguard",
+    "isvd_r128_tol",
+    "isvd_r128_qr64",
+    "isvd_r128_f0.01_tol",
+    "isvd_r128_f0.01_qr64",
+    "isvd_r256_noguard",
+    "isvd_r256_tol",
+    "isvd_r256_qr64",
+    "isvd_r256_f0.01_tol",
+    "isvd_r256_f0.01_qr64",
+    "oja_r64_h256_seed_tuned",
+}
 
 
 @pytest.mark.parametrize("t", [16384, 32768], ids=["16k", "32k"])
@@ -70,7 +99,7 @@ def test_the_golden_covers_every_arm_config_with_a_legacy_name() -> None:
     twin instead (below)."""
     named = {load_arm(p.stem).legacy_name for p in (ROOT / "arms").glob("*.yaml")} - {None}
     assert named - set(GOLDEN) == {"quant-2bit-kivi#chunk0"}
-    assert {v["config"] for v in GOLDEN.values()} | {"kivi2_singleshot"} == {
+    assert {v["config"] for v in GOLDEN.values()} | POST_V1 == {
         p.stem for p in (ROOT / "arms").glob("*.yaml")
     }
 

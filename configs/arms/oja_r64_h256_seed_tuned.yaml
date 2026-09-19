@@ -1,0 +1,29 @@
+name: oja_r64_h256_seed_tuned
+kind: bug
+chunkable: true
+doc: >-
+  Tuned by kvdlra.eval.recon.tune_oja on the 1B dumps (doc63 + doc718 held out, r=16,
+  layer 8, pre-RoPE keys; the value schedule is recorded in provenance and differs --
+  eta0=5.0 decay=0.1 for v, against this arm's k_pre pair below). The Week-2 (20.0, 0.03)
+  schedule scores worse on the current step: 0.8115 vs 0.3991 tuned (k_pre r16 doc63,
+  numbers from results/recon_1b/provenance.json and the task-4a fix1 report). L3's
+  oja_tuned arm starts here.
+cache:
+  rank: 64
+  coord_budget: null
+  recent_window: 32
+  absorb_block: 16
+  n_sink: 4
+  retention: "lowrank_surprise"
+  hh_budget: 256
+  hh_select: "surprise"
+  hh_neighbor: 1
+  hh_retain: true
+  seed_hh_warmup: true
+  score_rank: null
+  min_sv_frac: 0.0
+  tracker: "oja"
+  oja_eta0: 5.0
+  oja_decay: 0.3
+  quant_bits: null
+  quant_budget: 0

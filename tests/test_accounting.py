@@ -12,9 +12,12 @@ n_features 32), mirroring ``tests/test_bug_cache.py``.
 
 from __future__ import annotations
 
+import copy
+from typing import Any
+
 import pytest
 import torch
-from transformers import LlamaConfig, LlamaForCausalLM
+from transformers import LlamaForCausalLM
 
 from kvdlra import accounting as acc
 from kvdlra.cache import BugStreamingCache
@@ -22,27 +25,36 @@ from kvdlra.cache.bug_cache import BugStreamingLayer
 
 H, D = 2, 16
 N_FEATURES = H * D
+# The shared `tiny_model` fixture (tests/conftest.py) at this module's config.
+TINY_MPE = 4096
+# The two structural stream ranks `_low_rank_kv_model` builds -- different from each
+# other (the K/V asymmetry the billing has to handle) and both below every cap in use.
+D_K, D_V = 10, 14
 
 
-def _tiny_config() -> LlamaConfig:
-    return LlamaConfig(
-        vocab_size=256,
-        hidden_size=64,
-        intermediate_size=128,
-        num_hidden_layers=2,
-        num_attention_heads=4,
-        num_key_value_heads=H,
-        head_dim=D,
-        max_position_embeddings=4096,
-    )
+def _low_rank_kv_model(
+    model: LlamaForCausalLM, d_k: int = D_K, d_v: int = D_V, seed: int = 0
+) -> LlamaForCausalLM:
+    """A copy of ``model`` whose every layer emits a pre-RoPE K stream of rank ``d_k``
+    and a V stream of rank ``d_v``, whatever the tokens: each projection is replaced by
+    a rank-deficient product, so its outputs live in a fixed subspace of that width.
 
-
-@pytest.fixture(scope="module")
-def tiny_model() -> LlamaForCausalLM:
-    torch.manual_seed(0)
-    model = LlamaForCausalLM(_tiny_config())  # type: ignore[no-untyped-call]
-    model.eval()  # type: ignore[no-untyped-call]
-    return model
+    The Week-17 floor then collapses the tracked bases to exactly those two widths, by
+    construction -- where driving the untouched tiny model and hoping its own KV tail
+    falls below the cap at some ``min_sv_frac`` is environmental. It is the synthetic
+    low-rank stream ``tests/test_w17_rankfloor.py`` pins the floor with, fed through the
+    cache instead of the tracker (the gist tracks PRE-RoPE keys, so a low-rank K
+    projection is a low-rank tracked stream; V is never rotated at all).
+    """
+    low: LlamaForCausalLM = copy.deepcopy(model)
+    g = torch.Generator().manual_seed(seed)
+    for layer in low.model.layers:
+        for proj, d in ((layer.self_attn.k_proj, d_k), (layer.self_attn.v_proj, d_v)):
+            out_f, in_f = int(proj.weight.shape[0]), int(proj.weight.shape[1])
+            a = torch.randn(out_f, d, generator=g)
+            b = torch.randn(d, in_f, generator=g)
+            proj.weight.data = (a @ b) / (in_f * d) ** 0.5
+    return low
 
 
 def _drive(model: LlamaForCausalLM, cache: object, t: int = 200, n_new: int = 20) -> None:
@@ -122,6 +134,55 @@ def test_bug_footprint_matches_stored_state_numel(
         u_present=layer.u_k is not None,
     )
     assert fp.float_equiv() == layer.stored_state_numel()
+
+
+def test_bug_footprint_matches_stored_state_numel_at_a_collapsed_rank(
+    tiny_model: LlamaForCausalLM,
+) -> None:
+    """The same pin at a rank the Week-17 singular-value floor (``min_sv_frac``)
+    collapsed BELOW the configured cap: the measured state shrinks with the basis, so
+    the formula only reproduces it when fed the live ``u_k.shape[1]``. Billing the cap
+    over-counts -- the second assertion is the defect ``frontier._footprint`` closes.
+
+    Driven by a stream whose rank is STRUCTURAL (``_low_rank_kv_model``), so the
+    collapse and the K/V asymmetry are properties of the input, not of where the tiny
+    model's own singular-value tail happens to land at some floor.
+    """
+    model = _low_rank_kv_model(tiny_model)
+    cache = BugStreamingCache(
+        model,
+        rank=32,
+        coord_budget=24,
+        recent_window=8,
+        absorb_block=4,
+        n_sink=4,
+        min_sv_frac=1e-2,
+    )
+    _drive(model, cache)
+    layer = _bug_layer(cache)
+    assert layer.u_k is not None and layer.u_v is not None
+    rank_k, rank_v = int(layer.u_k.shape[1]), int(layer.u_v.shape[1])
+    # Exactly the stream's own rank per side -- the floor's contract, and below the cap.
+    assert (rank_k, rank_v) == (D_K, D_V) and max(rank_k, rank_v) < 32
+    # K and V therefore collapse INDEPENDENTLY. Every rank term in the formula is
+    # ``2*rank*x``, symmetric in the two streams, so the live rank it takes is their
+    # mean -- which is what ``frontier._footprint`` passes.
+    tracked = (rank_k + rank_v) / 2
+    counts: dict[str, Any] = {
+        "coord_count": layer._f_len() + layer._q_len(),
+        "recent_len": layer._recent_len(),
+        "n_sink": 4,
+        "hh_count": layer._hh_len(),
+        "u_present": True,
+    }
+    fp = acc.bug_footprint(N_FEATURES, rank=tracked, **counts)
+    # The structural stream collapses every layer to the same two widths, so the mean
+    # over the layers -- what `frontier._footprint` bills for the model -- is layer 0's
+    # own measurement here; the two are asserted together so neither can drift alone.
+    layers = cache._bug_layers()
+    mean_stored = sum(la.stored_state_numel() for la in layers) / len(layers)
+    assert fp.float_equiv() == mean_stored == layer.stored_state_numel()
+    assert acc.bug_footprint(N_FEATURES, rank=32, **counts).float_equiv() > fp.float_equiv()
 
 
 def test_balanced_config_ratio_pin() -> None:

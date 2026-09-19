@@ -1,0 +1,15 @@
+name: ppl_16k_pg19val
+generator: ppl
+ctx: 16384
+doc: >-
+  Teacher-forced perplexity at 16K on PG-19 validation: prefill the context with the arm's
+  compression active, then score a frozen 2048-token continuation window against the compressed
+  cache, over 32 NON-OVERLAPPING windows (overlapping ones would break the paired bootstrap).
+  Held-out long-form books, out of domain for a WikiText comparison -- the corpus half of the
+  v1 fix recorded in CODE_AUDIT (v1 read WikiText-103 TRAIN, 512-token windows, 4 samples).
+  The corpus supplies 160 windows at this span, so 32 is well inside its ceiling.
+n_trials: 1
+seeds: [0]
+corpus: pg19-val
+window: 2048
+n_samples: 32

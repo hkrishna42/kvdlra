@@ -18,13 +18,14 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
 import torch
-from transformers import LlamaConfig, LlamaForCausalLM
+from transformers import LlamaForCausalLM
 
 from kvdlra.baselines.compat import install_kvpress_prefill_compat
 
 H, D = 2, 16  # KV heads x head_dim -> n_features 32; num query heads 4
+# The shared `tiny_model` fixture (tests/conftest.py) at this module's config.
+TINY_MPE, TINY_SDPA = 4096, True
 
 
 class _StubTok:
@@ -32,25 +33,6 @@ class _StubTok:
 
     def decode(self, ids: list[int]) -> str:
         return " ".join(str(i) for i in ids)
-
-
-@pytest.fixture(scope="module")
-def tiny_model() -> LlamaForCausalLM:
-    cfg = LlamaConfig(
-        vocab_size=256,
-        hidden_size=64,
-        intermediate_size=128,
-        num_hidden_layers=2,
-        num_attention_heads=4,
-        num_key_value_heads=H,
-        head_dim=D,
-        max_position_embeddings=4096,
-    )
-    torch.manual_seed(0)
-    model = LlamaForCausalLM(cfg)  # type: ignore[no-untyped-call]
-    model.config._attn_implementation = "sdpa"
-    model.eval()  # type: ignore[no-untyped-call]
-    return model
 
 
 def _prompt(t: int, seed: int = 1) -> torch.Tensor:

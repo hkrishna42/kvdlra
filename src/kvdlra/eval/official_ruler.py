@@ -126,14 +126,19 @@ def run_trial(
 
     ``pool`` is unused -- the haystack comes from RULER's own generator, not from ours --
     and is accepted so every generator's ``run_trial`` has one signature.
+
+    The sub-task and the trial POSITION are handed down to ``retrieve`` as the label on
+    this trial's ``[diag]`` rows: this generator builds its own trials, so nothing else
+    on the path knows which of the thirteen official sub-tasks the rows came from.
     """
     rec = load_records(DATA_DIR, sub, None)[trial]
     body, question = split_input(rec["input"])
     hay, query = templated_official(tok, body, question, rec.get("answer_prefix", ""))
     max_new = TOKENS_TO_GENERATE[sub.split("_")[0]]
     hit, ratio, frac, sbits = retrieve(
-        model, tok, arm, hay, query, list(rec["outputs"]), device, chunk, n, h_kv, max_new
-    )
+        model, tok, arm, hay, query, list(rec["outputs"]), device, chunk, n, h_kv, max_new,
+        task=sub, idx=trial,
+    )  # fmt: skip
     return (
         int(hit),
         frac,

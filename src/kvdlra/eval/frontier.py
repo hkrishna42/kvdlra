@@ -30,6 +30,7 @@ from transformers.cache_utils import Cache, DynamicCache
 from kvdlra import accounting as acc
 from kvdlra.cache import BugStreamingCache, ShadowKVCache
 from kvdlra.eval.config import ArmCfg, arm_kwargs
+from kvdlra.eval.records import drained
 from kvdlra.quant.kivi_cache import aux_words, flush, make_quant_cache
 
 N_SINK = 4
@@ -91,19 +92,24 @@ def score_streaming(
     ctx_ids: torch.Tensor,
     win_ids: torch.Tensor,
     chunk: int = 0,
+    *,
+    arm: str,
+    idx: int | None = None,
 ) -> tuple[float, int]:
     """Prefill into a streaming cache (compresses) then frozen-window score over the
     compressed cache (non-mutating). ``chunk > 0`` (and < ctx) uses OOM-safe chunked
-    ingest; otherwise single-shot."""
+    ingest; otherwise single-shot. ``arm`` / ``idx`` only label the diagnostics."""
     ctx = ctx_ids.unsqueeze(0)
     ctx_len = int(ctx_ids.shape[0])
-    with cache.attach(model):
-        if 0 < chunk < ctx_len:
-            _prefill_chunked(model, cache, ctx, chunk)
-        else:
-            model(ctx, past_key_values=cache, use_cache=True, logits_to_keep=1)
-    with cache.frozen_scoring():
-        return _score_window(model, cache, ctx_len, win_ids)
+    with drained(cache, model, source="ppl", arm=arm, ctx=ctx_len, idx=idx):
+        with cache.attach(model):
+            if 0 < chunk < ctx_len:
+                _prefill_chunked(model, cache, ctx, chunk)
+            else:
+                model(ctx, past_key_values=cache, use_cache=True, logits_to_keep=1)
+        with cache.frozen_scoring():
+            scored = _score_window(model, cache, ctx_len, win_ids)
+    return scored
 
 
 @torch.no_grad()
@@ -289,12 +295,43 @@ def _press(cfg: ArmCfg) -> dict[str, Any]:
     return {"keep": float(p["keep"]), "make": _evict_factory(cfg)}
 
 
+def _tracked_rank(u: torch.Tensor | None) -> int:
+    """Columns a stored basis actually holds; 0 when the layer has yet to absorb one.
+
+    The rank that is BILLED -- as against ``arm["rank"]``, the configured *cap*: the
+    Week-17 relative singular-value floor (``min_sv_frac``) drops near-null tail
+    directions, so a floor-on layer tracks fewer columns than the cap and the cap
+    over-bills it (audit finding 0.2). The K and V streams collapse independently.
+    """
+    return 0 if u is None else int(u.shape[1])
+
+
 def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> acc.Footprint:
     """Per-layer footprint of the arm's *post-prefill* state."""
     kind = arm["kind"]
     if kind == "bug":
         assert isinstance(cache, BugStreamingCache)
-        layer = cache._bug_layers()[0]
+        layers = cache._bug_layers()
+        layer = layers[0]
+        # The LIVE tracked rank, never arm["rank"]. Every rank term in `bug_footprint`
+        # is `2*rank*x` -- symmetric in the two streams -- so where the floor collapsed
+        # K and V to different widths (measured 21 vs 23 on one tiny-model layer) their
+        # MEAN is what reproduces the measured `stored_state_numel` exactly, and it can
+        # be a half-integer. No basis yet => rank 0, billed with u_present=False so the
+        # basis and core terms drop out together.
+        #
+        # Averaged over ALL the layers, not read off layer 0: the floor collapses every
+        # layer's streams independently (measured 21/23 and 20/23 on the two tiny-model
+        # layers), and this one footprint is what every axis multiplies by the layer
+        # count. Every other term below is layer-invariant (the tier lengths are driven
+        # by the token count, which every layer shares), so the mean rank is exactly the
+        # mean of the per-layer `stored_state_numel()` -- pinned in
+        # tests/test_effective_rank_billing.py. Floor off, every layer sits at the cap
+        # and the bill is byte-identical to the one-layer read.
+        rank = sum(_tracked_rank(la.u_k) + _tracked_rank(la.u_v) for la in layers) / (
+            2 * len(layers)
+        )
+
         # Thread the arm's retention + hh_select so surprise arms count their
         # position/surprise buffers too (fifo default keeps existing arms
         # byte-identical); the anti-drift pin guards this against drift.
@@ -305,7 +342,7 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
         q_len = layer._q_len()
         return acc.bug_footprint(
             n,
-            rank=int(arm["rank"]),
+            rank=rank,
             coord_count=layer._f_len(),
             recent_len=layer._recent_len(),
             n_sink=N_SINK,
@@ -392,8 +429,14 @@ def run_ppl(
     n: int,
     h_kv: int,
     device: str,
+    corpus: str = "wikitext-103",
 ) -> list[dict[str, Any]]:
     """Score every arm on the same windows at context length ``t``; one row per arm.
+
+    ``corpus`` only labels: the windows are already cut, and it rides onto the row and
+    the ``[pplw]`` line so a pooled number can never be read as belonging to a corpus it
+    was not measured on. The default is `config.TaskCfg.corpus`'s -- what v1 scored --
+    and `kvdlra.eval.runner` always passes the task's.
 
     An arm that raises does not take the sweep down with it: its row carries
     ``status`` OOM/error and the loop moves on, which is the same rule the trial runner
@@ -408,8 +451,9 @@ def run_ppl(
                 window_nlls: list[float] = []  # per-window MEAN nll (nats/token)
                 window_toks: list[int] = []  # per-window scored-token counts
                 fp: acc.Footprint | None = None
+                eff_rank: int | None = None  # bug arms only: the live tracked rank
                 arm_chunk = chunk if arm.get("chunkable", True) else 0
-                for ctx_ids, win_ids in samples:
+                for sample_idx, (ctx_ids, win_ids) in enumerate(samples):
                     if arm["kind"] == "press" or arm["kind"] == "full":
                         press = arm["make"]()
                         nll, ntok, cache = score_press(model, press, ctx_ids, win_ids, arm_chunk)
@@ -418,13 +462,26 @@ def run_ppl(
                         nll, ntok = score_quant(model, cache, ctx_ids, win_ids, arm_chunk)
                     else:
                         cache = arm["make"]()
-                        nll, ntok = score_streaming(model, cache, ctx_ids, win_ids, arm_chunk)
+                        nll, ntok = score_streaming(
+                            model,
+                            cache,
+                            ctx_ids,
+                            win_ids,
+                            arm_chunk,
+                            arm=str(arm["name"]),
+                            idx=sample_idx,
+                        )
                     total_nll += nll
                     total_tok += ntok
                     window_nlls.append(nll / ntok)
                     window_toks.append(ntok)
                     if fp is None:
                         fp = _footprint(arm, cache, t, n, h_kv)
+                        if isinstance(cache, BugStreamingCache):
+                            # The narrowest K basis in the cache: the ppl axis's
+                            # one-number view of how far the floor collapsed the gist
+                            # (`diag.jsonl` carries the per-layer K and V ranks).
+                            eff_rank = min(_tracked_rank(la.u_k) for la in cache._bug_layers())
                     del cache
                     gc.collect()
                 peak = peak_get()
@@ -434,12 +491,13 @@ def run_ppl(
             # ADDITION so error bars exist (Week-15 intervals); the
             # pin: ppl == exp(sum(nll_i*tok_i)/sum(tok_i)) recomputed from them.
             ppl = float(torch.tensor(total_nll / total_tok).exp())
-            _log_pplw(t, arm["name"], window_nlls, window_toks[0])
+            _log_pplw(t, arm["name"], window_nlls, window_toks[0], corpus)
             row = {
                 "method": arm["name"],
                 "kind": arm["kind"],
                 "rank": arm["rank"],
                 "T": t,
+                "corpus": corpus,
                 "ppl": ppl,
                 "window_nlls": window_nlls,
                 "window_toks": window_toks,
@@ -450,6 +508,7 @@ def run_ppl(
                 "gpu_ratio_fp16": fp.gpu_ratio_fp16(t, n),
                 "cpu_ratio_fp16": fp.cpu_ratio_fp16(t, n),
                 "peak_gpu_bytes": peak,
+                "eff_rank": eff_rank,
                 "status": "ok",
             }
         except Exception as exc:
@@ -478,7 +537,7 @@ def run_ppl(
     return rows
 
 
-def _log_pplw(t: int, name: str, window_nlls: list[float], ntok: int) -> None:
+def _log_pplw(t: int, name: str, window_nlls: list[float], ntok: int, corpus: str) -> None:
     """The ``[pplw]`` per-window NLL line -- one per (arm, T), greppable ``^\\[pplw``.
 
     `vastai logs` truncates a line at ~500 chars, so a would-be >400-char line splits
@@ -487,17 +546,23 @@ def _log_pplw(t: int, name: str, window_nlls: list[float], ntok: int) -> None:
     Windows are uniform-length by construction (exact slices), so one ``ntok`` covers
     the group. Format (the harvest regex, `records.PPLW_RE`)::
 
-        ^\\[pplw\\] T=(\\d+) (\\S+) ntok=(\\d+)(?: part=(\\d+)/(\\d+))? nlls=([0-9.,]+)$
+        ^\\[pplw\\] T=(\\d+) (\\S+) ntok=(\\d+)(?: part=(\\d+)/(\\d+))? nlls=([0-9.,]+)
+        (?: corpus=(\\S+))?$          # one pattern; wrapped here only to fit the line limit
+
+    ``corpus=`` goes LAST and every fragment repeats it, so the group is self-describing
+    however the log was truncated -- and so the archived lines, which have none, keep
+    matching (`records.PPLW_RE` takes it as an optional trailing group).
     """
     vals = [f"{v:.6f}" for v in window_nlls]
     head = f"[pplw] T={t} {name} ntok={ntok}"
-    line = f"{head} nlls={','.join(vals)}"
+    tail = f" corpus={corpus}"
+    line = f"{head} nlls={','.join(vals)}{tail}"
     if len(line) <= 400:
         print(line, flush=True)
         return
     groups = [vals[i : i + 8] for i in range(0, len(vals), 8)]
     for pi, grp in enumerate(groups, 1):
-        print(f"{head} part={pi}/{len(groups)} nlls={','.join(grp)}", flush=True)
+        print(f"{head} part={pi}/{len(groups)} nlls={','.join(grp)}{tail}", flush=True)
 
 
 def _log_row(row: dict[str, Any]) -> None:
@@ -506,9 +571,16 @@ def _log_row(row: dict[str, Any]) -> None:
         return
     # `sbits=` appended after `ratio=` -- records.PPL_RE captures ratio= and ignores the
     # tail, so archived ppl lines keep parsing unchanged.
+    # `eff_rank=` (bug arms only) goes next: records.PPL_RE is a prefix match, so a
+    # field appended after `sbits=` leaves every archived and new line parsing the same.
+    # `corpus=` goes LAST, same rule as `_log_pplw`'s -- records.PPL_RE takes it as an
+    # optional trailing group, so archived lines (neither field) keep parsing too.
+    eff = row.get("eff_rank")
     print(
         f"  {row['method']:14s} [T={row['T']}] ppl={row['ppl']:.3f} "
         f"tok_eq/layer={row['tok_equiv_per_layer']:.1f} ratio={row['ratio_fp16']:.3f} "
-        f"sbits={row.get('ratio_stored_bits', float('nan')):.3f}",
+        f"sbits={row.get('ratio_stored_bits', float('nan')):.3f}"
+        f"{'' if eff is None else f' eff_rank={eff}'}"
+        f" corpus={row['corpus']}",
         flush=True,
     )

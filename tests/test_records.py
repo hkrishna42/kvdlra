@@ -182,6 +182,7 @@ def test_parse_ppl_lines_schema() -> None:
             "ratio": 0.085,
             "sbits": 0.150,
             "tok_eq": 1377.7,
+            "corpus": None,  # the pooled line never prints one; pplw.jsonl carries it
             "source": "f.txt:1",
         }
     ]
@@ -192,6 +193,26 @@ def test_parse_ppl_lines_no_leading_space_and_no_sbits() -> None:
     old = "bug-r32        [T=16384] ppl=4.566 tok_eq/layer=578.9 ratio=0.035\n"
     (row,) = parse_ppl_lines(old, model="M", source="f")
     assert row["arm"] == "bug-r32" and row["sbits"] is None and row["tok_eq"] == 578.9
+
+
+def test_parse_ppl_lines_reads_the_corpus_when_the_line_carries_one() -> None:
+    """`corpus=` is appended LAST by `frontier._log_row`, after the optional
+    `eff_rank=` -- both new forms parse, and the archived form (``PPL``, no `corpus=`
+    at all) still parses with `corpus: None`, same as `test_parse_ppl_lines_schema`."""
+    new = (
+        "  bugSseed-r64-h256 [T=16384] ppl=5.308 tok_eq/layer=1377.7 ratio=0.085 "
+        "sbits=0.150 corpus=pg19-val\n"
+    )
+    (row,) = parse_ppl_lines(new, model="M", source="f")
+    assert row["corpus"] == "pg19-val"
+    with_eff_rank = (
+        "  bugSseed-r64-h256 [T=16384] ppl=5.308 tok_eq/layer=1377.7 ratio=0.085 "
+        "sbits=0.150 eff_rank=64 corpus=pg19-val\n"
+    )
+    (row2,) = parse_ppl_lines(with_eff_rank, model="M", source="f")
+    assert row2["corpus"] == "pg19-val"
+    (archived,) = parse_ppl_lines(PPL, model="M", source="f")
+    assert archived["corpus"] is None
 
 
 def test_parse_ppl_lines_ignores_trial_and_cell_lines() -> None:
@@ -350,16 +371,17 @@ def test_v1_archive_manifests_add_up_and_match_jsonl() -> None:
 
 def test_parse_pplw_lines_schema() -> None:
     """One row per window, carrying the window's NLL SUM: the printed value is a
-    per-token mean over `ntok` tokens, and a sum is what pools without re-weighting."""
+    per-token mean over `ntok` tokens, and a sum is what pools without re-weighting.
+    ``corpus`` is None here: PPLW is an ARCHIVED line, printed before the field existed."""
     rows = parse_pplw_lines(PPLW, model="M", source="f.txt")
     assert rows == [
         {
             "model": "M", "arm": "bugSseed-r64-h256", "ctx": 16384, "window_idx": 0,
-            "ntok": 511, "nll_sum_nats": 1.573386 * 511, "source": "f.txt:1",
+            "ntok": 511, "nll_sum_nats": 1.573386 * 511, "corpus": None, "source": "f.txt:1",
         },
         {
             "model": "M", "arm": "bugSseed-r64-h256", "ctx": 16384, "window_idx": 1,
-            "ntok": 511, "nll_sum_nats": 1.236791 * 511, "source": "f.txt:1",
+            "ntok": 511, "nll_sum_nats": 1.236791 * 511, "corpus": None, "source": "f.txt:1",
         },
     ]  # fmt: skip
 

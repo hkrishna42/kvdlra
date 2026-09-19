@@ -1,0 +1,21 @@
+name: hygiene_table4_llama
+model: "unsloth/Meta-Llama-3.1-8B-Instruct"
+dtype: bfloat16
+doc: >-
+  The replicate of the Table-4 primary contrast on the family that never diverged: rank 256 with
+  the orthonormality guard off, under the default tolerance guard, and with a thin QR every 64
+  absorbs, against the uncompressed reference, on PG-19 validation perplexity at 16K. It answers
+  the other half of ICML plan 0.1 -- whether the repair costs anything where there is nothing to
+  repair. Re-sized to 16 windows (ppl_16k_pg19val_w16) after the first launch measured 5.2 min
+  per 16K sample on the r256 arms and was killed over its 2 h bar: prereg/hygiene_table4.md
+  Amendment 1, DECISIONS D-011 addendum 2. That killed run also left the evidence this replicate
+  now tests against -- the guard-off basis lost orthonormality in at least one layer of every
+  16K Llama sample it reached. No retrieval task on any of the three pods; the neutrality
+  secondary is deferred to a follow-up pod. Shares prereg/hygiene_table4.md with
+  hygiene_table4_qwen_r128 and hygiene_table4_qwen_r256; launch is the owner's call
+  (DECISIONS D-011) and must be a commit that descends from the prereg's.
+prereg: prereg/hygiene_table4.md
+arms: ["isvd_r256_noguard", "isvd_r256_tol", "isvd_r256_qr64", "full"]
+tasks: ["ppl_16k_pg19val_w16"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+gpu_budget_h: 5.0

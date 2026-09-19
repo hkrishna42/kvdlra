@@ -14,7 +14,7 @@ from pathlib import Path
 import pod
 import pytest
 
-from kvdlra.eval.config import config_hash, load_pod
+from kvdlra.eval.config import config_hash, load_arm, load_pod, load_task
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -150,7 +150,9 @@ def test_harvest_parses_a_log_into_records(dry_pod: Path, tmp_path: Path) -> Non
     ]  # fmt: skip
     assert pplw[0] == {
         "model": load_pod("w18_g1").model, "arm": "bugSseed-r64-h256", "ctx": 16384,
-        "window_idx": 0, "ntok": 511, "nll_sum_nats": 1.573386 * 511, "source": f"{log}:7",
+        "window_idx": 0, "ntok": 511, "nll_sum_nats": 1.573386 * 511,
+        "corpus": None,  # an archived-format [pplw] line: no corpus= field to recover
+        "source": f"{log}:7",
     }  # fmt: skip
     assert [w["nll_sum_nats"] for w in pplw[2:]] == [v * 255 for v in (1.0, 2.0, 3.0, 4.0, 5.0)]
 
@@ -499,6 +501,109 @@ def test_check_rejects_an_env_that_drifted_from_the_pyproject_pins(
     assert r.returncode == 1 and "CHECK FAIL env: torch==0.0.0" in r.stdout + r.stderr
 
 
+# --- L1.8: env.txt survives a log harvest -------------------------------------
+#
+# `run` writes results/<pod>/env.txt ON THE POD. A log harvest never brings that file
+# back, so every harvested pod failed `check` on `env: env.txt is missing` -- the three
+# Table-4 pods among them. boot.sh prints the same set into the log between
+# `===ENV_BEGIN===` and `===ENV_END===`, and that is where the harvest reads it from.
+ENV_BLOCK = [
+    "===ENV_BEGIN===",
+    "run_sha=deadbeef",
+    "NVIDIA A100-SXM4-40GB, 40960 MiB, 595.84",
+    "python=3.12.3",
+    "torch=2.11.0+cu128 cuda_build=12.8 cuda_avail=True",
+    "transformers=5.8.0 kvpress=0.5.1 optimum-quanto=0.2.7 hqq=0.2.8.post1",
+    "device=NVIDIA A100-SXM4-40GB",
+    "===ENV_END===",
+]
+# The set `env_lines()` writes on the pod, recovered from the block above. `cuda` is
+# torch's build (`cuda_build=`), `gpu` is not a version at all, and a package the block
+# does not print is `unrecorded` -- never guessed from the laptop running the harvest.
+HARVESTED_ENV = [
+    "torch==2.11.0+cu128",
+    "cuda==12.8",
+    "triton==unrecorded",
+    "transformers==5.8.0",
+    "kvpress==0.5.1",
+    "optimum-quanto==0.2.7",
+    "hqq==0.2.8.post1",
+    "omegaconf==unrecorded",
+    "gpu=NVIDIA A100-SXM4-40GB",
+]
+
+
+def test_harvest_writes_env_txt_from_the_logs_env_block(dry_pod: Path, tmp_path: Path) -> None:
+    """A pod-written env.txt is left exactly as it is; with none there -- which is every
+    harvested pod -- the log's own ENV block becomes one, and `check` passes on it."""
+    lines = [*ENV_BLOCK, *_trial_lines(*ARMS), *_ppl_lines(*ARMS), *_pplw_lines(*ARMS)]
+    d = _harvested(dry_pod, tmp_path, lines)
+    on_pod = (d / "env.txt").read_text()
+    assert on_pod != "\n".join(HARVESTED_ENV) + "\n"  # the run-side file, not the log's
+
+    (d / "env.txt").unlink()  # what a harvest of a finished pod actually starts from
+    r = _run("harvest", "--pod", "w18_g1", "--log", str(d / "pod.log"), "--out", str(d))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (d / "env.txt").read_text().splitlines() == HARVESTED_ENV
+    c = _run("check", str(d))
+    assert c.returncode == 0, c.stdout + c.stderr
+
+
+def test_harvest_writes_no_env_txt_when_the_log_has_no_env_block(
+    dry_pod: Path, tmp_path: Path
+) -> None:
+    """No block, no file. A harvest that invented an env.txt from the laptop it runs on
+    would record an environment no pod ever had; the missing file is the signal."""
+    lines = [*_trial_lines(*ARMS), *_ppl_lines(*ARMS), *_pplw_lines(*ARMS)]
+    d = _harvested(dry_pod, tmp_path, lines)
+    (d / "env.txt").unlink()
+    r = _run("harvest", "--pod", "w18_g1", "--log", str(d / "pod.log"), "--out", str(d))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not (d / "env.txt").exists()
+    c = _run("check", str(d))
+    assert c.returncode == 1 and "CHECK FAIL env: env.txt is missing" in c.stdout + c.stderr
+
+
+def _env_txt(d: Path, torch_line: str) -> Path:
+    (d / "env.txt").write_text("\n".join([torch_line, *HARVESTED_ENV[1:]]) + "\n")
+    return d
+
+
+def test_env_accepts_the_cuda_build_suffix_on_a_pinned_version(tmp_path: Path) -> None:
+    """A pod reports torch as a PEP 440 LOCAL version (`2.11.0+cu128`); the pyproject pin
+    is the public one, and the CUDA build is recorded separately as `cuda`. `unrecorded`
+    is the same evidence gap as an absent line, and fails like one."""
+    assert pod._env_fails(_env_txt(tmp_path, "torch==2.11.0+cu128")) == []
+    (wrong,) = pod._env_fails(_env_txt(tmp_path, "torch==2.10.0+cu128"))
+    assert wrong.startswith("env: torch==2.10.0+cu128 != the pyproject pin")
+    assert pod._env_fails(_env_txt(tmp_path, "torch==unrecorded")) == [
+        "env: torch is not recorded in env.txt"
+    ]
+
+
+def test_the_watchdog_keeps_the_env_block_rows() -> None:
+    """The watchdog greps each log fetch through `ROWS` before appending it, so a row
+    kind the filter drops never reaches the deduped `<label>.log` the harvest parses --
+    which is why the ENV block came back empty. The pattern is read from the script:
+    a copy of it here would pass while the script kept dropping the lines."""
+    rows = next(
+        x[len("ROWS='") : -1]
+        for x in (REPO_ROOT / "scripts/pod/watchdog.sh").read_text().splitlines()
+        if x.startswith("ROWS=")
+    )
+    kept = [
+        *ENV_BLOCK,
+        "triton=3.5.0 omegaconf=2.3.0 datasets=2.21.0 numpy=2.1.3 scipy=1.14.1",
+    ]
+    r = subprocess.run(
+        ["grep", "-aE", rows],
+        input="\n".join([*kept, "+ echo run_sha=deadbeef", "some other log noise"]) + "\n",
+        capture_output=True,
+        text=True,
+    )
+    assert r.stdout.splitlines() == kept
+
+
 def _git(*args: str) -> str:
     out = subprocess.run(["git", *args], capture_output=True, text=True, cwd=REPO_ROOT)
     return out.stdout.strip()
@@ -557,3 +662,107 @@ def test_harvest_counts_a_diag_line_the_fetch_cut_in_half(dry_pod: Path, tmp_pat
     c = _run("check", str(tmp_path))
     assert c.returncode == 1
     assert "CHECK FAIL diag: 1 [diag] line(s) were unparseable" in c.stdout + c.stderr
+
+
+# --- L1.6: the Table-4 pods (prereg/hygiene_table4.md) ------------------------
+
+TABLE4 = ("hygiene_table4_qwen_r128", "hygiene_table4_qwen_r256", "hygiene_table4_llama")
+
+
+def test_the_table4_pods_resolve_end_to_end() -> None:
+    """All three pods load, hash, name the shared prereg, and every arm and task they
+    reference loads. In-process on purpose: `run --dry-run` spawns a torch-importing
+    subprocess, and this asserts the same resolution for a tenth of the wall clock.
+
+    The two Qwen halves share a model, so all that separates their hashes is the arm
+    list Amendment 1 split them on. Each pod also carries `full` and exactly the one
+    re-sized perplexity task: every paired statistic is computed inside a single pod,
+    and a half that lost its uncompressed reference -- or drifted off the 16 windows the
+    amendment pre-registered -- could not produce the numbers the decision rule reads."""
+    hashes = set()
+    for name in TABLE4:
+        p = load_pod(name)
+        assert p.prereg == "prereg/hygiene_table4.md"
+        assert (REPO_ROOT / p.prereg).is_file(), "the prereg must be in the launch's ancestry"
+        assert p.gpu_budget_h > 0, f"{name}: a pod to be launched needs a pre-registered budget"
+        for a in p.arms:
+            assert load_arm(a).name == a
+        for t in p.tasks:
+            assert load_task(t).name == t
+        assert "full" in p.arms, f"{name}: no uncompressed reference to pair against"
+        ppl = [t for t in p.tasks if load_task(t).generator == "ppl"]
+        assert ppl == ["ppl_16k_pg19val_w16"], f"{name}: perplexity tasks {ppl}"
+        assert load_task(ppl[0]).n_samples == 16, f"{name}: not the pre-registered n"
+        hashes.add(config_hash(p))
+    assert len(hashes) == len(TABLE4)  # three pods, three hashes
+
+
+def test_the_table4_gist_arms_cap_the_diag_volume_the_log_can_carry() -> None:
+    """`diag_every` is the one knob standing between this pod and a lost result.
+
+    The log is the only channel back from a vast.ai instance. A 16K sample runs ~1024
+    absorbs per layer; at the 64 default that is ~17 `[diag]` rows per layer per sample
+    -- one Qwen half alone would print ~38,000 of them over its 5 gist arms x 16
+    windows, none of them a clean summary. `diag_every: 4096` fixes the data shape, not
+    a fetch budget: no diagnostic window ever completes, so the only row is
+    `drain_diag`'s end-of-sample flush -- one per layer per sample, as the killed run
+    measured (320 rows over 10 samples on 32 Llama layers,
+    results/hygiene_table4_llama_killed_51394691/diag.jsonl). That is 33 rows/sample at
+    most (32 diag + one `[pplw]` line) against the watchdog's 150s/30000-line poll
+    (prereg/hygiene_table4.md §8 and Amendment 1)."""
+    for name in TABLE4:
+        for a in load_pod(name).arms:
+            cfg = load_arm(a)
+            if cfg.kind == "bug":
+                assert cfg.cache.get("diag_every") == 4096, f"{a}: would flood the log"
+
+
+def test_the_table4_control_arms_are_free_to_diverge() -> None:
+    """The guard is the DEFAULT, so an arm that merely leaves `qr_every` unset is still
+    guarded and the contrast would compare two guarded arms. The `_noguard` control has
+    to switch BOTH tolerances off to be the v1 behaviour that produced the divergence --
+    the tripwire still records its `orth_err` trace, which is the point."""
+    arms = {a for name in TABLE4 for a in load_pod(name).arms}
+    noguard = {a for a in arms if a.endswith("_noguard")}
+    assert noguard, "the pods must carry the unguarded control"
+    for a in noguard:
+        c = load_arm(a).cache
+        assert c["orth_fix_tol"] is None and c["orth_abort_tol"] is None
+        assert "qr_every" not in c
+    for a in {x for x in arms if x.endswith("_qr64")}:
+        assert load_arm(a).cache["qr_every"] == 64
+    for a in {x for x in arms if x.endswith("_tol")}:
+        c = load_arm(a).cache
+        assert not {"orth_fix_tol", "orth_abort_tol", "qr_every"} & set(c)  # the defaults
+
+
+def test_the_table4_arms_equal_the_plain_cache_outside_the_named_knobs() -> None:
+    """Every Table-4 cell's `cache:` is `isvd_r128` / `isvd_r256` / `isvd_r256_f0.01` at the
+    shipped defaults, plus exactly the guard/floor/diag knobs this prereg varies -- a pin
+    against a quiet drift in `rank`, `recent_window`, `absorb_block`, `n_sink` or `retention`
+    that no other test here would catch."""
+    source = {
+        "isvd_r128_noguard": "isvd_r128",
+        "isvd_r128_tol": "isvd_r128",
+        "isvd_r128_qr64": "isvd_r128",
+        "isvd_r128_f0.01_tol": "isvd_r128",
+        "isvd_r128_f0.01_qr64": "isvd_r128",
+        "isvd_r256_noguard": "isvd_r256",
+        "isvd_r256_tol": "isvd_r256",
+        "isvd_r256_qr64": "isvd_r256",
+        "isvd_r256_f0.01_tol": "isvd_r256_f0.01",
+        "isvd_r256_f0.01_qr64": "isvd_r256_f0.01",
+    }
+    guard_knobs = {"orth_fix_tol", "orth_abort_tol", "qr_every", "diag_every"}
+    for arm, plain in source.items():
+        cache = load_arm(arm).cache
+        drop = guard_knobs | ({"min_sv_frac"} if "f0.01" in arm else set())
+        got = {k: v for k, v in cache.items() if k not in drop}
+        want = {k: v for k, v in load_arm(plain).cache.items() if k not in drop}
+        assert got == want, f"{arm}: drifted from {plain} outside the guard knobs"
+        # ...and the floor the NAME promises is the floor the arm carries. Dropped from
+        # the comparison above (it is the knob the cell varies), so without this the four
+        # `f0.01` cells could run any floor at all -- including the r256 arm's own, which
+        # is where the prereg's branch-2 reference number comes from.
+        if "f0.01" in arm:
+            assert cache["min_sv_frac"] == 0.01, f"{arm}: not the floor its name claims"

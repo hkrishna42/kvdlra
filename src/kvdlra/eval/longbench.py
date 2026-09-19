@@ -32,6 +32,7 @@ from transformers.cache_utils import Cache, DynamicCache
 
 from kvdlra.eval.config import TaskCfg
 from kvdlra.eval.frontier import _footprint, _prefill_chunked
+from kvdlra.eval.records import drained
 from kvdlra.eval.ruler import _decode, prompt_sha256
 
 # One templated example: (prompt ids, reference answers).
@@ -107,10 +108,14 @@ def generate(
     n: int,
     h_kv: int,
     max_new: int,
+    *,
+    task: str | None = None,
+    idx: int | None = None,
 ) -> tuple[str, float, float]:
     """Prefill the whole prompt except its last token (chunked, OOM-safe), then
     greedy-generate the answer from the last token at TRUE positions. Returns
-    (answer_text, fp16 memory ratio, stored-bits ratio of the compressed prompt)."""
+    (answer_text, fp16 memory ratio, stored-bits ratio of the compressed prompt).
+    ``task`` / ``idx`` only label the diagnostics this example drains."""
     prompt_ids = prompt_ids.to(device)
     pre, last = prompt_ids[:, :-1], prompt_ids[:, -1:]
     ctx_len = int(pre.shape[1])
@@ -121,7 +126,20 @@ def generate(
         # streaming arms) -- decode outside attach left ShadowKV's selection hook
         # unregistered, silently degrading it to most-recent-chunks retention
         # (the same defect as the RULER harness; those published rows are VOID).
-        with cache.attach(model):  # type: ignore[attr-defined]
+        with (
+            # The tripwire's rows, before the cache goes -- `records.drained` says why in
+            # a `finally`. `cache` is bound inside this branch, so the wrapper is here.
+            drained(
+                cache,
+                model,
+                source="longbench",
+                arm=str(arm["name"]),
+                ctx=ctx_len,
+                task=task,
+                idx=idx,
+            ),
+            cache.attach(model),  # type: ignore[attr-defined]
+        ):
             if 0 < chunk < ctx_len:
                 _prefill_chunked(model, cache, pre, chunk)
             else:
@@ -186,8 +204,10 @@ def run_trial(
     """
     examples = load_examples(tok, sub, task.ctx, task.n_samples)
     f1s, ratios, sbits = [], [], []
-    for prompt_ids, answers in examples:
-        text, ratio, sratio = generate(model, tok, arm, prompt_ids, device, chunk, n, h_kv, MAX_NEW)
+    for i, (prompt_ids, answers) in enumerate(examples):
+        text, ratio, sratio = generate(
+            model, tok, arm, prompt_ids, device, chunk, n, h_kv, MAX_NEW, task=sub, idx=i
+        )
         f1s.append(qa_f1_max(text, answers))
         ratios.append(ratio)
         sbits.append(sratio)

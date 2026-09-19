@@ -102,8 +102,8 @@ A run writes `results/<pod>/`: `manifest.json` (git SHA, config hash, model revi
 library and CUDA versions, GPU, wall clock, command line), `env.txt`, and the records —
 `trials.jsonl`, `ppl.jsonl`, `pplw.jsonl`, `latency.jsonl`, `diag.jsonl`. The per-trial
 prompt digests (`prompt_sha256`, `haystack_id`) are fields of `trials.jsonl` and are
-filled by generator v2; the corpus digests (`dataset_sha256`) arrive with that lane —
-the manifest key exists and is empty until then.
+filled by generator v2. `dataset_sha256` holds a digest of the exact token stream each
+perplexity sweep scored, keyed by corpus; the haystack digests join it with that lane.
 
 ## License
 

@@ -25,7 +25,12 @@ Palette = the dataviz reference instance, first three categorical slots (validat
 all-pairs); colour follows the entity across every figure (r64 blue, 2-bit orange,
 4-bit aqua; the compose cell is r64's hue with a hollow diamond; full KV is ink).
 
-    python scripts/figures.py --out docs/paper/figures
+`rank-sweep` is not one of those three: it draws the stored-representation study
+(`kvdlra.eval.recon`) from a `recon.jsonl`, which is a diagnostic, not a paper figure.
+
+    python scripts/figures.py --out docs/paper/figures            # the three, `build`
+    python scripts/figures.py rank-sweep --in results/recon_1b/recon.jsonl \
+        --out docs/paper/figures/rank_sweep_1b.pdf
 """
 
 from __future__ import annotations
@@ -33,7 +38,9 @@ from __future__ import annotations
 import argparse
 import re
 from functools import cache
+from math import sqrt
 from pathlib import Path
+from statistics import stdev
 from typing import cast
 
 import _paths  # noqa: F401
@@ -41,6 +48,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.artist import Artist
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.ticker import NullFormatter
@@ -327,6 +335,103 @@ def fig_coldstart(out: Path) -> None:
     _save(fig, "coldstart", out)
 
 
+# --- the stored-representation study (`kvdlra.eval.recon`) ----------------------
+
+RECON_STYLE = {  # row key -> (label, colour, dash); the isvd floor variant is dashed isvd
+    "svd_oracle": ("per-sequence SVD oracle", INK, (0, (4, 2))),
+    "isvd": ("incremental SVD", BLUE, "-"),
+    "isvd_f0.01": ("incremental SVD, sv floor 0.01", BLUE, (0, (3, 1.5))),
+    "fd": ("Frequent Directions", AQUA, "-"),
+    "fd2": ("Frequent Directions, l=2r", AQUA, (0, (1, 1.5))),
+    "oja": ("Oja's rule", ORANGE, "-"),
+    "frozen_prefill_svd": ("frozen prefill basis", MUTED, "-"),
+    "random_basis": ("random basis", MUTED, (0, (1, 2))),
+}
+
+
+def _recon_key(r: dict[str, object]) -> str:
+    """One line per method, with the isvd singular-value floor as its own line."""
+    floor = cast(float, r["min_sv_frac"])
+    return f"{r['method']}_f{floor:g}" if floor else str(r["method"])
+
+
+def fig_rank_sweep(src: Path, out: Path, block: int | None = None) -> None:
+    """Reconstruction error on the representation each method STORES, vs stored width.
+
+    One panel per kv, one line per method, mean +- SE over documents: the document is the
+    sampling unit, so a document's layers -- and both block sizes, unless `--block` pins
+    one -- are averaged before the spread over documents is taken. x is the stored width
+    (`stored_rank`), not the nominal rank, because FD at l=2r stores twice as much. The
+    `random_basis` control shares ONE Haar draw (`seed=0`) across every cell, so its band
+    is document variation, not draw-to-draw noise.
+
+    Exits non-zero when the file has nothing to draw, or when any series in `RECON_STYLE`
+    has no rows at all: a study run without `min_sv_frac=(0.0, 0.01)` has no `isvd_f0.01`
+    rows, and a silently absent line is an omission no reader can see.
+    """
+    rows = [r for r in read_jsonl(src) if block is None or r["block"] == block]
+    if not rows:
+        raise SystemExit(f"no rows for {src}" + ("" if block is None else f" at block={block}"))
+    missing = [k for k in RECON_STYLE if not any(_recon_key(r) == k for r in rows)]
+    if missing:
+        raise SystemExit(
+            f"{src}: no rows for {', '.join(missing)} -- rerun the study with every method "
+            "(`isvd_f0.01` is `min_sv_frac=(0.0, 0.01)`), or drop the series from RECON_STYLE"
+        )
+    kvs = sorted({str(r["kv"]) for r in rows})
+    fig, axes = plt.subplots(1, len(kvs), figsize=(3.7 * len(kvs), 2.9), sharey=True, squeeze=False)
+    for ax, kv in zip(axes[0], kvs, strict=True):
+        ax.grid(True, axis="y")
+        ax.set_xscale("log", base=2)
+        ax.set_yscale("log")
+        for key, (label, colour, dash) in RECON_STYLE.items():
+            sel = [r for r in rows if str(r["kv"]) == kv and _recon_key(r) == key]
+            if not sel:
+                continue
+            xs: list[float] = []
+            ys: list[float] = []
+            es: list[float] = []
+            for rank in sorted({cast(int, r["rank"]) for r in sel}):
+                at = [r for r in sel if r["rank"] == rank]
+                per_doc: dict[str, list[float]] = {}
+                for r in at:
+                    per_doc.setdefault(str(r["doc"]), []).append(cast(float, r["err"]))
+                means = [sum(v) / len(v) for v in per_doc.values()]
+                xs.append(sum(cast(int, r["stored_rank"]) for r in at) / len(at))
+                ys.append(sum(means) / len(means))
+                es.append(stdev(means) / sqrt(len(means)) if len(means) > 1 else 0.0)
+            ax.errorbar(
+                xs, ys, yerr=es, color=colour, ls=dash, marker="o", ms=3, lw=1.4,
+                capsize=2, label=label,
+            )  # fmt: skip
+        ax.set_title(kv, fontsize=8.5, color=INK)
+        ax.set_xlabel("stored width (columns of U)", fontsize=8)
+    axes[0][0].set_ylabel("||M - UC||_F / ||M||_F", fontsize=8)
+    # Below the panels, not inside one: the curves fall left-to-right and would sit under
+    # an in-axes legend at any rank grid narrower than the study's. Merged over every
+    # panel, not read off the first: a method whose rows cover only one kv is labelled too.
+    legend: dict[str, Artist] = {}
+    for ax in axes[0]:
+        handles, labels = ax.get_legend_handles_labels()
+        legend.update(zip(labels, handles, strict=True))
+    fig.legend(
+        list(legend.values()), list(legend.keys()),
+        loc="lower center", ncol=4, fontsize=7, bbox_to_anchor=(0.5, -0.02),
+    )  # fmt: skip
+    ndocs = len({str(r["doc"]) for r in rows})
+    fig.suptitle(
+        f"Reconstruction error of the STORED representation, mean +- SE over {ndocs} documents"
+        + ("" if block is None else f", block={block}"),
+        fontsize=9,
+        color=INK,
+    )
+    fig.tight_layout(rect=(0, 0.12, 1, 0.93))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[wrote {out}]")
+
+
 def _save(fig: Figure, name: str, out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
     for ext in ("pdf", "png"):
@@ -345,7 +450,22 @@ def build(out: Path) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", default="docs/paper/figures")
-    build(Path(ap.parse_args().out))
+    sub = ap.add_subparsers(dest="cmd")  # optional: no subcommand means `build`
+    # SUPPRESS so `--out` before the subcommand survives it (argparse would otherwise
+    # overwrite the parsed value with the subparser's default).
+    sub.add_parser("build", help="the three paper figures (the default)").add_argument(
+        "--out", default=argparse.SUPPRESS
+    )
+    rs = sub.add_parser("rank-sweep", help="the stored-representation study (4.1)")
+    rs.add_argument("--in", dest="src", required=True, help="a recon.jsonl from kvdlra.eval.recon")
+    rs.add_argument("--out", required=True, help="the .pdf to write")
+    rs.add_argument("--block", type=int, help="keep only this block size (default: all, averaged)")
+    args = ap.parse_args()
+    if args.cmd == "rank-sweep":
+        _style()
+        fig_rank_sweep(Path(args.src), Path(args.out), args.block)
+    else:
+        build(Path(args.out))
 
 
 if __name__ == "__main__":

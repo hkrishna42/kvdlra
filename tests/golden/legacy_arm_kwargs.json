@@ -149,7 +149,7 @@
         "retention": "lowrank_surprise",
         "score_rank": 32,
         "seed_hh_warmup": true,
-        "tracker": "bug"
+        "tracker": "isvd"
       },
       "32768": {
         "absorb_block": 16,
@@ -167,7 +167,7 @@
         "retention": "lowrank_surprise",
         "score_rank": 32,
         "seed_hh_warmup": true,
-        "tracker": "bug"
+        "tracker": "isvd"
       }
     }
   },
@@ -192,7 +192,7 @@
         "retention": "lowrank_surprise",
         "score_rank": null,
         "seed_hh_warmup": true,
-        "tracker": "bug"
+        "tracker": "isvd"
       },
       "32768": {
         "absorb_block": 16,
@@ -210,7 +210,7 @@
         "retention": "lowrank_surprise",
         "score_rank": null,
         "seed_hh_warmup": true,
-        "tracker": "bug"
+        "tracker": "isvd"
       }
     }
   },
@@ -235,7 +235,7 @@
         "retention": "lowrank_surprise",
         "score_rank": null,
         "seed_hh_warmup": true,
-        "tracker": "bug"
+        "tracker": "isvd"
       },
       "32768": {
         "absorb_block": 16,
@@ -253,7 +253,7 @@
         "retention": "lowrank_surprise",
         "score_rank": null,
         "seed_hh_warmup": true,
-        "tracker": "bug"
+        "tracker": "isvd"
       }
     }
   },
@@ -314,6 +314,8 @@
         "hh_select": "surprise",
         "min_sv_frac": 0.0,
         "n_sink": 4,
+        "oja_decay": 0.03,
+        "oja_eta0": 20.0,
         "quant_bits": null,
         "quant_budget": 0,
         "rank": 64,
@@ -332,6 +334,8 @@
         "hh_select": "surprise",
         "min_sv_frac": 0.0,
         "n_sink": 4,
+        "oja_decay": 0.03,
+        "oja_eta0": 20.0,
         "quant_bits": null,
         "quant_budget": 0,
         "rank": 64,
@@ -364,7 +368,7 @@
         "retention": "lowrank_surprise",
         "score_rank": null,
         "seed_hh_warmup": true,
-        "tracker": "bug"
+        "tracker": "isvd"
       },
       "32768": {
         "absorb_block": 16,
@@ -382,7 +386,7 @@
         "retention": "lowrank_surprise",
         "score_rank": null,
         "seed_hh_warmup": true,
-        "tracker": "bug"
+        "tracker": "isvd"
       }
     }
   },

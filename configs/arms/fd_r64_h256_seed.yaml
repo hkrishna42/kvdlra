@@ -3,8 +3,13 @@ legacy_name: "bugSseed-r64-h256-fd"
 kind: bug
 chunkable: true
 doc: >-
-  Tracker-swap ablation: the r64 arm with a Frequent-Directions tracker. The Week-20 run
-  crashed; the cell is unmeasured.
+  Tracker-swap ablation: the r64 arm with a Frequent-Directions tracker at sketch size
+  l = r = 64, so it stores exactly what the incremental-SVD arm stores and the two cells
+  are bytes-matched. The cell is unmeasured. Recorded: the Week-20 swap pod's log shows
+  linalg.svd failing to converge (ill-conditioned / too many repeated singular values,
+  results/w19_harvest/swap-llama.raw:69-71, kept locally). Reproduced locally
+  (tests/test_fd_numerics.py): a rank-deficient augmented core after shrinkage -- the
+  same class of failure, not a verified-identical trace.
 cache:
   rank: 64
   coord_budget: null

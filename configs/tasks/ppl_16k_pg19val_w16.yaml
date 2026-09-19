@@ -1,0 +1,21 @@
+name: ppl_16k_pg19val_w16
+generator: ppl
+ctx: 16384
+doc: >-
+  `ppl_16k_pg19val` at 16 scoring windows instead of 32, for the re-sized Table-4 pods only
+  (prereg/hygiene_table4.md, Amendment 1). Identical protocol otherwise: PG-19 validation,
+  16K prefill under the arm's compression, a frozen 2048-token continuation scored against
+  the compressed cache, NON-OVERLAPPING windows so the paired bootstrap keeps its
+  independence. The cut is a budget decision, not a protocol change -- the first launch
+  measured 5.2 min per 16K sample on the rank-256 gist arms (~65,000 core SVDs per sample),
+  which put the 32-window design at ~11 GPU-h on the Llama pod and ~37 GPU-h on the Qwen
+  matrix against a pre-registered 2 h / 4 h bar, and both pods were killed under the
+  prereg's own overrun rule (DECISIONS D-011 addendum 2). At 16 windows the paired CI and
+  the TOST at +/-0.05 bits/token stay decidable at the effect sizes at stake; the amendment
+  states the condition and what happens if it fails. `ppl_16k_pg19val` is untouched and
+  still carries the 32-window claim.
+n_trials: 1
+seeds: [0]
+corpus: pg19-val
+window: 2048
+n_samples: 16

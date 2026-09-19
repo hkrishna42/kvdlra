@@ -1,0 +1,16 @@
+name: isvd_r128_tol
+kind: bug
+chunkable: true
+doc: >-
+  Rank-128 gist under the default tolerance guard (repair above 1e-3, abort above 1e-1).
+  This is isvd_r128 at the shipped defaults; a separate file only so the pod can widen the
+  diagnostic window. Table-4 cell, prereg/hygiene_table4.md.
+cache:
+  rank: 128
+  coord_budget: null
+  recent_window: 32
+  absorb_block: 16
+  n_sink: 4
+  retention: "fifo"
+  min_sv_frac: 0.0
+  diag_every: 4096

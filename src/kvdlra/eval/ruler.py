@@ -35,6 +35,7 @@ from transformers.cache_utils import Cache, DynamicCache
 from kvdlra.eval.config import TaskCfg
 from kvdlra.eval.data import FILLER, LABELS
 from kvdlra.eval.frontier import _footprint, _prefill_chunked, _prefill_plain
+from kvdlra.eval.records import drained
 
 _TAIL_K = 48  # FLOOR for the decoded query tail (question + assistant header, as in
 # w4/w5); the actual tail is template-derived per family (see _templated) and never
@@ -282,11 +283,15 @@ def retrieve(
     n: int,
     h_kv: int,
     max_new: int,
+    *,
+    task: str | None = None,
+    idx: int | None = None,
 ) -> tuple[bool, float, float, float]:
     """Prefill the haystack (chunked, OOM-safe) then decode the query+answer. Returns
     (hit, fp16-memory-ratio, hits_fraction, stored-bits-ratio). A hit requires ALL
     ``targets`` in the output. Memory is the post-prefill compressed footprint
-    (kvdlra.accounting); the stored-bits ratio bills fp32-at-rest state as stored."""
+    (kvdlra.accounting); the stored-bits ratio bills fp32-at-rest state as stored.
+    ``task`` / ``idx`` only label the diagnostics this trial drains."""
     hay = hay.to(device)
     ctx_len = int(hay.shape[1])
     streaming = arm["kind"] in ("bug", "shadow")
@@ -297,14 +302,34 @@ def retrieve(
         # ShadowKV's pre-attention selection hook never ran at decode and
         # _selected_chunks fell back to the most-recent chunks -- excluding the
         # mid-context needle by construction (the published 0/0/0/0 rows are VOID).
-        with cache.attach(model):  # type: ignore[attr-defined]
+        with (
+            # The tripwire's rows, before the cache goes -- `records.drained` says why in
+            # a `finally`. `cache` is bound inside this branch, so the wrapper is here.
+            drained(
+                cache,
+                model,
+                source="ruler",
+                arm=str(arm["name"]),
+                ctx=ctx_len,
+                task=task,
+                idx=idx,
+            ),
+            cache.attach(model),  # type: ignore[attr-defined]
+        ):
             if 0 < chunk < ctx_len:
                 _prefill_chunked(model, cache, hay, chunk)
             else:
                 model(hay, past_key_values=cache, use_cache=True, logits_to_keep=1)
             fp = _footprint(arm, cache, ctx_len, n, h_kv)
             text = _decode(
-                model, tok, cache, query.to(device), ctx_len, device, block=False, max_new=max_new
+                model,
+                tok,
+                cache,
+                query.to(device),
+                ctx_len,
+                device,
+                block=False,
+                max_new=max_new,
             )
     elif arm["kind"] == "quant":
         # KIVI-style QuantizedCache baseline (Week-18/19): the arm supplies its OWN cache
@@ -408,7 +433,7 @@ def run_trial(
     # 12 tokens is enough for one number; every other task answers with several.
     max_new = 12 if task.tasks == ["niah_single"] else 40
     hit, ratio, frac, sbits = retrieve(
-        model, tok, arm, hay, query, targets, device, chunk, n, h_kv, max_new
+        model, tok, arm, hay, query, targets, device, chunk, n, h_kv, max_new, task=sub, idx=trial
     )
     depth = None
     if task.depths and sub == "niah_single":

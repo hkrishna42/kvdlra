@@ -21,8 +21,8 @@ G1  harness hygiene
     [x] Oja eta0/decay reach oja_step from config; tuned config committed
     [~] rank-sweep figure regenerates from local 1B dumps (Week 1) and 8B dumps (Week 3)
     [x] perplexity on TEST/PG-19 val, per-window NLL, paired CI + TOST
-    [ ] Table-4 cells re-run under prereg; DECISIONS.md: guard alone removes divergence? y/n
-    ✔ G1 2026-09-18 on lane/L1-harness-hygiene: lines 1–5, 7 met (4 as amended: crash class, D-012); 6 = 1B half (8B open); 8 open until the Table-4 pods harvest. Evidence: docs/plan/STATE.md (L1 entry), docs/plan/cleanup/l1-ledger.md.
+    [x] Table-4 cells re-run under prereg; DECISIONS.md: guard alone removes divergence? y/n  — outcome 3(a), D-011 addendum 8: the guard alone removes 98.4% of the Qwen r256 divergence (+10.94 → +0.17 bits); the floor closes the remaining 0.15
+    ✔ G1 2026-09-18: lines 1–5, 7, 8 met (4 as amended); 6 = 1B half (8B open — dump pod). Evidence: docs/plan/STATE.md, docs/plan/DECISIONS.md D-011/D-012–D-015, docs/plan/cleanup/l1-ledger.md.
 
 G2  generator v2 + baselines
     [ ] filler-realism diagnostic harvested; DECISIONS.md: in-house generator retained/retired

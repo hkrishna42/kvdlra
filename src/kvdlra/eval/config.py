@@ -14,9 +14,10 @@ legacy keyword set key for key (``tests/test_config_parity.py``).
 from __future__ import annotations
 
 import hashlib
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from omegaconf import DictConfig, OmegaConf
 
@@ -89,6 +90,28 @@ class TaskCfg:
 
 
 @dataclass
+class TaskV2Cfg(TaskCfg):
+    """A ``generator: v2`` task (`kvdlra.eval.gen`): real-text haystacks in a balanced design.
+
+    A subclass, not three more ``TaskCfg`` fields: `config_hash` hashes the resolved
+    schema, and three live manifests (``results/hygiene_table4_*``) pin their hashes for
+    `make check` -- a field added to ``TaskCfg`` would move every one of them. `load_task`
+    picks this schema when the raw YAML says ``generator: v2``.
+
+    ``design`` is the balanced grid one seed enumerates: ``haystacks`` per (depth, code)
+    cell, ``depths`` picked evenly off the six-point grid, ``codes`` needle draws per
+    (haystack, depth) -- the code family alternates with the draw index. ``n_trials`` must
+    equal its product, so every trial index names one cell exactly once.
+    """
+
+    haystacks: list[str] = field(default_factory=lambda: ["pg19", "arxiv", "wikipedia", "essays"])
+    code_families: list[str] = field(default_factory=lambda: ["numbers", "words"])
+    design: dict[str, int] = field(
+        default_factory=lambda: {"haystacks": 2, "depths": 3, "codes": 4}
+    )
+
+
+@dataclass
 class PodCfg:
     """One GPU run: a model, a set of arms, a set of tasks."""
 
@@ -129,9 +152,21 @@ def load_task(name: str) -> TaskCfg:
     ``n_samples``. Refused here too, against `CORPUS_TOKENS` -- hours before the pod finds
     out. A corpus that table does not name is not guarded: an unmeasured ceiling is not a
     ceiling, and v1's `wikitext-103` is capped by the loader, not by the corpus.
+
+    A v2 task is refused when ``n_trials`` is not the product of its ``design`` (a cell
+    would be enumerated twice or not at all) or when it asks for more depths than the
+    six-point grid holds.
     """
-    t: TaskCfg = _load("tasks", name, TaskCfg)
+    p = ROOT / "tasks" / f"{name}.yaml"
+    raw = cast(DictConfig, OmegaConf.load(p))  # a task file is a mapping, never a list
+    t: TaskCfg = _load("tasks", name, TaskV2Cfg if raw.get("generator") == "v2" else TaskCfg)
     bad = []
+    if isinstance(t, TaskV2Cfg):
+        want = math.prod(t.design.values())
+        if t.n_trials != want:
+            bad.append(f"n_trials={t.n_trials} != the design's product {want} ({t.design})")
+        if not 1 <= t.design.get("depths", 0) <= 6:
+            bad.append(f"design depths={t.design.get('depths')} must be within 1..6")
     if t.n_trials < 1:
         bad.append(f"n_trials={t.n_trials} must be >= 1")
     if not t.seeds:

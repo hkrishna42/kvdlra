@@ -1,0 +1,255 @@
+"""Generator v2 (`kvdlra.eval.gen`): real-text haystacks, a balanced design, official RULER
+task semantics, and a per-trial ``prompt_sha256`` -- lane L2 item 2.
+
+Everything here runs on the whitespace ``tok`` fixture (tests/conftest.py) and the
+12-document fixture corpus, so it needs no network and no model. The golden pins
+determinism of the design, the sentence window, the needle text and its placement under
+that stable fake tokenizer; the real-tokenizer hashes are recorded per pod.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import re
+from collections import Counter
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from kvdlra.eval.config import PodCfg, TaskV2Cfg, config_hash, load_pod, load_task
+from kvdlra.eval.data import ADJECTIVES, LABELS, NOUNS
+from kvdlra.eval.gen import (
+    DEPTH_GRID,
+    Trial,
+    depths,
+    design_cell,
+    load_corpora,
+    make_trial,
+    make_trial_v1,
+)
+
+REPO = Path(__file__).resolve().parents[1]
+FIX = Path(__file__).parent / "fixtures" / "haystacks_tiny.jsonl"
+TASKS = ["niah_single", "niah_multikey", "niah_multivalue", "niah_multiquery", "vt"]
+CFG = TaskV2Cfg(
+    name="t",
+    generator="v2",
+    ctx=1024,
+    tasks=TASKS,
+    n_trials=24,
+    seeds=[0, 1],
+    haystacks=["pg19", "arxiv", "wikipedia", "essays"],
+    code_families=["numbers", "words"],
+    design={"haystacks": 2, "depths": 3, "codes": 4},
+)
+
+
+@pytest.fixture(scope="module")
+def corpora() -> dict[str, list[Any]]:
+    return load_corpora(CFG.haystacks, root=FIX.parent, fixture=FIX)
+
+
+# ------------------------------------------------------------------ the design
+
+
+def test_design_is_balanced_and_exhaustive() -> None:
+    cells = [design_cell(CFG, t) for t in range(24)]
+    assert len(set(cells)) == 24  # 2 haystacks x 3 depths x 4 code draws
+    assert {c[1] for c in cells} == {0.05, 0.4, 0.95}  # 3 depths evenly off the 6-point grid
+    assert sorted({c[0] for c in cells}) == [0, 1]
+    assert {c[2] for c in cells} == {"numbers", "words"} and {c[3] for c in cells} == {0, 1, 2, 3}
+    # the family alternates with the code index; every (depth, family) pair is 4 cells
+    assert all(c[2] == CFG.code_families[c[3] % 2] for c in cells)
+    assert set(Counter((c[1], c[2]) for c in cells).values()) == {4}
+
+
+def test_depths_are_spread_evenly_over_the_grid() -> None:
+    assert DEPTH_GRID == (0.05, 0.2, 0.4, 0.6, 0.8, 0.95)
+    assert depths(1) == [0.4] and depths(3) == [0.05, 0.4, 0.95] and depths(6) == list(DEPTH_GRID)
+    assert depths(2) == [0.05, 0.95]
+
+
+def test_every_source_is_used_equally(tok: Any, corpora: dict[str, list[Any]]) -> None:
+    """Over the 24 trials of a design every source appears 6 times, and the two haystacks
+    of one (depth, code) cell come from two different sources."""
+    trials = [
+        make_trial(CFG, tok, "niah_single", seed=0, trial=t, corpora=corpora) for t in range(24)
+    ]
+    sources = [t.meta["haystack_id"].split(":")[0] for t in trials]
+    assert Counter(sources) == dict.fromkeys(CFG.haystacks, 6)
+    by_cell: dict[tuple[float, int], set[str]] = {}
+    for t, src in zip(range(24), sources, strict=True):
+        _h, depth, _fam, code = design_cell(CFG, t)
+        by_cell.setdefault((depth, code), set()).add(src)
+    assert set(map(len, by_cell.values())) == {2} and len(by_cell) == 12
+
+
+def test_haystack_id_is_compact_and_spans_docs(tok: Any, corpora: dict[str, list[Any]]) -> None:
+    """A ~700-word fixture document cannot hold a 1,024-token window, so every id names
+    a span of documents; and the id stays short enough for the [trial] line."""
+    for t in range(8):
+        hay = make_trial(CFG, tok, "niah_multikey", seed=1, trial=t, corpora=corpora).meta[
+            "haystack_id"
+        ]
+        assert len(hay) < 40
+        assert re.fullmatch(r"(pg19|arxiv|wikipedia|essays):d\d+\.\.d\d+:[2-9]", hay), hay
+
+
+# ------------------------------------------------------------------ the prompts
+
+
+@pytest.mark.parametrize("task", TASKS)
+def test_prompt_is_paired_and_needle_is_present(
+    task: str, tok: Any, corpora: dict[str, list[Any]]
+) -> None:
+    a = make_trial(CFG, tok, task, seed=0, trial=5, corpora=corpora)
+    b = make_trial(CFG, tok, task, seed=0, trial=5, corpora=corpora)
+    assert isinstance(a, Trial)
+    assert a.meta["prompt_sha256"] == b.meta["prompt_sha256"]
+    assert a.prefill_ids.shape[1] >= 0.9 * CFG.ctx
+    text = tok.decode(a.prefill_ids[0])
+    for t in a.targets:
+        assert t in text
+    assert 0.0 <= a.meta["depth"] <= 1.0 and a.meta["code_family"] in CFG.code_families
+    assert re.fullmatch(r"[0-9a-f]{64}", a.meta["prompt_sha256"])
+
+
+def test_seed_changes_codes_not_design(tok: Any, corpora: dict[str, list[Any]]) -> None:
+    a = make_trial(CFG, tok, "niah_single", seed=0, trial=3, corpora=corpora)
+    b = make_trial(CFG, tok, "niah_single", seed=1, trial=3, corpora=corpora)
+    assert (a.meta["depth"], a.meta["code_family"]) == (b.meta["depth"], b.meta["code_family"])
+    assert a.targets != b.targets
+    assert a.meta["haystack_id"] != b.meta["haystack_id"]  # the seed also picks the document
+
+
+def test_needle_lands_at_the_design_depth(tok: Any, corpora: dict[str, list[Any]]) -> None:
+    """The design depth is where the queried needle sits, as a fraction of the haystack."""
+    at: dict[float, float] = {}
+    for trial in range(6):  # trials 0/1 -> 0.05, 2/3 -> 0.4, 4/5 -> 0.95
+        t = make_trial(CFG, tok, "niah_single", seed=0, trial=trial, corpora=corpora)
+        words = tok.decode(t.prefill_ids[0]).split()
+        pos = next(i for i, w in enumerate(words) if t.targets[0] in w)
+        at[t.meta["depth"]] = pos / len(words)
+    assert at[0.05] < 0.15 and 0.3 < at[0.4] < 0.5 and at[0.95] > 0.85
+
+
+def test_templates_follow_official_ruler(tok: Any, corpora: dict[str, list[Any]]) -> None:
+    """RULER's synthetic templates, singular for one answer and plural otherwise, the
+    answer prefix primed after the assistant header; the words family hyphenates."""
+    single = make_trial(CFG, tok, "niah_single", seed=0, trial=0, corpora=corpora)
+    q = tok.decode(single.query_ids[0])
+    assert "What is the special magic number for" in q and q.endswith("in the provided text is")
+    assert "<hdr>" in q and q.index("<hdr>") < q.index("mentioned in the provided text is")
+    assert "A special magic number is hidden" in tok.decode(single.prefill_ids[0])
+    multi = make_trial(CFG, tok, "niah_multivalue", seed=0, trial=0, corpora=corpora)
+    assert "What are all the special magic numbers for" in tok.decode(multi.query_ids[0])
+    assert len(multi.targets) == 4 and len(set(multi.targets)) == 4
+    query = make_trial(CFG, tok, "niah_multiquery", seed=0, trial=0, corpora=corpora)
+    assert ", and " in tok.decode(query.query_ids[0]) and len(query.targets) == 4
+    words = make_trial(CFG, tok, "niah_multikey", seed=0, trial=6, corpora=corpora)  # c=1
+    assert words.meta["code_family"] == "words"
+    assert all(re.fullmatch(r"[a-z]+-[a-z]+", t) for t in words.targets)
+    vt = make_trial(CFG, tok, "vt", seed=0, trial=0, corpora=corpora)
+    assert "Find all variables that are assigned the value" in tok.decode(vt.query_ids[0])
+    assert len(vt.targets) == 5 and all(re.fullmatch(r"[A-Z]{5}", t) for t in vt.targets)
+    body = tok.decode(vt.prefill_ids[0])
+    assert f"VAR {vt.targets[1]} = VAR {vt.targets[0]}" in body
+
+
+def test_golden_prompt_hashes(tok: Any, corpora: dict[str, list[Any]]) -> None:
+    want = json.loads((Path(__file__).parent / "golden" / "gen_v2_prompts.json").read_text())
+    assert len(want) == 5 * 2 * 3
+    for key, sha in want.items():
+        task, seed, trial = key.split("|")
+        got = make_trial(CFG, tok, task, seed=int(seed), trial=int(trial), corpora=corpora)
+        assert got.meta["prompt_sha256"] == sha, key
+
+
+def test_v1_builder_is_untouched(tok: Any) -> None:
+    """``make_trial_v1`` IS ``ruler.build_task`` (no code motion, PR-L2-22); its cycled
+    prefill under the ``tok`` fixture is pinned by the constant below, computed once."""
+    from kvdlra.eval import ruler
+
+    assert make_trial_v1 is ruler.build_task
+    pre, q, targets = make_trial_v1(
+        tok, "niah_single", 512, trial=0, seed=0, n_keys=8, n_values=4, n_hops=3
+    )
+    assert hashlib.sha256(pre.numpy().tobytes()).hexdigest() == V1_NIAH_SINGLE_512_PREFILL_SHA
+    assert q.shape[1] == 48 and targets == ["72234"]
+
+
+# `sha256(build_task(tok, "niah_single", 512, 0, 0, 8, 4, 3)[0].numpy().tobytes())` on the
+# `tok` fixture, computed 2026-09-19 before gen.py existed (491 int64 ids).
+V1_NIAH_SINGLE_512_PREFILL_SHA = "527d2ffc8bcd68229d68cc97a1914dcef2424268e9c9c94099b889a74d48b284"
+
+
+def test_word_lists_are_well_formed() -> None:
+    for words in (ADJECTIVES, NOUNS):
+        assert len(words) == 200 and len(set(words)) == 200
+        assert all(re.fullmatch(r"[a-z]+", w) for w in words)
+        assert not set(words) & set(LABELS)
+
+
+# ------------------------------------------------------------------ the corpora
+
+
+def test_load_corpora_reads_the_fixture_and_skips_its_provenance_row(
+    corpora: dict[str, list[Any]],
+) -> None:
+    assert set(corpora) == set(CFG.haystacks)
+    assert all(len(docs) == 3 for docs in corpora.values())
+    assert all(d["id"] == f"d{i}" for docs in corpora.values() for i, d in enumerate(docs))
+    d = corpora["pg19"][0]
+    assert set(d) == {"id", "source", "text", "sha256"}
+    assert d["sha256"] == hashlib.sha256(d["text"].encode()).hexdigest()
+
+
+# ------------------------------------------------------------------ the config
+
+
+def test_v2_task_yamls_load_and_hash() -> None:
+    names = ["ruler_v2_16k", "ruler_v2_32k", "ruler_v2_16k_g1", "ruler_v2_16k_g2"]
+    hashes = set()
+    for name in names:
+        t = load_task(name)
+        assert isinstance(t, TaskV2Cfg) and t.generator == "v2"
+        assert t.n_trials == math.prod(t.design.values())
+        assert t.tasks == TASKS and t.chunk == 4096
+        assert t.haystacks == CFG.haystacks and t.code_families == CFG.code_families
+        hashes.add(config_hash(PodCfg(name="p", model="m", arms=["full"], tasks=[name])))
+    assert len(hashes) == 4
+    assert load_task("ruler_v2_16k").n_trials == 12 and load_task("ruler_v2_32k").ctx == 32768
+    assert (
+        load_task("ruler_v2_16k_g1").n_trials == 24 and load_task("ruler_v2_16k_g2").n_trials == 48
+    )
+    assert not isinstance(load_task("ruler_inhouse_16k"), TaskV2Cfg)
+
+
+def test_the_table4_manifest_hash_is_unchanged() -> None:
+    """PR-L2-5: the v2 fields live on a subclass, so the hash of every existing task --
+    and with it every live manifest `make check` compares against -- is byte-identical."""
+    m = json.loads((REPO / "results" / "hygiene_table4_llama" / "manifest.json").read_text())
+    assert config_hash(load_pod("hygiene_table4_llama")) == m["config_hash"]
+
+
+def test_load_task_refuses_a_v2_design_that_does_not_match_n_trials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "tasks").mkdir()
+    monkeypatch.setattr("kvdlra.eval.config.ROOT", tmp_path)
+    head = "name: bad\ngenerator: v2\nctx: 1024\ntasks: [vt]\nseeds: [0]\n"
+    (tmp_path / "tasks" / "bad.yaml").write_text(
+        head + "n_trials: 5\ndesign: {haystacks: 2, depths: 3, codes: 4}\n"
+    )
+    with pytest.raises(ValueError, match=r"bad\.yaml.*n_trials=5.*24"):
+        load_task("bad")
+    (tmp_path / "tasks" / "bad.yaml").write_text(
+        head + "n_trials: 14\ndesign: {haystacks: 1, depths: 7, codes: 2}\n"
+    )
+    with pytest.raises(ValueError, match=r"depths.*7"):
+        load_task("bad")
+    (tmp_path / "tasks" / "bad.yaml").write_text(head + "n_trials: 24\n")  # the default design
+    assert isinstance(load_task("bad"), TaskV2Cfg)

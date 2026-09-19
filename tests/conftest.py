@@ -9,9 +9,14 @@ and ``TINY_SDPA`` (the attention kernel). Those two are the ONLY way the thirtee
 copies of this fixture differed from each other, so they are the whole knob. The scope is
 per REQUESTING module, so a test that mutates its model (several set ``sdpa`` mid-file)
 still cannot reach another module's.
+
+``tok`` is the whitespace tokenizer the generator tests share (``WhitespaceTok`` below).
 """
 
 from __future__ import annotations
+
+import zlib
+from typing import Any
 
 import pytest
 import torch
@@ -44,3 +49,62 @@ def tiny_model(request: pytest.FixtureRequest) -> LlamaForCausalLM:
         model.config._attn_implementation = "sdpa"
     model.eval()  # type: ignore[no-untyped-call]
     return model
+
+
+# --------------------------------------------------------------- the `tok` fixture
+
+
+class _Enc(dict[str, Any]):
+    """The two faces of HF's ``BatchEncoding`` the eval code reads: ``enc.input_ids``
+    (``ruler._filler_cached``) and ``enc["input_ids"]`` (``templated_official``)."""
+
+    @property
+    def input_ids(self) -> Any:
+        return self["input_ids"]
+
+
+class WhitespaceTok:
+    """A whitespace tokenizer with a chat template and STABLE ids -- ``crc32(word)`` -- so
+    a golden hash computed on one machine reproduces on CI (a grow-on-demand vocabulary
+    would depend on call order). Enough of the HF surface for both generators:
+    ``__call__`` (``.input_ids`` a list, or a ``[1, n]`` tensor under
+    ``return_tensors="pt"``), ``apply_chat_template`` (the content words plus a fixed
+    3-token generation header) and ``decode`` (through the inverse map of every id it has
+    handed out). The two private stubs in test_w10_ruler_filler / test_ruler_template_tail
+    stay where they are: each pins a narrower surface on purpose."""
+
+    name_or_path = "tests/tok"
+    header = ("<eot>", "<asst>", "<hdr>")
+
+    def __init__(self) -> None:
+        self._words: dict[int, str] = {}
+
+    def _ids(self, words: list[str]) -> list[int]:
+        ids = [zlib.crc32(w.encode()) & 0x7FFFFFFF for w in words]
+        self._words.update(zip(ids, words, strict=True))
+        return ids
+
+    def __call__(self, text: str, return_tensors: str | None = None, **_: Any) -> _Enc:
+        ids = self._ids(text.split())
+        return _Enc(input_ids=torch.tensor([ids]) if return_tensors else ids)
+
+    def apply_chat_template(
+        self,
+        messages: list[dict[str, str]],
+        add_generation_prompt: bool = False,
+        return_tensors: str | None = None,
+        return_dict: bool = False,
+    ) -> dict[str, torch.Tensor]:
+        words = messages[0]["content"].split()
+        if add_generation_prompt:
+            words += self.header
+        return {"input_ids": torch.tensor([self._ids(words)])}
+
+    def decode(self, ids: Any) -> str:
+        ids = ids.tolist() if hasattr(ids, "tolist") else ids
+        return " ".join(self._words.get(int(i), "") for i in ids)
+
+
+@pytest.fixture(scope="module")
+def tok() -> WhitespaceTok:
+    return WhitespaceTok()

@@ -1,0 +1,11 @@
+name: ruler_v2_32k
+generator: v2
+ctx: 32768
+doc: >-
+  ruler_v2_16k at 32K: the same five tasks, four sources, templates and code families, the same
+  2 x 3 x 2 = 12-trial design per seed at depths 0.05 / 0.4 / 0.95, one seed, chunked prefill.
+  The smoke pod's long-context cell (lane L2 item 8).
+tasks: ["niah_single", "niah_multikey", "niah_multivalue", "niah_multiquery", "vt"]
+n_trials: 12
+seeds: [0]
+design: {haystacks: 2, depths: 3, codes: 2}

@@ -1,0 +1,12 @@
+name: ruler_v2_16k_g2
+generator: v2
+ctx: 16384
+doc: >-
+  The wider Gate-2 v2 design at 16K (docs/plan/lanes/GATES.md §G2): five tasks, design haystacks x
+  depths x codes = 4 x 3 x 4 = 48 trials per seed -- every (depth, code family) cell holds one
+  haystack from each of the four sources. One seed, chunked prefill; the baseline-comparison pods
+  of lane L2 items 4-7 consume it.
+tasks: ["niah_single", "niah_multikey", "niah_multivalue", "niah_multiquery", "vt"]
+n_trials: 48
+seeds: [0]
+design: {haystacks: 4, depths: 3, codes: 4}

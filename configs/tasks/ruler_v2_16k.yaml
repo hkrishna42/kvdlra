@@ -1,0 +1,14 @@
+name: ruler_v2_16k
+generator: v2
+ctx: 16384
+doc: >-
+  Generator v2 (kvdlra.eval.gen) at 16K: five RULER tasks -- the four in-house sub-task names plus
+  niah_multiquery -- on real-text haystacks from four sources (pg19, arxiv, wikipedia, essays),
+  official RULER needle / question / answer-prefix templates, numbers and words code families.
+  Design haystacks x depths x codes = 2 x 3 x 2 = 12 trials per seed at depths 0.05 / 0.4 / 0.95,
+  one seed, chunked prefill: the smoke pod's n = 12 (lane L2 item 8, harness validation, not paper
+  data). ruler_v2_16k_g1 is the 24-trial Gate-1 design at this context.
+tasks: ["niah_single", "niah_multikey", "niah_multivalue", "niah_multiquery", "vt"]
+n_trials: 12
+seeds: [0]
+design: {haystacks: 2, depths: 3, codes: 2}

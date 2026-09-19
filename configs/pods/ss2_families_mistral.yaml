@@ -1,0 +1,27 @@
+name: ss2_families_mistral
+model: "mistralai/Mistral-7B-Instruct-v0.3"
+dtype: bfloat16
+doc: >-
+  ss2 across families (lane L2 item 4, gate G2 line 4; prereg/ss2_families.md): does the r64
+  configuration's multi-value edge over 2-bit KIVI survive KIVI at its published protocol --
+  full-precision single-shot prefill, G=32, R=128 (kivi2_faithful) -- or was the edge an
+  artefact of the chunked-prefill streaming arm the v1 tables paired against? The v1 answer
+  rests on one Llama 16K cell (w19-sysfix-llama: single-shot KIVI-2 recovers multi-value from
+  0.42 to 0.83); this pod replicates it on Mistral at 16K and 32K, same in-house tasks, same
+  n = 12 (6 trials x 2 seeds), cycled filler, chunk 4096, so every record pairs on (seed,
+  trial) with the archived w19-a1-mistral KIVI rows and w18-g1-mistral r64 rows. Arm order is
+  the prereg's: the r64 arm first (it is the paired reference every contrast needs, so a pod
+  that dies early still lands an interpretable pair), then the faithful 2-bit arm (the primary
+  contrast), the G=64 single-shot control (protocol-bound or grouping-bound), and the faithful
+  4-bit arm (descriptive). No full arm: every contrast is paired within the pod on identical
+  prompts. The three quant arms are chunkable: false. The -devel image: quanto JIT-builds its
+  kernel. gpu_budget_h is the prereg's 2x bar over the measured-anchor point estimate (20.2 h),
+  enforced on the pod by `pod.py launch --max-hours`. Launch = DECISIONS, after D-005 closes:
+  the prereg runs the cycled filler by design and is amended to ruler_v2_* before launch if
+  D-005 retires it from headline claims. Shares prereg/ss2_families.md with
+  ss2_families_qwen and ss2_families_llama.
+prereg: prereg/ss2_families.md
+arms: ["isvd_r64_h256_seed", "kivi2_faithful", "kivi2_singleshot", "kivi4_faithful"]
+tasks: ["ruler_inhouse_16k", "ruler_inhouse_32k"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+gpu_budget_h: 40.4

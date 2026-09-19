@@ -883,3 +883,53 @@ def test_the_cycle_control_pod_replicates_the_archived_row() -> None:
     t, rt = load_task(p.tasks[0]), load_task(real.tasks[0])
     assert t.filler == "cycle" and t.n_trials * len(t.seeds) == 12
     assert (t.generator, t.ctx, t.tasks, t.chunk) == (rt.generator, rt.ctx, rt.tasks, rt.chunk)
+
+
+# --- L2.5: the ss2 pods (prereg/ss2_families.md) --------------------------------
+
+SS2_PODS = ("ss2_families_mistral", "ss2_families_qwen", "ss2_families_llama")
+SS2_ARMS = ["isvd_r64_h256_seed", "kivi2_faithful", "kivi2_singleshot", "kivi4_faithful"]
+
+
+def test_the_ss2_pods_resolve_end_to_end() -> None:
+    """All three pods load, hash, name the shared prereg, carry a budget to enforce, and
+    every arm and task they reference loads; three models (and one task list against
+    two) keep the three hashes apart."""
+    hashes = set()
+    for name in SS2_PODS:
+        p = load_pod(name)
+        assert p.prereg == "prereg/ss2_families.md"
+        assert (REPO_ROOT / p.prereg).is_file(), "the prereg must be in the launch's ancestry"
+        assert p.gpu_budget_h > 0, f"{name}: a pod to be launched needs a pre-registered budget"
+        for a in p.arms:
+            assert load_arm(a).name == a
+        for t in p.tasks:
+            assert load_task(t).name == t
+        hashes.add(config_hash(p))
+    assert len(hashes) == len(SS2_PODS)
+
+
+def test_the_ss2_pods_are_the_prereg_design() -> None:
+    """The arm list is the pre-registered one IN ORDER -- the r64 arm first, because it is
+    the paired reference every contrast needs and a pod that dies early must still land
+    an interpretable pair; no `full` (every contrast is paired within the pod). Llama runs
+    32K only (its 16K single-shot cell is the archived v1 observation), the other two
+    16K + 32K. Every task is the cycled-filler in-house protocol at the archived n and
+    chunk, so each record pairs on (seed, trial) with the w19-a1 / w18-g1 rows; the three
+    KIVI arms are the ones the runner prefills in one shot."""
+    for name in SS2_PODS:
+        p = load_pod(name)
+        assert p.arms == SS2_ARMS, f"{name}: not the pre-registered arm order"
+        assert "full" not in p.arms
+        want = ["ruler_inhouse_32k"] if name.endswith("llama") else [
+            "ruler_inhouse_16k",
+            "ruler_inhouse_32k",
+        ]  # fmt: skip
+        assert p.tasks == want, f"{name}: tasks {p.tasks}"
+        for tname in p.tasks:
+            t = load_task(tname)
+            assert t.generator == "inhouse" and t.filler == "cycle"
+            assert t.n_trials * len(t.seeds) == 12 and t.chunk == 4096
+            assert t.tasks == ["niah_single", "niah_multikey", "niah_multivalue", "vt"]
+        single_shot = [a for a in p.arms if not load_arm(a).chunkable]
+        assert single_shot == ["kivi2_faithful", "kivi2_singleshot", "kivi4_faithful"]

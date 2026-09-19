@@ -2,18 +2,18 @@ name: gate1_preflight
 model: "unsloth/Meta-Llama-3.1-8B-Instruct"
 dtype: bfloat16
 doc: >-
-  The Gate-1 pre-flight (lane L3 Task 1b; prereg/gate1_preflight.md): the Gate-1 primary-contrast
-  arms -- the r64 configuration, its byte-matched no-gist control (a 2423-token exact tier, 1.00003x
-  the r64 arm's stored bits at 16K) and its learn-then-freeze control -- under the uncompressed
-  ceiling, on generator v2 at 16K, five tasks, n = 12, one seed, chunked prefill, Llama only.
-  Generator v2 has never run on a GPU and its official-RULER `vt` has never been scored at all,
-  while the v1 `vt` fell to 0.08 uncompressed on real text (DECISIONS D-005 addendum 2): Stage 1's
-  144 GPU-h bar must not be the run that finds that out. Arm order is the cheap ceiling first, then
-  the two primary-contrast arms, then frozen, so a pod that dies early still lands the ceiling and
-  the contrast. Harness validation plus the measured real-text baseline the Gate-1 prereg quotes by
-  a dated amendment; no number from this pod is cited as a result. gpu_budget_h is the prereg's 2x
-  bar over the 8.4 h point estimate, enforced on the pod by `pod.py launch --max-hours`. Launch =
-  DECISIONS, under D-011's standing authorization for pods inside approved lanes.
+  The Gate-1 pre-flight (lane L3 Task 1b; prereg/gate1_preflight.md): the primary-contrast arms --
+  the r64 configuration, its byte-matched no-gist control (2423-token exact tier, 1.00003x its
+  stored bits at 16K) and its learn-then-freeze control -- under the uncompressed ceiling, on
+  generator v2 at 16K, five tasks, n = 12, one seed, chunked prefill, Llama only. Generator v2 has
+  never run on a GPU and its official-RULER `vt` never scored at all, while the v1 `vt` fell to
+  0.08 uncompressed on real text (D-005 addendum 2): Stage 1's 72 GPU-h point / 144 GPU-h bar (8
+  arms x 112 samples x 2 pods, derived arm by arm in prereg section 1) must not be the run that
+  finds that out. It also measures the per-arm min/sample that re-sizes Stage 1 (reading (iv),
+  manifest cell_elapsed_s). Arm order -- ceiling, the two primary-contrast arms, frozen -- so a
+  pod that dies early still lands the contrast. Harness validation; the Gate-1 prereg quotes the
+  rows by amendment; no number here is cited as a result. gpu_budget_h is the 2x bar over the
+  prereg's 8.4 h point (`pod.py launch --max-hours`). Launch = DECISIONS, under D-011.
 prereg: prereg/gate1_preflight.md
 arms: ["full", "isvd_r64_h256_seed", "nogist_h2423", "frozen_r64_h256_seed"]
 tasks: ["ruler_v2_16k"]

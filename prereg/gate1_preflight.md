@@ -15,12 +15,28 @@ lane L3, Task 1b. This pod is **not** a Gate-1 pod: it protects one.
 Gate 1 Stage 1 (`docs/plan/lanes/L3_gate1_tracker_swap_v2.md`, `docs/plan/ICML2027_PLAN.md` §2
 Gate 1, `docs/plan/lanes/GATES.md` §G3) is two pods — Llama and Qwen, eight arms each, the Gate-1
 tasks at n = 24 plus 16 paired perplexity windows — whose readings are paired contrasts on
-generator v2. At the
-rates of §7 that is **≈ 36 GPU-h per pod, 72 at the point estimate and 144 at the 2× bar, $65–107**
-(the sizing L3 Task 3 commits with the Stage-1 pod YAMLs and `prereg/gate1_tracker_swap_v2.md` §9
-carries; it is over the lane file's "≤ 50 GPU-h", which was written before the L2 pods measured the
-rates, and the owner sees the cut ladder in that prereg). Two facts make launching that bar without
-a pre-flight a bad bet:
+generator v2. Its size, at §7's rates — each arm **112 samples** (4 tasks × 24 trials + 16
+perplexity windows):
+
+| §7 rate (min/sample) | arms at it | minutes |
+| --- | --- | --- |
+| 0.6 | `full` | 112 × 0.6 = **67** |
+| 3.1 | `isvd_r64_h256_seed`, `isvd_r64_h256_seed_bf16`, `fd_r64_h256_seed`, `oja_r64_h256_seed` | 4 × (112 × 3.1 = 347) = **1,388** |
+| 2.1 | `frozen_r64_h256_seed`, `random_r64_h256_seed` | 2 × (112 × 2.1 = 235) = **470** |
+| 1.55 | `nogist_h2423` (Llama) / `nogist_h4460` (Qwen) | 112 × 1.55 = **174** |
+| | **compute per pod** (8 arms) | 67 + 1,388 + 470 + 174 = **2,099 min = 35.0 h** |
+
+Plus §7's 60 min boot → **≈ 36 GPU-h per pod**; two families (Llama, Qwen) → **72 GPU-h at the
+point estimate, 144 at the 2× bar**, and at the $0.45–0.74/h of §7 **$32–53 point, $65–107 at the
+bar**. This is the sizing L3 Task 3 commits with the Stage-1 pod YAMLs and
+`prereg/gate1_tracker_swap_v2.md` §9 carries, and it **supersedes** the lane plan's "≈ 41 GPU-h;
+with the 2× safety factor 82 h" (`docs/plan/plans/2026-09-11-L3-L5-gate1-bf16-prereg.md` "Pod
+sizing"), which predates the L2 pods' rate measurements (§7) — as it supersedes the lane file's
+"≤ 50 GPU-h", written against those same pre-L2 rates; the owner sees the cut ladder in that
+prereg. The four tasks are the Gate-1 family of `GATES.md` §G3, which L3 Task 3 edits
+`configs/tasks/ruler_v2_16k_g1.yaml` down to (the shipped file still lists five — §3); the table
+above is over four, and Task 3 re-derives it with the YAMLs if that changes. **This pod's own
+task keeps all five.** Two facts make launching that bar without a pre-flight a bad bet:
 
 1. **Generator v2 has never run on a GPU.** The only pods on the L0 runner are the three Table-4
    pods (perplexity, D-011 addendum 8) and the two filler-realism pods (the *in-house* generator,
@@ -41,14 +57,24 @@ uncompressed ceiling, on `ruler_v2_16k` (five tasks, n = 12, one seed) on Llama-
 is read for five things, fixed in §4: (a) completeness, (b) the `full` ceiling **per task**,
 (c) the pairing invariant, (d) the measured min/sample per arm that decides whether Stage 1 is
 re-sized before its launch commit, and (e) descriptive per-task rows that
-`prereg/gate1_tracker_swap_v2.md` (L5 writes it; L3 cannot launch Stage 1 before it) quotes in its
-§2 **by a dated Amendment 1, committed before the Stage-1 launch commit**, as its measured
+`prereg/gate1_tracker_swap_v2.md` quotes in its §2 **by a dated Amendment 1** as its measured
 real-text baseline.
+
+**The order the lane runs in, which is what makes (d) and (e) pre-registrations and not
+hindsight.** `prereg/gate1_tracker_swap_v2.md` §1–§11 — its arms, its family, its decision rule,
+its predictions and its §9 sizing — are **written and committed BEFORE this pod's launch
+commit**, with no row of this pod in hand; its predictions are written from the evidence of §2
+below, which is on disk and committed already (D-005). Everything this pod sends that file is a
+**dated amendment** committed before the *Stage-1* launch commit: Amendment 1 for the descriptive
+rows (§5), the §4 (ii) task exclusion if the ceiling fires, the §9 re-sizing if a §4 (iv) trigger
+fires. So no part of the Gate-1 body can be authored around what this pod returned, and every
+part that reacts to it is dated and visible as a reaction.
 
 **No number from this pod is cited as a result** — not in the paper, not in a table, not as a
 Gate-1 outcome. It decides nothing about the tracker (§9). Its accuracy rows exist so that the
-Gate-1 pre-registration predicts against measured real-text numbers on the arms it actually runs
-instead of against the cycled-filler archive D-005 retired.
+Gate-1 prereg's already-written predictions can be **restated by amendment against measured rows
+on the arms Stage 1 actually runs** — its controls included, which the D-005 pod never ran —
+rather than left resting only on the four-arm real-text rows of §2a.
 
 ## 2. The evidence on disk that sets the expectations
 
@@ -129,8 +155,11 @@ were printed from the configs (`load_arm` + `frontier.build_arm` at t = 16384 ov
 | 3 | `nogist_h2423` | `bug` | chunked 4096 | `nogist_h2423` | rank **1**, `coord_budget` **1**, **2423**-token surprise tier, same sinks / ring / seed |
 | 4 | `frozen_r64_h256_seed` | `bug` | chunked 4096 | `frozen_r64_h256_seed` | arm 2 verbatim with `tracker: frozen`, `freeze_after: 4096` |
 
-Arms 3 and 4 are each arm 2 with **one** thing changed, which is what makes the Gate-1 cells
-mechanism comparisons rather than budget comparisons:
+Arms 3 and 4 are each arm 2 with **one mechanism removed** — not one knob: arm 4 moves two
+(`tracker`, `freeze_after`) and arm 3 moves three (`rank` 64 → 1, `coord_budget` null → 1,
+`hh_budget` 256 → 2423), which is what removing the gist while keeping its bytes costs. One
+mechanism at a time is what makes the Gate-1 cells mechanism comparisons rather than budget
+comparisons:
 
 - **`frozen_r64_h256_seed`** — same rank, same 256-token tier, same seed, same bytes; incremental
   SVD over the first 4096 tokens, then the basis is frozen and later tokens are plain projections
@@ -182,10 +211,13 @@ in 4096-token chunks (arms 2–4) does not enter the digest.
 
 ## 4. Readings, fixed now
 
-Four readings, each a **pass / fail** on the harvested records; they are independent and the pod is
-"validated" only when all four pass. Nothing here is a hypothesis test and no correction applies.
-"The records" are `results/gate1_preflight/trials.jsonl` as `pod.py harvest` writes them from the
-deduped `<label>.log`, with `pod.py check` run on the directory.
+Four readings, each a **pass / fail** on the harvested records — readings (i)–(iii) on
+`trials.jsonl`, reading (iv) on the manifest's `cell_elapsed_s`; they are independent and the pod
+is "validated" only when all four pass. Nothing here is a hypothesis test and no correction
+applies. "The records" are `results/gate1_preflight/{trials.jsonl, manifest.json}` as
+`pod.py harvest` writes them from the deduped `<label>.log`, with `pod.py check` run on the
+directory. Every reading is decidable **after the fact, from the harvested directory alone**: no
+reading depends on anyone watching the run.
 
 **(i) Completeness.** All 20 `(arm, task)` cells hold exactly 12 records, `sum(1 for r in rows if
 r["error"])` = 0, `grep -c '^\[trial\]' <label>.log` = 240, and `scripts/pod.py check
@@ -200,8 +232,9 @@ that is a **generator finding, not a compression one**, and two things follow, b
 pre-registered here:
 
 - the task is **excluded from the Gate-1 primary Holm family** by an amendment to
-  `prereg/gate1_tracker_swap_v2.md` — dated, appended, committed **before the Stage-1 launch
-  commit** — which re-states the family size and the per-cell resolution at the smaller family, in
+  `prereg/gate1_tracker_swap_v2.md` — dated, appended to a body already committed before **this**
+  pod's launch commit (§1), and itself committed before the **Stage-1** launch commit — which
+  re-states the family size and the per-cell resolution at the smaller family, in
   the pattern of `prereg/filler_realism.md` Amendment 2 (which took `vt` out of the D-005 rule for
   exactly this reason at exactly this threshold); and
 - it is **fixed in `kvdlra.eval.gen` before any pod runs it again** — the excluded task does not
@@ -229,9 +262,25 @@ missing digest is a runner defect (the D-005 real-text pod's records, §2b, are 
 like). *Fail* names the keys and the arms whose digest differs — every paired statistic in Gate 1
 rests on this invariant, and Stage 1 cannot launch on a path where it is broken.
 
-**(iv) Budget trigger: the measured min/sample per arm.** Stage 1 is sized from *derived* rates for
-three of its arms (§7; the no-gist and frozen rates are the plan's factors over the measured r64
-rate, not measurements). If any of
+**(iv) Budget trigger: the measured min/sample per arm, read from `manifest.cell_elapsed_s`.**
+Stage 1 is sized from *derived* rates for three of its arms (§7; the no-gist and frozen rates are
+the plan's factors over the measured r64 rate, not measurements). The measurement, exactly:
+
+> **min/sample for an arm = (Σ of its five `cell_elapsed_s` values, seconds) ÷ 60 s/min ÷ 60
+> samples = Σ ÷ 3,600.**
+
+`_cell` (`src/kvdlra/eval/runner.py`) prints `[stage] cell arm=<arm> task=<task> ctx=<ctx>
+elapsed_s=<s> n=<records>` after every completed cell, timed with `time.perf_counter()` around
+that cell's trials; the watchdog's `ROWS` filter keeps `^\[stage` rows; `scripts/pod.py harvest`
+(`CELL_S_RE`) folds them into `manifest["cell_elapsed_s"]` as `{"<arm>/<task>/<ctx>": seconds}`,
+20 entries for this pod's 20 cells. Because each line carries its own seconds, the watchdog's
+per-poll `sort -u` — which destroys arrival order — cannot damage the reading, and **nobody has
+to be watching the run**. Shipped on this branch at **03fba42** (`L3.1c`, an ancestor of the
+launch commit) and pinned by `tests/test_pod_run_records_errors.py` (the runner prints one line
+per cell) and `tests/test_pod_manifest.py::test_harvest_records_the_cell_timings_the_run_printed`
+(the harvest carries them into the manifest).
+
+**The triggers.** If any of
 
 | arm | budgeted | **trigger** | what the trigger means |
 | --- | --- | --- | --- |
@@ -239,30 +288,38 @@ rate, not measurements). If any of
 | `nogist_h2423` | 1.55 | **> 3.1** (2 × 1.55) | the "2× faster, no gist rebuild" factor does not hold — re-scoring a 2423-token tier every absorb is the suspected reason (§7) |
 | `frozen_r64_h256_seed` | 2.1 | **> 3.1** | the 1.5× factor does not hold (3.1 is `isvd`'s own rate: frozen would be no cheaper than the arm it controls) |
 
-fires, **the Stage-1 pods are re-sized from the measured rates before their launch commit** — an
-amendment to `prereg/gate1_tracker_swap_v2.md` §9 re-deriving the table and the `gpu_budget_h` of
-each pod YAML in the commit that precedes the launch — and they are **never launched over their
-pre-registered bar**. A trigger is not a failure of this pod; it is the pod doing its job.
+fires, **the Stage-1 pods are re-sized from the measured rates before their launch commit** — a
+dated amendment to `prereg/gate1_tracker_swap_v2.md` §9 (a body committed before *this* pod's
+launch commit, §1) re-deriving the table and the `gpu_budget_h` of each pod YAML in the commit
+that precedes the Stage-1 launch — and they are **never launched over their pre-registered bar**.
+A trigger is not a failure of this pod; it is the pod doing its job.
 
-*How the rate is measured, with its resolution.* The runner prints no timestamp and
-`manifest.wall_clock_s` is `null` in every harvested manifest to date (the `[stage]` fix is lane
-L3's Task 5), so: **whole pod** = `manifest.launched_at` → `harvested_at` (on the D-005 real-text
-pod that reads 6.99 h against the ≈ 6.8 h billed — a ≈ 0.2 h harvest lag, which is the method's
-accuracy); **per arm** = the wall-clock time at which each arm's five cell rows
-(`[<task> ctx16384] <arm> acc=…`) first appear in the watchdog's `<label>.raw`, recorded as
-timestamped reads during the run exactly as D-005 addenda 2 and 3 recorded theirs. The watchdog
-polls every 150 s (`scripts/pod/watchdog.sh`), so an arm boundary is bracketed to ± 2.5 min over
-spans of 0.6–3.1 h: better than 2 % on the three arms whose rate the triggers read.
+**Fallback, pre-committed now, if the harvested log carries no `[stage] cell` lines** (the pod
+ran an older SHA, or the fetch lost them — the manifest then has no `cell_elapsed_s` key at all):
+every per-arm trigger above is recorded **`not measured`** in the DECISIONS entry, never as
+"passed", and Stage 1 is re-sized from the pod's **aggregate** rate instead. That rate is
+`manifest.launched_at` → the harvest time of the `===ALL_DONE_…===` marker
+(`manifest.harvested_at`) **minus §7's 60 min boot**, apportioned by §7's per-arm shares:
+κ = (that compute, in minutes) ÷ 441, and each arm's rate = κ × its §7 rate (0.6 / 3.1 / 1.55 /
+2.1 min/sample). κ > 1 re-sizes Stage 1 upward by the same rule a trigger would; κ ≤ 1 leaves
+§7's table standing. Resolution: on the D-005 real-text pod `launched_at` → `harvested_at` reads
+6.99 h against the ≈ 6.8 h billed — a ≈ 0.2 h harvest lag on a ≈ 7 h pod. What the fallback
+cannot do is tell one arm's rate from another's: it can only scale all four together, which is
+why it is the fallback and the `[stage] cell` line is the source.
 
 **Consistency check when the table is written:** four lines, each `pass` or `fail`, none blank; a
 *fail* on (i) makes (ii) and (iv) unreadable for the affected arm and is written as
-`fail (not reached)` there, never as pass.
+`fail (not reached)` there, never as pass. The one non-`pass`/`fail` entry the table allows is
+reading (iv) under its fallback above — `not measured`, with κ and the re-sized table beside it —
+and it is never abbreviated to `pass`.
 
 ## 5. Expectations, descriptive
 
-No accuracy threshold is pre-registered for arms 2–4, and **nothing here decides Gate 1**. What is
-expected, so that a surprise is recognisable — and so that the Gate-1 pre-registration's own
-predictions are written against measured numbers instead of the retired cycled archive:
+No accuracy threshold is pre-registered for arms 2–4, and **nothing here decides Gate 1**. The
+Gate-1 prereg's own predictions are **not** written from these rows: its body is committed before
+this pod's launch commit (§1) and predicts from the D-005 real-text evidence of §2a. What follows
+is expected here, so that a surprise is recognisable, and is what Amendment 1 restates against
+the arms Stage 1 runs:
 
 - **`full`**: the ceiling, reading (ii). 12/12 on the four `niah_*` tasks is what the D-005
   real-text pod produced on three of its four (1.00 / 1.00 / 0.92) with the cache intact; `vt` and
@@ -330,8 +387,14 @@ in-house ones (`gen` stops at ≥ 16,384 haystack tokens plus needles and templa
 | `[diag]`: 3 gist arms × 60 samples × 416 | **74,880** (≤ 97,920 at the bound) |
 | `[trial]`: 4 × 60 | 240 |
 | cell rows: 4 × 5 | 20 |
-| `[stage]` (four haystack digests, corpora, model load), ENV block, markers | ≈ 30 |
-| **expected deduped `<label>.log`** | **≈ 75,200 lines** (≈ 98,200 at the bound; ≈ 21–27 MB at the measured 275 B/row) |
+| `[stage]`: the 20 cell timings reading (iv) reads + four haystack digests, corpora, model load; ENV block, markers | ≈ 50 |
+| **expected deduped `<label>.log`** | **≈ 75,200 lines** (≈ 98,200 at the bound; ≈ 21–27 MB at 275 B/row) |
+
+(275 B/row is measured, not assumed: the live filler-realism pod's `.raw` read 78.5 MB over
+286,000 lines on 2026-09-19 07:13 — `prereg/ss2_families.md` §8, "the cost of that choice,
+stated". 75,200 × 275 B = 20.7 MB; 98,200 × 275 B = 27.0 MB. The 20 `[stage] cell` lines reading
+(iv) needs are ≈ 90 B each — 1.8 kB of the total, and the reading fails only if the log is lost
+entirely, which §4 (iv)'s fallback covers.)
 
 **No `[diag]` row can be lost, by the arithmetic that decides it.** The only way the watchdog loses
 a row for good is a **poll-to-poll gap**: more matched lines printed between two 150 s polls than
@@ -389,11 +452,14 @@ before concluding truncation.
   tier is re-scored every absorb, which the r64 arm's 256-token tier is not.
 - **Overhead 60 min**: boot, clone, `pip`, the weight download that stalled ≈ 1 h on a Table-4 pod
   (D-011 addendum 2; `prereg/filler_realism.md` A1.4). Generator v2 adds two more items this pod
-  does not bill separately: ≈ 10 min of haystack materialization (four sources × 64 documents,
-  streamed from Hugging Face at the pinned revisions) and ≈ 2 min of per-trial prompt construction
-  (`make_trial` per trial per arm, ≈ 0.5 s × 240 samples). Those 12 min sit **inside the safety
-  factor** rather than moving the bar, exactly as `prereg/filler_realism.md` A1.4 placed its added
-  35 min.
+  does not bill separately, both taken from `prereg/l2_smoke.md` §7's overhead bullet: **≈ 10 min
+  of haystack materialization** (four sources × 64 documents streamed from Hugging Face at the
+  pinned revisions — its "+10 for haystack materialization", measured at 1.1–5.1 s per 2 documents
+  on the L2.3b proof run, and the same four sources at the same 64 documents here) and **≈ 2 min
+  of per-trial prompt construction** (its ≈ 0.5 s per `make_trial` — the sentence split plus ≈ 800
+  tokenizer calls, not memoized across arms — which gave that pod 20 min over 2,400 samples;
+  0.5 s × 240 samples = 120 s here). Those 12 min sit **inside the safety factor** rather than
+  moving the bar, exactly as `prereg/filler_realism.md` A1.4 placed its added 35 min.
 
 | # | arm | min/sample | × 60 | minutes | cumulative compute |
 | --- | --- | --- | --- | --- | --- |
@@ -407,9 +473,13 @@ before concluding truncation.
 | --- | --- | --- | --- | --- |
 | `gate1_preflight` | 7.35 h | + 60 min | **8.4 h** | **17.0** |
 
-17.0 is 2.0× the point estimate (and 1.99× the 8.55 h that also bills the two v2 extras above). At
-the **$0.45–0.74/h** the D-005 and Table-4 pods paid for an A100 40 GB (D-005 addenda: $0.449 on
-51553610, $0.471 and $0.67 on the two cycle hosts; D-011 and its addenda: $0.40–0.74):
+17.0 is 2.0× the point estimate (and 1.99× the 8.55 h that also bills the two v2 extras above).
+The **observed** band for an A100 40 GB is **$0.40–0.74/h**: D-005 addenda $0.449 on 51553610,
+$0.471 and $0.67 on the two cycle hosts; D-011's first addendum — the Table-4 launch entry,
+2026-09-18 — **$0.40 on both pods**, its addendum 3 $0.54 / $0.60 / $0.54, addendum 4 $0.67 and
+$0.74, addendum 6 $0.44 (the attribution corrected by `prereg/filler_realism.md` A1.7). The cells
+below cost at **$0.45–0.74/h** — the floor rounded *up* from the observed $0.40, so the low end of
+every dollar figure here and in §1 is the conservative one:
 
 | | GPU-h | × $0.45 | × $0.74 |
 | --- | --- | --- | --- |
@@ -418,10 +488,16 @@ the **$0.45–0.74/h** the D-005 and Table-4 pods paid for an A100 40 GB (D-005 
 | after arms 1–3 (both primary-contrast arms landed), + overhead | 6.3 | $2.8 | $4.7 |
 
 **This experiment asks for ≈ 8.4 GPU-hours expected, 17 at the bar — $4–6 expected, $8–13 at the
-bar.** The arm order makes the cheapest useful stopping point a design and not a salvage: at ≈ 5.3 h
-of compute (≈ 6.3 h from instance creation) the log already holds the ceiling, the r64 arm and the
-no-gist control, which is reading (ii) in full, reading (iii) on three arms, and two of the three
-rates reading (iv) needs.
+bar.** The arm order buys an ordered loss, not a stopping rule: at ≈ 5.3 h of compute (≈ 6.3 h
+from instance creation) the log already holds the ceiling, the r64 arm and the no-gist control,
+which is reading (ii) in full, reading (iii) on three arms, and two of the three rates reading
+(iv) needs — so a pod that *dies* there still returns most of what it was launched for.
+
+**The pod runs all four arms.** Arm 4 is dropped only by the watchdog's credit floor or by the
+`gpu_budget_h` overrun stop below — never on what arms 1–3 showed. There is no early stop keyed
+to an accuracy, a rate or a surprise in the first three arms, and a run stopped by hand for any
+such reason is a **fail** of reading (i), reported as one: `frozen_r64_h256_seed` has no prior
+anywhere (§2d), which is precisely the kind of cell a mid-run judgement would quietly delete.
 
 **Credit.** $92.52 (`vastai show user --raw`, 2026-09-19 13:50). This pod's bar fits inside it with
 room; **Stage 1 does not** — 144 GPU-h at the bar, $65–107 (the rates above over Stage 1's design,
@@ -446,6 +522,14 @@ thing to read against the 3.1 assumption.
   table — prereg path, arm order, task list, n = 12, a positive `gpu_budget_h`, every arm through
   `frontier.build_arm` at t = 16384 as the runner builds it before its first trial, and a
   `config_hash` distinct from every other pinned pod's).
+- **`prereg/gate1_tracker_swap_v2.md` §1–§11 must be committed strictly before this pod's launch
+  commit** (§1) — the lane runs in that order, and the DECISIONS launch entry below names that
+  file's first-commit SHA beside this one's, so both orderings are checkable with
+  `git merge-base --is-ancestor <prereg first commit> <launch SHA>`. Nothing this pod returns may
+  enter that file except as a **dated amendment**, itself committed before the Stage-1 launch
+  commit: Amendment 1 (§5's rows), the §4 (ii) exclusion, the §4 (iv) §9 re-sizing. `pod.py
+  launch` enforces the order for *this* pod's prereg only; the Gate-1 body's order is this lane's
+  commitment and the harvest entry is where it is evidenced.
 - **This file must be committed strictly before the launch commit.** `scripts/pod.py launch`
   refuses otherwise (`prereg_error`: missing, uncommitted, not a strict ancestor, or committed by
   the launch commit itself — plus a dirty tree and an unpushed SHA), and `scripts/pod.py check`
@@ -459,13 +543,15 @@ thing to read against the 3.1 assumption.
   the pod, this file's first-commit SHA, the launch SHA, the offer id, the hourly rate, the bar
   (17.0) and the credit before launch — the format of the D-005 addendum entries.
 - Outputs: `results/gate1_preflight/` with `manifest.json` (git SHA, config hash, model revision,
-  `dataset_sha256` for the four haystack sources, torch / CUDA / transformers versions, GPU, wall
+  `dataset_sha256` for the four haystack sources, `cell_elapsed_s` for the 20 cells — reading
+  (iv)'s source — torch / CUDA / transformers versions, GPU, wall
   clock, command line, `errors`, `records`, `diag_skipped`, `timeout`), `trials.jsonl` (20 cells ×
   12, every row with `prompt_sha256`, `haystack_id`, `depth`, `code_family`, `ratio`, `sbits`),
   `diag.jsonl` (the three gist arms' rows), `env.txt` (rebuilt from the log's ENV block),
   `pods.txt`.
 - The harvest's DECISIONS entry records the four readings of §4 as pass / fail with the evidence
-  path, the measured per-arm rates, and — if reading (ii) or (iv) fires — the amendment to
+  path, the four per-arm rates from `manifest.cell_elapsed_s` (or `not measured` under §4 (iv)'s
+  fallback, with κ), and — if reading (ii) or (iv) fires — the amendment to
   `prereg/gate1_tracker_swap_v2.md` it obliges, by SHA, before the Stage-1 launch commit. **No
   number from this pod is cited as a result** (§1); `make tables` reads nothing from
   `results/gate1_preflight/`. The descriptive rows enter `prereg/gate1_tracker_swap_v2.md` §2 only

@@ -37,7 +37,7 @@ What "runs end to end" means, arm by arm, is fixed by the harness and not by thi
 `runner.run_pod` builds every arm of the pod before the first trial (`frontier.build_arm` — a
 config that cannot resolve fails the pod before a record exists), then for each arm in order runs
 the five sub-tasks × 12 trials, each trial `gen.run_trial` → `ruler.retrieve` under the arm's own
-prefill protocol (chunked 4096 for a `chunkable` arm, single-shot otherwise), a greedy decode of
+prefill protocol (chunked only for the streaming and quant kinds; see §3), a greedy decode of
 `MAX_NEW` tokens, the `string_match_all` hit rule, and — for a `bug`-kind arm — the `[diag]`
 drain. A trial that raises is a record with `error` set and `hit = 0`, counted in n (ruling R29).
 
@@ -208,8 +208,9 @@ all 40 arms are fed the same token ids for a given key; the runner's `[trial]` l
 carry `prompt_sha256` over exactly those ids, so the pairing is verified from the records (§4
 reading 3), not assumed. Whether an arm prefilled the ids in one shot or in 4096-token chunks
 does not enter the digest (it is over the ids, not the forward), so the single-shot and chunked
-arms must agree too — as `full` (chunked) and `kivi2_singleshot` do on the running real-text
-pod, whose `[trial]` lines carry `sha=` since L2.3b.
+arms must agree too — as `full` (single-shot) and `bugSseed-r64-h256` (chunked 4096) do on the
+cycle pod (instance 51559661, launch SHA a5cd89c, post-L2.3b): 48 paired keys, 0 disagreeing
+`prompt_sha256` (§2a).
 
 **Decode budgets.** `MAX_NEW` = 48 for the four `niah_*` tasks and 64 for `vt` (`gen.MAX_NEW`),
 not the in-house 40; the query is fed in one forward for the DynamicCache arms and one token per
@@ -369,13 +370,14 @@ empty-fetch fallback is taken). A sample's `[diag]` rows are printed in one burs
 drains, so the burst per poll is bounded by how many gist samples can *complete* in 150 s. The
 fastest gist arm is the rank-1 `evict_surprise_h256` (its augmented SVD core is 17 × 17 per
 absorb against the r64 arms' 80 × 80; billed at the r64 rate in §7 but plausibly nearer
-`full`'s 0.6 min): at ≥ 0.6 min per sample **at most three**
-samples complete inside one poll — **≤ 3 × 544 + 3 = 1,635 rows per poll at the bound (1,251 at
-the measured count)**, 18× under the 30,000-line window and 3× under the 5,000-line fallback;
-the r64-class arms at ≥ 2.1 min per sample give ≤ 2 samples (≤ 1,090), the r128/r256 arms at ≥ 4
-min ≤ 1 sample (≤ 545). The unfiltered raw log (download progress, warnings) would have to add
-> 3,300 lines in 150 s on top of the worst burst to open a gap. Nothing in the readings needs
-one summary row per layer (the data shape the Table-4 pods set `diag_every: 4096` for); the
+`full`'s 0.6 min): at the ≥ 0.6 min (36 s) floor, 150 s / 36 s = 4.2, so **up to five**
+samples complete inside one poll (both endpoints) — **≤ 5 × 544 + 5 = 2,725 rows per poll at the
+bound (2,085 at the measured count)**, 11× under the 30,000-line window and 1.8× under the
+5,000-line fallback; the r64-class arms at ≥ 2.1 min per sample give ≤ 2 samples (≤ 1,090), the
+r128/r256 arms at ≥ 4 min ≤ 1 sample (≤ 545). The unfiltered raw log (download progress,
+warnings) would have to add > 2,275 lines in 150 s on top of the worst burst to open a gap.
+Nothing in the readings needs one summary row per layer (the data shape the Table-4 pods set
+`diag_every: 4096` for); the
 union of every poll's matched rows, deduped at the terminal marker, is the record, and the run's
 ≈ 300,000 rows never have to fit inside any one fetch. Keeping the shipped arms also keeps every
 record key the archive and `scripts/tables.py` know. **If the r128/r256 arms had needed
@@ -385,9 +387,13 @@ variants, ten more arm files would have been the cost; they do not, and none is 
 appends *every* matched row of each fetch to `<label>.raw` and dedupes only at the terminal
 marker (`sort -u` → `<label>.log`). Once the instance log passes 30,000 matched lines — after
 ≈ 70 gist samples, i.e. early in arm 30 — the tail is saturated and every poll re-appends
-≈ 30,000 rows ≈ 8.3 MB (275 B/row measured on the live pod). At this pod's bar (§7, 168 h =
-4,032 polls) `<label>.raw` reaches **≈ 33 GB**; at the point estimate (84 h) ≈ 17 GB; the gist
-half alone ≈ 19 GB at its bar, ≈ 10 GB at its point. That is disk and a slow final dedupe inside
+≈ 30,000 rows ≈ 8.3 MB (275 B/row measured on the live pod). Naively — saturated from t = 0 of
+the whole pod — `<label>.raw` would reach **≈ 33 GB** at this pod's bar (§7, 168 h = 4,032
+polls) and **≈ 17 GB** at the point estimate (84 h); both are upper bounds, since the cheap
+first half emits no `[diag]` row and never saturates the window itself (below). Billing only the
+gist phase as saturated (post arm 28, 35.0 h of compute) tightens that to **≈ 26 GB at the bar,
+≈ 10 GB at the point**; the gist half alone (its own separate launch) is unchanged at ≈ 19 GB at
+its bar, ≈ 10 GB at its point. That is disk and a slow final dedupe inside
 the iCloud-synced tree the launch machine runs from (D-007), not loss — but it is not a size the
 `filler_realism` pods (≈ 95 MB raw after four hours) have exercised. The first half alone never
 saturates the window (≈ 1,900 matched rows in total; its raw stays under 1 GB at its bar).
@@ -544,7 +550,9 @@ in halves:
   prereg; arms 29–40; `gpu_budget_h: 97.5`) carries the rest; this YAML's `gpu_budget_h` becomes
   72.8; the `# --- L2.5b` test's set pin then reads over the union of the two pods' arms, in the
   same commit. Both halves can also run on two instances at once, in which case the wall clock
-  is the longer of them.
+  is the longer of them. An instance death does not sink what it already ran: the surviving
+  arms' records are kept at harvest, and only the missing arms relaunch — as a new pod, a new
+  manifest under the same prereg — so the prices above are the worst case.
 - **Cutting single arms** (the third pre-registered way to spend less): the class table above
   prices any subset; the three r256 arms are the largest single saving (18 GPU-h expected).
   An arm cut from the smoke is an arm **not validated** and is listed as such in the harvest's

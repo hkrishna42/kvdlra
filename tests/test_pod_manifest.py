@@ -501,6 +501,109 @@ def test_check_rejects_an_env_that_drifted_from_the_pyproject_pins(
     assert r.returncode == 1 and "CHECK FAIL env: torch==0.0.0" in r.stdout + r.stderr
 
 
+# --- L1.8: env.txt survives a log harvest -------------------------------------
+#
+# `run` writes results/<pod>/env.txt ON THE POD. A log harvest never brings that file
+# back, so every harvested pod failed `check` on `env: env.txt is missing` -- the three
+# Table-4 pods among them. boot.sh prints the same set into the log between
+# `===ENV_BEGIN===` and `===ENV_END===`, and that is where the harvest reads it from.
+ENV_BLOCK = [
+    "===ENV_BEGIN===",
+    "run_sha=deadbeef",
+    "NVIDIA A100-SXM4-40GB, 40960 MiB, 595.84",
+    "python=3.12.3",
+    "torch=2.11.0+cu128 cuda_build=12.8 cuda_avail=True",
+    "transformers=5.8.0 kvpress=0.5.1 optimum-quanto=0.2.7 hqq=0.2.8.post1",
+    "device=NVIDIA A100-SXM4-40GB",
+    "===ENV_END===",
+]
+# The set `env_lines()` writes on the pod, recovered from the block above. `cuda` is
+# torch's build (`cuda_build=`), `gpu` is not a version at all, and a package the block
+# does not print is `unrecorded` -- never guessed from the laptop running the harvest.
+HARVESTED_ENV = [
+    "torch==2.11.0+cu128",
+    "cuda==12.8",
+    "triton==unrecorded",
+    "transformers==5.8.0",
+    "kvpress==0.5.1",
+    "optimum-quanto==0.2.7",
+    "hqq==0.2.8.post1",
+    "omegaconf==unrecorded",
+    "gpu=NVIDIA A100-SXM4-40GB",
+]
+
+
+def test_harvest_writes_env_txt_from_the_logs_env_block(dry_pod: Path, tmp_path: Path) -> None:
+    """A pod-written env.txt is left exactly as it is; with none there -- which is every
+    harvested pod -- the log's own ENV block becomes one, and `check` passes on it."""
+    lines = [*ENV_BLOCK, *_trial_lines(*ARMS), *_ppl_lines(*ARMS), *_pplw_lines(*ARMS)]
+    d = _harvested(dry_pod, tmp_path, lines)
+    on_pod = (d / "env.txt").read_text()
+    assert on_pod != "\n".join(HARVESTED_ENV) + "\n"  # the run-side file, not the log's
+
+    (d / "env.txt").unlink()  # what a harvest of a finished pod actually starts from
+    r = _run("harvest", "--pod", "w18_g1", "--log", str(d / "pod.log"), "--out", str(d))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (d / "env.txt").read_text().splitlines() == HARVESTED_ENV
+    c = _run("check", str(d))
+    assert c.returncode == 0, c.stdout + c.stderr
+
+
+def test_harvest_writes_no_env_txt_when_the_log_has_no_env_block(
+    dry_pod: Path, tmp_path: Path
+) -> None:
+    """No block, no file. A harvest that invented an env.txt from the laptop it runs on
+    would record an environment no pod ever had; the missing file is the signal."""
+    lines = [*_trial_lines(*ARMS), *_ppl_lines(*ARMS), *_pplw_lines(*ARMS)]
+    d = _harvested(dry_pod, tmp_path, lines)
+    (d / "env.txt").unlink()
+    r = _run("harvest", "--pod", "w18_g1", "--log", str(d / "pod.log"), "--out", str(d))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not (d / "env.txt").exists()
+    c = _run("check", str(d))
+    assert c.returncode == 1 and "CHECK FAIL env: env.txt is missing" in c.stdout + c.stderr
+
+
+def _env_txt(d: Path, torch_line: str) -> Path:
+    (d / "env.txt").write_text("\n".join([torch_line, *HARVESTED_ENV[1:]]) + "\n")
+    return d
+
+
+def test_env_accepts_the_cuda_build_suffix_on_a_pinned_version(tmp_path: Path) -> None:
+    """A pod reports torch as a PEP 440 LOCAL version (`2.11.0+cu128`); the pyproject pin
+    is the public one, and the CUDA build is recorded separately as `cuda`. `unrecorded`
+    is the same evidence gap as an absent line, and fails like one."""
+    assert pod._env_fails(_env_txt(tmp_path, "torch==2.11.0+cu128")) == []
+    (wrong,) = pod._env_fails(_env_txt(tmp_path, "torch==2.10.0+cu128"))
+    assert wrong.startswith("env: torch==2.10.0+cu128 != the pyproject pin")
+    assert pod._env_fails(_env_txt(tmp_path, "torch==unrecorded")) == [
+        "env: torch is not recorded in env.txt"
+    ]
+
+
+def test_the_watchdog_keeps_the_env_block_rows() -> None:
+    """The watchdog greps each log fetch through `ROWS` before appending it, so a row
+    kind the filter drops never reaches the deduped `<label>.log` the harvest parses --
+    which is why the ENV block came back empty. The pattern is read from the script:
+    a copy of it here would pass while the script kept dropping the lines."""
+    rows = next(
+        x[len("ROWS='") : -1]
+        for x in (REPO_ROOT / "scripts/pod/watchdog.sh").read_text().splitlines()
+        if x.startswith("ROWS=")
+    )
+    kept = [
+        *ENV_BLOCK,
+        "triton=3.5.0 omegaconf=2.3.0 datasets=2.21.0 numpy=2.1.3 scipy=1.14.1",
+    ]
+    r = subprocess.run(
+        ["grep", "-aE", rows],
+        input="\n".join([*kept, "+ echo run_sha=deadbeef", "some other log noise"]) + "\n",
+        capture_output=True,
+        text=True,
+    )
+    assert r.stdout.splitlines() == kept
+
+
 def _git(*args: str) -> str:
     out = subprocess.run(["git", *args], capture_output=True, text=True, cwd=REPO_ROOT)
     return out.stdout.strip()

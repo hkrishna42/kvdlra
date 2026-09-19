@@ -325,6 +325,37 @@ def _jsonl(path: Path, rows: list[dict[str, Any]]) -> int:
     return len(rows)
 
 
+def _env_from_log(text: str) -> list[str] | None:
+    """`env_lines()` rebuilt from boot.sh's ENV block, or None if the log carries none.
+
+    `run` writes env.txt ON THE POD, and a log harvest never brings that file back -- so
+    every harvested pod failed `check` on `env: env.txt is missing`, which is a missing
+    file, not a missing environment: boot.sh prints the same set into the log. The block
+    is read line by line rather than between its `===ENV_` markers because the watchdog
+    dedupes the rows with `sort -u`, which scatters the block's contents away from them.
+
+    A log with no `torch=` line gets NO env.txt: an environment invented from the laptop
+    running the harvest is worse than the missing-file failure it would silence. What the
+    block does not print is `unrecorded`, which `_env_fails` treats as the absent line it
+    is.
+    """
+    got: dict[str, str] = {}
+    for line in text.splitlines():
+        if line.startswith("device="):  # the GPU name has spaces; not a k=v token list
+            got["device"] = line[len("device=") :].strip()
+        elif line.startswith(("torch=", "transformers=", "triton=")):
+            for tok in line.split():
+                key, _, val = tok.partition("=")
+                if val:
+                    got[key] = val
+    if "torch" not in got:
+        return None
+    got["cuda"] = got.get("cuda_build", "unrecorded")  # torch's build, not a distribution
+    return [f"{p}=={got.get(p, 'unrecorded')}" for p in ENV_PKGS] + [
+        f"gpu={got.get('device', 'none')}"
+    ]
+
+
 def _wall_clock_s(text: str) -> float | None:
     """Seconds from the environment header to ALL_DONE, when the log carries timestamps
     (`vastai logs` does not always), else None."""
@@ -485,6 +516,14 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     m["diag_skipped"] = diag_skipped
     _write_manifest(out, m)
     print(f"{out}: " + ", ".join(f"{k}={v}" for k, v in records.items()))
+    # Never written over an env.txt `run` left on the pod: that file is the environment,
+    # this one only a reconstruction of it. A refused harvest returned above and writes
+    # no env.txt either -- the environment belongs to the records it came back with.
+    epath = out / "env.txt"
+    env = None if epath.is_file() else _env_from_log(text)
+    if env:
+        epath.write_text("\n".join(env) + "\n")
+        print(f"harvest: wrote {epath} from the log's ENV block")
     if diag_skipped:
         print(
             f"harvest: {diag_skipped} [diag] line(s) skipped"
@@ -632,10 +671,13 @@ def _env_fails(d: Path) -> list[str]:
     )
     fails = []
     for pkg, pin in _pyproject_pins().items():
-        if pkg not in got:
+        ver = got.get(pkg, "unrecorded")  # a harvest writes `unrecorded`: the same gap
+        if ver == "unrecorded":
             fails.append(f"env: {pkg} is not recorded in env.txt")
-        elif got[pkg] != pin:
-            fails.append(f"env: {pkg}=={got[pkg]} != the pyproject pin {pin}")
+        # A pod reports torch as a PEP 440 LOCAL version (`2.11.0+cu128`); the pyproject
+        # pin is the public one, and the CUDA build is recorded separately as `cuda`.
+        elif ver.split("+", 1)[0] != pin:
+            fails.append(f"env: {pkg}=={ver} != the pyproject pin {pin}")
     return fails
 
 

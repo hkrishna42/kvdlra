@@ -61,7 +61,9 @@ python -c "import hqq" 2>/dev/null && echo "===HQQ_OK===" || echo "===HQQ_MISSIN
 
 # Reproducibility header, INSIDE the log block (the evidentiary chain). Everything a
 # camera-ready compute-disclosure needs: commit, card, driver/CUDA, and library set.
-# `scripts/pod.py run` writes the same set to results/$POD/env.txt as name==version.
+# `scripts/pod.py run` writes the same set to results/$POD/env.txt as name==version;
+# `pod.py harvest` rebuilds that file FROM these lines, since the pod-side one is
+# destroyed with the instance. A package dropped from this block is `unrecorded` there.
 echo "===ENV_BEGIN==="
 echo "run_sha=${RUN_SHA}"
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader || true
@@ -73,6 +75,7 @@ def _ver(pkg):
 print(f"python={sys.version.split()[0]}")
 print(f"torch={torch.__version__} cuda_build={torch.version.cuda} cuda_avail={torch.cuda.is_available()}")
 print(f"transformers={transformers.__version__} kvpress={_ver('kvpress')} optimum-quanto={_ver('optimum-quanto')} hqq={_ver('hqq')}")
+print(f"triton={_ver('triton')} omegaconf={_ver('omegaconf')} datasets={_ver('datasets')} numpy={_ver('numpy')} scipy={_ver('scipy')}")
 if torch.cuda.is_available():
     print(f"device={torch.cuda.get_device_name(0)}")
 PY

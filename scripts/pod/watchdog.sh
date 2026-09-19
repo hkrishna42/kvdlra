@@ -17,19 +17,26 @@
 # <label>.log and turn them into records with `scripts/pod.py harvest` (which takes the
 # pod name or the label, and refuses to shrink an existing harvest). It commits nothing
 # and pushes nothing -- the orchestrator commits the harvest.
-# Credit floor -> destroy everything; so does the BUDGET_ITERS expiry (default 600 x 150s
-# = 25h -- give a long pole a bigger budget): a watchdog that stops polling must not leave
-# a pod billing (D-011 addendum 2). Run detached, and under caffeinate -s -i so the Mac
-# cannot sleep past a finished pod (D-011 addendum 8: ~$12 of idle billing):
+# Credit floor -> destroy everything; so does the BUDGET_ITERS expiry (default: the pod's
+# gpu_budget_h plus boot.sh's 2 h grace in 150 s polls, floor 600 = 25 h; BUDGET_ITERS=
+# overrides): a watchdog that stops polling must not leave a pod billing (D-011 addendum
+# 2), and one that expires before the pod's own bar destroys a healthy run. Run detached,
+# and under caffeinate -s -i so the Mac cannot sleep past a finished pod (D-011 addendum
+# 8: ~$12 of idle billing):
 #   caffeinate -s -i scripts/pod/watchdog.sh <pod>
 # boot.sh's own budget markers (RUN_TIMEOUT, SELF_DESTRUCT_FAILED) are kept in ROWS so
 # they reach the harvested log; the pod also self-destructs GRACE_S after its final marker.
 POD="${1:?usage: watchdog.sh <pod>}"
 cd "$(dirname "$0")/../.." || exit 1
 export PATH="$HOME/.local/bin:$PATH"
+# The harvest needs the repo's venv (the cycle pod's harvest died on a bare `python`).
+PY=$( [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3 )
 H="results/$POD"; mkdir -p "$H"; touch "$H/pods.txt" "$H/done.txt"
 echo $$ > "$H/watchdog.pid"  # for caffeinate -w and for teardown checks
-FLOOR="${FLOOR:-6.0}"; BUDGET_ITERS="${BUDGET_ITERS:-600}"
+FLOOR="${FLOOR:-6.0}"
+# Expiry in polls: the pod's own bar (gpu_budget_h, the `timeout` boot.sh enforces) plus
+# its GRACE_S self-destruct (7200 s), over the 150 s sleep; never under 600 (25 h).
+BUDGET_ITERS="${BUDGET_ITERS:-$(cat "configs/pods/$POD.yaml" 2>/dev/null | awk -F': *' '/^gpu_budget_h:/{n=int(($2*3600+7200)/150)+1} END{print (n<600)?600:n}')}"
 # The row kinds kept from each log fetch. boot.sh's ENV block rows are in the set because
 # `pod.py harvest` rebuilds results/<pod>/env.txt from them -- the file `pod.py run`
 # writes stays on the destroyed instance, and a rebuilt one is what `check` reads. The
@@ -56,13 +63,14 @@ for iter in $(seq 1 "$BUDGET_ITERS"); do
     # back before skipping.
     [ -z "$L" ] && L="$(vastai logs "$id" --tail 5000 2>/dev/null)"; [ -z "$L" ] && continue
     echo "$L" | grep -aE "$ROWS" >> "$H/${lab}.raw"
+    sort -u "$H/${lab}.raw" -o "$H/${lab}.raw"  # the fetch re-sends the tail every poll
     if echo "$L" | grep -qaE "===(ALL_DONE|RUN_FAILED|${BOOT})_${mode}"; then
       end="ALL_DONE"; echo "$L" | grep -qaE "===RUN_FAILED_${mode}" && end="RUN_FAILED"
       echo "$L" | grep -qaE "===(${BOOT})_${mode}" && end="BOOT_FAILED"
       echo "$(date +%H:%M) $lab $end -> destroy"; echo y | vastai destroy instance "$id" >/dev/null 2>&1
       echo "$lab" >> "$H/done.txt"
       sort -u "$H/${lab}.raw" > "$H/${lab}.log"
-      python scripts/pod.py harvest --pod "$POD" --log "$H/${lab}.log" || echo "HARVEST_FAILED $lab"
+      $PY scripts/pod.py harvest --pod "$POD" --log "$H/${lab}.log" || echo "HARVEST_FAILED $lab"
     fi
   done < "$H/pods.txt"
   cr="$(vastai show user --raw 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin).get("credit",0))' 2>/dev/null)"

@@ -157,7 +157,11 @@ def test_a_perplexity_arm_that_raises_is_logged_and_counted(
     (err,) = parse_error_lines(out, "log")
     assert err["axis"] == "ppl" and err["arm"] == "full" and err["ctx"] == 16384
     assert err["error"] == "RuntimeError: boom" and str(err["source"]).startswith("log:")
-    assert json.loads((tmp_path / "manifest.json").read_text())["errors"] == 1
+    m = json.loads((tmp_path / "manifest.json").read_text())
+    assert m["errors"] == 1
+    # The corpus digest reaches the log in the form the harvest parses (L2.9a): the manifest
+    # this run wrote stays on the pod, and the harvested one is rebuilt from these lines.
+    assert dict(pod.DIGEST_RE.findall(out)) == m["dataset_sha256"] != {}
     assert not (tmp_path / "ppl.jsonl").exists()  # a failed arm writes no record
 
 

@@ -3,10 +3,11 @@
 `materialize` streams the first ``n_docs`` documents of `MIN_CHARS` to `MAX_CHARS`
 characters from one Hub dataset into ``data/haystacks/<source>.jsonl`` (one `gen.Doc`
 per line, ids ``d<index>`` in stream order) and writes the JSONL's sha256 beside it; the
-run records that digest in ``manifest.dataset_sha256["haystack:<source>"]``, so the text
-a cell was built on is named by the evidence that cites it. ``data/haystacks/`` is
-gitignored: `scripts/pod.py prepare --pod <pod>` (or `run`, when a source is missing)
-is what fills it.
+run prints that digest as a ``[stage] dataset_sha256 haystack:<source> <sha>`` line and
+`scripts/pod.py harvest` writes it into ``manifest.dataset_sha256`` (the manifest the run
+writes stays on the instance), so the text a cell was built on is named by the evidence
+that cites it. ``data/haystacks/`` is gitignored: `scripts/pod.py prepare --pod <pod>`
+(or `run`, when a source is missing) is what fills it.
 
 Every source is pinned to a repository commit (``revision=``); the pins are the ``sha``
 each repo reported at ``https://huggingface.co/api/datasets/<repo>`` on 2026-09-19:

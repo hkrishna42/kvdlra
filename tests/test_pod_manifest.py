@@ -640,6 +640,7 @@ def test_the_watchdog_keeps_the_env_block_rows() -> None:
         "===RUN_TIMEOUT_w18_g1_18.3h===",  # L2.1: boot.sh's budget and self-destruct
         "===SELF_DESTRUCT_FAILED_w18_g1===",  # markers reach the harvested log
         "[stage] load_model unsloth/Meta-Llama-3.1-8B-Instruct (61.3 s)",  # L2.3b timings
+        f"[stage] dataset_sha256 haystack:pg19 {'a' * 64}",  # L2.9a: the digests' only way back
     ]
     r = subprocess.run(
         ["grep", "-aE", rows],
@@ -648,6 +649,54 @@ def test_the_watchdog_keeps_the_env_block_rows() -> None:
         text=True,
     )
     assert r.stdout.splitlines() == kept
+
+
+def test_the_watchdog_harvests_under_the_venv_and_expires_at_the_pods_bar() -> None:
+    """Three lines of the script, run as bash runs them (L2.9a): the harvest's interpreter
+    is the repo's `.venv/bin/python` when there is one (the cycle pod's harvest died on a
+    bare `python`), and the expiry is the pod's own `gpu_budget_h` plus boot.sh's 2 h
+    grace in 150 s polls -- a flat 600 (25 h) would have destroyed the healthy 168 h smoke
+    pod -- never under 600, and still whatever the environment says. The per-poll `sort -u`
+    keeps `<label>.raw` from re-growing by the saturated 30,000-line tail every 150 s."""
+    text = (REPO_ROOT / "scripts/pod/watchdog.sh").read_text()
+    py, budget = (
+        next(x for x in text.splitlines() if x.startswith(k)) for k in ("PY=", "BUDGET_ITERS=")
+    )
+
+    def sh(script: str, cwd: Path = REPO_ROOT) -> str:
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, cwd=cwd)
+        assert r.returncode == 0, r.stderr
+        return r.stdout.strip()
+
+    def iters(pod: str, env: str = "") -> int:
+        return int(sh(f'{env}POD={pod}; {budget}; echo "$BUDGET_ITERS"'))
+
+    assert sh(f'{py}; echo "$PY"') == ".venv/bin/python"
+    assert sh(f'{py}; echo "$PY"', cwd=REPO_ROOT / "tests") == "python3"
+    assert iters("l2_smoke") == (168 * 3600 + 7200) // 150 + 1 == 4081
+    assert iters("filler_realism") == iters("w18_g1") == iters("no_such_pod") == 600
+    assert iters("l2_smoke", env="BUDGET_ITERS=7 ") == 7
+    assert "$PY scripts/pod.py harvest" in text and "python scripts/pod.py" not in text
+    assert 'sort -u "$H/${lab}.raw" -o "$H/${lab}.raw"' in text
+
+
+def test_harvest_records_the_dataset_digests_the_run_printed(dry_pod: Path, tmp_path: Path) -> None:
+    """`run` writes the haystack and corpus digests into the manifest ON THE POD, which
+    dies with the instance -- every harvested manifest carried `dataset_sha256: {}`. They
+    travel as `[stage] dataset_sha256 <key> <sha>` lines (a row kind the watchdog keeps)
+    and the harvest writes them back; two tasks on one corpus print it twice, last wins."""
+    d = _copy(dry_pod, tmp_path)
+    log = d / "pod.log"
+    log.write_text(
+        LOG
+        + f"[stage] dataset_sha256 haystack:pg19 {'a' * 64}\n"
+        + f"[stage] dataset_sha256 pg19val {'b' * 64}\n"
+        + f"[stage] dataset_sha256 pg19val {'c' * 64}\n"
+    )
+    assert json.loads((d / "manifest.json").read_text())["dataset_sha256"] == {}
+    assert pod.harvest("w18_g1", log, d, force=False) == 0
+    m = json.loads((d / "manifest.json").read_text())
+    assert m["dataset_sha256"] == {"haystack:pg19": "a" * 64, "pg19val": "c" * 64}
 
 
 def _git(*args: str) -> str:

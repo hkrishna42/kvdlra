@@ -209,8 +209,11 @@ def run(name: str, out: Path, dry_run: bool) -> int:
 
     # The haystacks before the weights: a source that will not download fails the pod
     # in seconds, not after the model load; their digests are evidence, so the manifest
-    # carries them from here on.
+    # carries them from here on -- and the log too: this manifest dies with the instance,
+    # and `harvest` rebuilds `dataset_sha256` from these lines (`DIGEST_RE`).
     m["dataset_sha256"] = {**m["dataset_sha256"], **_haystack_sha256(pod)}
+    for key, sha in m["dataset_sha256"].items():
+        print(f"[stage] dataset_sha256 {key} {sha}", flush=True)
     _write_manifest(out, m)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     t0 = time.perf_counter()
@@ -372,6 +375,13 @@ def launch(name: str, offer: str, dry_run: bool, max_hours: float | None = None)
 def _jsonl(path: Path, rows: list[dict[str, Any]]) -> int:
     path.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
     return len(rows)
+
+
+# `run` (the haystack sources) and `runner._ppl_rows` (the perplexity corpora) print one
+# `[stage] dataset_sha256 <key> <sha>` line per digest, because the manifest they write
+# it into stays on the destroyed instance: every harvested manifest carried
+# `dataset_sha256: {}`. The watchdog keeps `[stage]` rows; the last line for a key wins.
+DIGEST_RE = re.compile(r"^\[stage\] dataset_sha256 (\S+) ([0-9a-f]{64})\s*$", re.M)
 
 
 def _env_from_log(text: str) -> list[str] | None:
@@ -551,6 +561,7 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
 
     m = _read_manifest(out) or manifest(name, _head(), source, False)
     m["harvested_at"] = _now()
+    m["dataset_sha256"] = {**m.get("dataset_sha256", {}), **dict(DIGEST_RE.findall(text))}
     m["records"] = records
     # Both axes: a perplexity arm that raised has no record to carry the failure, only
     # the `[error]` line, so counting trial rows alone called such a pod clean.

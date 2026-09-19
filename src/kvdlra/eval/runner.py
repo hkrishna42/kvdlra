@@ -326,12 +326,14 @@ def _ppl_rows(
     ``sha`` collects ``corpus -> sha256(token ids)``: which text was scored is half of
     what a perplexity number means, and the digest is over the exact ids the windows
     were cut from, so a corpus that silently changed upstream cannot pass for the one
-    the manifest cites. `_finish` writes it to `manifest.json`.
+    the manifest cites. `_finish` writes it to `manifest.json` on the pod; the
+    ``[stage] dataset_sha256`` line is how `pod.py harvest` gets it off the log.
     """
     t0 = time.perf_counter()
     ids = load_corpus_ids(tok, device, corpus=task.corpus)
     print(f"[stage] load_corpus_ids {task.corpus} ({time.perf_counter() - t0:.1f} s)", flush=True)
     sha[task.corpus] = hashlib.sha256(ids.cpu().numpy().tobytes()).hexdigest()
+    print(f"[stage] dataset_sha256 {task.corpus} {sha[task.corpus]}", flush=True)
     samples = frontier.windows(ids, task.ctx, task.window, task.n_samples)
     if not samples:
         print(f"[T={task.ctx}] corpus too short for {task.n_samples} windows", flush=True)

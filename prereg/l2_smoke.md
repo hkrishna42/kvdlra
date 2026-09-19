@@ -592,7 +592,8 @@ everything before them is already on the log.
   and — if the pod is split or an arm is cut — the split commit's SHA and the arms not validated.
   The raw-log precondition of §6 (or the owner's waiver) is named there.
 - Outputs: `results/l2_smoke/` (and `results/l2_smoke_gist/` if split) with `manifest.json`
-  (git SHA, config hash, model revision, `dataset_sha256` for the four haystack sources,
+  (git SHA, config hash, model revision, `dataset_sha256` for the four haystack sources — each
+  digest travels as a `[stage] dataset_sha256` line and `harvest` writes it into the manifest —
   torch/CUDA/transformers versions, GPU, wall clock, command line, `errors`, `records`,
   `diag_skipped`, `timeout`), `trials.jsonl` (200 cells × 12; every row with `prompt_sha256`,
   `haystack_id`, `depth`, `code_family`), `diag.jsonl` (the twelve gist arms' rows), `env.txt`

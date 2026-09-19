@@ -870,12 +870,16 @@ def test_the_filler_realism_pod_is_the_prereg_design_table() -> None:
 
 
 def test_the_cycle_control_pod_replicates_the_archived_row() -> None:
-    """One arm on the cycled filler at the same n: the harness-consistency control that
+    """The r64 arm on the cycled filler at the same n is the harness-consistency control that
     separates a drop on the real-text pod from drift between `w10_ruler.py` (which
-    produced the archived rows) and `pod.py run` (ruling PR-L2-19). Same model and
-    generator as the real-text pod; the filler is the only difference."""
+    produced the archived rows) and `pod.py run` (ruling PR-L2-19). `full` joins it under
+    prereg Amendment 2 -- the real-text pod's `full` arm fell on `vt` (0.08) and slightly on
+    `niah_multivalue` (0.92), so the cycled-`full` cell is bought to measure whether the ceiling
+    was already below 1.00 on the archived filler -- and the bar moves 6.0 -> 7.0 h for the +48
+    samples. Same model and generator as the real-text pod; the filler is the only difference."""
     p, real = load_pod("filler_realism_cycle"), load_pod("filler_realism")
-    assert p.arms == ["isvd_r64_h256_seed"] and p.model == real.model
+    assert p.arms == ["isvd_r64_h256_seed", "full"] and p.model == real.model
+    assert p.gpu_budget_h == 7.0
     t, rt = load_task(p.tasks[0]), load_task(real.tasks[0])
     assert t.filler == "cycle" and t.n_trials * len(t.seeds) == 12
     assert (t.generator, t.ctx, t.tasks, t.chunk) == (rt.generator, rt.ctx, rt.tasks, rt.chunk)

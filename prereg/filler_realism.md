@@ -456,3 +456,51 @@ A1.4 misattributes all six measured rates to "D-011 addenda 3–4": only $0.54, 
 are there — $0.40 is D-011's original launch entry (2026-09-18, under the owner's 2026-09-17
 authorization) and $0.44 is D-011 addendum 6. The $0.40–0.74/h range and every number A1.4 derives
 from it are unchanged.
+
+## Amendment 2 (2026-09-19, before the cycle pod's relaunch; after the real-text pod's `full` arm, before any other arm's cells)
+
+### A2.1 Evidence: the real-text pod's `full` arm (2026-09-19 04:30, instance 51553610, launch SHA 56e89ee)
+
+The `full` arm (uncompressed) on the WikiText filler finished all four cells:
+`[niah_single ctx16384] full acc=1.00 n=12` · `[niah_multikey ctx16384] full acc=1.00 n=12` ·
+`[niah_multivalue ctx16384] full acc=0.92 recall=0.98 n=12` (seed 0 trial 1: frac 0.75) ·
+`[vt ctx16384] full acc=0.08 recall=0.08 n=12` (1/12: seed 1 trial 0 only). The cycle-control pod
+(`filler_realism_cycle`, instance 51553637) never left vast.ai's "loading" state in 47 min and was
+destroyed without running anything; it is relaunched after this amendment.
+
+### A2.2 Consequence: the cycled-`full` control is bought
+
+The prereg's *Control considered and skipped* paragraph pre-committed to exactly this case: "If arm 1
+comes back below 1.00 the cycled `full` cell becomes worth about $1 to buy, and this prereg is amended
+before it is run rather than after." `full` fell on `vt` (0.08) and slightly on `niah_multivalue`
+(0.92), so the cycled-`full` control is bought — `full` joins `filler_realism_cycle` (arms
+`["isvd_r64_h256_seed", "full"]`, cycled filler, same 4 tasks, n=12).
+
+### A2.3 How the reading changes
+
+For a task where `full` on real text is ≥ 0.92 (single, multikey, multivalue) the decision rule of
+§"Decision rule" applies unchanged. For `vt`, where `full` itself scores 0.08, no drop of the r64 or
+q4 arm is attributable to compression ("If `full` also falls, the tasks got harder for every method
+and no drop is attributable to compression" — §Arms), so `vt` is EXCLUDED from the decision rule on
+real text and reported descriptively, and the Holm family shrinks from 8 to 6 (2 arms × 3 tasks). The
+cycled-`full` cell measures whether the ceiling itself was already below 1.00 on the archived filler —
+the archived rows have no `full`.
+
+### A2.4 What this amendment does not change
+
+The arms, order and n of the real-text pod; the ≥ 0.25 point-estimate threshold; the two KIVI arms
+reported descriptively.
+
+### A2.5 Budget
+
++48 `full` samples ≈ 30 min (measured ≈ 0.6 min/sample on 51553610: the full arm's 48 samples took
+≈ 30 min wall) → cycle pod bar 6.0 → 7.0 h.
+
+### A2.6 A note for the generator, not yet checked
+
+The `vt` failure mode on real text is itself a finding for the generator: v1 `vt` inserts
+`VAR X.. = ..` sentences into WikiText-2 prose whose headings are `= = Title = =` lines that the
+sentence splitter keeps. Hypothesis only, to be checked when the records are harvested — the `frac`
+per trial is in the log; the decoded answers are not.
+
+STATUS 2026-09-19 (2): cycle pod relaunched with `full` under Amendment 2; real-text pod unchanged.

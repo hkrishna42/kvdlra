@@ -3,7 +3,9 @@ legacy_name: "quant-4bit-kivi"
 kind: quant
 chunkable: true
 doc: >-
-  4-bit KV quantization, KIVI grouping, quanto backend, chunked prefill.
+  transformers QuantizedCache mixin, G=64, chunked 4096 prefill — later chunks attend to 4-bit
+  dequantized context; the arm the paper-v1 tables used (the 4-bit point; kivi4_faithful is KIVI's
+  own protocol).
 quant:
   nbits: 4
   scheme: "kivi"

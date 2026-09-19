@@ -25,14 +25,15 @@ G1  harness hygiene
     ✔ G1 2026-09-18: lines 1–5, 7, 8 met (4 as amended); 6 = 1B half (8B open — dump pod). Evidence: docs/plan/STATE.md, docs/plan/DECISIONS.md D-011/D-012–D-015, docs/plan/cleanup/l1-ledger.md.
 
 G2  generator v2 + baselines
-    [ ] filler-realism diagnostic harvested; DECISIONS.md: in-house generator retained/retired
-    [ ] pairing test (identical prompt sha256 across arms); balanced-depth test
-    [ ] kivi2_faithful: G=32, R=128, full-precision prefill; dequant test; bytes incl. scales
-    [ ] ss2 on Mistral/Qwen 16K + 3 families 32K harvested; Holm result in DECISIONS.md
-    [ ] svd_oracle rename complete; grep "palu" hits only the docstring + DECISIONS entry
-    [ ] SnapKV/PyramidKV/EA k∈{0.10,0.15,0.25}, ThinK+SnapKV run in smoke pod
-    [ ] OjaKV e2e runs on Llama 16K; version recorded
-    [ ] ShadowKV and ea_k0.25 v1 rows appear in make tables
+    [x] filler-realism diagnostic harvested; DECISIONS.md: in-house generator retained/retired  — RETIRED (D-005 CLOSED 2026-09-19: r64 0.25/0.08/0.00 and q4 0/0/0 on real text vs 1.00 cycled; ceiling 1.00/1.00/0.92; harness replicates the archive; results/filler_realism{,_cycle})
+    [x] pairing test (identical prompt sha256 across arms); balanced-depth test  — tests/test_gen_v2.py; on hardware: 48/48 paired keys identical in results/filler_realism_cycle/trials.jsonl
+    [x] kivi2_faithful: G=32, R=128, full-precision prefill; dequant test; bytes incl. scales  — src/kvdlra/quant/kivi.py, tests/test_kivi_faithful.py
+    [ ] ss2 on Mistral/Qwen 16K + 3 families 32K harvested; Holm result in DECISIONS.md  — pre-registered (prereg/ss2_families.md, 3 pods); launch after the D-003 top-up; amended to ruler_v2_* per D-005
+    [x] svd_oracle rename complete; grep "palu" hits only the docstring + DECISIONS entry  — met as amended (PR-L2-14): hits = disclaimer + archive keys + DECISIONS; tests/test_palu_rename.py
+    [ ] SnapKV/PyramidKV/EA k∈{0.10,0.15,0.25}, ThinK+SnapKV run in smoke pod  — arms built (src/kvdlra/baselines/presses.py); pod pre-registered (prereg/l2_smoke.md); launch = DECISIONS
+    [ ] OjaKV e2e runs on Llama 16K; version recorded  — BLOCKED: D-017 (repo @182b034, arXiv 2509.21623v2 recorded; their code cannot run through this harness)
+    [x] ShadowKV and ea_k0.25 v1 rows appear in make tables  — docs/paper/tables/table_baselines.md; make tables diff-clean
+    ✔ G2 2026-09-19: lines 1, 2, 3, 8 met; 5 met as amended; 4 and 6 pre-registered, open until launched; 7 open (D-017). Evidence: docs/plan/STATE.md, docs/plan/DECISIONS.md D-004/D-005/D-006/D-017, docs/plan/cleanup/l2-ledger.md.
 
 G3  gate 1 v2
     [ ] prereg SHA precedes launch SHA; ≤ 50 GPU-h in manifest

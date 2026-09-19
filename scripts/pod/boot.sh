@@ -11,10 +11,13 @@
 #   SHA=$(git rev-parse HEAD)   # the exact commit to evaluate; push it first
 #   vastai create instance $OFFER \
 #     --image pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel --disk 80 \
-#     --env "-e POD=w18_g1 -e SHA=$SHA -e MODEL=<hf-id> -e DTYPE=bfloat16" \
+#     --env "-e POD=w18_g1 -e SHA=$SHA -e MODEL=<hf-id> -e DTYPE=bfloat16 -e MAX_HOURS=<h>" \
 #     --onstart scripts/pod/boot.sh --label kvdlra-w18_g1
 # Harvest with `scripts/pod.py harvest --pod <name>` (scripts/pod/watchdog.sh does it
-# unattended and destroys the instance on ALL_DONE). Does NOT self-destruct.
+# unattended and destroys the instance on ALL_DONE / RUN_FAILED). Budget: the run stops
+# at MAX_HOURS (`pod.py launch --max-hours`, default the pod's gpu_budget_h) via `timeout`,
+# and the pod SELF-DESTRUCTS a grace period (GRACE_S) after its final marker, so an
+# unattended pod never bills past its budget plus the grace (D-011 addendum 8).
 #
 # EVERY marker this script prints carries the pod name: `===<MARKER>_${POD}...`. The
 # watchdog matches `===(ALL_DONE|RUN_FAILED|<boot failure>)_<pod>` and destroys the
@@ -36,8 +39,33 @@ export POD="${POD:-w18_g1}"
 export MODEL="${MODEL:-unsloth/Meta-Llama-3.1-8B-Instruct}"
 export DTYPE="${DTYPE:-bfloat16}"
 export SHA="${SHA:-week7}"          # exact commit; falls back to the branch tip
+export MAX_HOURS="${MAX_HOURS:-24}"  # the bar `pod.py launch --max-hours` sets; `timeout` below
+# ponytail: GRACE_S is the ceiling on what the self-destruct can lose -- a watchdog asleep
+# longer than the grace loses the rows since its last poll (the log dies with the
+# instance). `caffeinate -s` on the watchdog is the primary fix; this caps idle billing
+# at ~2 h (about $1). Raise it via --env if the watchdog cannot be kept awake.
+export GRACE_S="${GRACE_S:-7200}"
 
 echo "===POD_${POD}==="
+
+# Self-destruct, GRACE_S after this script's final marker -- an EXIT trap, so ALL_DONE,
+# RUN_FAILED and every boot failure's `exit 1` all reach it. The watchdog polls every
+# 150 s and destroys on the marker itself, so it normally wins the race; the grace is
+# for the watchdog that is asleep. Credentials: vast.ai injects an instance-scoped key
+# and the instance id into every container as CONTAINER_API_KEY / CONTAINER_ID
+# (https://docs.vast.ai/guides/instances/docker-environment: "Each instance comes with a
+# per-instance API key stored in the CONTAINER_API_KEY environment variable ... You can
+# also stop or destroy the instance from within: vastai destroy instance $CONTAINER_ID").
+# Unset variables or a failed call print SELF_DESTRUCT_FAILED and leave the watchdog as
+# the destroyer -- harmless. `set +x` first: the key must not be traced into the log.
+self_destruct() {
+  sleep "$GRACE_S"
+  set +x
+  { [ -n "${CONTAINER_ID:-}" ] && [ -n "${CONTAINER_API_KEY:-}" ] \
+      && echo y | vastai destroy instance "$CONTAINER_ID" --api-key "$CONTAINER_API_KEY" >/dev/null 2>&1; } \
+    || echo "===SELF_DESTRUCT_FAILED_${POD}==="
+}
+trap self_destruct EXIT
 
 cd /root || exit 1
 for attempt in 1 2 3 4 5; do
@@ -54,6 +82,9 @@ echo "===RUN_SHA_${RUN_SHA}==="
 
 pip install -q hf_transfer hf_xet ninja numpy scipy matplotlib "kvpress==0.5.1" 2>&1 | tail -5
 pip install -q 'transformers==5.8.0' 'datasets==2.21.0' "optimum-quanto>=0.2.7" 'hqq==0.2.8.post1' 'omegaconf>=2.3' 2>&1 | tail -5
+# vastai (self-destruct CLI) installs separately, after the pinned evaluation stack, so
+# its own resolver can never touch those pins.
+pip install -q vastai 2>&1 | tail -1
 echo "===DEPS_DONE==="
 # Fail loud if the quant baseline backend is missing (else the quant arms silently SKIP).
 python -c "import optimum.quanto" 2>/dev/null && echo "===QUANTO_OK===" || echo "===QUANTO_MISSING_${POD}==="
@@ -95,10 +126,17 @@ emit() {
 }
 export -f emit
 
-# Hand off to the committed, SHA-pinned entrypoint. Every knob is in the pod YAML.
-# ALL_DONE is what the watchdog destroys on, so it must NOT be printed after a failed
-# run -- an unconditional echo turns a crash into a clean-looking pod. RUN_FAILED is
-# the same signal for the watchdog (destroy: no idle billing) and a visible status in
-# the harvested manifest.
-python scripts/pod.py run --pod "$POD" 2>&1 || { echo "===RUN_FAILED_${POD}_${RUN_SHA}==="; exit 1; }
+# Hand off to the committed, SHA-pinned entrypoint, under its budget: `timeout` sends
+# TERM at MAX_HOURS (KILL 60 s later) and exits 124, which prints RUN_TIMEOUT for the
+# human reading the harvest (`pod.py harvest` records `timeout: true`) and then the same
+# RUN_FAILED as any failed run. If the process ignores TERM and `timeout` has to KILL it
+# 60 s later instead, the exit code is 137, not 124: RUN_FAILED prints with no RUN_TIMEOUT
+# marker and the harvest records `timeout: false` -- a bare 137 with no RUN_TIMEOUT marker
+# can still be the budget bar, not a crash. Every knob is in the pod YAML. ALL_DONE is what the
+# watchdog destroys on, so it must NOT be printed after a failed or timed-out run -- an
+# unconditional echo turns a crash into a clean-looking pod. RUN_FAILED is the same
+# signal for the watchdog (destroy: no idle billing) and a visible status in the
+# harvested manifest.
+timeout --signal=TERM --kill-after=60 "${MAX_HOURS}h" python scripts/pod.py run --pod "$POD" 2>&1 \
+  || { [ $? -eq 124 ] && echo "===RUN_TIMEOUT_${POD}_${MAX_HOURS}h==="; echo "===RUN_FAILED_${POD}_${RUN_SHA}==="; exit 1; }
 echo "===ALL_DONE_${POD}_${RUN_SHA}==="

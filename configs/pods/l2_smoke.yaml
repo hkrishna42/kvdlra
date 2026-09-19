@@ -1,0 +1,72 @@
+name: l2_smoke
+model: "unsloth/Meta-Llama-3.1-8B-Instruct"
+dtype: bfloat16
+doc: >-
+  The L2 smoke pod (lane L2 item 8; prereg/l2_smoke.md): every arm under configs/arms/ that is
+  not a Table-4 diagnostic variant -- 40 of the 50 stems; the ten isvd_r{128,256}_{noguard,tol,
+  qr64,f0.01_tol,f0.01_qr64} files exist for one perplexity contrast and would add ten
+  near-duplicate r128/r256 arms to a retrieval smoke -- run end to end through generator v2 on
+  Llama-3.1-8B at 16K: the five RULER tasks of ruler_v2_16k (niah_single, niah_multikey,
+  niah_multivalue, niah_multiquery, vt) on real-text haystacks from four sources, the balanced
+  2 x 3 x 2 design = 12 records per (arm, task) cell, one seed, chunk 4096 for the streaming
+  and chunked-quant arms (the full, press, composite and single-shot arms prefill in one
+  forward, as ruler.retrieve has always run them). Harness validation, not paper data: no
+  number from this pod is cited. The readings are completeness readings -- no arm with an
+  error row, every cell at n = 12, prompt_sha256 identical across all 40 arms per (task, seed,
+  trial), the eight k in {0.10, 0.15, 0.25} press arms plus think_c0.5_snapkv_k0.15 complete
+  (gate G2 line 6), the oja_*/fd_* tracker-swap arms complete without an abort. The gist arms are
+  expected to score low on generator v2's real documents (D-005 addenda 2-3: the r64 arm at
+  0.25 / 0.08 / 0.00 on WikiText filler against 1.00 / 1.00 / 1.00 cycled) and are read for
+  completeness only. No OjaKV arm: DECISIONS D-017. Arm order is cheap -> expensive so a pod
+  that dies early still lands whole classes: full, the presses, the quant arms, the composites,
+  the shadow arms, then the twelve gist arms (rank-1 surprise eviction, r64, r64 q4, the oja
+  and fd tracker swaps, r128, r256). The cheap first half is everything before
+  evict_surprise_h256. The -devel image: the quant arms JIT quanto's kernel. gpu_budget_h is
+  the prereg's 2x bar over the point estimate (84 h at the pre-registered per-class rates),
+  enforced on the pod by `pod.py launch --max-hours`; the prereg prices the halves. Launch =
+  DECISIONS.
+prereg: prereg/l2_smoke.md
+arms:
+  - full
+  - snapkv_k0.1
+  - snapkv_k0.10
+  - snapkv_k0.15
+  - snapkv_k0.25
+  - pyramidkv_k0.10
+  - pyramidkv_k0.15
+  - pyramidkv_k0.25
+  - ea_k0.1
+  - ea_k0.10
+  - ea_k0.15
+  - ea_k0.25
+  - ea_k0.5
+  - think_c0.5
+  - think_c0.5_snapkv_k0.15
+  - svd_oracle_r0.5
+  - kivi2_streaming
+  - kivi4_streaming
+  - kivi2_singleshot
+  - kivi2_faithful
+  - kivi4_faithful
+  - kivi8_hqq
+  - ea_k0.1_kivi2
+  - ea_k0.1_kivi4
+  - ea_k0.25_kivi2
+  - ea_k0.25_kivi4
+  - shadowkv_r64
+  - shadowkv_r128
+  - evict_surprise_h256
+  - isvd_r64
+  - isvd_r64_h256_seed
+  - isvd_r64_h256_seed_q4
+  - oja_r64_h256_seed
+  - oja_r64_h256_seed_tuned
+  - fd_r64_h256_seed
+  - isvd_r128
+  - isvd_r128_h1024_seed_s32
+  - isvd_r256
+  - isvd_r256_f0.01
+  - isvd_r256_h1024_seed
+tasks: ["ruler_v2_16k"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+gpu_budget_h: 168.0

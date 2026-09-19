@@ -2,6 +2,10 @@ name: kivi2_streaming
 legacy_name: "quant-2bit-kivi"
 kind: quant
 chunkable: true
+# transformers QuantizedCache mixin, G=64, chunked 4096 prefill -- later chunks attend to
+# 2-bit dequantized context; the arm the paper-v1 tables used. kivi2_faithful is KIVI's
+# published protocol (G=32, R=128, fp16 single-shot prefill). doc: below is frozen: it is
+# inside the config hash a live manifest pins.
 doc: >-
   2-bit KV quantization, per-channel keys and per-token values (the KIVI grouping), transformers
   QuantizedCache over the quanto backend, chunked prefill with the fp16 residual flushed.

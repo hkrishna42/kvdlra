@@ -34,7 +34,7 @@ from transformers.cache_utils import Cache, DynamicCache
 
 from kvdlra.eval.config import TaskCfg
 from kvdlra.eval.data import FILLER, LABELS
-from kvdlra.eval.frontier import _footprint, _prefill_chunked, _prefill_plain
+from kvdlra.eval.frontier import _footprint, _prefill_chunked, _prefill_faithful, _prefill_plain
 from kvdlra.eval.records import drained
 
 _TAIL_K = 48  # FLOOR for the decoded query tail (question + assistant header, as in
@@ -331,13 +331,18 @@ def retrieve(
                 block=False,
                 max_new=max_new,
             )
-    elif arm["kind"] == "quant":
+    elif arm["kind"] in ("quant", "quant_faithful"):
         # KIVI-style QuantizedCache baseline (Week-18/19): the arm supplies its OWN cache
-        # object (not a press over a DynamicCache); prefill honors --chunk (Week-19: the
-        # single-shot 16K/32K quant prefill OOM'd even on 80GB) and flushes the residual
-        # so decode starts fully quantized, as after a single-shot prefill.
+        # object (not a press over a DynamicCache). `quant` prefills honoring --chunk
+        # (Week-19: the single-shot 16K/32K quant prefill OOM'd even on 80GB) and flushes
+        # the residual so decode starts fully quantized, as after a single-shot prefill;
+        # `quant_faithful` is KIVI's own protocol (L2.2): full-precision single-shot
+        # prefill, the quantized store built post hoc. Both decode the same way.
         cache = arm["make"]()
-        _prefill_plain(model, cache, hay, chunk)
+        if arm["kind"] == "quant":
+            _prefill_plain(model, cache, hay, chunk)
+        else:
+            _prefill_faithful(model, cache, hay)
         fp = _footprint(arm, cache, ctx_len, n, h_kv)
         text = _decode(
             model, tok, cache, query.to(device), ctx_len, device, block=True, max_new=max_new
@@ -361,13 +366,17 @@ def retrieve(
         # final ChunkPress chunk violates ("Query length ... should be greater than
         # the window size"). RULER prefill uses logits_to_keep=1 + sdpa, so full-T
         # prefill is memory-safe (proven by ExpectedAttention surviving at 32K).
+        # A per-layer-budget press (PyramidKV) decodes one token per forward like the
+        # streaming caches: transformers' single causal mask is sized to layer 0's keys
+        # and a q_len>1 block trips it on every other layer (frontier `_press`).
         cache = DynamicCache()
         press = arm["make"]()
         with press(model) if press is not None else nullcontext():
             model(hay, past_key_values=cache, use_cache=True, logits_to_keep=1)
         fp = _footprint(arm, cache, ctx_len, n, h_kv)
+        block = not arm.get("per_layer_budget", False)
         text = _decode(
-            model, tok, cache, query.to(device), ctx_len, device, block=True, max_new=max_new
+            model, tok, cache, query.to(device), ctx_len, device, block=block, max_new=max_new
         )
     frac = sum(t in text for t in targets) / len(targets)
     hit = frac >= 1.0

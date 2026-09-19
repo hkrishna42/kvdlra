@@ -1,0 +1,13 @@
+name: ss2_families_qwen
+model: "Qwen/Qwen2.5-7B-Instruct"
+dtype: bfloat16
+doc: >-
+  ss2 across families (lane L2 item 4, gate G2 line 4): the Qwen2.5-7B cells of the single-shot
+  KIVI-2 question at 16K and 32K -- does the r64 arm's multi-value edge over 2-bit KIVI survive KIVI's
+  published protocol? Arm order is the prereg's: the r64 reference first, then the faithful 2-bit
+  arm, the G=64 single-shot control, the faithful 4-bit arm. Everything else: prereg/ss2_families.md.
+prereg: prereg/ss2_families.md
+arms: ["isvd_r64_h256_seed", "kivi2_faithful", "kivi2_singleshot", "kivi4_faithful"]
+tasks: ["ruler_inhouse_16k", "ruler_inhouse_32k"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+gpu_budget_h: 40.4

@@ -1,4 +1,4 @@
-"""Palu low-rank-projection press: per-head-group truncated-SVD compression.
+"""SVD-oracle low-rank-projection press: per-head-group truncated-SVD compression.
 
 Unit-tests the ``_compress_tensor`` step directly on random KV blocks (no model),
 mirroring ``tests/test_bug_press.py``: shape preserved; ``rank_ratio = 1`` is
@@ -21,19 +21,19 @@ def _kv(t: int, seed: int = 0) -> torch.Tensor:
     return torch.randn(1, H, t, D, generator=g)
 
 
-def test_palu_shape_preserved() -> None:
+def test_oracle_shape_preserved() -> None:
     out = SVDOraclePress(rank_ratio=0.5)._compress_tensor(_kv(40))
     assert out.shape == (1, H, 40, D)
 
 
-def test_palu_full_rank_is_lossless() -> None:
+def test_oracle_full_rank_is_lossless() -> None:
     """rank_ratio=1 => r=head_dim => truncated SVD of a (D, T>D) block is exact."""
     x = _kv(48)
     out = SVDOraclePress(rank_ratio=1.0)._compress_tensor(x)
     assert torch.allclose(out, x, atol=1e-4)
 
 
-def test_palu_low_rank_is_lossy_but_reasonable() -> None:
+def test_oracle_low_rank_is_lossy_but_reasonable() -> None:
     x = _kv(64)
     out = SVDOraclePress(rank_ratio=0.25)._compress_tensor(x)
     assert not torch.allclose(out, x, atol=1e-2)
@@ -46,7 +46,7 @@ def test_sink_columns_exact() -> None:
     through the full ``compress()`` the K sinks additionally ride BUGPress's
     pre-RoPE un/re-rotate round trip, so they are allclose rather than
     bit-equal there). Non-sink columns are still genuinely compressed -- the
-    exemption does not leak. Pre-fix, Palu was the ONLY frontier arm that
+    exemption does not leak. Pre-fix, this arm was the ONLY frontier arm that
     low-ranked the sinks (the incoherent 1B ppl signature)."""
     press = SVDOraclePress(rank_ratio=0.25)
     x = _kv(64)
@@ -72,12 +72,12 @@ def test_nonsink_block_is_lowrank() -> None:
         assert int((sv > 1e-5 * float(sv[0])).sum()) <= r
 
 
-def test_palu_grouped_low_rank_runs() -> None:
+def test_oracle_grouped_low_rank_runs() -> None:
     out = SVDOraclePress(rank_ratio=0.5, group=2)._compress_tensor(_kv(40))  # both heads share
     assert out.shape == (1, H, 40, D)
 
 
-def test_palu_validation() -> None:
+def test_oracle_validation() -> None:
     with pytest.raises(ValueError):
         SVDOraclePress(rank_ratio=0.0)
     with pytest.raises(ValueError):

@@ -14,7 +14,8 @@ from pathlib import Path
 import pod
 import pytest
 
-from kvdlra.eval.config import config_hash, load_arm, load_pod, load_task
+from kvdlra.eval.config import TaskV2Cfg, config_hash, load_arm, load_pod, load_task
+from kvdlra.eval.frontier import build_arm
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -195,7 +196,26 @@ def test_harvest_records_a_failed_run(dry_pod: Path, tmp_path: Path) -> None:
     log = tmp_path / "pod.log"
     log.write_text(LOG.replace("===ALL_DONE_w18_g1", "===RUN_FAILED_w18_g1"))
     _run("harvest", "--pod", "w18_g1", "--log", str(log), "--out", str(tmp_path))
-    assert json.loads((tmp_path / "manifest.json").read_text())["status"] == "RUN_FAILED"
+    m = json.loads((tmp_path / "manifest.json").read_text())
+    assert m["status"] == "RUN_FAILED"
+    assert m["timeout"] is False  # a plain RUN_FAILED with no RUN_TIMEOUT marker (e.g. a 137 KILL)
+
+
+def test_harvest_records_a_timeout_as_a_failed_run(dry_pod: Path, tmp_path: Path) -> None:
+    """A run that reaches `--max-hours` prints ===RUN_TIMEOUT_ and then the same
+    ===RUN_FAILED_ as any failed run: the status stays RUN_FAILED (the watchdog and
+    `check` know one failure kind) and the reason survives as `timeout: true`."""
+    tmp_path = _copy(dry_pod, tmp_path)
+    log = tmp_path / "pod.log"
+    log.write_text(
+        LOG.replace(
+            "===ALL_DONE_w18_g1_deadbeef===",
+            "===RUN_TIMEOUT_w18_g1_18.3h===\n===RUN_FAILED_w18_g1_deadbeef===",
+        )
+    )
+    _run("harvest", "--pod", "w18_g1", "--log", str(log), "--out", str(tmp_path))
+    m = json.loads((tmp_path / "manifest.json").read_text())
+    assert (m["status"], m["timeout"]) == ("RUN_FAILED", True)
 
 
 def test_harvest_refuses_to_shrink_an_existing_trials_file(dry_pod: Path, tmp_path: Path) -> None:
@@ -275,6 +295,8 @@ def test_launch_refuses_a_pod_with_no_prereg() -> None:
     The refusal is checked before `vastai` is reached, so `--dry-run` proves it."""
     r = _run("launch", "--pod", "w18_g1", "--offer", "12345678", "--dry-run")
     assert r.returncode == 1 and "prereg" in r.stdout + r.stderr
+    # ...and its `gpu_budget_h: 0.0` is the second refusal: no bar for boot.sh to enforce.
+    assert "max-hours" in r.stdout + r.stderr
 
 
 def test_prereg_refusal_reasons(tmp_path: Path) -> None:
@@ -288,14 +310,31 @@ def test_prereg_refusal_reasons(tmp_path: Path) -> None:
 
 def test_launch_dry_run_prints_the_vastai_command(tmp_path: Path) -> None:
     """The command is the one the boot-script header documents: image from the pod
-    YAML, --disk 80, the POD/SHA/MODEL/DTYPE env, boot.sh as --onstart."""
-    cmd = pod.launch_command("w18_g1", "12345678", "deadbeef")
+    YAML, --disk 80, the POD/SHA/MODEL/DTYPE/MAX_HOURS env, boot.sh as --onstart."""
+    cmd = pod.launch_command("w18_g1", "12345678", "deadbeef", max_hours=2.5)
     assert cmd[:4] == ["vastai", "create", "instance", "12345678"]
     joined = " ".join(cmd)
     assert "--disk 80" in joined and "--onstart scripts/pod/boot.sh" in joined
     assert "--label kvdlra-w18_g1" in joined
     assert "-e POD=w18_g1 -e SHA=deadbeef" in joined
+    assert "-e DTYPE=bfloat16 -e MAX_HOURS=2.5" in joined  # inside the one --env string
     assert load_pod("w18_g1").image in joined
+
+
+def test_launch_max_hours_defaults_to_the_pod_budget() -> None:
+    """The bar boot.sh enforces on the pod (`timeout`) is the pre-registered one unless
+    the launch says otherwise. A pod with no budget -- every v1 pod -- has no bar to
+    enforce and is refused rather than launched open-ended: `timeout 0h` DISABLES the
+    limit, so a zero can never reach the command."""
+    joined = " ".join(pod.launch_command("filler_realism", "1", "deadbeef"))
+    hours = float(joined.split("MAX_HOURS=")[1].split()[0])
+    assert hours == load_pod("filler_realism").gpu_budget_h == 18.3
+    with pytest.raises(ValueError, match="max-hours"):
+        pod.launch_command("w18_g1", "1", "deadbeef")  # gpu_budget_h: 0.0
+    # nan <= 0 is False and +inf > 0 is True: each needs its own check (isfinite AND > 0)
+    for bad in (0.0, float("nan"), float("inf"), -float("inf")):
+        with pytest.raises(ValueError, match="max-hours"):
+            pod.launch_command("filler_realism", "1", "deadbeef", max_hours=bad)
 
 
 # w18_g1's expected cell set, spelled out rather than re-derived: three arms by their
@@ -594,6 +633,10 @@ def test_the_watchdog_keeps_the_env_block_rows() -> None:
     kept = [
         *ENV_BLOCK,
         "triton=3.5.0 omegaconf=2.3.0 datasets=2.21.0 numpy=2.1.3 scipy=1.14.1",
+        "===RUN_TIMEOUT_w18_g1_18.3h===",  # L2.1: boot.sh's budget and self-destruct
+        "===SELF_DESTRUCT_FAILED_w18_g1===",  # markers reach the harvested log
+        "[stage] load_model unsloth/Meta-Llama-3.1-8B-Instruct (61.3 s)",  # L2.3b timings
+        f"[stage] dataset_sha256 haystack:pg19 {'a' * 64}",  # L2.9a: the digests' only way back
     ]
     r = subprocess.run(
         ["grep", "-aE", rows],
@@ -602,6 +645,54 @@ def test_the_watchdog_keeps_the_env_block_rows() -> None:
         text=True,
     )
     assert r.stdout.splitlines() == kept
+
+
+def test_the_watchdog_harvests_under_the_venv_and_expires_at_the_pods_bar() -> None:
+    """Three lines of the script, run as bash runs them (L2.9a): the harvest's interpreter
+    is the repo's `.venv/bin/python` when there is one (the cycle pod's harvest died on a
+    bare `python`), and the expiry is the pod's own `gpu_budget_h` plus boot.sh's 2 h
+    grace in 150 s polls -- a flat 600 (25 h) would have destroyed the healthy 168 h smoke
+    pod -- never under 600, and still whatever the environment says. The per-poll `sort -u`
+    keeps `<label>.raw` from re-growing by the saturated 30,000-line tail every 150 s."""
+    text = (REPO_ROOT / "scripts/pod/watchdog.sh").read_text()
+    py, budget = (
+        next(x for x in text.splitlines() if x.startswith(k)) for k in ("PY=", "BUDGET_ITERS=")
+    )
+
+    def sh(script: str, cwd: Path = REPO_ROOT) -> str:
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, cwd=cwd)
+        assert r.returncode == 0, r.stderr
+        return r.stdout.strip()
+
+    def iters(pod: str, env: str = "") -> int:
+        return int(sh(f'{env}POD={pod}; {budget}; echo "$BUDGET_ITERS"'))
+
+    assert sh(f'{py}; echo "$PY"') == ".venv/bin/python"
+    assert sh(f'{py}; echo "$PY"', cwd=REPO_ROOT / "tests") == "python3"
+    assert iters("l2_smoke") == (168 * 3600 + 7200) // 150 + 1 == 4081
+    assert iters("filler_realism") == iters("w18_g1") == iters("no_such_pod") == 600
+    assert iters("l2_smoke", env="BUDGET_ITERS=7 ") == 7
+    assert "$PY scripts/pod.py harvest" in text and "python scripts/pod.py" not in text
+    assert 'sort -u "$H/${lab}.raw" -o "$H/${lab}.raw"' in text
+
+
+def test_harvest_records_the_dataset_digests_the_run_printed(dry_pod: Path, tmp_path: Path) -> None:
+    """`run` writes the haystack and corpus digests into the manifest ON THE POD, which
+    dies with the instance -- every harvested manifest carried `dataset_sha256: {}`. They
+    travel as `[stage] dataset_sha256 <key> <sha>` lines (a row kind the watchdog keeps)
+    and the harvest writes them back; two tasks on one corpus print it twice, last wins."""
+    d = _copy(dry_pod, tmp_path)
+    log = d / "pod.log"
+    log.write_text(
+        LOG
+        + f"[stage] dataset_sha256 haystack:pg19 {'a' * 64}\n"
+        + f"[stage] dataset_sha256 pg19val {'b' * 64}\n"
+        + f"[stage] dataset_sha256 pg19val {'c' * 64}\n"
+    )
+    assert json.loads((d / "manifest.json").read_text())["dataset_sha256"] == {}
+    assert pod.harvest("w18_g1", log, d, force=False) == 0
+    m = json.loads((d / "manifest.json").read_text())
+    assert m["dataset_sha256"] == {"haystack:pg19": "a" * 64, "pg19val": "c" * 64}
 
 
 def _git(*args: str) -> str:
@@ -766,3 +857,153 @@ def test_the_table4_arms_equal_the_plain_cache_outside_the_named_knobs() -> None
         # is where the prereg's branch-2 reference number comes from.
         if "f0.01" in arm:
             assert cache["min_sv_frac"] == 0.01, f"{arm}: not the floor its name claims"
+
+
+# --- The L2 pods: prereg/filler_realism.md, prereg/ss2_families.md, prereg/l2_smoke.md --
+
+FILLER_ARMS = [
+    "full",
+    "isvd_r64_h256_seed",
+    "isvd_r64_h256_seed_q4",
+    "kivi2_streaming",
+    "kivi2_singleshot",
+]
+SS2_ARMS = ["isvd_r64_h256_seed", "kivi2_faithful", "kivi2_singleshot", "kivi4_faithful"]
+INHOUSE = ["ruler_inhouse_16k", "ruler_inhouse_32k"]
+INHOUSE_SUBTASKS = ["niah_single", "niah_multikey", "niah_multivalue", "vt"]
+# Each pod as its prereg designs it: the prereg, the arm ORDER, the task list, and the
+# arms the runner prefills in one shot (`chunkable: false`) -- what a YAML edit could
+# drift from the prereg without any manifest noticing. The order is load-bearing: the
+# cheap ceiling control (filler) or the paired r64 reference (cycle, ss2) comes first, so
+# a pod that dies early still lands an interpretable result. The smoke pod's arm set is a
+# rule, not a list (`test_the_smoke_pod_names_every_arm_but_the_table4_variants`), and
+# its single-shot arms are each arm's own protocol. `gpu_budget_h` and the v2 design are
+# not echoed here: the launch manifest's config_hash and the prereg pin those.
+FILLER, SS2 = "prereg/filler_realism.md", "prereg/ss2_families.md"
+L2_PODS: dict[str, tuple[str, list[str] | None, list[str], list[str] | None]] = {
+    "filler_realism": (FILLER, FILLER_ARMS, ["ruler_inhouse_16k_wikitext"], ["kivi2_singleshot"]),
+    "filler_realism_cycle": (FILLER, ["isvd_r64_h256_seed", "full"], INHOUSE[:1], []),
+    "ss2_families_mistral": (SS2, SS2_ARMS, INHOUSE, SS2_ARMS[1:]),
+    "ss2_families_qwen": (SS2, SS2_ARMS, INHOUSE, SS2_ARMS[1:]),
+    "ss2_families_llama": (SS2, SS2_ARMS, INHOUSE, SS2_ARMS[1:]),
+    "l2_smoke": ("prereg/l2_smoke.md", None, ["ruler_v2_16k"], None),
+}
+
+
+@pytest.mark.parametrize("name", list(L2_PODS))
+def test_the_l2_pods_resolve_end_to_end(name: str) -> None:
+    """The pod loads, hashes, names its prereg (in the launch's ancestry), carries a budget
+    to enforce, and every arm builds at the task's context exactly as the runner builds it
+    before the first trial (`frontier.build_arm`: a config that cannot resolve fails the
+    pod before a record exists). In-process and model-free: `build_arm` only captures the
+    model, and `run --dry-run` would spawn a torch-importing subprocess per pod."""
+    p = load_pod(name)
+    prereg = L2_PODS[name][0]
+    assert p.prereg == prereg and (REPO_ROOT / prereg).is_file()
+    assert p.gpu_budget_h > 0, f"{name}: a pod to be launched needs a pre-registered budget"
+    assert config_hash(p)
+    ctx = load_task(p.tasks[0]).ctx
+    for a in p.arms:
+        cfg = load_arm(a)
+        assert cfg.name == a
+        assert build_arm(cfg, model=None, t=ctx)["name"] == (cfg.legacy_name or a)
+    for t in p.tasks:
+        assert load_task(t).name == t
+
+
+def test_the_l2_pods_are_their_prereg_designs() -> None:
+    """Row by row against `L2_PODS`: arm order, task list, the single-shot arms; every task
+    at n = 12 (6 trials x 2 seeds, or the v2 design's 12 from one seed) and chunk 4096,
+    the in-house pods on the four archived sub-tasks with generator-drawn depths and the
+    cycled filler (`wikitext` on the real-text pod), the smoke pod on generator v2's five
+    at 16K on the paper's model; bf16 on the -devel image (quanto JIT-builds its kernel);
+    six pods, six hashes (one arm list against another, one filler or model against
+    another keeps them apart)."""
+    for name, (_, arms, tasks, single_shot) in L2_PODS.items():
+        p = load_pod(name)
+        assert p.tasks == tasks, f"{name}: tasks {p.tasks}"
+        if arms is not None:
+            assert p.arms == arms, f"{name}: not the pre-registered arm order"
+        if single_shot is not None:
+            assert [a for a in p.arms if not load_arm(a).chunkable] == single_shot, name
+        assert p.dtype == "bfloat16" and "-devel" in p.image, f"{name}: {p.dtype} {p.image}"
+        for tname in p.tasks:
+            t = load_task(tname)
+            assert t.n_trials * len(t.seeds) == 12 and t.chunk == 4096, tname
+            if name == "l2_smoke":
+                assert isinstance(t, TaskV2Cfg) and t.generator == "v2" and t.ctx == 16384
+                assert t.tasks == [*INHOUSE_SUBTASKS[:3], "niah_multiquery", "vt"]
+            else:
+                assert t.generator == "inhouse" and t.tasks == INHOUSE_SUBTASKS, tname
+                filler = "wikitext" if name == "filler_realism" else "cycle"
+                assert t.depths is None and t.filler == filler, tname
+    assert load_pod("l2_smoke").model == "unsloth/Meta-Llama-3.1-8B-Instruct"
+    assert len({config_hash(load_pod(n)) for n in L2_PODS}) == len(L2_PODS)
+
+
+def test_the_filler_realism_pods_pair_with_the_archived_rows() -> None:
+    """The real-text pod's records carry the prereg's row keys (the v1 arm strings), and the
+    cycled control -- the harness-consistency control that separates a real-text drop from
+    drift between `w10_ruler.py` and `pod.py run` (PR-L2-19), `full` joining it under
+    Amendment 2 -- runs the same model, generator, context, sub-tasks and chunk: the filler
+    is the only difference."""
+    real, cycle = load_pod("filler_realism"), load_pod("filler_realism_cycle")
+    assert [load_arm(a).legacy_name for a in real.arms] == [
+        "full",
+        "bugSseed-r64-h256",
+        "bugSseed-r64-h256-q4",
+        "quant-2bit-kivi",
+        "quant-2bit-kivi#chunk0",
+    ]
+    rt, ct = load_task(real.tasks[0]), load_task(cycle.tasks[0])
+    assert cycle.model == real.model
+    assert (ct.generator, ct.ctx, ct.tasks, ct.chunk) == (rt.generator, rt.ctx, rt.tasks, rt.chunk)
+
+
+def test_the_live_filler_manifests_still_hash_to_their_configs() -> None:
+    """`doc:` is inside `config_hash`, so an arm a live manifest names carries a frozen
+    docstring -- kivi2_streaming's label lives in a `#` comment block instead (L2.9b),
+    and YAML comments are outside the hash: both filler pods name the arm, and the
+    launched manifests still hash to the configs on disk."""
+    for name in ("filler_realism", "filler_realism_cycle"):
+        m = json.loads((REPO_ROOT / "results" / name / "manifest.json").read_text())
+        assert config_hash(load_pod(name)) == m["config_hash"], name
+
+
+# Gate G2 line 6: the k in {0.10, 0.15, 0.25} eviction grid + ThinK composed as its paper
+# intends -- ticked by the smoke pod's harvest, so the pod has to carry all nine.
+SMOKE_GATE_ARMS = [
+    "snapkv_k0.10",
+    "snapkv_k0.15",
+    "snapkv_k0.25",
+    "pyramidkv_k0.10",
+    "pyramidkv_k0.15",
+    "pyramidkv_k0.25",
+    "ea_k0.10",
+    "ea_k0.15",
+    "think_c0.5_snapkv_k0.15",
+]
+
+
+def test_the_smoke_pod_names_every_arm_but_the_table4_variants() -> None:
+    """The arm set is a rule, not a list: every stem under configs/arms/ that is not a Table-4
+    diagnostic variant -- the gist arms of the three Table-4 pods, which exist for one
+    perplexity contrast and would add ten near-duplicate r128/r256 arms to a retrieval smoke.
+    So a future arm cannot be left out silently, a future Table-4 variant is excluded by the
+    same rule, and a change in the variants' count is a change to decide, not to inherit.
+    Order is cheap -> expensive: `full` first, the twelve gist arms last (a pod that dies early
+    still lands whole classes, and the pre-registered cheap first half is everything before the
+    first gist arm). The nine arms gate G2 line 6 names are in; no OjaKV stem is (D-017)."""
+    p = load_pod("l2_smoke")
+    table4 = {a for n in TABLE4 for a in load_pod(n).arms if load_arm(a).kind == "bug"}
+    assert len(table4) == 10, sorted(table4)
+    stems = {q.stem for q in (REPO_ROOT / "configs" / "arms").glob("*.yaml")}
+    assert len(p.arms) == len(set(p.arms)), "an arm listed twice would double its cells"
+    assert set(p.arms) == stems - table4
+    assert p.arms[0] == "full"
+    kinds = [load_arm(a).kind for a in p.arms]
+    n_gist = kinds.count("bug")
+    assert n_gist == 12, "prereg/l2_smoke.md sizes the budget and the log volume for 12 gist arms"
+    assert kinds[-n_gist:] == ["bug"] * n_gist, kinds
+    assert set(SMOKE_GATE_ARMS) <= set(p.arms)
+    assert not [a for a in p.arms if a.startswith("ojakv")]

@@ -1,0 +1,27 @@
+{
+  "command_line": "vastai create instance 49157741 --image pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel --disk 80 --env '-e POD=filler_realism_cycle -e SHA=a5cd89c90724cb3a3d9d0d9180d7b155d379a39a -e MODEL=unsloth/Meta-Llama-3.1-8B-Instruct -e DTYPE=bfloat16 -e MAX_HOURS=7' --onstart scripts/pod/boot.sh --label kvdlra-filler_realism_cycle",
+  "config_hash": "8403268e899798a496ff0775b71a56578846e4c1d0b77c01663d6168506ef59e",
+  "cuda": "none",
+  "dataset_sha256": {},
+  "diag_skipped": 0,
+  "dry_run": false,
+  "errors": 0,
+  "git_sha": "a5cd89c90724cb3a3d9d0d9180d7b155d379a39a",
+  "gpu": "none",
+  "harvested_at": "2026-09-19T11:41:18+00:00",
+  "kvpress": "0.5.1",
+  "launched_at": "2026-09-19T08:39:09+00:00",
+  "model": "unsloth/Meta-Llama-3.1-8B-Instruct",
+  "model_revision": null,
+  "pod": "filler_realism_cycle",
+  "records": {
+    "diag.jsonl": 18712,
+    "trials.jsonl": 96
+  },
+  "status": "ALL_DONE",
+  "timeout": false,
+  "torch": "2.11.0",
+  "transformers": "5.8.0",
+  "triton": "none",
+  "wall_clock_s": null
+}

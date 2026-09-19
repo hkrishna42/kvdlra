@@ -2,9 +2,10 @@
 
 Everything the eval modules read from disk or the Hub lives here: the tokenizer/model
 pair, the held-out token stream a perplexity sweep scores, the natural-text sentence
-pool the realistic RULER filler draws from, and the two frozen word lists the in-house
+pool the realistic RULER filler draws from, the two frozen word lists the in-house
 generator uses (``FILLER``, the ten cycled sentences of the archived haystack, and
-``LABELS``, the needle key names).
+``LABELS``, the needle key names), and the two generator-v2 lists (``ADJECTIVES``,
+``NOUNS``) its ``words`` code family pairs into needle values.
 
 The bodies are the Week-3..18 ones, unchanged: the corpora, the splits, the sentence
 split rule and the two lists are what produced every archived number, and a change here
@@ -194,3 +195,54 @@ def load_corpus_sentences(corpus: str = "wikitext-2", max_sentences: int = 20_00
     if not sentences:
         raise RuntimeError(f"no usable filler sentences from corpus {corpus!r}")
     return sentences[:max_sentences]
+
+
+# Generator v2's `words` code family (kvdlra.eval.gen): a needle value is one adjective
+# hyphenated to one noun, drawn per trial from these two lists. 200 common English words
+# each, lower-case, no duplicates, none of them a LABELS entry (the keys must never
+# collide with a value); the module is git-pinned, so the lists are the SHA-pinned
+# word file the plan asked for. tests/test_gen_v2.py checks all four properties.
+ADJECTIVES = [
+    "able", "acid", "aged", "airy", "alert", "alive", "ample", "angry", "ashen", "awake",
+    "bald", "bare", "basic", "bitter", "black", "bland", "blank", "blind", "blue", "blunt",
+    "bold", "brave", "brief", "bright", "brisk", "broad", "brown", "busy", "calm", "cheap",
+    "chief", "chill", "civil", "clean", "clear", "clever", "close", "cloudy", "coarse", "cold",
+    "cool", "crisp", "cruel", "curly", "damp", "dark", "dear", "deep", "dense", "dim",
+    "dizzy", "dry", "dull", "dusty", "eager", "early", "easy", "empty", "equal", "even",
+    "exact", "faint", "fair", "false", "fancy", "fast", "fat", "fierce", "final", "fine",
+    "firm", "flat", "fond", "frail", "frank", "free", "fresh", "full", "funny", "gentle",
+    "giant", "glad", "gold", "grand", "grave", "gray", "great", "green", "grim", "gross",
+    "hard", "harsh", "heavy", "high", "hollow", "hasty", "huge", "humble", "idle", "inner",
+    "jolly", "keen", "kind", "large", "late", "lazy", "lean", "light", "little", "lively",
+    "lone", "long", "loose", "loud", "low", "loyal", "lucky", "mad", "main", "major",
+    "mean", "meek", "mild", "minor", "moist", "muddy", "mute", "narrow", "neat", "new",
+    "nice", "noble", "noisy", "odd", "old", "open", "pale", "petty", "plain", "plump",
+    "polite", "poor", "proud", "pure", "quick", "quiet", "rapid", "rare", "raw", "ready",
+    "real", "rich", "ripe", "rough", "round", "royal", "rude", "rural", "rusty", "sad",
+    "safe", "salty", "sandy", "scarce", "sharp", "shiny", "short", "shy", "silent", "silly",
+    "simple", "sleek", "slim", "slow", "small", "smart", "smooth", "sober", "soft", "solid",
+    "sour", "spare", "steep", "stiff", "still", "stout", "sunny", "sweet", "swift", "tall",
+    "tame", "tense", "thick", "thin", "tidy", "tiny", "tough", "vague", "vast", "warm",
+]  # fmt: skip
+NOUNS = [
+    "acorn", "anchor", "anvil", "apple", "arrow", "badge", "banner", "barrel", "basket", "beacon",
+    "bell", "bench", "berry", "blade", "board", "boat", "bolt", "bottle", "bridge", "broom",
+    "brush", "bucket", "button", "cabin", "candle", "canoe", "canvas", "carpet", "castle", "cellar",
+    "chain", "chair", "chalk", "cherry", "chimney", "cloak", "clock", "cloud", "coast", "collar",
+    "comet", "copper", "corner", "cottage", "crown", "curtain", "cushion", "desert", "desk", "dish",
+    "door", "dragon", "drum", "eagle", "engine", "falcon", "feather", "fence", "ferry", "field",
+    "flag", "flame", "flute", "forest", "fossil", "fountain", "garden", "gate", "glacier", "glove",
+    "goblet", "granite", "guitar", "hammer", "harbor", "harp", "hat", "helmet", "hill", "hinge",
+    "hook", "horn", "hut", "iron", "island", "ivory", "jacket", "jar", "jewel", "kettle",
+    "key", "kite", "knife", "ladder", "lamp", "lantern", "lawn", "leaf", "lemon", "letter",
+    "lever", "lily", "lion", "lock", "locket", "magnet", "mantle", "marble", "market", "meadow",
+    "mirror", "mitten", "monkey", "mountain", "needle", "nest", "net", "oak", "oar", "olive",
+    "orbit", "orchard", "otter", "oven", "paddle", "palace", "paper", "parrot", "pebble", "pencil",
+    "pepper", "piano", "pillow", "pine", "pipe", "pistol", "planet", "plank", "plate", "pocket",
+    "pony", "puzzle", "quill", "rabbit", "raft", "rail", "raven", "ribbon", "ring", "river",
+    "robin", "rocket", "roof", "rope", "rose", "ruler", "saddle", "sail", "salmon", "scarf",
+    "shelf", "shield", "shovel", "silver", "sled", "slipper", "sofa", "spade", "spider", "sponge",
+    "spoon", "spring", "stable", "stone", "stove", "street", "sugar", "sword", "table", "tent",
+    "thread", "ticket", "tiger", "timber", "tower", "trumpet", "tunnel", "turtle", "valley", "vase",
+    "violin", "wagon", "wallet", "walnut", "wheel", "whistle", "willow", "window", "wolf", "zebra",
+]  # fmt: skip

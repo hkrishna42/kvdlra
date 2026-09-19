@@ -21,7 +21,11 @@ instead of quietly weakening it.
 The ``[trial]``, ``[<task> ctx<T>]``, ``[pplw]``, ``[latency ctx<T>]`` and ``ppl=``
 lines are printed as well as written: they are the pod's stdout contract, and `pod.py
 harvest` can rebuild the same records from a `vastai logs` capture when the results
-directory never made it off the instance.
+directory never made it off the instance. A ``[trial]`` line carries the generator's
+pairing fields (``hay= depth= code= sha=``, ``-`` where the generator set none), so a
+harvested pod can still show that two arms of one cell were fed byte-identical prompts.
+``[stage] <what> (<s> s)`` lines time the loads (model, corpora, haystacks); the watchdog
+keeps them, so a slow pod's log says where the hours went.
 """
 
 from __future__ import annotations
@@ -35,7 +39,7 @@ from typing import Any
 import torch
 
 from kvdlra.baselines.compat import install_kvpress_prefill_compat
-from kvdlra.eval import frontier, latency, longbench, official_ruler, ruler
+from kvdlra.eval import frontier, gen, latency, longbench, official_ruler, ruler
 from kvdlra.eval.config import PodCfg, TaskCfg, load_arm, load_task
 from kvdlra.eval.data import load_corpus_ids, load_corpus_sentences
 from kvdlra.eval.records import (
@@ -55,6 +59,7 @@ GENERATORS = {
     "inhouse": ruler,
     "official_ruler": official_ruler,
     "longbench": longbench,
+    "v2": gen,
 }
 
 
@@ -227,7 +232,11 @@ def _cell(
     """
     module = GENERATORS[task.generator]
     chunk = task.chunk if arm["chunkable"] else 0
+    t0 = time.perf_counter()
     pool = None if task.filler in ("cycle", "official") else load_corpus_sentences(task.filler)
+    if pool is not None:
+        dt = time.perf_counter() - t0
+        print(f"[stage] load_corpus_sentences {task.filler} ({dt:.1f} s)", flush=True)
     hits, fracs, ratios, sbits, errors = 0, [], [], [], 0
     for seed in task.seeds:
         for trial in range(task.n_trials):
@@ -272,9 +281,15 @@ def _cell(
             with trials_path.open("a") as f:
                 f.write(json.dumps(row, sort_keys=True) + "\n")
                 f.flush()
+            depth = row["depth"]
+            # `%.2f` round-trips log -> disk only while every depth grid is 2-decimal
+            # (the six-point `gen.DEPTH_GRID` is); a finer grid needs a wider print.
             print(
                 f"[trial] task={sub} ctx={task.ctx} arm={arm['name']} seed={seed} "
                 f"trial={tid} hit={hit} frac={frac:.3f} generator={task.generator}"
+                f" hay={row['haystack_id'] or '-'}"
+                f" depth={'-' if depth is None else f'{depth:.2f}'}"
+                f" code={row['code_family'] or '-'} sha={row['prompt_sha256'] or '-'}"
                 + (f" error={err}" if err else ""),
                 flush=True,
             )
@@ -308,10 +323,14 @@ def _ppl_rows(
     ``sha`` collects ``corpus -> sha256(token ids)``: which text was scored is half of
     what a perplexity number means, and the digest is over the exact ids the windows
     were cut from, so a corpus that silently changed upstream cannot pass for the one
-    the manifest cites. `_finish` writes it to `manifest.json`.
+    the manifest cites. `_finish` writes it to `manifest.json` on the pod; the
+    ``[stage] dataset_sha256`` line is how `pod.py harvest` gets it off the log.
     """
+    t0 = time.perf_counter()
     ids = load_corpus_ids(tok, device, corpus=task.corpus)
+    print(f"[stage] load_corpus_ids {task.corpus} ({time.perf_counter() - t0:.1f} s)", flush=True)
     sha[task.corpus] = hashlib.sha256(ids.cpu().numpy().tobytes()).hexdigest()
+    print(f"[stage] dataset_sha256 {task.corpus} {sha[task.corpus]}", flush=True)
     samples = frontier.windows(ids, task.ctx, task.window, task.n_samples)
     if not samples:
         print(f"[T={task.ctx}] corpus too short for {task.n_samples} windows", flush=True)

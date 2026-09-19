@@ -1,0 +1,24 @@
+name: filler_realism
+model: "unsloth/Meta-Llama-3.1-8B-Instruct"
+dtype: bfloat16
+doc: >-
+  The filler-realism diagnostic (lane L2 item 1, gate G2 line 1, DECISIONS D-005): the four in-house
+  RULER tasks at 16K, n = 12 per cell, with the haystack drawn from WikiText-2 test sentences instead
+  of the ten cycled sentences behind every archived in-house row -- one variable changed; model,
+  context, tasks, n, seeds, chunked prefill and the arm configs held at the values that produced the
+  reference rows. Decision rule (prereg/filler_realism.md): if the r64 configuration or its q4 cell
+  drops by more than 0.25 on any task against its archived cycled-filler row, the cycled generator is
+  retired from every headline claim. Arm order is the prereg's -- the uncompressed ceiling control
+  first, then the two arms the rule names, then the two KIVI-2 baselines (chunked, single-shot) that
+  say whether a drop is gist-specific -- so a pod that dies early still lands an interpretable
+  result; the records carry the legacy names (full, bugSseed-r64-h256, bugSseed-r64-h256-q4,
+  quant-2bit-kivi, quant-2bit-kivi#chunk0). No perplexity line. The -devel image: the quant arms JIT
+  quanto's kernel. gpu_budget_h is the bar of prereg Amendment 1 (the measured rates, 2x the point
+  estimate), enforced on the pod itself by `pod.py launch --max-hours`. filler_realism_cycle is the
+  harness-consistency control that runs beside this pod. Launch = DECISIONS (D-005, under D-011's
+  standing authorization) and must be a commit that descends from the prereg's.
+prereg: prereg/filler_realism.md
+arms: ["full", "isvd_r64_h256_seed", "isvd_r64_h256_seed_q4", "kivi2_streaming", "kivi2_singleshot"]
+tasks: ["ruler_inhouse_16k_wikitext"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+gpu_budget_h: 18.3

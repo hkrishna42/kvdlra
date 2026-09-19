@@ -18,9 +18,11 @@ produced nothing impossible to pass off as a clean run. And because recording ra
 skipping keeps every cell full, the error COUNT is its own rule: any recorded failure
 fails the pod (ruling R29), with no tolerance knob.
 
-`run` writes the manifest and the environment, then hands the pod config to
-`kvdlra.eval.runner.run_pod`, which is the eval loop; `--dry-run` stops after the manifest,
-which is what the tests and `make check` exercise. Archived paper-v1 manifests carry
+`run` writes the manifest and the environment, materializes any haystack source a
+generator-v2 task names that is not on disk (`prepare` is that step alone) and records
+the sources' digests, then hands the pod config to `kvdlra.eval.runner.run_pod`, which
+is the eval loop; `--dry-run` stops after the manifest, which is what the tests and
+`make check` exercise. Archived paper-v1 manifests carry
 `converted_by` and are skipped: they are static evidence of runs that happened before this
 entrypoint existed.
 """
@@ -30,10 +32,12 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import math
 import re
 import shlex
 import subprocess
 import sys
+import time
 import tomllib
 from collections import Counter
 from datetime import UTC, datetime
@@ -43,7 +47,7 @@ from typing import Any, cast
 
 import _paths  # noqa: F401
 
-from kvdlra.eval.config import PodCfg, config_hash, load_arm, load_pod, load_task
+from kvdlra.eval.config import PodCfg, TaskV2Cfg, config_hash, load_arm, load_pod, load_task
 from kvdlra.eval.records import (
     TrialRecord,
     parse_diag_lines,
@@ -143,6 +147,9 @@ def manifest(name: str, sha: str, command_line: str, dry_run: bool) -> dict[str,
         # ALL_DONE / RUN_FAILED / BOOT_FAILED, read off the log's markers by `harvest`.
         # The watchdog destroys the instance on all three; this is where the failure shows.
         "status": None,
+        # True when the log carries boot.sh's ===RUN_TIMEOUT_ marker: the run hit the
+        # `--max-hours` bar. Its status is still RUN_FAILED; this keeps the reason.
+        "timeout": False,
         "dry_run": dry_run,
     }
 
@@ -157,7 +164,27 @@ def _read_manifest(out: Path) -> dict[str, Any] | None:
     return cast(dict[str, Any], json.loads(p.read_text())) if p.is_file() else None
 
 
-# --- run ----------------------------------------------------------------------
+# --- run / prepare --------------------------------------------------------------
+
+
+def _haystack_sha256(pod: PodCfg) -> dict[str, str]:
+    """``haystack:<source>`` -> sha256 of ``data/haystacks/<source>.jsonl`` for every
+    source the pod's v2 tasks name, materializing (`kvdlra.eval.haystacks.ensure`) the
+    ones not on disk. Empty for a pod with no v2 task."""
+    # Imported here: `check` and `--dry-run` never need the eval stack it pulls in.
+    from kvdlra.eval.haystacks import ensure
+
+    tasks = [load_task(t) for t in pod.tasks]
+    sources = sorted({s for t in tasks if isinstance(t, TaskV2Cfg) for s in t.haystacks})
+    return {f"haystack:{s}": sha for s, sha in ensure(sources).items()}
+
+
+def prepare(name: str) -> int:
+    """Materialize the haystacks a pod's v2 tasks name (`run` does it too, before the
+    model loads; this is the same step on its own, for a laptop or a warm pod)."""
+    for key, sha in _haystack_sha256(load_pod(name)).items():
+        print(f"{key} {sha}")
+    return 0
 
 
 def run(name: str, out: Path, dry_run: bool) -> int:
@@ -180,8 +207,18 @@ def run(name: str, out: Path, dry_run: bool) -> int:
     from kvdlra.eval.data import load_model
     from kvdlra.eval.runner import run_pod
 
+    # The haystacks before the weights: a source that will not download fails the pod
+    # in seconds, not after the model load; their digests are evidence, so the manifest
+    # carries them from here on -- and the log too: this manifest dies with the instance,
+    # and `harvest` rebuilds `dataset_sha256` from these lines (`DIGEST_RE`).
+    m["dataset_sha256"] = {**m["dataset_sha256"], **_haystack_sha256(pod)}
+    for key, sha in m["dataset_sha256"].items():
+        print(f"[stage] dataset_sha256 {key} {sha}", flush=True)
+    _write_manifest(out, m)
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    t0 = time.perf_counter()
     loaded = load_model(pod.model, device, pod.dtype)
+    print(f"[stage] load_model {pod.model} ({time.perf_counter() - t0:.1f} s)", flush=True)
     m["model_revision"] = getattr(loaded[0].config, "_commit_hash", None)
     _write_manifest(out, m)
     run_pod(pod, out, loaded)
@@ -191,14 +228,24 @@ def run(name: str, out: Path, dry_run: bool) -> int:
 # --- launch -------------------------------------------------------------------
 
 
-def launch_command(name: str, offer: str, sha: str) -> list[str]:
+def launch_command(name: str, offer: str, sha: str, max_hours: float | None = None) -> list[str]:
     """The `vastai create instance` the boot-script header documents.
 
-    `boot.sh` needs four things from the environment: which pod config to run, which
-    commit to check out, which weights to pull and in what dtype. Everything else it
-    reads from the SHA-pinned clone.
+    `boot.sh` needs five things from the environment: which pod config to run, which
+    commit to check out, which weights to pull and in what dtype, and the bar in hours
+    it enforces on the run with `timeout` (default: the pod's pre-registered
+    `gpu_budget_h`). Everything else it reads from the SHA-pinned clone. A bar of zero is
+    refused, not passed on: `timeout 0h` disables the limit, and every v1 pod config
+    carries `gpu_budget_h: 0.0`.
     """
     pod = load_pod(name)
+    hours = pod.gpu_budget_h if max_hours is None else max_hours
+    if not (math.isfinite(hours) and hours > 0):  # catches <= 0, nan, AND +/-inf
+        # (nan > 0 is False; +inf > 0 is True but not finite -- `timeout infh` is no bar)
+        raise ValueError(
+            f"--max-hours {hours:g} is no bar: pre-register a finite gpu_budget_h > 0 in"
+            f" configs/pods/{name}.yaml or pass --max-hours"
+        )
     return [
         "vastai",
         "create",
@@ -209,7 +256,8 @@ def launch_command(name: str, offer: str, sha: str) -> list[str]:
         "--disk",
         "80",
         "--env",
-        f"-e POD={name} -e SHA={sha} -e MODEL={pod.model} -e DTYPE={pod.dtype}",
+        f"-e POD={name} -e SHA={sha} -e MODEL={pod.model} -e DTYPE={pod.dtype}"
+        f" -e MAX_HOURS={hours:g}",
         "--onstart",
         "scripts/pod/boot.sh",
         "--label",
@@ -287,15 +335,19 @@ def pod_name(arg: str) -> str:
     return m.group(1) if m else arg
 
 
-def launch(name: str, offer: str, dry_run: bool) -> int:
+def launch(name: str, offer: str, dry_run: bool, max_hours: float | None = None) -> int:
     pod = load_pod(name)
     sha = _head()
     reasons = launch_refusals(pod, sha)
+    try:
+        cmd = launch_command(name, offer, sha, max_hours)
+    except ValueError as exc:  # no enforceable bar (see launch_command)
+        reasons.append(str(exc))
+        cmd = []
     for r in reasons:
         print(f"REFUSE: {r}")
     if reasons:
         return 1
-    cmd = launch_command(name, offer, sha)
     out = REPO_ROOT / "results" / name
     m = manifest(name, sha, shlex.join(cmd), dry_run=False)
     if dry_run:
@@ -323,6 +375,13 @@ def launch(name: str, offer: str, dry_run: bool) -> int:
 def _jsonl(path: Path, rows: list[dict[str, Any]]) -> int:
     path.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
     return len(rows)
+
+
+# `run` (the haystack sources) and `runner._ppl_rows` (the perplexity corpora) print one
+# `[stage] dataset_sha256 <key> <sha>` line per digest, because the manifest they write
+# it into stays on the destroyed instance: every harvested manifest carried
+# `dataset_sha256: {}`. The watchdog keeps `[stage]` rows; the last line for a key wins.
+DIGEST_RE = re.compile(r"^\[stage\] dataset_sha256 (\S+) ([0-9a-f]{64})\s*$", re.M)
 
 
 def _env_from_log(text: str) -> list[str] | None:
@@ -502,6 +561,7 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
 
     m = _read_manifest(out) or manifest(name, _head(), source, False)
     m["harvested_at"] = _now()
+    m["dataset_sha256"] = {**m.get("dataset_sha256", {}), **dict(DIGEST_RE.findall(text))}
     m["records"] = records
     # Both axes: a perplexity arm that raised has no record to carry the failure, only
     # the `[error]` line, so counting trial rows alone called such a pod clean.
@@ -510,6 +570,7 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     )
     m["wall_clock_s"] = _wall_clock_s(text) or m.get("wall_clock_s")
     m["status"] = _status(text)
+    m["timeout"] = "===RUN_TIMEOUT_" in text  # the RUN_FAILED was boot.sh's `timeout`
     # A `[diag]` line the fetch cut in half parses into nothing. Counted in the manifest
     # (and failed by `check`) rather than dropped: the skip is evidence the log came back
     # truncated, which is a harvest to redo, not a pod that printed no diagnostics.
@@ -764,10 +825,18 @@ def main() -> int:
     r.add_argument("--pod", required=True)
     r.add_argument("--out", default=None, help="default: results/<pod>")
     r.add_argument("--dry-run", action="store_true", help="manifest + env only, no eval")
+    pr = sub.add_parser("prepare", help="materialize the haystacks a pod's v2 tasks name")
+    pr.add_argument("--pod", required=True)
     ln = sub.add_parser("launch", help="create the vast.ai instance that runs a pod")
     ln.add_argument("--pod", required=True)
     ln.add_argument("--offer", required=True)
     ln.add_argument("--dry-run", action="store_true", help="print the command, launch nothing")
+    ln.add_argument(
+        "--max-hours",
+        type=float,
+        default=None,
+        help="the bar boot.sh enforces on the run with `timeout`; default: the pod's gpu_budget_h",
+    )
     h = sub.add_parser("harvest", help="parse a pod's log into records")
     h.add_argument("--pod", required=True, help="pod name, or a watchdog label <pod>-<instance>")
     h.add_argument("--log", default=None, help="default: fetch it with the vast.ai CLI")
@@ -785,8 +854,10 @@ def main() -> int:
     out = Path(a.out) if getattr(a, "out", None) else REPO_ROOT / "results" / name
     if a.cmd == "run":
         return run(name, out, a.dry_run)
+    if a.cmd == "prepare":
+        return prepare(name)
     if a.cmd == "launch":
-        return launch(name, a.offer, a.dry_run)
+        return launch(name, a.offer, a.dry_run, a.max_hours)
     return harvest(name, Path(a.log) if a.log else None, out, a.force)
 
 

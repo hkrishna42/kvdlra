@@ -1,0 +1,9 @@
+name: pyramidkv_k0.25
+kind: press
+chunkable: false
+doc: >-
+  PyramidKV eviction keeping 25% of the tokens at prefill, one point of the L2 matched-budget
+  eviction grid k in {0.10, 0.15, 0.25}; mechanics and the ppl refusal: pyramidkv_k0.10 / presses.py.
+press:
+  family: pyramidkv
+  keep: 0.25

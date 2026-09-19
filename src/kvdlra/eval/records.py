@@ -15,7 +15,8 @@ files: the aggregate ``PplRecord`` (``ppl.jsonl``) and the per-window ``PplwReco
 ``generator``/``haystack_id``/``depth``/``code_family``/``prompt_sha256``/``error`` are
 carried in the schema but are ``None`` for the archived paper-v1 records: the v1
 emitters never printed them, and the archive is not re-converted to invent them. Read
-them with ``.get`` -- an archived row has the key absent, not null.
+them with ``.get`` -- an archived row has the key absent, not null. The runner has
+printed them on the ``[trial]`` line since L2.3b, so a harvested pod carries them too.
 
 ``generator`` is part of a cell's identity, not decoration: the in-house and official
 RULER generators reuse the sub-task names ``niah_multivalue`` and ``vt`` at the same
@@ -32,13 +33,17 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, TypedDict
 
-# `generator=` and `error=` are appended by `kvdlra.eval.runner` (in that order); no v1
-# log has either, so both are optional -- the harvest fills the generator from the pod's
-# task configs when the line does not say, and a row with no `error=` did not raise.
+# `generator=`, the four pairing fields `hay= depth= code= sha=` (L2.3b) and `error=`
+# are appended by `kvdlra.eval.runner`, in that order; no v1 log has any of them, so all
+# are optional -- the harvest fills the generator from the pod's task configs when the
+# line does not say, a pairing field the generator did not set prints as `-`, and a row
+# with no `error=` did not raise. `error=` stays last and unanchored: the message can
+# hold anything, and a trailing field a v1 log carried but this format does not name
+# must not stop the line from parsing.
 TRIAL_RE = re.compile(
     r"^\[trial\] task=(\S+) ctx=(\d+) arm=(\S+) seed=(\d+) trial=(\d+) hit=([01]) frac=([0-9.]+)"
-    r"(?: generator=(\S+))?(?: error=(.*))?"  # unanchored: a trailing field a v1 log
-    # carried but this format does not name must not stop the line from parsing
+    r"(?: generator=(\S+))?(?: hay=(\S+))?(?: depth=(\S+))?(?: code=(\S+))?(?: sha=(\S+))?"
+    r"(?: error=(.*))?"
 )
 # `ratio=`/`sbits=` are absent from a cell whose every trial raised: there is no ratio to
 # average, and the `ratio=nan sbits=nan` that printed instead matched nothing at all, so
@@ -178,6 +183,12 @@ class LatencyRecord(TypedDict):
     source: str
 
 
+def _field(s: str | None) -> str | None:
+    """A pairing field as the line printed it: absent (an archived row) or `-` (the
+    generator set none) is None."""
+    return None if s in (None, "-") else s
+
+
 def parse_trial_lines(text: str, model: str, source: str) -> list[TrialRecord]:
     """Every ``[trial]`` line in ``text`` as a record citing ``<source>:<lineno>``."""
     out: list[TrialRecord] = []
@@ -185,7 +196,7 @@ def parse_trial_lines(text: str, model: str, source: str) -> list[TrialRecord]:
         m = TRIAL_RE.match(line)
         if not m:
             continue
-        task, ctx, arm, seed, trial, hit, frac, generator, error = m.groups()
+        task, ctx, arm, seed, trial, hit, frac, generator, hay, depth, code, sha, error = m.groups()
         out.append(
             {
                 "model": model,
@@ -199,10 +210,10 @@ def parse_trial_lines(text: str, model: str, source: str) -> list[TrialRecord]:
                 # Only what the line printed: a v1 row does not name its generator, and
                 # `scripts/pod.py harvest` is where the pod config fills that gap.
                 "generator": generator,
-                "haystack_id": None,
-                "depth": None,
-                "code_family": None,
-                "prompt_sha256": None,
+                "haystack_id": _field(hay),
+                "depth": float(depth) if _field(depth) else None,
+                "code_family": _field(code),
+                "prompt_sha256": _field(sha),
                 "error": error,
                 "source": f"{source}:{i}",
             }

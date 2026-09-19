@@ -9,8 +9,8 @@ against the live cache.
 
 This module also owns the two pieces every other eval axis shares: the prefill
 helpers (``_prefill_chunked`` for a streaming cache, ``_prefill_plain`` for a
-QuantizedCache) and ``_footprint``, which maps an arm plus its post-prefill cache to
-a ``Footprint``.
+QuantizedCache, ``_prefill_faithful`` for the KIVI arm that quantizes post hoc) and
+``_footprint``, which maps an arm plus its post-prefill cache to a ``Footprint``.
 
 The ``[pplw]`` and ``ppl=`` lines this module prints are the pod's stdout contract:
 ``kvdlra.eval.records`` parses them back out of a harvested log, so their format is
@@ -28,9 +28,11 @@ from torch.nn.functional import cross_entropy
 from transformers.cache_utils import Cache, DynamicCache
 
 from kvdlra import accounting as acc
+from kvdlra.baselines.presses import make_press, press_family
 from kvdlra.cache import BugStreamingCache, ShadowKVCache
 from kvdlra.eval.config import ArmCfg, arm_kwargs
 from kvdlra.eval.records import drained
+from kvdlra.quant.kivi import quantize_after_prefill, residual_tokens
 from kvdlra.quant.kivi_cache import aux_words, flush, make_quant_cache
 
 N_SINK = 4
@@ -156,6 +158,16 @@ def _prefill_plain(model: Any, cache: Any, ctx: torch.Tensor, chunk: int) -> Non
 
 
 @torch.no_grad()
+def _prefill_faithful(model: Any, cache: Any, ctx: torch.Tensor) -> None:
+    """KIVI's own protocol: single-shot full-precision prefill into a ``DynamicCache``
+    (``logits_to_keep=1``, the memory-safe call the presses make), then the QuantizedCache
+    is built from it post hoc -- prefill attention never sees a dequantized token."""
+    dyn = DynamicCache()
+    model(ctx, past_key_values=dyn, use_cache=True, logits_to_keep=1)
+    quantize_after_prefill(cache, dyn)
+
+
+@torch.no_grad()
 def score_quant(
     model: Any, cache: Any, ctx_ids: torch.Tensor, win_ids: torch.Tensor, chunk: int = 0
 ) -> tuple[float, int]:
@@ -224,13 +236,18 @@ def build_arm(cfg: ArmCfg, model: Any, t: int) -> dict[str, Any]:
             **arm,
             "keep": float(cfg.press["keep"]),
             **_quant_fields(cfg),
-            "make_press": _evict_factory(cfg),
+            "make_press": _press_factory(cfg),
             "make_cache": _quant_factory(cfg, model),
         }
     if kind == "press":
         return {**arm, **_press(cfg)}
     if kind == "quant_faithful":
-        raise NotImplementedError("L2")  # faithful KIVI (G=32, R=128, fp prefill)
+        # KIVI at its published operating point: the scheme IS the arm, so a YAML that
+        # says otherwise is refused, not relabelled; past that, the cache is the quant
+        # arm's (`make_kivi` is `make_quant_cache` at the kivi scheme).
+        if cfg.quant.get("scheme") != "kivi":
+            raise ValueError(f"configs/arms/{cfg.name}.yaml: quant_faithful is the kivi scheme")
+        return {**arm, **_quant_fields(cfg), "make": _quant_factory(cfg, model)}
     raise ValueError(f"unknown arm kind {cfg.kind!r} in configs/arms/{cfg.name}.yaml")
 
 
@@ -258,41 +275,51 @@ def _quant_factory(cfg: ArmCfg, model: Any) -> Any:
     )
 
 
-def _evict_factory(cfg: ArmCfg) -> Any:
-    """SnapKV for a config named ``snapkv*``, ExpectedAttention otherwise -- the two
-    scorer presses take the same single parameter, so the name is what separates them."""
-    from kvpress import ExpectedAttentionPress, SnapKVPress
-
-    cls = SnapKVPress if cfg.name.startswith("snapkv") else ExpectedAttentionPress
-    return lambda: cls(compression_ratio=1.0 - float(cfg.press["keep"]))
+def _press_factory(cfg: ArmCfg) -> Any:
+    """The `press_quant` arm's press factory (`presses.make_press` decides the family).
+    The family is resolved NOW, so a ``press:`` block that names no press fails at build,
+    not at first use."""
+    if press_family(cfg) is None:
+        raise ValueError(f"configs/arms/{cfg.name}.yaml: press names no keep/ratio/rank")
+    return lambda: make_press(cfg)
 
 
 def _press(cfg: ArmCfg) -> dict[str, Any]:
-    """A prefill press, dispatched on which parameter its ``press:`` block carries:
-    ``ratio`` is ThinK's channel-wise key pruning, ``rank`` the per-sequence SVD oracle
-    (the rows published as ``palu-*``), ``keep`` an eviction press's kept fraction.
-    ``press_type`` is what `_footprint` branches on for the two analytic footprints."""
-    p = cfg.press
-    if "ratio" in p:
-        from kvpress import ThinKPress
+    """A prefill press. ``rank`` is the per-sequence SVD oracle
+    (:mod:`kvdlra.baselines.svd_oracle`); everything else is a kvpress press of
+    `presses.make_press`'s family, carrying ``keep`` (an eviction press's kept fraction)
+    and/or ``think_ratio`` (ThinK's channel ratio). ``press_type`` is what `_footprint`
+    branches on for the analytic footprints; a plain eviction press has none.
 
-        ratio = float(p["ratio"])
-        return {
-            "press_type": "think",
-            "think_ratio": ratio,
-            "make": lambda: ThinKPress(key_channel_compression_ratio=ratio),
-        }
+    ``per_layer_budget`` (the pyramidkv family only; ABSENT on every other press, so the
+    archived arms' dicts are unchanged): PyramidKV keeps a different token count per
+    layer, and transformers builds ONE causal mask per forward from layer 0's key count
+    that no attention path slices to a layer's own length -- so any q_len>1 forward after
+    prefill raises. The retrieval axes read the key and decode one token per forward
+    (q_len=1 needs no mask); `run_ppl` refuses the arm (ruling R-L2-5)."""
+    p = cfg.press
     if "rank" in p:
         from kvdlra.baselines.svd_oracle import SVDOraclePress
 
         ratio, group = float(p["rank"]), int(p["group"])
         return {
-            "press_type": "palu",
-            "palu_rank_ratio": ratio,
-            "palu_group": group,
+            "press_type": "svd_oracle",
+            "oracle_rank_ratio": ratio,
+            "oracle_group": group,
             "make": lambda: SVDOraclePress(rank_ratio=ratio, group=group),
         }
-    return {"keep": float(p["keep"]), "make": _evict_factory(cfg)}
+    fam = press_family(cfg)  # resolved NOW: a bad block fails at build, not at first use
+    if fam is None:
+        raise ValueError(f"configs/arms/{cfg.name}.yaml: press names no keep/ratio/rank")
+    arm: dict[str, Any] = {"make": lambda: make_press(cfg)}
+    if "keep" in p:
+        arm["keep"] = float(p["keep"])
+    if "ratio" in p:
+        arm["press_type"] = fam
+        arm["think_ratio"] = float(p["ratio"])
+    if fam == "pyramidkv":
+        arm["per_layer_budget"] = True
+    return arm
 
 
 def _tracked_rank(u: torch.Tensor | None) -> int:
@@ -368,13 +395,16 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
         )
     if kind == "full":
         return acc.full_cache_footprint(t, n)
-    if kind == "quant":  # QuantizedCache is NOT a DynamicCache subclass -> branch first
+    if kind in ("quant", "quant_faithful"):  # NOT a DynamicCache subclass -> branch first
+        # The streaming arm is billed its configured residual (flushed, then regrown at
+        # decode); the faithful arm the T mod R tokens its prefill actually left fp16.
+        resid = residual_tokens(cache) if kind == "quant_faithful" else int(arm["quant_residual"])
         return acc.quant_footprint(
             t,
             n,
             nbits=int(arm["nbits"]),
             group=int(arm["quant_group"]),
-            residual_length=int(arm["quant_residual"]),
+            residual_length=resid,
             scale_words=aux_words(cache),  # billed at the backend's real aux precision
         )
     if kind == "press_quant":  # Week-20 composite: kept fraction, survivors quantized.
@@ -396,16 +426,31 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
         # ThinK zeros channels (no measured gain) -> analytic footprint (K pruned).
         head_dim = n // h_kv
         return acc.think_footprint(t, n, head_dim, h_kv, float(arm["think_ratio"]))
-    if arm.get("press_type") == "palu":
-        # Palu reconstructs same-shape K/V (Mode A); analytic low-rank footprint.
+    if arm.get("press_type") == "think_snapkv":
+        # Evicted (measured, as below) AND channel-pruned (analytic, as above).
         head_dim = n // h_kv
-        return acc.palu_footprint(
-            t, n, head_dim, h_kv, float(arm["palu_rank_ratio"]), group=int(arm["palu_group"])
+        return acc.think_evict_footprint(
+            t, n, head_dim, h_kv, float(arm["think_ratio"]), _kept_tokens(cache) / t
+        )
+    if arm.get("press_type") == "svd_oracle":
+        # The SVD oracle reconstructs same-shape K/V (Mode A); analytic low-rank footprint.
+        head_dim = n // h_kv
+        return acc.lowrank_footprint(
+            t, n, head_dim, h_kv, float(arm["oracle_rank_ratio"]), group=int(arm["oracle_group"])
         )
     # eviction press: measure kept fraction from the compressed DynamicCache
+    return acc.evict_footprint(t, n, _kept_tokens(cache) / t)
+
+
+def _kept_tokens(cache: Cache) -> float:
+    """Tokens a pruned DynamicCache holds, as the MEAN over its layers -- not layer 0's
+    count. PyramidKV keeps more tokens in the lower layers and fewer in the upper (the
+    mean is the configured budget; layer 0 alone is ~2x it at 16K), and this one
+    per-layer footprint is what every axis multiplies by the layer count. The uniform
+    presses keep the same count on every layer, so their bill is byte-identical."""
     assert isinstance(cache, DynamicCache)
-    kept = int(cast(Any, cache.layers[0]).keys.shape[2])
-    return acc.evict_footprint(t, n, kept / t)
+    layers = cast(Any, cache.layers)
+    return sum(int(la.keys.shape[2]) for la in layers) / len(layers)
 
 
 # -------------------------------------------------------------------- runner
@@ -446,6 +491,15 @@ def run_ppl(
     for arm in arms:
         peak_ctx = acc.measure_peak_gpu(device)
         try:
+            if arm.get("per_layer_budget"):
+                # Inside the try: the refusal is RECORDED as this arm's error row (and the
+                # runner's `[error] axis=ppl` line), never an exception out of the sweep.
+                raise ValueError(
+                    f"{arm['name']}: PyramidKV's per-layer budgets cannot be scored through"
+                    " transformers' single causal mask (a 512-token window in one forward);"
+                    " the retrieval axes decode token-by-token -- per-token perplexity"
+                    " scoring is not implemented"
+                )
             with peak_ctx as peak_get:
                 total_nll, total_tok = 0.0, 0
                 window_nlls: list[float] = []  # per-window MEAN nll (nats/token)
@@ -460,6 +514,12 @@ def run_ppl(
                     elif arm["kind"] == "quant":
                         cache = arm["make"]()
                         nll, ntok = score_quant(model, cache, ctx_ids, win_ids, arm_chunk)
+                    elif arm["kind"] == "quant_faithful":
+                        cache = arm["make"]()
+                        _prefill_faithful(model, cache, ctx_ids.unsqueeze(0))
+                        if fp is None:  # the post-prefill state: the window grows the residual
+                            fp = _footprint(arm, cache, t, n, h_kv)
+                        nll, ntok = _score_window(model, cache, int(ctx_ids.shape[0]), win_ids)
                     else:
                         cache = arm["make"]()
                         nll, ntok = score_streaming(

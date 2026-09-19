@@ -48,7 +48,7 @@ paired_bootstrap` and `tables.py`'s subcommands (`build`, `ppl`, `table_baseline
 `tests/test_golden_cache.py` (the r64 golden is never regenerated; `gist_dtype` off = bit-identical).
 Re-size the pods from the rates L2 MEASURED on the real-text pod (Llama 16K, A100 40 GB: `full` ≈ 0.6,
 r64 gist ≈ 3.1, q4 ≈ 3.8, KIVI ≈ 1.5 min per sample, task-independent — prefill dominates): the plan's
-1.0/3.0/3.5/1.5 min per task and its "Stage 1 ≈ 41 GPU-h" are wrong; write the honest table (per arm × family
+1.0/3.0/3.5/1.5 min per task and its "Stage 1 ≈ 41 GPU-h" are wrong; write the measured table (per arm × family
 × ctx: 96 retrieval samples + 16 windows; 32K ≈ 2×; frozen/random ≈ 1.5× faster than isvd, no-gist ≈ 2×) and
 pre-commit the cuts in the prereg (drop `random` first, then n=16 for oja/fd) — expect Stage 1 (Llama + Qwen
 × 16K × 7 arms incl. bf16) near 60 GPU-h base / 120 at 2×, i.e. ≈ $27–90 at the measured $0.45–0.74/h.

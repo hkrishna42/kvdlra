@@ -143,6 +143,9 @@ def manifest(name: str, sha: str, command_line: str, dry_run: bool) -> dict[str,
         # ALL_DONE / RUN_FAILED / BOOT_FAILED, read off the log's markers by `harvest`.
         # The watchdog destroys the instance on all three; this is where the failure shows.
         "status": None,
+        # True when the log carries boot.sh's ===RUN_TIMEOUT_ marker: the run hit the
+        # `--max-hours` bar. Its status is still RUN_FAILED; this keeps the reason.
+        "timeout": False,
         "dry_run": dry_run,
     }
 
@@ -191,14 +194,23 @@ def run(name: str, out: Path, dry_run: bool) -> int:
 # --- launch -------------------------------------------------------------------
 
 
-def launch_command(name: str, offer: str, sha: str) -> list[str]:
+def launch_command(name: str, offer: str, sha: str, max_hours: float | None = None) -> list[str]:
     """The `vastai create instance` the boot-script header documents.
 
-    `boot.sh` needs four things from the environment: which pod config to run, which
-    commit to check out, which weights to pull and in what dtype. Everything else it
-    reads from the SHA-pinned clone.
+    `boot.sh` needs five things from the environment: which pod config to run, which
+    commit to check out, which weights to pull and in what dtype, and the bar in hours
+    it enforces on the run with `timeout` (default: the pod's pre-registered
+    `gpu_budget_h`). Everything else it reads from the SHA-pinned clone. A bar of zero is
+    refused, not passed on: `timeout 0h` disables the limit, and every v1 pod config
+    carries `gpu_budget_h: 0.0`.
     """
     pod = load_pod(name)
+    hours = pod.gpu_budget_h if max_hours is None else max_hours
+    if hours <= 0:
+        raise ValueError(
+            f"--max-hours {hours:g} is no bar: pre-register gpu_budget_h > 0 in"
+            f" configs/pods/{name}.yaml or pass --max-hours"
+        )
     return [
         "vastai",
         "create",
@@ -209,7 +221,8 @@ def launch_command(name: str, offer: str, sha: str) -> list[str]:
         "--disk",
         "80",
         "--env",
-        f"-e POD={name} -e SHA={sha} -e MODEL={pod.model} -e DTYPE={pod.dtype}",
+        f"-e POD={name} -e SHA={sha} -e MODEL={pod.model} -e DTYPE={pod.dtype}"
+        f" -e MAX_HOURS={hours:g}",
         "--onstart",
         "scripts/pod/boot.sh",
         "--label",
@@ -287,15 +300,19 @@ def pod_name(arg: str) -> str:
     return m.group(1) if m else arg
 
 
-def launch(name: str, offer: str, dry_run: bool) -> int:
+def launch(name: str, offer: str, dry_run: bool, max_hours: float | None = None) -> int:
     pod = load_pod(name)
     sha = _head()
     reasons = launch_refusals(pod, sha)
+    try:
+        cmd = launch_command(name, offer, sha, max_hours)
+    except ValueError as exc:  # no enforceable bar (see launch_command)
+        reasons.append(str(exc))
+        cmd = []
     for r in reasons:
         print(f"REFUSE: {r}")
     if reasons:
         return 1
-    cmd = launch_command(name, offer, sha)
     out = REPO_ROOT / "results" / name
     m = manifest(name, sha, shlex.join(cmd), dry_run=False)
     if dry_run:
@@ -510,6 +527,7 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     )
     m["wall_clock_s"] = _wall_clock_s(text) or m.get("wall_clock_s")
     m["status"] = _status(text)
+    m["timeout"] = "===RUN_TIMEOUT_" in text  # the RUN_FAILED was boot.sh's `timeout`
     # A `[diag]` line the fetch cut in half parses into nothing. Counted in the manifest
     # (and failed by `check`) rather than dropped: the skip is evidence the log came back
     # truncated, which is a harvest to redo, not a pod that printed no diagnostics.
@@ -768,6 +786,12 @@ def main() -> int:
     ln.add_argument("--pod", required=True)
     ln.add_argument("--offer", required=True)
     ln.add_argument("--dry-run", action="store_true", help="print the command, launch nothing")
+    ln.add_argument(
+        "--max-hours",
+        type=float,
+        default=None,
+        help="the bar boot.sh enforces on the run with `timeout`; default: the pod's gpu_budget_h",
+    )
     h = sub.add_parser("harvest", help="parse a pod's log into records")
     h.add_argument("--pod", required=True, help="pod name, or a watchdog label <pod>-<instance>")
     h.add_argument("--log", default=None, help="default: fetch it with the vast.ai CLI")
@@ -786,7 +810,7 @@ def main() -> int:
     if a.cmd == "run":
         return run(name, out, a.dry_run)
     if a.cmd == "launch":
-        return launch(name, a.offer, a.dry_run)
+        return launch(name, a.offer, a.dry_run, a.max_hours)
     return harvest(name, Path(a.log) if a.log else None, out, a.force)
 
 

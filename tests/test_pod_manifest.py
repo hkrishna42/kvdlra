@@ -198,6 +198,23 @@ def test_harvest_records_a_failed_run(dry_pod: Path, tmp_path: Path) -> None:
     assert json.loads((tmp_path / "manifest.json").read_text())["status"] == "RUN_FAILED"
 
 
+def test_harvest_records_a_timeout_as_a_failed_run(dry_pod: Path, tmp_path: Path) -> None:
+    """A run that reaches `--max-hours` prints ===RUN_TIMEOUT_ and then the same
+    ===RUN_FAILED_ as any failed run: the status stays RUN_FAILED (the watchdog and
+    `check` know one failure kind) and the reason survives as `timeout: true`."""
+    tmp_path = _copy(dry_pod, tmp_path)
+    log = tmp_path / "pod.log"
+    log.write_text(
+        LOG.replace(
+            "===ALL_DONE_w18_g1_deadbeef===",
+            "===RUN_TIMEOUT_w18_g1_18.3h===\n===RUN_FAILED_w18_g1_deadbeef===",
+        )
+    )
+    _run("harvest", "--pod", "w18_g1", "--log", str(log), "--out", str(tmp_path))
+    m = json.loads((tmp_path / "manifest.json").read_text())
+    assert (m["status"], m["timeout"]) == ("RUN_FAILED", True)
+
+
 def test_harvest_refuses_to_shrink_an_existing_trials_file(dry_pod: Path, tmp_path: Path) -> None:
     """A short log -- the 5000-line fallback, a truncated fetch -- must not overwrite a
     good harvest. The files on disk are left exactly as they were."""
@@ -275,6 +292,8 @@ def test_launch_refuses_a_pod_with_no_prereg() -> None:
     The refusal is checked before `vastai` is reached, so `--dry-run` proves it."""
     r = _run("launch", "--pod", "w18_g1", "--offer", "12345678", "--dry-run")
     assert r.returncode == 1 and "prereg" in r.stdout + r.stderr
+    # ...and its `gpu_budget_h: 0.0` is the second refusal: no bar for boot.sh to enforce.
+    assert "max-hours" in r.stdout + r.stderr
 
 
 def test_prereg_refusal_reasons(tmp_path: Path) -> None:
@@ -288,14 +307,29 @@ def test_prereg_refusal_reasons(tmp_path: Path) -> None:
 
 def test_launch_dry_run_prints_the_vastai_command(tmp_path: Path) -> None:
     """The command is the one the boot-script header documents: image from the pod
-    YAML, --disk 80, the POD/SHA/MODEL/DTYPE env, boot.sh as --onstart."""
-    cmd = pod.launch_command("w18_g1", "12345678", "deadbeef")
+    YAML, --disk 80, the POD/SHA/MODEL/DTYPE/MAX_HOURS env, boot.sh as --onstart."""
+    cmd = pod.launch_command("w18_g1", "12345678", "deadbeef", max_hours=2.5)
     assert cmd[:4] == ["vastai", "create", "instance", "12345678"]
     joined = " ".join(cmd)
     assert "--disk 80" in joined and "--onstart scripts/pod/boot.sh" in joined
     assert "--label kvdlra-w18_g1" in joined
     assert "-e POD=w18_g1 -e SHA=deadbeef" in joined
+    assert "-e DTYPE=bfloat16 -e MAX_HOURS=2.5" in joined  # inside the one --env string
     assert load_pod("w18_g1").image in joined
+
+
+def test_launch_max_hours_defaults_to_the_pod_budget() -> None:
+    """The bar boot.sh enforces on the pod (`timeout`) is the pre-registered one unless
+    the launch says otherwise. A pod with no budget -- every v1 pod -- has no bar to
+    enforce and is refused rather than launched open-ended: `timeout 0h` DISABLES the
+    limit, so a zero can never reach the command."""
+    joined = " ".join(pod.launch_command("filler_realism", "1", "deadbeef"))
+    hours = float(joined.split("MAX_HOURS=")[1].split()[0])
+    assert hours == load_pod("filler_realism").gpu_budget_h == 18.3
+    with pytest.raises(ValueError, match="max-hours"):
+        pod.launch_command("w18_g1", "1", "deadbeef")  # gpu_budget_h: 0.0
+    with pytest.raises(ValueError, match="max-hours"):
+        pod.launch_command("filler_realism", "1", "deadbeef", max_hours=0.0)
 
 
 # w18_g1's expected cell set, spelled out rather than re-derived: three arms by their
@@ -594,6 +628,8 @@ def test_the_watchdog_keeps_the_env_block_rows() -> None:
     kept = [
         *ENV_BLOCK,
         "triton=3.5.0 omegaconf=2.3.0 datasets=2.21.0 numpy=2.1.3 scipy=1.14.1",
+        "===RUN_TIMEOUT_w18_g1_18.3h===",  # L2.1: boot.sh's budget and self-destruct
+        "===SELF_DESTRUCT_FAILED_w18_g1===",  # markers reach the harvested log
     ]
     r = subprocess.run(
         ["grep", "-aE", rows],

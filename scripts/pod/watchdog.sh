@@ -17,8 +17,13 @@
 # <label>.log and turn them into records with `scripts/pod.py harvest` (which takes the
 # pod name or the label, and refuses to shrink an existing harvest). It commits nothing
 # and pushes nothing -- the orchestrator commits the harvest.
-# Credit floor -> destroy everything. Run detached (python double-fork) + caffeinate.
-#   BUDGET_ITERS (default 600 x 150s = 25h) -- give a long pole a bigger budget.
+# Credit floor -> destroy everything; so does the BUDGET_ITERS expiry (default 600 x 150s
+# = 25h -- give a long pole a bigger budget): a watchdog that stops polling must not leave
+# a pod billing (D-011 addendum 2). Run detached, and under caffeinate -s -i so the Mac
+# cannot sleep past a finished pod (D-011 addendum 8: ~$12 of idle billing):
+#   caffeinate -s -i scripts/pod/watchdog.sh <pod>
+# boot.sh's own budget markers (RUN_TIMEOUT, SELF_DESTRUCT_FAILED) are kept in ROWS so
+# they reach the harvested log; the pod also self-destructs GRACE_S after its final marker.
 POD="${1:?usage: watchdog.sh <pod>}"
 cd "$(dirname "$0")/../.." || exit 1
 export PATH="$HOME/.local/bin:$PATH"
@@ -30,12 +35,15 @@ FLOOR="${FLOOR:-6.0}"; BUDGET_ITERS="${BUDGET_ITERS:-600}"
 # writes stays on the destroyed instance, and a rebuilt one is what `check` reads. The
 # `===ENV_` markers alone are not enough: `sort -u` scatters the block's contents, so
 # every line the harvest needs has to match on its own.
-ROWS='^\[(niah|vt|persist|latency)[^]]*\] +[^ ].* (acc=|SKIP|bytes=|ms/tok=)|^ +[^ ].* \[T=[0-9]+\] (ppl=|OOM|error|mem alloc)|^\[pplw|^\[diag|^\[trial\]|^\[error\]|^===(ALL_DONE|RUN_FAILED|CLONE_FAILED|CHECKOUT_FAILED|DEPS_FAILED|MODEL_FAILED|POD_|RUN_SHA|ENV_|QUANTO|HQQ|MODEL_)|^run_sha=|^device=|^python=|^torch=|^triton=|^transformers=|NVIDIA'
+ROWS='^\[(niah|vt|persist|latency)[^]]*\] +[^ ].* (acc=|SKIP|bytes=|ms/tok=)|^ +[^ ].* \[T=[0-9]+\] (ppl=|OOM|error|mem alloc)|^\[pplw|^\[diag|^\[trial\]|^\[error\]|^===(ALL_DONE|RUN_FAILED|RUN_TIMEOUT|SELF_DESTRUCT|CLONE_FAILED|CHECKOUT_FAILED|DEPS_FAILED|MODEL_FAILED|POD_|RUN_SHA|ENV_|QUANTO|HQQ|MODEL_)|^run_sha=|^device=|^python=|^torch=|^triton=|^transformers=|NVIDIA'
 # boot.sh's pre-run failures. The instance is destroyed on any of them exactly as on
 # ALL_DONE -- a pod that could not clone, check out, install, load the model or import
 # its quant backend has nothing left to do but bill. `pod.py harvest` reads the same
 # markers back and records `status: BOOT_FAILED`.
 BOOT='CLONE_FAILED|CHECKOUT_FAILED|DEPS_FAILED|MODEL_FAILED|QUANTO_MISSING|HQQ_MISSING'
+destroy_all() {
+  while IFS=: read -r lab id mode tag; do [ -n "$id" ] && echo y | vastai destroy instance "$id" >/dev/null 2>&1; done < "$H/pods.txt"
+}
 for iter in $(seq 1 "$BUDGET_ITERS"); do
   while IFS=: read -r lab id mode tag; do
     [ -z "$lab" ] && continue
@@ -60,7 +68,7 @@ for iter in $(seq 1 "$BUDGET_ITERS"); do
   echo "$(date +%H:%M) iter=$iter done=$nd/$tot credit=\$$cr"
   if [ -n "$cr" ] && awk "BEGIN{exit !($cr < $FLOOR)}" 2>/dev/null; then
     echo "!!! CREDIT FLOOR <\$$FLOOR -- destroy all"
-    while IFS=: read -r lab id mode tag; do [ -n "$id" ] && echo y | vastai destroy instance "$id" >/dev/null 2>&1; done < "$H/pods.txt"
+    destroy_all
     echo "FLOOR_STOP $(date)" > "$H/status.txt"; exit 0
   fi
   if [ "$tot" -gt 0 ] && [ "$nd" -ge "$tot" ] && [ -z "${KEEP_ALIVE:-}" ]; then
@@ -68,4 +76,6 @@ for iter in $(seq 1 "$BUDGET_ITERS"); do
   fi
   sleep 150
 done
+echo "!!! BUDGET_ITERS=$BUDGET_ITERS expired -- destroy all"
+destroy_all
 echo "BUDGET_EXPIRED $(date)" > "$H/status.txt"

@@ -154,14 +154,17 @@ def load_task(name: str) -> TaskCfg:
     ceiling, and v1's `wikitext-103` is capped by the loader, not by the corpus.
 
     A v2 task is refused when ``n_trials`` is not the product of its ``design`` (a cell
-    would be enumerated twice or not at all) or when it asks for more depths than the
-    six-point grid holds.
+    would be enumerated twice or not at all), when it asks for more depths than the
+    six-point grid holds, or when ``design`` names a key the generator does not read (it
+    would enter the product ``n_trials`` must equal without entering the enumeration).
     """
     p = ROOT / "tasks" / f"{name}.yaml"
     raw = cast(DictConfig, OmegaConf.load(p))  # a task file is a mapping, never a list
     t: TaskCfg = _load("tasks", name, TaskV2Cfg if raw.get("generator") == "v2" else TaskCfg)
     bad = []
     if isinstance(t, TaskV2Cfg):
+        for k in sorted(set(t.design) - {"haystacks", "depths", "codes"}):
+            bad.append(f"design key {k!r} is not one of haystacks/depths/codes")
         want = math.prod(t.design.values())
         if t.n_trials != want:
             bad.append(f"n_trials={t.n_trials} != the design's product {want} ({t.design})")

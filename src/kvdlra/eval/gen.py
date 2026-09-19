@@ -6,8 +6,9 @@ gist. This one draws the haystack from real text -- four sources materialized on
 pod by `kvdlra.eval.haystacks` (PG-19 books, arXiv papers, Wikipedia, Paul Graham
 essays) -- and enumerates the trials of a task over a balanced design, ``codes x depths
 x haystacks`` (`config.TaskV2Cfg.design`): every (depth, code family) cell sees the same
-number of haystacks, and the sources rotate with the trial index so each appears equally
-often. ``seed`` changes the draws (which document, where the window starts, which needle
+number of haystacks, and the source rotates with the haystack, depth and draw indices --
+never with the code family (`design_source`), so family and source do not co-vary.
+``seed`` changes the draws (which document, where the window starts, which needle
 values), never the design.
 
 Task semantics mirror NVIDIA/RULER's synthetic ``niah`` and ``variable_tracking``
@@ -132,9 +133,10 @@ def _corpora(names: tuple[str, ...], root: Path, fixture: Path | None) -> dict[s
 
 def sentences(text: str) -> list[str]:
     """``text`` split after terminal punctuation, whitespace normalized (a paragraph
-    break is a space), fragments under 20 characters dropped -- headings, stray
-    tokens -- as `data.load_corpus_sentences` does for the v1 realistic filler."""
-    return [s for s in _SENT_END.split(" ".join(text.split())) if len(s) >= 20]
+    break is a space), fragments under 20 characters or without a space dropped --
+    headings, stray tokens, bare URLs -- as `data.load_corpus_sentences` does for the
+    v1 realistic filler."""
+    return [s for s in _SENT_END.split(" ".join(text.split())) if len(s) >= 20 and " " in s]
 
 
 # ------------------------------------------------------------- the design
@@ -148,17 +150,35 @@ def depths(d: int) -> list[float]:
     return [DEPTH_GRID[round(i * 5 / (d - 1))] for i in range(d)]
 
 
-def design_cell(cfg: TaskV2Cfg, trial: int) -> tuple[int, float, str, int]:
-    """``trial`` -> (haystack_idx, depth, code_family, code_idx).
-
-    The lexicographic product codes (outer) x depths x haystacks (inner): trials
-    ``0..n-1`` with ``n = prod(design)`` cover the design exactly once. The family
-    alternates with the code index, so ``codes: 4`` over two families is two draws of
-    each per (haystack, depth)."""
+def _indices(cfg: TaskV2Cfg, trial: int) -> tuple[int, int, int]:
+    """``trial`` -> (haystack_idx, depth_idx, code_idx): the lexicographic product codes
+    (outer) x depths x haystacks (inner), so trials ``0..n-1`` with ``n = prod(design)``
+    cover the design exactly once."""
     nh, nd = cfg.design["haystacks"], cfg.design["depths"]
     h, rest = trial % nh, trial // nh
-    d, c = rest % nd, rest // nd
-    return h, depths(nd)[d], cfg.code_families[c % len(cfg.code_families)], c
+    return h, rest % nd, rest // nd
+
+
+def design_cell(cfg: TaskV2Cfg, trial: int) -> tuple[int, float, str, int]:
+    """``trial`` -> (haystack_idx, depth, code_family, code_idx) (`_indices`, the depth
+    index resolved through `depths`). The family alternates with the code index, so
+    ``codes: 4`` over two families is two draws of each per (haystack, depth); the
+    source of the haystack is `design_source`'s."""
+    h, d, c = _indices(cfg, trial)
+    return h, depths(cfg.design["depths"])[d], cfg.code_families[c % len(cfg.code_families)], c
+
+
+def design_source(cfg: TaskV2Cfg, trial: int) -> str:
+    """The source of ``trial``'s haystack: ``haystacks[(h + depth_idx + H * replicate) %
+    len(haystacks)]`` with ``replicate = code_idx // n_families`` (ruling PR-L2-23).
+    The family (``code_idx % n_families``) never enters, so swapping it at a fixed
+    (haystack, depth, replicate) keeps the source: in the 2 x 3 x 4 design every
+    (depth, family) pair sees all four sources once (six trials per source), in 4 x 3 x 4
+    twice. ``trial % len(haystacks)`` would have paired family with source in every
+    two-haystack design."""
+    h, d, c = _indices(cfg, trial)
+    i = h + d + cfg.design["haystacks"] * (c // len(cfg.code_families))
+    return cfg.haystacks[i % len(cfg.haystacks)]
 
 
 def _window(tok: Any, docs: list[Doc], first: int, seed: int, ctx: int) -> tuple[list[str], str]:
@@ -167,12 +187,18 @@ def _window(tok: Any, docs: list[Doc], first: int, seed: int, ctx: int) -> tuple
     source (wrapping) when it runs out. Each sentence is tokenized ONCE (no special
     tokens -- a per-sentence BOS would overcount) and the counts accumulate, O(n) in
     the window. Returns the sentences and the compact id ``<source>:<doc>`` or
-    ``<source>:<first>..<last>:<n_docs>``."""
+    ``<source>:<first>..<last>:<n_docs>`` over the documents that contributed a
+    sentence: a later document without a usable one is passed over unrecorded; the
+    first one is where the offset is drawn, so it is refused."""
     sents: list[str] = []
     total, used = 0, []
     for k in range(len(docs)):
         doc = docs[(first + k) % len(docs)]
         pool = sentences(doc["text"])
+        if not pool:
+            if k == 0:
+                raise ValueError(f"{doc['source']}:{doc['id']}: no usable sentence")
+            continue
         used.append(doc["id"])
         for s in pool[random.Random(seed).randrange(len(pool)) if k == 0 else 0 :]:
             sents.append(s)
@@ -248,12 +274,12 @@ def make_trial(
     corpora: dict[str, list[Doc]],
 ) -> Trial:
     """Build the prompt of one (task, seed, trial) cell: the haystack from the design's
-    source and document, the needles of the task at the design depth, RULER's template
-    around them. Deterministic in its arguments, which is what the pairing invariant
-    (byte-identical prompts across arms) rests on."""
+    source (`design_source`) and document (``(haystack_idx + seed) % n_docs``), the
+    needles of the task at the design depth, RULER's template around them.
+    Deterministic in its arguments, which is what the pairing invariant (byte-identical
+    prompts across arms) rests on."""
     h, depth, family, _ = design_cell(cfg, trial)
-    source = cfg.haystacks[trial % len(cfg.haystacks)]
-    docs = corpora[source]
+    docs = corpora[design_source(cfg, trial)]
     sents, hay_id = _window(tok, docs, (h + seed) % len(docs), seed, cfg.ctx)
     n_sentences = len(sents)
     g = torch.Generator().manual_seed(seed * 131 + trial)  # the v1 seed formula

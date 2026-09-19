@@ -285,6 +285,8 @@ def _cell(
                 f.write(json.dumps(row, sort_keys=True) + "\n")
                 f.flush()
             depth = row["depth"]
+            # `%.2f` round-trips log -> disk only while every depth grid is 2-decimal
+            # (the six-point `gen.DEPTH_GRID` is); a finer grid needs a wider print.
             print(
                 f"[trial] task={sub} ctx={task.ctx} arm={arm['name']} seed={seed} "
                 f"trial={tid} hit={hit} frac={frac:.3f} generator={task.generator}"

@@ -8,6 +8,8 @@ doc: >-
   Design haystacks x depths x codes = 2 x 3 x 2 = 12 trials per seed at depths 0.05 / 0.4 / 0.95,
   one seed, chunked prefill: the smoke pod's n = 12 (lane L2 item 8, harness validation, not paper
   data). ruler_v2_16k_g1 is the 24-trial Gate-1 design at this context.
+  vt's value takes the cell's code family -- a deviation from official RULER's numbers-only vt,
+  kept so code_family is truthful per row (ruling R-L2-4).
 tasks: ["niah_single", "niah_multikey", "niah_multivalue", "niah_multiquery", "vt"]
 n_trials: 12
 seeds: [0]

@@ -16,8 +16,9 @@ import re
 import subprocess
 import sys
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pod
 import pytest
@@ -29,14 +30,17 @@ from kvdlra.eval.gen import (
     Trial,
     depths,
     design_cell,
+    design_source,
     load_corpora,
     make_trial,
     make_trial_v1,
+    sentences,
 )
 
 REPO = Path(__file__).resolve().parents[1]
 FIX = Path(__file__).parent / "fixtures" / "haystacks_tiny.jsonl"
 TASKS = ["niah_single", "niah_multikey", "niah_multivalue", "niah_multiquery", "vt"]
+V2_TASKS = ["ruler_v2_16k", "ruler_v2_32k", "ruler_v2_16k_g1", "ruler_v2_16k_g2"]
 CFG = TaskV2Cfg(
     name="t",
     generator="v2",
@@ -75,19 +79,86 @@ def test_depths_are_spread_evenly_over_the_grid() -> None:
     assert depths(2) == [0.05, 0.95]
 
 
+def _sources(design: dict[str, int]) -> tuple[TaskV2Cfg, list[str]]:
+    cfg = replace(CFG, n_trials=math.prod(design.values()), design=design)
+    return cfg, [design_source(cfg, t) for t in range(cfg.n_trials)]
+
+
 def test_every_source_is_used_equally(tok: Any, corpora: dict[str, list[Any]]) -> None:
-    """Over the 24 trials of a design every source appears 6 times, and the two haystacks
-    of one (depth, code) cell come from two different sources."""
+    """PR-L2-23, enumerated: in the 2 x 3 x 4 design every (depth, family) pair sees all
+    four sources exactly once and each source is used six times; in 4 x 3 x 4 every pair
+    sees every source twice. The two haystacks of one (depth, code) cell still come from
+    two sources, and the prompt's haystack comes from the source the design names."""
+    for design, per_pair in ((CFG.design, 1), ({"haystacks": 4, "depths": 3, "codes": 4}, 2)):
+        cfg, sources = _sources(design)
+        assert Counter(sources) == dict.fromkeys(CFG.haystacks, 6 * per_pair)
+        by_pair: dict[tuple[float, str], Counter[str]] = {}
+        by_cell: dict[tuple[float, int], set[str]] = {}
+        for t, src in enumerate(sources):
+            _h, depth, fam, code = design_cell(cfg, t)
+            by_pair.setdefault((depth, fam), Counter())[src] += 1
+            by_cell.setdefault((depth, code), set()).add(src)
+        assert len(by_pair) == 6 and len(by_cell) == 12
+        assert all(seen == dict.fromkeys(CFG.haystacks, per_pair) for seen in by_pair.values())
+        assert set(map(len, by_cell.values())) == {design["haystacks"]}
     trials = [
         make_trial(CFG, tok, "niah_single", seed=0, trial=t, corpora=corpora) for t in range(24)
     ]
-    sources = [t.meta["haystack_id"].split(":")[0] for t in trials]
-    assert Counter(sources) == dict.fromkeys(CFG.haystacks, 6)
-    by_cell: dict[tuple[float, int], set[str]] = {}
-    for t, src in zip(range(24), sources, strict=True):
-        _h, depth, _fam, code = design_cell(CFG, t)
-        by_cell.setdefault((depth, code), set()).add(src)
-    assert set(map(len, by_cell.values())) == {2} and len(by_cell) == 12
+    assert [t.meta["haystack_id"].split(":")[0] for t in trials] == _sources(CFG.design)[1]
+
+
+def test_the_family_never_changes_the_source() -> None:
+    """In every design, swapping the code family at a fixed (haystack, depth, replicate)
+    leaves the source unchanged -- the four task YAMLs' designs and four odd shapes, every
+    trial, every partner within the design."""
+    designs = [cast(TaskV2Cfg, load_task(n)).design for n in V2_TASKS] + [
+        {"haystacks": 1, "depths": 1, "codes": 2},
+        {"haystacks": 3, "depths": 6, "codes": 4},
+        {"haystacks": 4, "depths": 2, "codes": 6},
+        {"haystacks": 2, "depths": 5, "codes": 3},
+    ]
+    n_fam = len(CFG.code_families)
+    for design in designs:
+        cfg, sources = _sources(design)
+        nh, nd, nc = design["haystacks"], design["depths"], design["codes"]
+        swaps = 0
+        for t in range(cfg.n_trials):
+            h, d, c = t % nh, t // nh % nd, t // nh // nd  # codes (outer) x depths x haystacks
+            cell = design_cell(cfg, t)
+            assert (cell[0], cell[3]) == (h, c)
+            for partner in range(c // n_fam * n_fam, min(c // n_fam * n_fam + n_fam, nc)):
+                assert sources[h + nh * (d + nd * partner)] == sources[t], (design, t)
+                swaps += partner != c
+        # every trial has n_fam - 1 partners, except those in a trailing partial block
+        assert swaps == cfg.n_trials * (n_fam - 1) - nh * nd * (nc % n_fam) * (n_fam - nc % n_fam)
+
+
+def test_sentences_drop_fragments_without_a_space() -> None:
+    """Parity with `data.load_corpus_sentences`: a bare URL is long enough but not a sentence."""
+    url = "https://example.org/a/long/path/with/no/space/in/it."
+    assert len(url) >= 20
+    text = f"A first sentence with spaces in it.\n\n{url} Then a second sentence follows it."
+    assert sentences(text) == [
+        "A first sentence with spaces in it.",
+        "Then a second sentence follows it.",
+    ]
+
+
+def test_window_refuses_an_empty_first_doc_and_skips_an_empty_later_one(tok: Any) -> None:
+    """A document without a usable sentence: the module's own error, naming source and id,
+    when the window starts in it; passed over and left out of the id when it is a later one."""
+    from kvdlra.eval.gen import Doc, _window
+
+    def doc(i: int, text: str) -> Doc:
+        return {"id": f"d{i}", "source": "s", "text": text, "sha256": ""}
+
+    head = doc(0, "One good sentence of prose here. " * 8)  # 48 tokens at most
+    bare = doc(1, "https://example.org/no/space/and/no/terminal/punctuation")
+    tail = doc(2, "Another good sentence of prose here. " * 40)
+    with pytest.raises(ValueError, match=r"^s:d1: no usable sentence"):
+        _window(tok, [bare, head], 0, 0, 8)
+    sents, hay = _window(tok, [head, bare, tail], 0, 0, 64)
+    assert hay == "s:d0..d2:2" and sum(len(s.split()) for s in sents) >= 64
 
 
 def test_haystack_id_is_compact_and_spans_docs(tok: Any, corpora: dict[str, list[Any]]) -> None:
@@ -213,12 +284,15 @@ def test_load_corpora_reads_the_fixture_and_skips_its_provenance_row(
 def test_materialize_writes_docs_and_their_digest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Short rows are skipped, ids are `d<index>` in materialization order, the JSONL's
-    sha256 is returned and written beside it -- network-free through a fake stream."""
+    """Short and oversized rows are skipped, ids are `d<index>` in materialization order,
+    the JSONL's sha256 is returned and written beside it -- network-free through a fake
+    stream."""
     from kvdlra.eval import haystacks
 
     calls: list[dict[str, Any]] = []
-    rows = [{"text": "x" * 10}, {"text": "a" * 2500}, {"text": "b" * 3000}, {"text": "c" * 4000}]
+    assert (haystacks.MIN_CHARS, haystacks.MAX_CHARS) == (2_000, 2_000_000)
+    rows = [{"text": "x" * 10}, {"text": "z" * (haystacks.MAX_CHARS + 1)}]  # a stub, a compilation
+    rows += [{"text": "a" * 2500}, {"text": "b" * 3000}, {"text": "c" * 4000}]
 
     def fake_load_dataset(**kw: Any) -> list[dict[str, Any]]:
         calls.append(kw)
@@ -279,9 +353,8 @@ def test_prepare_is_a_subcommand() -> None:
 
 
 def test_v2_task_yamls_load_and_hash() -> None:
-    names = ["ruler_v2_16k", "ruler_v2_32k", "ruler_v2_16k_g1", "ruler_v2_16k_g2"]
     hashes = set()
-    for name in names:
+    for name in V2_TASKS:
         t = load_task(name)
         assert isinstance(t, TaskV2Cfg) and t.generator == "v2"
         assert t.n_trials == math.prod(t.design.values())
@@ -321,6 +394,21 @@ def test_load_task_refuses_a_v2_design_that_does_not_match_n_trials(
         load_task("bad")
     (tmp_path / "tasks" / "bad.yaml").write_text(head + "n_trials: 24\n")  # the default design
     assert isinstance(load_task("bad"), TaskV2Cfg)
+
+
+def test_load_task_refuses_an_unknown_design_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A design key the generator does not read would enter the product `n_trials` must
+    equal without entering the enumeration -- refused, naming the file and the key."""
+    (tmp_path / "tasks").mkdir()
+    monkeypatch.setattr("kvdlra.eval.config.ROOT", tmp_path)
+    (tmp_path / "tasks" / "bad.yaml").write_text(
+        "name: bad\ngenerator: v2\nctx: 1024\ntasks: [vt]\nseeds: [0]\nn_trials: 24\n"
+        "design: {haystacks: 2, depths: 3, codes: 4, seeds: 1}\n"
+    )
+    with pytest.raises(ValueError, match=r"bad\.yaml.*design key 'seeds'"):
+        load_task("bad")
 
 
 # ------------------------------------------------------------------ the log line

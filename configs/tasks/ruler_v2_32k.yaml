@@ -5,6 +5,8 @@ doc: >-
   ruler_v2_16k at 32K: the same five tasks, four sources, templates and code families, the same
   2 x 3 x 2 = 12-trial design per seed at depths 0.05 / 0.4 / 0.95, one seed, chunked prefill.
   The smoke pod's long-context cell (lane L2 item 8).
+  vt's value takes the cell's code family -- a deviation from official RULER's numbers-only vt,
+  kept so code_family is truthful per row (ruling R-L2-4).
 tasks: ["niah_single", "niah_multikey", "niah_multivalue", "niah_multiquery", "vt"]
 n_trials: 12
 seeds: [0]

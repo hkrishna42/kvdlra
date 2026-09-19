@@ -6,6 +6,8 @@ doc: >-
   depths x codes = 4 x 3 x 4 = 48 trials per seed -- every (depth, code family) cell holds one
   haystack from each of the four sources. One seed, chunked prefill; the baseline-comparison pods
   of lane L2 items 4-7 consume it.
+  vt's value takes the cell's code family -- a deviation from official RULER's numbers-only vt,
+  kept so code_family is truthful per row (ruling R-L2-4).
 tasks: ["niah_single", "niah_multikey", "niah_multivalue", "niah_multiquery", "vt"]
 n_trials: 48
 seeds: [0]

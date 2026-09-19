@@ -6,6 +6,8 @@ doc: >-
   four sources, design haystacks x depths x codes = 2 x 3 x 4 = 24 trials per seed -- every
   (depth, code family) cell holds two haystacks from two sources, each source appears six times,
   two code draws per family per (haystack, depth). One seed, chunked prefill.
+  vt's value takes the cell's code family -- a deviation from official RULER's numbers-only vt,
+  kept so code_family is truthful per row (ruling R-L2-4).
 tasks: ["niah_single", "niah_multikey", "niah_multivalue", "niah_multiquery", "vt"]
 n_trials: 24
 seeds: [0]

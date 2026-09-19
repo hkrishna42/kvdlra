@@ -1,10 +1,10 @@
 """The real-text haystack sources of generator v2, materialized once per pod.
 
-`materialize` streams the first ``n_docs`` documents of at least `MIN_CHARS` characters
-from one Hub dataset into ``data/haystacks/<source>.jsonl`` (one `gen.Doc` per line,
-ids ``d<index>`` in stream order) and writes the JSONL's sha256 beside it; the run
-records that digest in ``manifest.dataset_sha256["haystack:<source>"]``, so the text a
-cell was built on is named by the evidence that cites it. ``data/haystacks/`` is
+`materialize` streams the first ``n_docs`` documents of `MIN_CHARS` to `MAX_CHARS`
+characters from one Hub dataset into ``data/haystacks/<source>.jsonl`` (one `gen.Doc`
+per line, ids ``d<index>`` in stream order) and writes the JSONL's sha256 beside it; the
+run records that digest in ``manifest.dataset_sha256["haystack:<source>"]``, so the text
+a cell was built on is named by the evidence that cites it. ``data/haystacks/`` is
 gitignored: `scripts/pod.py prepare --pod <pod>` (or `run`, when a source is missing)
 is what fills it.
 
@@ -41,6 +41,10 @@ from datasets import load_dataset
 from kvdlra.eval.gen import HAYSTACKS, Doc
 
 MIN_CHARS = 2_000  # a shorter row is a stub or a fragment, not a haystack document
+# A longer row is a compilation, not a document -- compilations and scripture at the
+# head of PG-19's train split (the KJV Bible, 4.3 M chars; a "Library of the Future"
+# anthology, 5.4 M) would otherwise be the seed-0 pg19 haystacks.
+MAX_CHARS = 2_000_000
 
 # source -> (`load_dataset` keyword arguments, the text field of a row).
 SOURCES: dict[str, tuple[dict[str, Any], str]] = {
@@ -83,22 +87,24 @@ SOURCES: dict[str, tuple[dict[str, Any], str]] = {
 
 def materialize(source: str, n_docs: int = 64, out: Path = HAYSTACKS) -> str:
     """Stream ``source`` into ``<out>/<source>.jsonl`` + ``<source>.sha256``; returns the
-    sha256 of the JSONL bytes. Fails loud if the stream ends before ``n_docs`` documents
-    of at least `MIN_CHARS` characters: fewer would be a different corpus than the one
-    the design names."""
+    sha256 of the JSONL bytes. Rows shorter than `MIN_CHARS` or longer than `MAX_CHARS`
+    are skipped. Fails loud if the stream ends before ``n_docs`` documents: fewer would be
+    a different corpus than the one the design names."""
     kwargs, field = SOURCES[source]
     t0 = time.perf_counter()
     docs: list[Doc] = []
     for row in load_dataset(streaming=True, **kwargs):
         text = str(row[field])
-        if len(text) < MIN_CHARS:
+        if not MIN_CHARS <= len(text) <= MAX_CHARS:
             continue
         sha = hashlib.sha256(text.encode()).hexdigest()
         docs.append({"id": f"d{len(docs)}", "source": source, "text": text, "sha256": sha})
         if len(docs) == n_docs:
             break
     if len(docs) < n_docs:
-        raise RuntimeError(f"{source}: {len(docs)} documents of >= {MIN_CHARS} chars, not {n_docs}")
+        raise RuntimeError(
+            f"{source}: {len(docs)} documents of {MIN_CHARS}..{MAX_CHARS} chars, not {n_docs}"
+        )
     out.mkdir(parents=True, exist_ok=True)
     payload = "".join(json.dumps(d, sort_keys=True) + "\n" for d in docs).encode()
     (out / f"{source}.jsonl").write_bytes(payload)

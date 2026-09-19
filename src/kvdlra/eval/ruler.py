@@ -370,13 +370,23 @@ def retrieve(
         # final ChunkPress chunk violates ("Query length ... should be greater than
         # the window size"). RULER prefill uses logits_to_keep=1 + sdpa, so full-T
         # prefill is memory-safe (proven by ExpectedAttention surviving at 32K).
+        # A per-layer-budget press (PyramidKV) decodes one token per forward like the
+        # streaming caches: transformers' single causal mask is sized to layer 0's keys
+        # and a q_len>1 block trips it on every other layer (frontier `_press`).
         cache = DynamicCache()
         press = arm["make"]()
         with press(model) if press is not None else nullcontext():
             model(hay, past_key_values=cache, use_cache=True, logits_to_keep=1)
         fp = _footprint(arm, cache, ctx_len, n, h_kv)
         text = _decode(
-            model, tok, cache, query.to(device), ctx_len, device, block=True, max_new=max_new
+            model,
+            tok,
+            cache,
+            query.to(device),
+            ctx_len,
+            device,
+            block=not arm.get("per_layer_budget", False),
+            max_new=max_new,
         )
     frac = sum(t in text for t in targets) / len(targets)
     hit = frac >= 1.0

@@ -6,7 +6,9 @@ doc: >-
   eviction grid k in {0.10, 0.15, 0.25}; single-shot prefill (a scorer press). kvpress 0.5.1's
   PyramidKVPress at its defaults (window 64, kernel 5, beta 20): the budget is a pyramid over
   the layers, more tokens kept in the lower layers and fewer in the upper, whose mean over the
-  layers is the keep fraction -- and the mean is what is billed.
+  layers is the keep fraction -- and the mean is what is billed. Retrieval axes only: the
+  per-layer budgets decode one token per forward (transformers builds a single causal mask
+  per forward, sized to layer 0), and the ppl axis refuses the arm.
 press:
   family: pyramidkv
   keep: 0.15

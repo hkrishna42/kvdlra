@@ -166,7 +166,9 @@ def generate(
         with active(model) if active is not None else nullcontext():
             model(pre, past_key_values=cache, use_cache=True, logits_to_keep=1)
         fp = _footprint(arm, cache, ctx_len, n, h_kv)
-        text = _decode(model, tok, cache, last, ctx_len, device, block=True, max_new=max_new)
+        # PyramidKV (per-layer budgets) decodes token-by-token, as in `ruler.retrieve`.
+        block = not arm.get("per_layer_budget", False)
+        text = _decode(model, tok, cache, last, ctx_len, device, block=block, max_new=max_new)
     del cache
     gc.collect()
     return text, fp.ratio_fp16(ctx_len, n), fp.ratio_stored_bits(ctx_len, n)

@@ -129,11 +129,15 @@ def test_a_press_arm_with_no_press_parameters_is_refused() -> None:
         build_arm(cfg, model=None, t=1024)
 
 
-def test_new_arms_run_single_shot_and_carry_their_billing_fields() -> None:
+def test_new_arms_are_single_shot_and_carry_billing_fields() -> None:
     for stem in ("snapkv_k0.10", "pyramidkv_k0.15", "ea_k0.15"):
         arm = build_arm(load_arm(stem), model=None, t=16384)
         assert arm["chunkable"] is False and "press_type" not in arm
         assert arm["keep"] == float(stem.rsplit("k", 1)[1])
+        # Only the pyramid family carries the key (absent, not False, on every other press:
+        # the archived arms' golden dicts must not change).
+        assert ("per_layer_budget" in arm) is stem.startswith("pyramidkv")
+        assert arm.get("per_layer_budget", False) is stem.startswith("pyramidkv")
     arm = build_arm(load_arm("think_c0.5_snapkv_k0.15"), model=None, t=16384)
     assert arm["chunkable"] is False
     assert (arm["press_type"], arm["think_ratio"], arm["keep"]) == ("think_snapkv", 0.5, 0.15)
@@ -185,3 +189,82 @@ def test_think_snapkv_is_billed_measured_keep_times_the_channel_ratio(
     assert sbits == pytest.approx(want.ratio_stored_bits(ctx, n))
     # keep x (1 - ratio/2): the V half is untouched, the K half keeps half its channels
     assert ratio == pytest.approx(kept / ctx * 0.75 + want.aux_words * 2 / (2 * ctx * n))
+
+
+# ------------------------------------------------------- per-layer budgets (R-L2-5)
+
+
+def test_pyramidkv_decodes_token_by_token_and_the_uniform_presses_in_one_block(
+    tiny_model: LlamaForCausalLM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """transformers builds ONE causal mask per forward from layer 0's key count and never
+    slices it to a layer's own length, so a q_len>1 forward after a PyramidKV prefill
+    (448 vs 64 keys on the two tiny layers) raises. `retrieve` reads the arm's
+    ``per_layer_budget`` and decodes the query one token per forward (q_len=1: sdpa
+    skips the mask); forcing the key off reproduces the raise (the switch is
+    load-bearing), and a uniform press (snapkv) still decodes in one block."""
+    install_kvpress_prefill_compat()
+    from kvdlra.eval import ruler
+
+    seen: list[bool] = []
+    real = ruler._decode
+
+    def spy(*a: Any, **k: Any) -> str:
+        seen.append(bool(k["block"]))
+        return real(*a, **k)
+
+    monkeypatch.setattr(ruler, "_decode", spy)
+    n, h_kv, ctx = H * D, H, 512
+    hay, query = _prompt(ctx, 3), _prompt(6, 4)
+    cfg = load_arm("pyramidkv_k0.10")
+    cfg.press["keep"] = 0.5
+    arm = build_arm(cfg, tiny_model, ctx)
+    assert arm["per_layer_budget"] is True
+    kept = [
+        int(cast(Any, la).keys.shape[2]) for la in _prefill(tiny_model, arm["make"](), hay).layers
+    ]
+    assert kept == [448, 64], kept  # the per-layer key counts differ: the pyramid is active
+    args = (tiny_model, _StubTok(), arm, hay, query, ["needle"], "cpu", 0, n, h_kv, 4)
+    _hit, ratio, _frac, _sbits = ruler.retrieve(*args)
+    assert ratio == pytest.approx(acc.evict_footprint(ctx, n, 0.5).ratio_fp16(ctx, n))
+    with pytest.raises(RuntimeError, match="must match the size"):
+        ruler.retrieve(tiny_model, _StubTok(), {**arm, "per_layer_budget": False}, *args[3:])
+    snap = build_arm(load_arm("snapkv_k0.10"), tiny_model, ctx)
+    assert "per_layer_budget" not in snap
+    ruler.retrieve(tiny_model, _StubTok(), snap, *args[3:])
+    assert seen == [False, True, True]
+
+
+def test_run_ppl_refuses_a_pyramidkv_arm_as_a_recorded_error(
+    tiny_model: LlamaForCausalLM, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The ppl axis scores a 512-token window in ONE forward, which the single mask
+    forbids for per-layer budgets; the arm is refused before scoring, and the refusal
+    lands where any failed ppl arm does -- a ``status: error`` row the runner prints as
+    an ``[error] axis=ppl`` line and counts -- never an exception out of the sweep."""
+    from kvdlra.eval.frontier import run_ppl, windows
+    from kvdlra.eval.runner import _log_ppl_errors
+
+    t, w = 64, 16
+    arm = build_arm(load_arm("pyramidkv_k0.15"), tiny_model, t)
+    rows = run_ppl(
+        [arm],
+        tiny_model,
+        windows(_prompt(200, 7)[0], t, w, 1),
+        t,
+        chunk=0,
+        n=H * D,
+        h_kv=H,
+        device="cpu",
+    )
+    (row,) = rows
+    assert row["method"] == "pyramidkv_k0.15" and row["status"] == "error"
+    assert row["error"].startswith(
+        "ValueError: pyramidkv_k0.15: PyramidKV's per-layer budgets cannot be scored through"
+        " transformers' single causal mask (a 512-token window in one forward)"
+    )
+    assert "per-token perplexity scoring is not implemented" in row["error"]
+    assert _log_ppl_errors(rows) == 1
+    assert (
+        "[error] axis=ppl arm=pyramidkv_k0.15 ctx=64 error=ValueError:" in capsys.readouterr().out
+    )

@@ -299,7 +299,14 @@ def _press(cfg: ArmCfg) -> dict[str, Any]:
     (:mod:`kvdlra.baselines.svd_oracle`); everything else is a kvpress press of
     `presses.make_press`'s family, carrying ``keep`` (an eviction press's kept fraction)
     and/or ``think_ratio`` (ThinK's channel ratio). ``press_type`` is what `_footprint`
-    branches on for the analytic footprints; a plain eviction press has none."""
+    branches on for the analytic footprints; a plain eviction press has none.
+
+    ``per_layer_budget`` (the pyramidkv family only; ABSENT on every other press, so the
+    archived arms' dicts are unchanged): PyramidKV keeps a different token count per
+    layer, and transformers builds ONE causal mask per forward from layer 0's key count
+    that no attention path slices to a layer's own length -- so any q_len>1 forward after
+    prefill raises. The retrieval axes read the key and decode one token per forward
+    (q_len=1 needs no mask); `run_ppl` refuses the arm (ruling R-L2-5)."""
     p = cfg.press
     if "rank" in p:
         from kvdlra.baselines.svd_oracle import SVDOraclePress
@@ -317,6 +324,8 @@ def _press(cfg: ArmCfg) -> dict[str, Any]:
     if "ratio" in p:
         arm["press_type"] = press_family(cfg)
         arm["think_ratio"] = float(p["ratio"])
+    if press_family(cfg) == "pyramidkv":
+        arm["per_layer_budget"] = True
     return arm
 
 
@@ -489,6 +498,15 @@ def run_ppl(
     for arm in arms:
         peak_ctx = acc.measure_peak_gpu(device)
         try:
+            if arm.get("per_layer_budget"):
+                # Inside the try: the refusal is RECORDED as this arm's error row (and the
+                # runner's `[error] axis=ppl` line), never an exception out of the sweep.
+                raise ValueError(
+                    f"{arm['name']}: PyramidKV's per-layer budgets cannot be scored through"
+                    " transformers' single causal mask (a 512-token window in one forward);"
+                    " the retrieval axes decode token-by-token -- per-token perplexity"
+                    " scoring is not implemented"
+                )
             with peak_ctx as peak_get:
                 total_nll, total_tok = 0.0, 0
                 window_nlls: list[float] = []  # per-window MEAN nll (nats/token)

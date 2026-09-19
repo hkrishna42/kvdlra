@@ -602,9 +602,12 @@ def table_baselines() -> tuple[str, str]:
     src = (("w15-confirm", "shadow-r64"), ("w11-goalA-ruler", "ea-k0.25"))
     rows = []
     for pod, arm in src:
-        cells = {r["task"]: r for r in _cells(pod) if r["arm"] == arm and r["ctx"] == K16}
+        found = [r for r in _cells(pod) if r["arm"] == arm and r["ctx"] == K16]
+        cells = {r["task"]: r for r in found}
         if not cells:
             raise SystemExit(f"no aggregate rows: {pod} {arm} ctx={K16}")
+        if len(cells) != len(found):  # keying by task would silently keep the last one
+            raise SystemExit(f"duplicate (arm, task, ctx) row: {pod} {arm} ctx={K16}")
         if any(r["n"] is not None or r["hits"] is not None for r in cells.values()):
             raise SystemExit(f"{pod} {arm} carries hits/n: count it from records, not here")
         ratios = {r["ratio"] for r in cells.values()}

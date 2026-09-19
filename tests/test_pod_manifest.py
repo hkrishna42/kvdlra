@@ -14,7 +14,8 @@ from pathlib import Path
 import pod
 import pytest
 
-from kvdlra.eval.config import config_hash, load_arm, load_pod, load_task
+from kvdlra.eval.config import TaskV2Cfg, config_hash, load_arm, load_pod, load_task
+from kvdlra.eval.frontier import build_arm
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -930,3 +931,77 @@ def test_the_ss2_pods_are_the_prereg_design() -> None:
             assert t.tasks == ["niah_single", "niah_multikey", "niah_multivalue", "vt"]
         single_shot = [a for a in p.arms if not load_arm(a).chunkable]
         assert single_shot == ["kivi2_faithful", "kivi2_singleshot", "kivi4_faithful"]
+
+
+# --- L2.5b: the smoke pod (prereg/l2_smoke.md) ----------------------------------
+
+# Gate G2 line 6: the k in {0.10, 0.15, 0.25} eviction grid + ThinK composed as its paper
+# intends -- ticked by the smoke pod's harvest, so the pod has to carry all nine.
+SMOKE_GATE_ARMS = [
+    "snapkv_k0.10",
+    "snapkv_k0.15",
+    "snapkv_k0.25",
+    "pyramidkv_k0.10",
+    "pyramidkv_k0.15",
+    "pyramidkv_k0.25",
+    "ea_k0.10",
+    "ea_k0.15",
+    "think_c0.5_snapkv_k0.15",
+]
+
+
+def test_the_smoke_pod_resolves_end_to_end() -> None:
+    """The pod loads, hashes, names its prereg, carries a budget to enforce, and every arm
+    builds at the task's context exactly as the runner builds it before the first trial
+    (`frontier.build_arm`: a config that cannot resolve fails the pod before a record
+    exists). In-process and model-free: `build_arm` only captures the model."""
+    p = load_pod("l2_smoke")
+    assert p.prereg == "prereg/l2_smoke.md"
+    assert (REPO_ROOT / p.prereg).is_file(), "the prereg must be in the launch's ancestry"
+    assert p.gpu_budget_h > 0, "a pod to be launched needs a pre-registered budget"
+    assert p.model == "unsloth/Meta-Llama-3.1-8B-Instruct"
+    assert p.dtype == "bfloat16" and "-devel" in p.image, f"{p.dtype} {p.image}"
+    ctx = load_task(p.tasks[0]).ctx
+    for a in p.arms:
+        cfg = load_arm(a)
+        assert cfg.name == a
+        assert build_arm(cfg, model=None, t=ctx)["name"] == (cfg.legacy_name or a)
+    assert config_hash(p)
+
+
+def test_the_smoke_pod_names_every_arm_but_the_table4_variants() -> None:
+    """The arm set is a rule, not a list: every stem under configs/arms/ that is not a Table-4
+    diagnostic variant -- the gist arms of the three Table-4 pods, which exist for one
+    perplexity contrast and would add ten near-duplicate r128/r256 arms to a retrieval smoke.
+    So a future arm cannot be left out silently, a future Table-4 variant is excluded by the
+    same rule, and a change in the variants' count is a change to decide, not to inherit.
+    Order is cheap -> expensive: `full` first, the twelve gist arms last (a pod that dies early
+    still lands whole classes, and the pre-registered cheap first half is everything before the
+    first gist arm). The nine arms gate G2 line 6 names are in; no OjaKV stem is (D-017)."""
+    p = load_pod("l2_smoke")
+    table4 = {a for n in TABLE4 for a in load_pod(n).arms if load_arm(a).kind == "bug"}
+    assert len(table4) == 10, sorted(table4)
+    stems = {q.stem for q in (REPO_ROOT / "configs" / "arms").glob("*.yaml")}
+    assert len(p.arms) == len(set(p.arms)), "an arm listed twice would double its cells"
+    assert set(p.arms) == stems - table4
+    assert p.arms[0] == "full"
+    kinds = [load_arm(a).kind for a in p.arms]
+    n_gist = kinds.count("bug")
+    assert n_gist == 12, "prereg/l2_smoke.md sizes the budget and the log volume for 12 gist arms"
+    assert kinds[-n_gist:] == ["bug"] * n_gist, kinds
+    assert set(SMOKE_GATE_ARMS) <= set(p.arms)
+    assert not [a for a in p.arms if a.startswith("ojakv")]
+
+
+def test_the_smoke_pod_task_is_generator_v2_at_n12() -> None:
+    """One task: generator v2 at 16K, the five RULER sub-tasks (`niah_multiquery` included),
+    the balanced 2 x 3 x 2 design = 12 records per cell from one seed, chunked prefill -- the
+    smoke's n. The runner prefills the `chunkable: false` arms in one shot whatever the task
+    says; that is the arm's protocol, not the task's."""
+    p = load_pod("l2_smoke")
+    assert p.tasks == ["ruler_v2_16k"]
+    t = load_task(p.tasks[0])
+    assert isinstance(t, TaskV2Cfg) and t.generator == "v2" and t.ctx == 16384
+    assert t.tasks == ["niah_single", "niah_multikey", "niah_multivalue", "niah_multiquery", "vt"]
+    assert t.n_trials * len(t.seeds) == 12
+    assert t.design == {"haystacks": 2, "depths": 3, "codes": 2} and t.chunk == 4096

@@ -859,7 +859,8 @@ def test_the_table4_arms_equal_the_plain_cache_outside_the_named_knobs() -> None
             assert cache["min_sv_frac"] == 0.01, f"{arm}: not the floor its name claims"
 
 
-# --- The L2 pods: prereg/filler_realism.md, prereg/ss2_families.md, prereg/l2_smoke.md --
+# --- The L2 pods: prereg/filler_realism.md, prereg/ss2_families.md, prereg/l2_smoke.md,
+# --- and L3's pre-flight pod: prereg/gate1_preflight.md ----------------------------------
 
 FILLER_ARMS = [
     "full",
@@ -874,12 +875,15 @@ INHOUSE_SUBTASKS = ["niah_single", "niah_multikey", "niah_multivalue", "vt"]
 # Each pod as its prereg designs it: the prereg, the arm ORDER, the task list, and the
 # arms the runner prefills in one shot (`chunkable: false`) -- what a YAML edit could
 # drift from the prereg without any manifest noticing. The order is load-bearing: the
-# cheap ceiling control (filler) or the paired r64 reference (cycle, ss2) comes first, so
-# a pod that dies early still lands an interpretable result. The smoke pod's arm set is a
-# rule, not a list (`test_the_smoke_pod_names_every_arm_but_the_table4_variants`), and
-# its single-shot arms are each arm's own protocol. `gpu_budget_h` and the v2 design are
-# not echoed here: the launch manifest's config_hash and the prereg pin those.
+# cheap ceiling control (filler, pre-flight) or the paired r64 reference (cycle, ss2)
+# comes first, so a pod that dies early still lands an interpretable result -- for the
+# pre-flight pod, the ceiling plus both Gate-1 primary-contrast arms by arm 3
+# (`prereg/gate1_preflight.md` §3, §7). The smoke pod's arm set is a rule, not a list
+# (`test_the_smoke_pod_names_every_arm_but_the_table4_variants`), and its single-shot arms
+# are each arm's own protocol. `gpu_budget_h` and the v2 design are not echoed here: the
+# launch manifest's config_hash and the prereg pin those.
 FILLER, SS2 = "prereg/filler_realism.md", "prereg/ss2_families.md"
+PREFLIGHT_ARMS = ["full", "isvd_r64_h256_seed", "nogist_h2423", "frozen_r64_h256_seed"]
 L2_PODS: dict[str, tuple[str, list[str] | None, list[str], list[str] | None]] = {
     "filler_realism": (FILLER, FILLER_ARMS, ["ruler_inhouse_16k_wikitext"], ["kivi2_singleshot"]),
     "filler_realism_cycle": (FILLER, ["isvd_r64_h256_seed", "full"], INHOUSE[:1], []),
@@ -887,6 +891,7 @@ L2_PODS: dict[str, tuple[str, list[str] | None, list[str], list[str] | None]] = 
     "ss2_families_qwen": (SS2, SS2_ARMS, INHOUSE, SS2_ARMS[1:]),
     "ss2_families_llama": (SS2, SS2_ARMS, INHOUSE, SS2_ARMS[1:]),
     "l2_smoke": ("prereg/l2_smoke.md", None, ["ruler_v2_16k"], None),
+    "gate1_preflight": ("prereg/gate1_preflight.md", PREFLIGHT_ARMS, ["ruler_v2_16k"], []),
 }
 
 
@@ -915,10 +920,10 @@ def test_the_l2_pods_are_their_prereg_designs() -> None:
     """Row by row against `L2_PODS`: arm order, task list, the single-shot arms; every task
     at n = 12 (6 trials x 2 seeds, or the v2 design's 12 from one seed) and chunk 4096,
     the in-house pods on the four archived sub-tasks with generator-drawn depths and the
-    cycled filler (`wikitext` on the real-text pod), the smoke pod on generator v2's five
-    at 16K on the paper's model; bf16 on the -devel image (quanto JIT-builds its kernel);
-    six pods, six hashes (one arm list against another, one filler or model against
-    another keeps them apart)."""
+    cycled filler (`wikitext` on the real-text pod), the two v2 pods (smoke, pre-flight) on
+    generator v2's five at 16K on the paper's model; bf16 on the -devel image (quanto
+    JIT-builds its kernel); seven pods, seven hashes (one arm list against another, one
+    filler or model against another keeps them apart)."""
     for name, (_, arms, tasks, single_shot) in L2_PODS.items():
         p = load_pod(name)
         assert p.tasks == tasks, f"{name}: tasks {p.tasks}"
@@ -930,14 +935,15 @@ def test_the_l2_pods_are_their_prereg_designs() -> None:
         for tname in p.tasks:
             t = load_task(tname)
             assert t.n_trials * len(t.seeds) == 12 and t.chunk == 4096, tname
-            if name == "l2_smoke":
-                assert isinstance(t, TaskV2Cfg) and t.generator == "v2" and t.ctx == 16384
+            if t.generator == "v2":
+                assert isinstance(t, TaskV2Cfg) and t.ctx == 16384
                 assert t.tasks == [*INHOUSE_SUBTASKS[:3], "niah_multiquery", "vt"]
             else:
                 assert t.generator == "inhouse" and t.tasks == INHOUSE_SUBTASKS, tname
                 filler = "wikitext" if name == "filler_realism" else "cycle"
                 assert t.depths is None and t.filler == filler, tname
-    assert load_pod("l2_smoke").model == "unsloth/Meta-Llama-3.1-8B-Instruct"
+    for name in ("l2_smoke", "gate1_preflight"):
+        assert load_pod(name).model == "unsloth/Meta-Llama-3.1-8B-Instruct", name
     assert len({config_hash(load_pod(n)) for n in L2_PODS}) == len(L2_PODS)
 
 
@@ -985,8 +991,9 @@ SMOKE_GATE_ARMS = [
 ]
 
 # L3.1's Gate-1 controls (tests/test_gate1_arms.py): the learn-then-freeze and fixed-random
-# tracker arms and the two byte-matched no-gist arms. Their pod is `gate1_tracker_swap_v2`,
-# not the smoke pod -- see the exclusion note in the test below.
+# tracker arms and the two byte-matched no-gist arms. Their pods are `gate1_preflight` (the
+# 1024-wide no-gist arm and the frozen arm) and Stage 1's `gate1_tracker_swap_v2`, not the
+# smoke pod -- see the exclusion note in the test below.
 GATE1 = {"frozen_r64_h256_seed", "random_r64_h256_seed", "nogist_h2423", "nogist_h4460"}
 
 
@@ -1000,11 +1007,12 @@ def test_the_smoke_pod_names_every_arm_but_the_table4_variants() -> None:
     still lands whole classes, and the pre-registered cheap first half is everything before the
     first gist arm). The nine arms gate G2 line 6 names are in; no OjaKV stem is (D-017).
 
-    `GATE1` is the second exclusion, and it is named rather than derived because its pod does
-    not exist yet: `prereg/l2_smoke.md` prices this pod at 40 arms x 5 tasks = 200 cells and 12
-    gist arms, and the L3 Gate-1 controls belong to the `gate1_tracker_swap_v2` pod (L5's
-    prereg), so putting them here would amend a committed pre-registration rather than add a
-    smoke reading. Listing them keeps the rule's point: nothing is left out silently."""
+    `GATE1` is the second exclusion, and it is named rather than derived because its pods are
+    L3's: `prereg/l2_smoke.md` prices this pod at 40 arms x 5 tasks = 200 cells and 12 gist
+    arms, while the Gate-1 controls belong to `gate1_preflight` (two of them, pre-registered)
+    and to Stage 1's `gate1_tracker_swap_v2` pods (L5's prereg), so putting them here would
+    amend a committed pre-registration rather than add a smoke reading. Listing them keeps the
+    rule's point: nothing is left out silently."""
     p = load_pod("l2_smoke")
     table4 = {a for n in TABLE4 for a in load_pod(n).arms if load_arm(a).kind == "bug"}
     assert len(table4) == 10, sorted(table4)

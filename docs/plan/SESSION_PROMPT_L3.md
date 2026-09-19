@@ -1,4 +1,4 @@
-# Next-session prompt — L3 (+ L5) (paste as the first message; cwd ~/Desktop/kv-dlra, branch main)
+# Next-session prompt — L3 (+ L5) (paste as the first message; cwd ~/src/kv-dlra, branch main)
 
 You are the orchestrator for kvdlra Weeks 0–3 (docs/plan/ICML2027_PLAN.md §1–§2), continuing from the last
 entries of docs/plan/STATE.md (2026-09-19: L2 merged into `main` at e116212; `main` is the only branch; D-005

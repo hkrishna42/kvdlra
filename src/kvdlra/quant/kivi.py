@@ -56,7 +56,8 @@ def quantize_after_prefill(cache: QuantizedCache, dyn: DynamicCache) -> None:
         layer._quantized_values = layer._quantize(
             v[..., :cut, :].contiguous(), axis=layer.axis_value
         )
-        layer.keys, layer.values = k[..., cut:, :].clone(), v[..., cut:, :].clone()
+        if cut < t:  # else the 1-D empty `lazy_initialization` left: upstream's own form
+            layer.keys, layer.values = k[..., cut:, :].clone(), v[..., cut:, :].clone()
         layer.cumulative_length = t
         dl.keys = dl.values = k.new_empty(0)  # the fp16 slab goes now, not with ``dyn``
 

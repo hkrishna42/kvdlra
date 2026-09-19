@@ -105,6 +105,29 @@ def test_posthoc_quantization_equals_the_upstream_update_on_the_same_slab() -> N
     assert residual_tokens(post) == 0
 
 
+def test_the_residual_folds_as_a_streamed_layer_folds_it() -> None:
+    """A post-hoc layer whose prefill left no residual (T mod R = 0) holds upstream's own
+    1-D empty tensor, not a 4-D ``(1, H, 0, D)`` slice (``update`` tests ``keys.dim() == 4``
+    before it counts the residual); and the fold R decode steps later is the streamed
+    layer's: everything quantized, the residual empty again, the length advanced."""
+    model, cfg = _tiny()
+    cache = make_kivi(cfg, nbits=4, backend="hqq", residual=4)
+    ids = torch.randint(0, 256, (1, 8))
+    dyn = DynamicCache()
+    with torch.no_grad():
+        model(ids, past_key_values=dyn, use_cache=True, logits_to_keep=1)
+    quantize_after_prefill(cache, dyn)
+    layer: Any = cache.layers[0]
+    assert residual_tokens(cache) == 0 and layer.keys.dim() == layer.values.dim() == 1
+    held = []
+    for pos in range(8, 12):
+        with torch.no_grad():
+            model(ids[:, :1], past_key_values=cache, position_ids=torch.tensor([[pos]]))
+        held.append(residual_tokens(cache))
+    assert held == [1, 2, 3, 0]  # the fourth token trips `R` and folds the residual
+    assert cache.get_seq_length() == 12 and _deq(cache)[0].shape[-2] == 12
+
+
 def test_per_channel_keys_survive_an_outlier_channel() -> None:
     """Per-channel keys give the outlier channel its own scale; per-token keys let it set
     the scale of every other channel in its token (the Week-18 0.00 retrieval)."""

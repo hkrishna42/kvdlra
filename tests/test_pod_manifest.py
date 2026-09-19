@@ -893,6 +893,16 @@ def test_the_filler_realism_pods_resolve_end_to_end() -> None:
     assert len(hashes) == len(FILLER_PODS)
 
 
+def test_the_live_filler_manifests_still_hash_to_their_configs() -> None:
+    """`doc:` is inside `config_hash`, so an arm a live manifest names carries a frozen
+    docstring -- kivi2_streaming's label lives in a `#` comment block instead (L2.9b),
+    and YAML comments are outside the hash: both filler pods name the arm, and the
+    launched manifests still hash to the configs on disk."""
+    for name in FILLER_PODS:
+        m = json.loads((REPO_ROOT / "results" / name / "manifest.json").read_text())
+        assert config_hash(load_pod(name)) == m["config_hash"], name
+
+
 def test_the_filler_realism_pod_is_the_prereg_design_table() -> None:
     """Row by row: the arm order is the prereg's (cheap ceiling control, the two arms
     the decision rule names, the descriptive baselines -- a pod that dies early still

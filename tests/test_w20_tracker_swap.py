@@ -19,11 +19,16 @@ import torch
 from transformers import LlamaConfig, LlamaForCausalLM
 
 from kvdlra.cache import BugStreamingCache
-from kvdlra.tracker.isvd import augmented_bug_step, fd_step, oja_step
+from kvdlra.tracker.isvd import augmented_bug_step, fd_step, frozen_step, oja_step
 
 # The Week-2 validated pre-RoPE schedule, which the arm config names. ``oja_step`` has no
 # defaults to fall back on, so every call site states the schedule it is testing.
 OJA = partial(oja_step, eta0=20.0, decay=0.03)
+# L3.1's Gate-1 control, in its TRACKING phase (a freeze the stream never reaches), which
+# is where it has a contract to honor at all -- past the freeze it returns its input. Its
+# sibling ``random_step`` is not here: its basis is rank_cap-wide from the seeding call, so
+# it cannot honor the seeding shape below by design (pinned in tests/test_gate1_arms.py).
+FROZEN = partial(frozen_step, n_seen=0, freeze_after=1 << 30)
 
 N, R, B = 32, 6, 5  # features, rank cap, block columns
 
@@ -42,7 +47,7 @@ def _stream(seed: int, t: int = 40, true_rank: int = 4) -> torch.Tensor:
     return out
 
 
-@pytest.mark.parametrize("step", [OJA, fd_step], ids=["oja", "fd"])
+@pytest.mark.parametrize("step", [OJA, fd_step, FROZEN], ids=["oja", "fd", "frozen"])
 def test_swapped_trackers_honor_the_step_contract(step: Any) -> None:
     m = _stream(0)
     u, b, rot = step(None, None, m[:, :B], R)  # seeding = reduced QR, like the isvd step

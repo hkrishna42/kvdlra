@@ -1,0 +1,27 @@
+name: random_r64_h256_seed
+kind: bug
+chunkable: true
+doc: >-
+  Gate-1 floor control (L3.1): fixed Haar-random orthonormal basis -- one seeded draw per
+  layer and per stream (basis_seed + 2*layer_idx, +1 for V), never updated, so no data
+  ever enters the gist. Everything else is isvd_r64_h256_seed verbatim, which makes this
+  cell what the rank-64 storage, the 256-token exact tier, the sinks and the ring are
+  worth with no subspace tracking at all.
+cache:
+  rank: 64
+  coord_budget: null
+  recent_window: 32
+  absorb_block: 16
+  n_sink: 4
+  retention: "lowrank_surprise"
+  hh_budget: 256
+  hh_select: "surprise"
+  hh_neighbor: 1
+  hh_retain: true
+  seed_hh_warmup: true
+  score_rank: null
+  min_sv_frac: 0.0
+  tracker: "random"
+  basis_seed: 0
+  quant_bits: null
+  quant_budget: 0

@@ -593,3 +593,83 @@ def fd_step(
     u_new = (u_aug @ u_loc[:, :k]).contiguous()
     b_new = torch.diag(s_new).contiguous()
     return u_new, b_new, u_loc[:r_old, :k].mT  # == u_new^T u, and (k, 0) when seeding
+
+
+# ----------------------------------------------------------------------------
+# Gate-1 (L3) controls: the same contract again, but the basis stops tracking --
+# ``frozen_step`` after a warm-up window, ``random_step`` before it ever starts.
+# The question they answer is whether the ONLINE tracking is load-bearing or
+# whether the rank-r storage, the exact tier, the sinks and the ring carry the
+# arm on their own, so each one holds everything but the gist fixed.
+# ----------------------------------------------------------------------------
+
+
+def frozen_step(
+    u: Tensor | None,
+    b_core: Tensor | None,
+    block: Tensor,
+    rank_cap: int,
+    *,
+    n_seen: int,
+    freeze_after: int,
+    theta: float | None = None,
+    min_sv_frac: float = 0.0,
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Learn-then-freeze basis (the xKV / ShadowKV-style control), one block.
+
+    Block incremental SVD (:func:`augmented_bug_step`, with that step's own ``theta`` and
+    ``min_sv_frac``) while the stream is shorter than ``freeze_after`` tokens; from there
+    on the basis and core come back untouched behind an identity rotation, so the caller's
+    coordinate carry (``rot @ c``) is a no-op and every later token is stored as a plain
+    projection ``uᵀ block`` onto the warm-up basis.
+
+    ``n_seen`` is the caller's tokens-seen frontier at this block. It must be MONOTONE --
+    the cache passes :meth:`~kvdlra.cache.bug_cache.BugStreamingLayer._tokens_seen`, since
+    a frontier read off the coordinate tiers' occupancy stops at their budget and a long
+    context would then never freeze at all.
+
+    A seeding call (``u is None``) always runs the incremental-SVD step, whatever
+    ``n_seen`` says: there is no basis yet to keep. So ``freeze_after=0`` is the
+    first block's basis, frozen -- not an error and not an empty gist.
+    """
+    if u is None or b_core is None or n_seen < freeze_after:
+        # Also where a half-provided (u, b_core) pair raises, as for every other step.
+        return augmented_bug_step(u, b_core, block, rank_cap, theta=theta, min_sv_frac=min_sv_frac)
+    return u, b_core, torch.eye(u.shape[1], dtype=u.dtype, device=u.device)
+
+
+def random_step(
+    u: Tensor | None,
+    b_core: Tensor | None,
+    block: Tensor,
+    rank_cap: int,
+    *,
+    seed: int,
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Fixed random orthonormal basis (the floor control), one block.
+
+    The seeding call draws the basis once -- the reduced QR of an ``(n, rank_cap)``
+    Gaussian at ``seed``, drawn the way ``kvdlra.eval.recon``'s ``random_basis`` control
+    draws its own -- and every later call returns it unchanged behind an identity
+    rotation. No data ever enters the basis, so the arm is what the rank-r storage, the
+    exact tier, the sinks and the ring are worth with no subspace tracking at all.
+
+    The generator is CPU-side and explicit, and the caller seeds it per layer and per
+    stream (the cache derives ``basis_seed + 2*layer_idx``, ``+1`` for V), so the draw is
+    reproducible from the arm config alone and K and V never share a basis. The core is
+    the identity: an unweighted basis is exactly what "no tracking" means, and the step
+    never reads the core back.
+    """
+    if (u is None) != (b_core is None):
+        raise ValueError("u and b_core must be provided together (or both None)")
+    if rank_cap < 1:
+        raise ValueError(f"rank_cap must be >= 1, got {rank_cap}")
+    if u is not None and b_core is not None:
+        return u, b_core, torch.eye(u.shape[1], dtype=u.dtype, device=u.device)
+    g = torch.Generator().manual_seed(seed)
+    draw = torch.randn(block.shape[0], rank_cap, generator=g)  # (n, rank_cap), CPU fp32
+    # Reduced QR: ``min(n, rank_cap)`` columns, so a rank cap above the feature count
+    # collapses to a full orthonormal basis instead of a rank-deficient one.
+    u_new = torch.linalg.qr(draw)[0].to(dtype=block.dtype, device=block.device).contiguous()
+    k = int(u_new.shape[1])
+    return u_new, torch.eye(k, dtype=block.dtype, device=block.device), u_new.new_zeros((k, 0))

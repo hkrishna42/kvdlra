@@ -278,6 +278,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         tracker: str = "isvd",
         oja_eta0: float = 20.0,
         oja_decay: float = 0.03,
+        freeze_after: int = 4096,
+        basis_seed: int = 0,
         prefill_block_size: int = 128,
         retention: str = "fifo",
         quant_bits: int | None = None,
@@ -314,6 +316,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             raise ValueError("quant_bits and quant_budget (> 0) must be set together")
         if quant_bits is not None and not 1 <= quant_bits <= 8:
             raise ValueError(f"quant_bits must be in [1, 8], got {quant_bits}")
+        if freeze_after < 0:
+            raise ValueError(f"freeze_after must be >= 0, got {freeze_after}")
         if hh_budget < 0:
             raise ValueError(f"hh_budget must be >= 0, got {hh_budget}")
         if hh_select not in ("attn", "surprise"):
@@ -400,13 +404,18 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             tracker = "isvd"
         if tracker not in TRACKERS:
             raise ValueError(f"tracker must be one of {sorted(TRACKERS)}, got {tracker!r}")
-        # The gist tracker (Week-20 swap ablation). "isvd" = the shipped augmented step,
-        # which at theta=None and min_sv_frac=0 IS fixed-rank incremental SVD; "oja" =
-        # Oja's rule (the OjaKV baseline), whose schedule the two knobs below set; "fd" =
-        # Frequent Directions. Everything else in the cache is held fixed across the three.
+        # The gist tracker (Week-20 swap ablation, extended by the L3 Gate-1 controls).
+        # "isvd" = the shipped augmented step, which at theta=None and min_sv_frac=0 IS
+        # fixed-rank incremental SVD; "oja" = Oja's rule (the OjaKV baseline), whose
+        # schedule the two knobs below set; "fd" = Frequent Directions; "frozen" = the
+        # incremental-SVD step for the first ``freeze_after`` tokens and a fixed basis
+        # after that; "random" = one seeded orthonormal draw per layer and stream, never
+        # updated. Everything else in the cache is held fixed across the five.
         self.tracker = tracker
         self.oja_eta0 = oja_eta0
         self.oja_decay = oja_decay
+        self.freeze_after = freeze_after
+        self.basis_seed = basis_seed
         self.rope = rope
         self.rank = rank
         self.coord_budget = coord_budget
@@ -752,6 +761,39 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             step = TRACKERS["fd"]
             self.u_k, self.b_k, rot_k = step(self.u_k, self.b_k, block_k, self.rank)
             self.u_v, self.b_v, rot_v = step(self.u_v, self.b_v, block_v, self.rank)
+        elif self.tracker == "frozen":  # Gate-1: track the warm-up window, then stop
+            # The SAME monotone frontier Oja's decay reads, for the same reason: derived
+            # from the coordinate tiers' occupancy it would stop at their budget, and a
+            # context longer than the budget would never reach the freeze at all.
+            n_seen = self._tokens_seen(positions)
+            step = TRACKERS["frozen"]
+            self.u_k, self.b_k, rot_k = step(
+                self.u_k,
+                self.b_k,
+                block_k,
+                self.rank,
+                n_seen=n_seen,
+                freeze_after=self.freeze_after,
+                theta=self.theta,
+                min_sv_frac=self.min_sv_frac,
+            )
+            self.u_v, self.b_v, rot_v = step(
+                self.u_v,
+                self.b_v,
+                block_v,
+                self.rank,
+                n_seen=n_seen,
+                freeze_after=self.freeze_after,
+                theta=self.theta,
+                min_sv_frac=self.min_sv_frac,
+            )
+        elif self.tracker == "random":  # Gate-1 floor: one seeded draw, never updated
+            # Per layer AND per stream, so the 2L bases of a model are 2L independent
+            # draws and K and V never share one.
+            step = TRACKERS["random"]
+            seed = self.basis_seed + 2 * self.layer_idx
+            self.u_k, self.b_k, rot_k = step(self.u_k, self.b_k, block_k, self.rank, seed=seed)
+            self.u_v, self.b_v, rot_v = step(self.u_v, self.b_v, block_v, self.rank, seed=seed + 1)
         else:  # "isvd" today -- unchanged, bit-identical; looked up by name (fix1 R3) so a
             # fourth TRACKERS entry lands here and fails loudly on theta=/min_sv_frac=
             # instead of silently running the incremental-SVD step.
@@ -1467,10 +1509,14 @@ class BugStreamingCache(Cache):
         window; see :meth:`drain_diag`.
     recent_window, absorb_block, n_sink, theta, min_sv_frac, prefill_block_size:
         See :class:`BugStreamingLayer`.
-    tracker, oja_eta0, oja_decay:
+    tracker, oja_eta0, oja_decay, freeze_after, basis_seed:
         Which gist tracker the layers run (a key of :data:`kvdlra.tracker.TRACKERS`;
-        ``"bug"`` is a deprecated alias for ``"isvd"``) and, for ``"oja"``, its learning-rate
-        schedule ``eta0 / (1 + decay * tokens_seen)``. See :class:`BugStreamingLayer`.
+        ``"bug"`` is a deprecated alias for ``"isvd"``) and the knobs the swapped ones
+        need: for ``"oja"``, the learning-rate schedule ``eta0 / (1 + decay *
+        tokens_seen)``; for ``"frozen"``, the tokens-seen frontier past which the basis
+        stops updating (default 4096); for ``"random"``, the base seed of the per-layer,
+        per-stream orthonormal draw (``basis_seed + 2*layer_idx``, ``+1`` for V). See
+        :class:`BugStreamingLayer`.
     """
 
     def __init__(
@@ -1486,6 +1532,8 @@ class BugStreamingCache(Cache):
         tracker: str = "isvd",
         oja_eta0: float = 20.0,
         oja_decay: float = 0.03,
+        freeze_after: int = 4096,
+        basis_seed: int = 0,
         prefill_block_size: int = 128,
         retention: str = "fifo",
         quant_bits: int | None = None,
@@ -1526,6 +1574,8 @@ class BugStreamingCache(Cache):
                 tracker=tracker,
                 oja_eta0=oja_eta0,
                 oja_decay=oja_decay,
+                freeze_after=freeze_after,
+                basis_seed=basis_seed,
                 prefill_block_size=prefill_block_size,
                 retention=retention,
                 quant_bits=quant_bits,

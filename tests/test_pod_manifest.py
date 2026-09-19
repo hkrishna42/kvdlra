@@ -984,6 +984,11 @@ SMOKE_GATE_ARMS = [
     "think_c0.5_snapkv_k0.15",
 ]
 
+# L3.1's Gate-1 controls (tests/test_gate1_arms.py): the learn-then-freeze and fixed-random
+# tracker arms and the two byte-matched no-gist arms. Their pod is `gate1_tracker_swap_v2`,
+# not the smoke pod -- see the exclusion note in the test below.
+GATE1 = {"frozen_r64_h256_seed", "random_r64_h256_seed", "nogist_h2423", "nogist_h4460"}
+
 
 def test_the_smoke_pod_names_every_arm_but_the_table4_variants() -> None:
     """The arm set is a rule, not a list: every stem under configs/arms/ that is not a Table-4
@@ -993,13 +998,20 @@ def test_the_smoke_pod_names_every_arm_but_the_table4_variants() -> None:
     same rule, and a change in the variants' count is a change to decide, not to inherit.
     Order is cheap -> expensive: `full` first, the twelve gist arms last (a pod that dies early
     still lands whole classes, and the pre-registered cheap first half is everything before the
-    first gist arm). The nine arms gate G2 line 6 names are in; no OjaKV stem is (D-017)."""
+    first gist arm). The nine arms gate G2 line 6 names are in; no OjaKV stem is (D-017).
+
+    `GATE1` is the second exclusion, and it is named rather than derived because its pod does
+    not exist yet: `prereg/l2_smoke.md` prices this pod at 40 arms x 5 tasks = 200 cells and 12
+    gist arms, and the L3 Gate-1 controls belong to the `gate1_tracker_swap_v2` pod (L5's
+    prereg), so putting them here would amend a committed pre-registration rather than add a
+    smoke reading. Listing them keeps the rule's point: nothing is left out silently."""
     p = load_pod("l2_smoke")
     table4 = {a for n in TABLE4 for a in load_pod(n).arms if load_arm(a).kind == "bug"}
     assert len(table4) == 10, sorted(table4)
     stems = {q.stem for q in (REPO_ROOT / "configs" / "arms").glob("*.yaml")}
+    assert stems >= GATE1, sorted(GATE1 - stems)
     assert len(p.arms) == len(set(p.arms)), "an arm listed twice would double its cells"
-    assert set(p.arms) == stems - table4
+    assert set(p.arms) == stems - table4 - GATE1
     assert p.arms[0] == "full"
     kinds = [load_arm(a).kind for a in p.arms]
     n_gist = kinds.count("bug")

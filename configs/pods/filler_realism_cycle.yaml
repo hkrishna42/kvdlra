@@ -1,0 +1,21 @@
+name: filler_realism_cycle
+model: "unsloth/Meta-Llama-3.1-8B-Instruct"
+dtype: bfloat16
+doc: >-
+  The harness-consistency control for filler_realism (ruling PR-L2-19; prereg/filler_realism.md
+  Amendment 1, A1.3): the r64 configuration alone on the CYCLED filler at 16K, n = 12 per cell. It
+  replicates the archived w18-g1 row -- bugSseed-r64-h256, 1.00 / 1.00 / 1.00 / 0.58 on single /
+  multikey / multivalue / vt: results/paper-v1/w18-llama/cells.jsonl (the aggregate row, from
+  results/w18-llama-lines.txt) and results/paper-v1/w18-g1-llama/trials.jsonl (its 48 per-trial
+  records) -- on the L0 runner. Those rows came from w10_ruler.py on an older transformers, and the
+  L0 runner's parity with it rests on CPU bit-identity tests, never on a GPU re-run; this pod is
+  that re-run, so a drop on the real-text pod can be attributed to the filler and not to drift
+  between w10_ruler.py and `pod.py run`. Reading: a replication differing from the archived row by
+  more than 0.25 on any task is harness drift, and the real-text reading is inconclusive until the
+  drift is explained; within 0.25 on every task, the archived rows stand as the comparison base. Not
+  in the Holm family. Launch = DECISIONS (D-005), beside filler_realism.
+prereg: prereg/filler_realism.md
+arms: ["isvd_r64_h256_seed"]
+tasks: ["ruler_inhouse_16k"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+gpu_budget_h: 6.0

@@ -766,3 +766,71 @@ def test_the_table4_arms_equal_the_plain_cache_outside_the_named_knobs() -> None
         # is where the prereg's branch-2 reference number comes from.
         if "f0.01" in arm:
             assert cache["min_sv_frac"] == 0.01, f"{arm}: not the floor its name claims"
+
+
+# --- L2.1: the filler-realism pods (prereg/filler_realism.md) ------------------
+
+FILLER_PODS = ("filler_realism", "filler_realism_cycle")
+FILLER_ARMS = [
+    "full",
+    "isvd_r64_h256_seed",
+    "isvd_r64_h256_seed_q4",
+    "kivi2_streaming",
+    "kivi2_singleshot",
+]
+
+
+def test_the_filler_realism_pods_resolve_end_to_end() -> None:
+    """Both pods load, hash, name the filler prereg, carry a budget to enforce, and
+    every arm and task they reference loads; one arm list against five and one filler
+    against the other keep the two hashes apart."""
+    hashes = set()
+    for name in FILLER_PODS:
+        p = load_pod(name)
+        assert p.prereg == "prereg/filler_realism.md"
+        assert (REPO_ROOT / p.prereg).is_file(), "the prereg must be in the launch's ancestry"
+        assert p.gpu_budget_h > 0, f"{name}: a pod to be launched needs a pre-registered budget"
+        for a in p.arms:
+            assert load_arm(a).name == a
+        for t in p.tasks:
+            assert load_task(t).name == t
+        hashes.add(config_hash(p))
+    assert len(hashes) == len(FILLER_PODS)
+
+
+def test_the_filler_realism_pod_is_the_prereg_design_table() -> None:
+    """Row by row: the arm order is the prereg's (cheap ceiling control, the two arms
+    the decision rule names, the descriptive baselines -- a pod that dies early still
+    lands an interpretable result) and the records carry the prereg's row keys; the one
+    task is the four-task real-text protocol, so `max_new` resolves to 40 as it did for
+    every reference row, at the archived n, chunked prefill and generator-drawn depths;
+    the single-shot KIVI arm is the one arm the runner prefills in one shot."""
+    p = load_pod("filler_realism")
+    assert p.arms == FILLER_ARMS
+    assert [load_arm(a).legacy_name for a in p.arms] == [
+        "full",
+        "bugSseed-r64-h256",
+        "bugSseed-r64-h256-q4",
+        "quant-2bit-kivi",
+        "quant-2bit-kivi#chunk0",
+    ]
+    assert p.tasks == ["ruler_inhouse_16k_wikitext"]
+    t = load_task(p.tasks[0])
+    assert t.filler == "wikitext"
+    assert t.tasks == ["niah_single", "niah_multikey", "niah_multivalue", "vt"]
+    assert t.n_trials * len(t.seeds) == 12
+    assert t.depths is None and t.chunk == 4096
+    single_shot = [a for a in p.arms if not load_arm(a).chunkable]
+    assert single_shot == ["kivi2_singleshot"]
+
+
+def test_the_cycle_control_pod_replicates_the_archived_row() -> None:
+    """One arm on the cycled filler at the same n: the harness-consistency control that
+    separates a drop on the real-text pod from drift between `w10_ruler.py` (which
+    produced the archived rows) and `pod.py run` (ruling PR-L2-19). Same model and
+    generator as the real-text pod; the filler is the only difference."""
+    p, real = load_pod("filler_realism_cycle"), load_pod("filler_realism")
+    assert p.arms == ["isvd_r64_h256_seed"] and p.model == real.model
+    t, rt = load_task(p.tasks[0]), load_task(real.tasks[0])
+    assert t.filler == "cycle" and t.n_trials * len(t.seeds) == 12
+    assert (t.generator, t.ctx, t.tasks, t.chunk) == (rt.generator, rt.ctx, rt.tasks, rt.chunk)

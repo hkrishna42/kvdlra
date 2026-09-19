@@ -195,7 +195,9 @@ def test_harvest_records_a_failed_run(dry_pod: Path, tmp_path: Path) -> None:
     log = tmp_path / "pod.log"
     log.write_text(LOG.replace("===ALL_DONE_w18_g1", "===RUN_FAILED_w18_g1"))
     _run("harvest", "--pod", "w18_g1", "--log", str(log), "--out", str(tmp_path))
-    assert json.loads((tmp_path / "manifest.json").read_text())["status"] == "RUN_FAILED"
+    m = json.loads((tmp_path / "manifest.json").read_text())
+    assert m["status"] == "RUN_FAILED"
+    assert m["timeout"] is False  # a plain RUN_FAILED with no RUN_TIMEOUT marker (e.g. a 137 KILL)
 
 
 def test_harvest_records_a_timeout_as_a_failed_run(dry_pod: Path, tmp_path: Path) -> None:
@@ -330,6 +332,8 @@ def test_launch_max_hours_defaults_to_the_pod_budget() -> None:
         pod.launch_command("w18_g1", "1", "deadbeef")  # gpu_budget_h: 0.0
     with pytest.raises(ValueError, match="max-hours"):
         pod.launch_command("filler_realism", "1", "deadbeef", max_hours=0.0)
+    with pytest.raises(ValueError, match="max-hours"):  # nan <= 0 is False: needs its own check
+        pod.launch_command("filler_realism", "1", "deadbeef", max_hours=float("nan"))
 
 
 # w18_g1's expected cell set, spelled out rather than re-derived: three arms by their

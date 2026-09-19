@@ -62,7 +62,7 @@ self_destruct() {
   sleep "$GRACE_S"
   set +x
   { [ -n "${CONTAINER_ID:-}" ] && [ -n "${CONTAINER_API_KEY:-}" ] \
-      && echo y | vastai destroy instance "$CONTAINER_ID" --api-key "$CONTAINER_API_KEY"; } \
+      && echo y | vastai destroy instance "$CONTAINER_ID" --api-key "$CONTAINER_API_KEY" >/dev/null 2>&1; } \
     || echo "===SELF_DESTRUCT_FAILED_${POD}==="
 }
 trap self_destruct EXIT
@@ -80,8 +80,11 @@ git checkout -q "$SHA" >/dev/null 2>&1 || { echo "===CHECKOUT_FAILED_${POD}_${SH
 RUN_SHA="$(git rev-parse HEAD)"
 echo "===RUN_SHA_${RUN_SHA}==="
 
-pip install -q hf_transfer hf_xet ninja numpy scipy matplotlib vastai "kvpress==0.5.1" 2>&1 | tail -5
+pip install -q hf_transfer hf_xet ninja numpy scipy matplotlib "kvpress==0.5.1" 2>&1 | tail -5
 pip install -q 'transformers==5.8.0' 'datasets==2.21.0' "optimum-quanto>=0.2.7" 'hqq==0.2.8.post1' 'omegaconf>=2.3' 2>&1 | tail -5
+# vastai (self-destruct CLI) installs separately, after the pinned evaluation stack, so
+# its own resolver can never touch those pins.
+pip install -q vastai 2>&1 | tail -1
 echo "===DEPS_DONE==="
 # Fail loud if the quant baseline backend is missing (else the quant arms silently SKIP).
 python -c "import optimum.quanto" 2>/dev/null && echo "===QUANTO_OK===" || echo "===QUANTO_MISSING_${POD}==="
@@ -126,7 +129,10 @@ export -f emit
 # Hand off to the committed, SHA-pinned entrypoint, under its budget: `timeout` sends
 # TERM at MAX_HOURS (KILL 60 s later) and exits 124, which prints RUN_TIMEOUT for the
 # human reading the harvest (`pod.py harvest` records `timeout: true`) and then the same
-# RUN_FAILED as any failed run. Every knob is in the pod YAML. ALL_DONE is what the
+# RUN_FAILED as any failed run. If the process ignores TERM and `timeout` has to KILL it
+# 60 s later instead, the exit code is 137, not 124: RUN_FAILED prints with no RUN_TIMEOUT
+# marker and the harvest records `timeout: false` -- a bare 137 with no RUN_TIMEOUT marker
+# can still be the budget bar, not a crash. Every knob is in the pod YAML. ALL_DONE is what the
 # watchdog destroys on, so it must NOT be printed after a failed or timed-out run -- an
 # unconditional echo turns a crash into a clean-looking pod. RUN_FAILED is the same
 # signal for the watchdog (destroy: no idle billing) and a visible status in the

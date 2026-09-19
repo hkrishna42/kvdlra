@@ -449,3 +449,10 @@ of A1.3 runs the r64 arm on the cycled filler, not `full`; the cycled-`full` cel
 if arm 1 comes back below 1.00, by a further amendment before it runs).
 
 STATUS 2026-09-19: launch authorized under D-005/D-011 (owner 2026-09-17); launched by the orchestrator after this amendment's commit — see DECISIONS.md D-005 addendum for SHAs, offers and cost.
+
+### A1.7 Correction (2026-09-19)
+
+A1.4 misattributes all six measured rates to "D-011 addenda 3–4": only $0.54, $0.60, $0.67 and $0.74
+are there — $0.40 is D-011's original launch entry (2026-09-18, under the owner's 2026-09-17
+authorization) and $0.44 is D-011 addendum 6. The $0.40–0.74/h range and every number A1.4 derives
+from it are unchanged.

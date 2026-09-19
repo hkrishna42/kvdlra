@@ -1,15 +1,15 @@
 """Generator v2: real-text haystacks in a balanced design, official RULER task semantics.
 
-The in-house v1 generator (``ruler.build_task``, re-exported here as ``make_trial_v1``
-and frozen bit-for-bit) cycles ten sentences and is suspected of flattering a low-rank
-gist. This one draws the haystack from real text -- four sources materialized once per
-pod by `kvdlra.eval.haystacks` (PG-19 books, arXiv papers, Wikipedia, Paul Graham
-essays) -- and enumerates the trials of a task over a balanced design, ``codes x depths
-x haystacks`` (`config.TaskV2Cfg.design`): every (depth, code family) cell sees the same
-number of haystacks, and the source rotates with the haystack, depth and draw indices --
-never with the code family (`design_source`), so family and source do not co-vary.
-``seed`` changes the draws (which document, where the window starts, which needle
-values), never the design.
+The in-house v1 generator (``ruler.build_task``, frozen bit-for-bit) cycles ten
+sentences and is suspected of flattering a low-rank gist. This one draws the haystack
+from real text -- four sources materialized once per pod by `kvdlra.eval.haystacks`
+(PG-19 books, arXiv papers, Wikipedia, Paul Graham essays) -- and enumerates the trials
+of a task over a balanced design, ``codes x depths x haystacks``
+(`config.TaskV2Cfg.design`): every (depth, code family) cell sees the same number of
+haystacks, and the source rotates with the haystack, depth and draw indices -- never
+with the code family (`design_source`), so family and source do not co-vary. ``seed``
+changes the draws (which document, where the window starts, which needle values), never
+the design.
 
 Task semantics mirror NVIDIA/RULER's synthetic ``niah`` and ``variable_tracking``
 templates (scripts/data/synthetic/constants.py, the generator `official_ruler` pins):
@@ -35,9 +35,8 @@ import random
 import re
 import string
 import time
-from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, NamedTuple, TypedDict
+from typing import Any, NamedTuple
 
 import torch
 
@@ -45,8 +44,6 @@ from kvdlra.eval import ruler
 from kvdlra.eval.config import TaskV2Cfg
 from kvdlra.eval.data import ADJECTIVES, LABELS, NOUNS
 from kvdlra.eval.official_ruler import split_input, templated_official
-
-make_trial_v1 = ruler.build_task  # the frozen v1 builder, no code motion (PR-L2-22)
 
 # Where `haystacks.materialize` writes `<source>.jsonl` (gitignored; `pod.py prepare`).
 HAYSTACKS = Path(__file__).resolve().parents[3] / "data" / "haystacks"
@@ -83,13 +80,8 @@ STEP = 0.2  # the depth step between the needles of one multi-needle task, wrapp
 _SENT_END = re.compile(r"(?<=[.!?])\s+")
 
 
-class Doc(TypedDict):
-    """One materialized document (`haystacks.materialize`); `id` is `d<index>`."""
-
-    id: str
-    source: str
-    text: str
-    sha256: str
+# One materialized document (`haystacks.materialize`): id (`d<index>`), source, text, sha256.
+Doc = dict[str, Any]
 
 
 class Trial(NamedTuple):
@@ -102,21 +94,17 @@ class Trial(NamedTuple):
 # ------------------------------------------------------------- corpora
 
 
+@functools.lru_cache(maxsize=4)
 def load_corpora(
-    names: Sequence[str], root: Path = HAYSTACKS, fixture: Path | None = None
+    names: tuple[str, ...], root: Path = HAYSTACKS, fixture: Path | None = None
 ) -> dict[str, list[Doc]]:
     """``source -> docs`` for every source in ``names``, read once per process.
 
     Each source is ``<root>/<name>.jsonl`` as `haystacks.materialize` wrote it; ``fixture``
     is one JSONL holding every source (a ``source`` field per row, a provenance record
     first -- ``tests/fixtures/haystacks_tiny.jsonl``), for tests that must not touch
-    ``data/``. Memoized on the arguments: the runner asks for the same corpora for every
-    arm, sub-task, seed and trial of a pod."""
-    return _corpora(tuple(names), root, fixture)
-
-
-@functools.lru_cache(maxsize=4)
-def _corpora(names: tuple[str, ...], root: Path, fixture: Path | None) -> dict[str, list[Doc]]:
+    ``data/``. Memoized on the arguments (hence the tuple): the runner asks for the same
+    corpora for every arm, sub-task, seed and trial of a pod."""
     t0 = time.perf_counter()
     rows: list[Doc] = []
     for p in [fixture] if fixture else [root / f"{n}.jsonl" for n in names]:
@@ -281,7 +269,6 @@ def make_trial(
     h, depth, family, _ = design_cell(cfg, trial)
     docs = corpora[design_source(cfg, trial)]
     sents, hay_id = _window(tok, docs, (h + seed) % len(docs), seed, cfg.ctx)
-    n_sentences = len(sents)
     g = torch.Generator().manual_seed(seed * 131 + trial)  # the v1 seed formula
     if task == "vt":
         value = _values(g, family, 1)[0]
@@ -333,7 +320,6 @@ def make_trial(
             "depth": depth,
             "code_family": family,
             "prompt_sha256": ruler.prompt_sha256(pre, query_ids),
-            "n_sentences": n_sentences,
         },
     )
 
@@ -356,7 +342,7 @@ def run_trial(
     """Build one prompt and retrieve through ``arm`` -- `ruler.run_trial`'s signature, the
     runner's ``GENERATORS["v2"]``. ``pool`` is the v1 filler pool, unused here. The
     corpora load once per process (`load_corpora`); nothing in `ruler.retrieve` changes."""
-    t = make_trial(task, tok, sub, seed, trial, load_corpora(task.haystacks))
+    t = make_trial(task, tok, sub, seed, trial, load_corpora(tuple(task.haystacks)))
     hit, ratio, frac, sbits = ruler.retrieve(
         model, tok, arm, t.prefill_ids, t.query_ids, t.targets, device, chunk, n, h_kv,
         MAX_NEW[sub.split("_")[0]], task=sub, idx=trial,

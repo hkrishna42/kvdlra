@@ -232,14 +232,11 @@ def _cell(
     """
     module = GENERATORS[task.generator]
     chunk = task.chunk if arm["chunkable"] else 0
-    pool = None
-    if task.filler not in ("cycle", "official"):
-        t0 = time.perf_counter()
-        pool = load_corpus_sentences(task.filler)
-        print(
-            f"[stage] load_corpus_sentences {task.filler} ({time.perf_counter() - t0:.1f} s)",
-            flush=True,
-        )
+    t0 = time.perf_counter()
+    pool = None if task.filler in ("cycle", "official") else load_corpus_sentences(task.filler)
+    if pool is not None:
+        dt = time.perf_counter() - t0
+        print(f"[stage] load_corpus_sentences {task.filler} ({dt:.1f} s)", flush=True)
     hits, fracs, ratios, sbits, errors = 0, [], [], [], 0
     for seed in task.seeds:
         for trial in range(task.n_trials):

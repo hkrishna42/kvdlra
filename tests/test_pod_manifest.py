@@ -331,14 +331,10 @@ def test_launch_max_hours_defaults_to_the_pod_budget() -> None:
     assert hours == load_pod("filler_realism").gpu_budget_h == 18.3
     with pytest.raises(ValueError, match="max-hours"):
         pod.launch_command("w18_g1", "1", "deadbeef")  # gpu_budget_h: 0.0
-    with pytest.raises(ValueError, match="max-hours"):
-        pod.launch_command("filler_realism", "1", "deadbeef", max_hours=0.0)
-    with pytest.raises(ValueError, match="max-hours"):  # nan <= 0 is False: needs its own check
-        pod.launch_command("filler_realism", "1", "deadbeef", max_hours=float("nan"))
-    with pytest.raises(ValueError, match="max-hours"):  # +inf > 0 is True: needs isfinite too
-        pod.launch_command("filler_realism", "1", "deadbeef", max_hours=float("inf"))
-    with pytest.raises(ValueError, match="max-hours"):
-        pod.launch_command("filler_realism", "1", "deadbeef", max_hours=-float("inf"))
+    # nan <= 0 is False and +inf > 0 is True: each needs its own check (isfinite AND > 0)
+    for bad in (0.0, float("nan"), float("inf"), -float("inf")):
+        with pytest.raises(ValueError, match="max-hours"):
+            pod.launch_command("filler_realism", "1", "deadbeef", max_hours=bad)
 
 
 # w18_g1's expected cell set, spelled out rather than re-derived: three arms by their
@@ -863,9 +859,8 @@ def test_the_table4_arms_equal_the_plain_cache_outside_the_named_knobs() -> None
             assert cache["min_sv_frac"] == 0.01, f"{arm}: not the floor its name claims"
 
 
-# --- L2.1: the filler-realism pods (prereg/filler_realism.md) ------------------
+# --- The L2 pods: prereg/filler_realism.md, prereg/ss2_families.md, prereg/l2_smoke.md --
 
-FILLER_PODS = ("filler_realism", "filler_realism_cycle")
 FILLER_ARMS = [
     "full",
     "isvd_r64_h256_seed",
@@ -873,24 +868,96 @@ FILLER_ARMS = [
     "kivi2_streaming",
     "kivi2_singleshot",
 ]
+SS2_ARMS = ["isvd_r64_h256_seed", "kivi2_faithful", "kivi2_singleshot", "kivi4_faithful"]
+INHOUSE = ["ruler_inhouse_16k", "ruler_inhouse_32k"]
+INHOUSE_SUBTASKS = ["niah_single", "niah_multikey", "niah_multivalue", "vt"]
+# Each pod as its prereg designs it: the prereg, the arm ORDER, the task list, and the
+# arms the runner prefills in one shot (`chunkable: false`) -- what a YAML edit could
+# drift from the prereg without any manifest noticing. The order is load-bearing: the
+# cheap ceiling control (filler) or the paired r64 reference (cycle, ss2) comes first, so
+# a pod that dies early still lands an interpretable result. The smoke pod's arm set is a
+# rule, not a list (`test_the_smoke_pod_names_every_arm_but_the_table4_variants`), and
+# its single-shot arms are each arm's own protocol. `gpu_budget_h` and the v2 design are
+# not echoed here: the launch manifest's config_hash and the prereg pin those.
+FILLER, SS2 = "prereg/filler_realism.md", "prereg/ss2_families.md"
+L2_PODS: dict[str, tuple[str, list[str] | None, list[str], list[str] | None]] = {
+    "filler_realism": (FILLER, FILLER_ARMS, ["ruler_inhouse_16k_wikitext"], ["kivi2_singleshot"]),
+    "filler_realism_cycle": (FILLER, ["isvd_r64_h256_seed", "full"], INHOUSE[:1], []),
+    "ss2_families_mistral": (SS2, SS2_ARMS, INHOUSE, SS2_ARMS[1:]),
+    "ss2_families_qwen": (SS2, SS2_ARMS, INHOUSE, SS2_ARMS[1:]),
+    "ss2_families_llama": (SS2, SS2_ARMS, INHOUSE, SS2_ARMS[1:]),
+    "l2_smoke": ("prereg/l2_smoke.md", None, ["ruler_v2_16k"], None),
+}
 
 
-def test_the_filler_realism_pods_resolve_end_to_end() -> None:
-    """Both pods load, hash, name the filler prereg, carry a budget to enforce, and
-    every arm and task they reference loads; one arm list against five and one filler
-    against the other keep the two hashes apart."""
-    hashes = set()
-    for name in FILLER_PODS:
+@pytest.mark.parametrize("name", list(L2_PODS))
+def test_the_l2_pods_resolve_end_to_end(name: str) -> None:
+    """The pod loads, hashes, names its prereg (in the launch's ancestry), carries a budget
+    to enforce, and every arm builds at the task's context exactly as the runner builds it
+    before the first trial (`frontier.build_arm`: a config that cannot resolve fails the
+    pod before a record exists). In-process and model-free: `build_arm` only captures the
+    model, and `run --dry-run` would spawn a torch-importing subprocess per pod."""
+    p = load_pod(name)
+    prereg = L2_PODS[name][0]
+    assert p.prereg == prereg and (REPO_ROOT / prereg).is_file()
+    assert p.gpu_budget_h > 0, f"{name}: a pod to be launched needs a pre-registered budget"
+    assert config_hash(p)
+    ctx = load_task(p.tasks[0]).ctx
+    for a in p.arms:
+        cfg = load_arm(a)
+        assert cfg.name == a
+        assert build_arm(cfg, model=None, t=ctx)["name"] == (cfg.legacy_name or a)
+    for t in p.tasks:
+        assert load_task(t).name == t
+
+
+def test_the_l2_pods_are_their_prereg_designs() -> None:
+    """Row by row against `L2_PODS`: arm order, task list, the single-shot arms; every task
+    at n = 12 (6 trials x 2 seeds, or the v2 design's 12 from one seed) and chunk 4096,
+    the in-house pods on the four archived sub-tasks with generator-drawn depths and the
+    cycled filler (`wikitext` on the real-text pod), the smoke pod on generator v2's five
+    at 16K on the paper's model; bf16 on the -devel image (quanto JIT-builds its kernel);
+    six pods, six hashes (one arm list against another, one filler or model against
+    another keeps them apart)."""
+    for name, (_, arms, tasks, single_shot) in L2_PODS.items():
         p = load_pod(name)
-        assert p.prereg == "prereg/filler_realism.md"
-        assert (REPO_ROOT / p.prereg).is_file(), "the prereg must be in the launch's ancestry"
-        assert p.gpu_budget_h > 0, f"{name}: a pod to be launched needs a pre-registered budget"
-        for a in p.arms:
-            assert load_arm(a).name == a
-        for t in p.tasks:
-            assert load_task(t).name == t
-        hashes.add(config_hash(p))
-    assert len(hashes) == len(FILLER_PODS)
+        assert p.tasks == tasks, f"{name}: tasks {p.tasks}"
+        if arms is not None:
+            assert p.arms == arms, f"{name}: not the pre-registered arm order"
+        if single_shot is not None:
+            assert [a for a in p.arms if not load_arm(a).chunkable] == single_shot, name
+        assert p.dtype == "bfloat16" and "-devel" in p.image, f"{name}: {p.dtype} {p.image}"
+        for tname in p.tasks:
+            t = load_task(tname)
+            assert t.n_trials * len(t.seeds) == 12 and t.chunk == 4096, tname
+            if name == "l2_smoke":
+                assert isinstance(t, TaskV2Cfg) and t.generator == "v2" and t.ctx == 16384
+                assert t.tasks == [*INHOUSE_SUBTASKS[:3], "niah_multiquery", "vt"]
+            else:
+                assert t.generator == "inhouse" and t.tasks == INHOUSE_SUBTASKS, tname
+                filler = "wikitext" if name == "filler_realism" else "cycle"
+                assert t.depths is None and t.filler == filler, tname
+    assert load_pod("l2_smoke").model == "unsloth/Meta-Llama-3.1-8B-Instruct"
+    assert len({config_hash(load_pod(n)) for n in L2_PODS}) == len(L2_PODS)
+
+
+def test_the_filler_realism_pods_pair_with_the_archived_rows() -> None:
+    """The real-text pod's records carry the prereg's row keys (the v1 arm strings), and the
+    cycled control -- the harness-consistency control that separates a real-text drop from
+    drift between `w10_ruler.py` and `pod.py run` (PR-L2-19), `full` joining it under
+    Amendment 2 -- runs the same model, generator, context, sub-tasks and chunk: the filler
+    is the only difference."""
+    real, cycle = load_pod("filler_realism"), load_pod("filler_realism_cycle")
+    assert [load_arm(a).legacy_name for a in real.arms] == [
+        "full",
+        "bugSseed-r64-h256",
+        "bugSseed-r64-h256-q4",
+        "quant-2bit-kivi",
+        "quant-2bit-kivi#chunk0",
+    ]
+    rt, ct = load_task(real.tasks[0]), load_task(cycle.tasks[0])
+    assert cycle.model == real.model
+    assert (ct.generator, ct.ctx, ct.tasks, ct.chunk) == (rt.generator, rt.ctx, rt.tasks, rt.chunk)
 
 
 def test_the_live_filler_manifests_still_hash_to_their_configs() -> None:
@@ -898,101 +965,10 @@ def test_the_live_filler_manifests_still_hash_to_their_configs() -> None:
     docstring -- kivi2_streaming's label lives in a `#` comment block instead (L2.9b),
     and YAML comments are outside the hash: both filler pods name the arm, and the
     launched manifests still hash to the configs on disk."""
-    for name in FILLER_PODS:
+    for name in ("filler_realism", "filler_realism_cycle"):
         m = json.loads((REPO_ROOT / "results" / name / "manifest.json").read_text())
         assert config_hash(load_pod(name)) == m["config_hash"], name
 
-
-def test_the_filler_realism_pod_is_the_prereg_design_table() -> None:
-    """Row by row: the arm order is the prereg's (cheap ceiling control, the two arms
-    the decision rule names, the descriptive baselines -- a pod that dies early still
-    lands an interpretable result) and the records carry the prereg's row keys; the one
-    task is the four-task real-text protocol, so `max_new` resolves to 40 as it did for
-    every reference row, at the archived n, chunked prefill and generator-drawn depths;
-    the single-shot KIVI arm is the one arm the runner prefills in one shot."""
-    p = load_pod("filler_realism")
-    assert p.arms == FILLER_ARMS
-    assert [load_arm(a).legacy_name for a in p.arms] == [
-        "full",
-        "bugSseed-r64-h256",
-        "bugSseed-r64-h256-q4",
-        "quant-2bit-kivi",
-        "quant-2bit-kivi#chunk0",
-    ]
-    assert p.tasks == ["ruler_inhouse_16k_wikitext"]
-    t = load_task(p.tasks[0])
-    assert t.filler == "wikitext"
-    assert t.tasks == ["niah_single", "niah_multikey", "niah_multivalue", "vt"]
-    assert t.n_trials * len(t.seeds) == 12
-    assert t.depths is None and t.chunk == 4096
-    single_shot = [a for a in p.arms if not load_arm(a).chunkable]
-    assert single_shot == ["kivi2_singleshot"]
-
-
-def test_the_cycle_control_pod_replicates_the_archived_row() -> None:
-    """The r64 arm on the cycled filler at the same n is the harness-consistency control that
-    separates a drop on the real-text pod from drift between `w10_ruler.py` (which
-    produced the archived rows) and `pod.py run` (ruling PR-L2-19). `full` joins it under
-    prereg Amendment 2 -- the real-text pod's `full` arm fell on `vt` (0.08) and slightly on
-    `niah_multivalue` (0.92), so the cycled-`full` cell is bought to measure whether the ceiling
-    was already below 1.00 on the archived filler -- and the bar moves 6.0 -> 7.0 h for the +48
-    samples. Same model and generator as the real-text pod; the filler is the only difference."""
-    p, real = load_pod("filler_realism_cycle"), load_pod("filler_realism")
-    assert p.arms == ["isvd_r64_h256_seed", "full"] and p.model == real.model
-    assert p.gpu_budget_h == 7.0
-    t, rt = load_task(p.tasks[0]), load_task(real.tasks[0])
-    assert t.filler == "cycle" and t.n_trials * len(t.seeds) == 12
-    assert (t.generator, t.ctx, t.tasks, t.chunk) == (rt.generator, rt.ctx, rt.tasks, rt.chunk)
-
-
-# --- L2.5: the ss2 pods (prereg/ss2_families.md) --------------------------------
-
-SS2_PODS = ("ss2_families_mistral", "ss2_families_qwen", "ss2_families_llama")
-SS2_ARMS = ["isvd_r64_h256_seed", "kivi2_faithful", "kivi2_singleshot", "kivi4_faithful"]
-
-
-def test_the_ss2_pods_resolve_end_to_end() -> None:
-    """All three pods load, hash, name the shared prereg, carry a budget to enforce, and
-    every arm and task they reference loads; three models keep the three hashes apart."""
-    hashes = set()
-    for name in SS2_PODS:
-        p = load_pod(name)
-        assert p.prereg == "prereg/ss2_families.md"
-        assert (REPO_ROOT / p.prereg).is_file(), "the prereg must be in the launch's ancestry"
-        assert p.gpu_budget_h > 0, f"{name}: a pod to be launched needs a pre-registered budget"
-        for a in p.arms:
-            assert load_arm(a).name == a
-        for t in p.tasks:
-            assert load_task(t).name == t
-        hashes.add(config_hash(p))
-    assert len(hashes) == len(SS2_PODS)
-
-
-def test_the_ss2_pods_are_the_prereg_design() -> None:
-    """The arm list is the pre-registered one IN ORDER -- the r64 arm first, because it is
-    the paired reference every contrast needs and a pod that dies early must still land
-    an interpretable pair; no `full` (every contrast is paired within the pod). All three
-    run 16K + 32K (R-L2-6: the archived Llama 16K single-shot cell is the G=64 mixin, not
-    the faithful arm, so Llama's 16K contrast is bought too). Every task is the
-    cycled-filler in-house protocol at the archived n and chunk, so each record pairs on
-    (seed, trial) with the w19-a1 / w18-g1 rows; the three KIVI arms are the ones the
-    runner prefills in one shot; bf16 on the -devel image (quanto JIT-builds its kernel)."""
-    for name in SS2_PODS:
-        p = load_pod(name)
-        assert p.arms == SS2_ARMS, f"{name}: not the pre-registered arm order"
-        assert "full" not in p.arms
-        assert p.tasks == ["ruler_inhouse_16k", "ruler_inhouse_32k"], f"{name}: tasks {p.tasks}"
-        assert p.dtype == "bfloat16" and "-devel" in p.image, f"{name}: {p.dtype} {p.image}"
-        for tname in p.tasks:
-            t = load_task(tname)
-            assert t.generator == "inhouse" and t.filler == "cycle"
-            assert t.n_trials * len(t.seeds) == 12 and t.chunk == 4096
-            assert t.tasks == ["niah_single", "niah_multikey", "niah_multivalue", "vt"]
-        single_shot = [a for a in p.arms if not load_arm(a).chunkable]
-        assert single_shot == ["kivi2_faithful", "kivi2_singleshot", "kivi4_faithful"]
-
-
-# --- L2.5b: the smoke pod (prereg/l2_smoke.md) ----------------------------------
 
 # Gate G2 line 6: the k in {0.10, 0.15, 0.25} eviction grid + ThinK composed as its paper
 # intends -- ticked by the smoke pod's harvest, so the pod has to carry all nine.
@@ -1007,25 +983,6 @@ SMOKE_GATE_ARMS = [
     "ea_k0.15",
     "think_c0.5_snapkv_k0.15",
 ]
-
-
-def test_the_smoke_pod_resolves_end_to_end() -> None:
-    """The pod loads, hashes, names its prereg, carries a budget to enforce, and every arm
-    builds at the task's context exactly as the runner builds it before the first trial
-    (`frontier.build_arm`: a config that cannot resolve fails the pod before a record
-    exists). In-process and model-free: `build_arm` only captures the model."""
-    p = load_pod("l2_smoke")
-    assert p.prereg == "prereg/l2_smoke.md"
-    assert (REPO_ROOT / p.prereg).is_file(), "the prereg must be in the launch's ancestry"
-    assert p.gpu_budget_h > 0, "a pod to be launched needs a pre-registered budget"
-    assert p.model == "unsloth/Meta-Llama-3.1-8B-Instruct"
-    assert p.dtype == "bfloat16" and "-devel" in p.image, f"{p.dtype} {p.image}"
-    ctx = load_task(p.tasks[0]).ctx
-    for a in p.arms:
-        cfg = load_arm(a)
-        assert cfg.name == a
-        assert build_arm(cfg, model=None, t=ctx)["name"] == (cfg.legacy_name or a)
-    assert config_hash(p)
 
 
 def test_the_smoke_pod_names_every_arm_but_the_table4_variants() -> None:
@@ -1050,17 +1007,3 @@ def test_the_smoke_pod_names_every_arm_but_the_table4_variants() -> None:
     assert kinds[-n_gist:] == ["bug"] * n_gist, kinds
     assert set(SMOKE_GATE_ARMS) <= set(p.arms)
     assert not [a for a in p.arms if a.startswith("ojakv")]
-
-
-def test_the_smoke_pod_task_is_generator_v2_at_n12() -> None:
-    """One task: generator v2 at 16K, the five RULER sub-tasks (`niah_multiquery` included),
-    the balanced 2 x 3 x 2 design = 12 records per cell from one seed, chunked prefill -- the
-    smoke's n. The runner prefills the `chunkable: false` arms in one shot whatever the task
-    says; that is the arm's protocol, not the task's."""
-    p = load_pod("l2_smoke")
-    assert p.tasks == ["ruler_v2_16k"]
-    t = load_task(p.tasks[0])
-    assert isinstance(t, TaskV2Cfg) and t.generator == "v2" and t.ctx == 16384
-    assert t.tasks == ["niah_single", "niah_multikey", "niah_multivalue", "niah_multiquery", "vt"]
-    assert t.n_trials * len(t.seeds) == 12
-    assert t.design == {"haystacks": 2, "depths": 3, "codes": 2} and t.chunk == 4096

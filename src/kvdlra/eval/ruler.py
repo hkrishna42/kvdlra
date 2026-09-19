@@ -331,22 +331,18 @@ def retrieve(
                 block=False,
                 max_new=max_new,
             )
-    elif arm["kind"] == "quant":
+    elif arm["kind"] in ("quant", "quant_faithful"):
         # KIVI-style QuantizedCache baseline (Week-18/19): the arm supplies its OWN cache
-        # object (not a press over a DynamicCache); prefill honors --chunk (Week-19: the
-        # single-shot 16K/32K quant prefill OOM'd even on 80GB) and flushes the residual
-        # so decode starts fully quantized, as after a single-shot prefill.
+        # object (not a press over a DynamicCache). `quant` prefills honoring --chunk
+        # (Week-19: the single-shot 16K/32K quant prefill OOM'd even on 80GB) and flushes
+        # the residual so decode starts fully quantized, as after a single-shot prefill;
+        # `quant_faithful` is KIVI's own protocol (L2.2): full-precision single-shot
+        # prefill, the quantized store built post hoc. Both decode the same way.
         cache = arm["make"]()
-        _prefill_plain(model, cache, hay, chunk)
-        fp = _footprint(arm, cache, ctx_len, n, h_kv)
-        text = _decode(
-            model, tok, cache, query.to(device), ctx_len, device, block=True, max_new=max_new
-        )
-    elif arm["kind"] == "quant_faithful":
-        # KIVI's own protocol (L2.2): full-precision single-shot prefill, the quantized
-        # store built post hoc, then decode as the streaming quant arm above.
-        cache = arm["make"]()
-        _prefill_faithful(model, cache, hay)
+        if arm["kind"] == "quant":
+            _prefill_plain(model, cache, hay, chunk)
+        else:
+            _prefill_faithful(model, cache, hay)
         fp = _footprint(arm, cache, ctx_len, n, h_kv)
         text = _decode(
             model, tok, cache, query.to(device), ctx_len, device, block=True, max_new=max_new
@@ -378,15 +374,9 @@ def retrieve(
         with press(model) if press is not None else nullcontext():
             model(hay, past_key_values=cache, use_cache=True, logits_to_keep=1)
         fp = _footprint(arm, cache, ctx_len, n, h_kv)
+        block = not arm.get("per_layer_budget", False)
         text = _decode(
-            model,
-            tok,
-            cache,
-            query.to(device),
-            ctx_len,
-            device,
-            block=not arm.get("per_layer_budget", False),
-            max_new=max_new,
+            model, tok, cache, query.to(device), ctx_len, device, block=block, max_new=max_new
         )
     frac = sum(t in text for t in targets) / len(targets)
     hit = frac >= 1.0

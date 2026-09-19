@@ -32,7 +32,7 @@ from kvdlra.baselines.presses import make_press, press_family
 from kvdlra.cache import BugStreamingCache, ShadowKVCache
 from kvdlra.eval.config import ArmCfg, arm_kwargs
 from kvdlra.eval.records import drained
-from kvdlra.quant.kivi import make_kivi, quantize_after_prefill, residual_tokens
+from kvdlra.quant.kivi import quantize_after_prefill, residual_tokens
 from kvdlra.quant.kivi_cache import aux_words, flush, make_quant_cache
 
 N_SINK = 4
@@ -242,22 +242,12 @@ def build_arm(cfg: ArmCfg, model: Any, t: int) -> dict[str, Any]:
     if kind == "press":
         return {**arm, **_press(cfg)}
     if kind == "quant_faithful":
-        # KIVI at its published operating point: the scheme IS the arm, so the factory
-        # pins it (`make_kivi`) and a YAML that says otherwise is refused, not relabelled.
-        q = cfg.quant
-        if q.get("scheme") != "kivi":
+        # KIVI at its published operating point: the scheme IS the arm, so a YAML that
+        # says otherwise is refused, not relabelled; past that, the cache is the quant
+        # arm's (`make_kivi` is `make_quant_cache` at the kivi scheme).
+        if cfg.quant.get("scheme") != "kivi":
             raise ValueError(f"configs/arms/{cfg.name}.yaml: quant_faithful is the kivi scheme")
-        return {
-            **arm,
-            **_quant_fields(cfg),
-            "make": lambda: make_kivi(
-                model.config,
-                nbits=int(q["nbits"]),
-                group=int(q["group"]),
-                residual=int(q["residual"]),
-                backend=str(q["backend"]),
-            ),
-        }
+        return {**arm, **_quant_fields(cfg), "make": _quant_factory(cfg, model)}
     raise ValueError(f"unknown arm kind {cfg.kind!r} in configs/arms/{cfg.name}.yaml")
 
 
@@ -286,9 +276,9 @@ def _quant_factory(cfg: ArmCfg, model: Any) -> Any:
 
 
 def _press_factory(cfg: ArmCfg) -> Any:
-    """A factory for the arm's kvpress press (`presses.make_press` decides the family).
-    The family is resolved NOW, so a bad ``press:`` block fails at build, not at first use;
-    a ``kind: press`` arm with no press parameters would otherwise run as the full cache."""
+    """The `press_quant` arm's press factory (`presses.make_press` decides the family).
+    The family is resolved NOW, so a ``press:`` block that names no press fails at build,
+    not at first use."""
     if press_family(cfg) is None:
         raise ValueError(f"configs/arms/{cfg.name}.yaml: press names no keep/ratio/rank")
     return lambda: make_press(cfg)
@@ -318,13 +308,16 @@ def _press(cfg: ArmCfg) -> dict[str, Any]:
             "oracle_group": group,
             "make": lambda: SVDOraclePress(rank_ratio=ratio, group=group),
         }
-    arm: dict[str, Any] = {"make": _press_factory(cfg)}
+    fam = press_family(cfg)  # resolved NOW: a bad block fails at build, not at first use
+    if fam is None:
+        raise ValueError(f"configs/arms/{cfg.name}.yaml: press names no keep/ratio/rank")
+    arm: dict[str, Any] = {"make": lambda: make_press(cfg)}
     if "keep" in p:
         arm["keep"] = float(p["keep"])
     if "ratio" in p:
-        arm["press_type"] = press_family(cfg)
+        arm["press_type"] = fam
         arm["think_ratio"] = float(p["ratio"])
-    if press_family(cfg) == "pyramidkv":
+    if fam == "pyramidkv":
         arm["per_layer_budget"] = True
     return arm
 

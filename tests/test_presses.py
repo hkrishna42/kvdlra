@@ -17,6 +17,7 @@ SnapKV's 64-token observation window.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -41,9 +42,7 @@ H, D = 2, 16  # KV heads x head_dim -> n_features 32 (the shared fixture's shape
 TINY_MPE, TINY_SDPA = 4096, True
 
 
-class _StubTok:
-    def decode(self, ids: list[int]) -> str:
-        return " ".join(str(i) for i in ids)
+_TOK = SimpleNamespace(decode=lambda ids: " ".join(str(i) for i in ids))
 
 
 def _prompt(t: int, seed: int) -> torch.Tensor:
@@ -183,7 +182,7 @@ def test_think_snapkv_is_billed_measured_keep_times_the_channel_ratio(
         assert zeroed.tolist() == [[D // 2] * h_kv]  # ... then half the channels pruned
     want = acc.think_evict_footprint(ctx, n, D, h_kv, 0.5, kept / ctx)
     _hit, ratio, _frac, sbits = retrieve(
-        tiny_model, _StubTok(), arm, hay, query, ["needle"], "cpu", 0, n, h_kv, 4
+        tiny_model, _TOK, arm, hay, query, ["needle"], "cpu", 0, n, h_kv, 4
     )
     assert ratio == pytest.approx(want.ratio_fp16(ctx, n))
     assert sbits == pytest.approx(want.ratio_stored_bits(ctx, n))
@@ -217,21 +216,16 @@ def test_pyramidkv_decodes_token_by_token_and_the_uniform_presses_in_one_block(
     n, h_kv, ctx = H * D, H, 512
     hay, query = _prompt(ctx, 3), _prompt(6, 4)
     cfg = load_arm("pyramidkv_k0.10")
-    cfg.press["keep"] = 0.5
+    cfg.press["keep"] = 0.5  # the 448 / 64 pyramid the billing test above pins
     arm = build_arm(cfg, tiny_model, ctx)
     assert arm["per_layer_budget"] is True
-    kept = [
-        int(cast(Any, la).keys.shape[2]) for la in _prefill(tiny_model, arm["make"](), hay).layers
-    ]
-    assert kept == [448, 64], kept  # the per-layer key counts differ: the pyramid is active
-    args = (tiny_model, _StubTok(), arm, hay, query, ["needle"], "cpu", 0, n, h_kv, 4)
-    _hit, ratio, _frac, _sbits = ruler.retrieve(*args)
-    assert ratio == pytest.approx(acc.evict_footprint(ctx, n, 0.5).ratio_fp16(ctx, n))
+    args = (tiny_model, _TOK, arm, hay, query, ["needle"], "cpu", 0, n, h_kv, 4)
+    ruler.retrieve(*args)
     with pytest.raises(RuntimeError, match="must match the size"):
-        ruler.retrieve(tiny_model, _StubTok(), {**arm, "per_layer_budget": False}, *args[3:])
+        ruler.retrieve(tiny_model, _TOK, {**arm, "per_layer_budget": False}, *args[3:])
     snap = build_arm(load_arm("snapkv_k0.10"), tiny_model, ctx)
     assert "per_layer_budget" not in snap
-    ruler.retrieve(tiny_model, _StubTok(), snap, *args[3:])
+    ruler.retrieve(tiny_model, _TOK, snap, *args[3:])
     assert seen == [False, True, True]
 
 

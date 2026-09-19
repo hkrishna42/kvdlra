@@ -13,8 +13,6 @@ import hashlib
 import json
 import math
 import re
-import subprocess
-import sys
 from collections import Counter
 from dataclasses import replace
 from pathlib import Path
@@ -33,7 +31,6 @@ from kvdlra.eval.gen import (
     design_source,
     load_corpora,
     make_trial,
-    make_trial_v1,
     sentences,
 )
 
@@ -56,7 +53,7 @@ CFG = TaskV2Cfg(
 
 @pytest.fixture(scope="module")
 def corpora() -> dict[str, list[Any]]:
-    return load_corpora(CFG.haystacks, root=FIX.parent, fixture=FIX)
+    return load_corpora(tuple(CFG.haystacks), root=FIX.parent, fixture=FIX)
 
 
 # ------------------------------------------------------------------ the design
@@ -108,9 +105,9 @@ def test_every_source_is_used_equally(tok: Any, corpora: dict[str, list[Any]]) -
 
 
 def test_the_family_never_changes_the_source() -> None:
-    """In every design, swapping the code family at a fixed (haystack, depth, replicate)
-    leaves the source unchanged -- the four task YAMLs' designs and four odd shapes, every
-    trial, every partner within the design."""
+    """In every design -- the four task YAMLs' and four odd shapes -- the trials of one
+    (haystack, depth, replicate) group, which differ only in the code family, share one
+    source: `design_source` never reads the family (``code_idx % n_families``)."""
     designs = [cast(TaskV2Cfg, load_task(n)).design for n in V2_TASKS] + [
         {"haystacks": 1, "depths": 1, "codes": 2},
         {"haystacks": 3, "depths": 6, "codes": 4},
@@ -120,17 +117,13 @@ def test_the_family_never_changes_the_source() -> None:
     n_fam = len(CFG.code_families)
     for design in designs:
         cfg, sources = _sources(design)
-        nh, nd, nc = design["haystacks"], design["depths"], design["codes"]
-        swaps = 0
+        groups: dict[tuple[int, float, int], set[str]] = {}
         for t in range(cfg.n_trials):
-            h, d, c = t % nh, t // nh % nd, t // nh // nd  # codes (outer) x depths x haystacks
-            cell = design_cell(cfg, t)
-            assert (cell[0], cell[3]) == (h, c)
-            for partner in range(c // n_fam * n_fam, min(c // n_fam * n_fam + n_fam, nc)):
-                assert sources[h + nh * (d + nd * partner)] == sources[t], (design, t)
-                swaps += partner != c
-        # every trial has n_fam - 1 partners, except those in a trailing partial block
-        assert swaps == cfg.n_trials * (n_fam - 1) - nh * nd * (nc % n_fam) * (n_fam - nc % n_fam)
+            h, d, _, c = design_cell(cfg, t)
+            groups.setdefault((h, d, c // n_fam), set()).add(sources[t])
+        assert all(len(s) == 1 for s in groups.values()), design
+        nh, nd, nc = design["haystacks"], design["depths"], design["codes"]
+        assert len(groups) == nh * nd * math.ceil(nc / n_fam)  # a trailing block is a group too
 
 
 def test_sentences_drop_fragments_without_a_space() -> None:
@@ -243,12 +236,11 @@ def test_golden_prompt_hashes(tok: Any, corpora: dict[str, list[Any]]) -> None:
 
 
 def test_v1_builder_is_untouched(tok: Any) -> None:
-    """``make_trial_v1`` IS ``ruler.build_task`` (no code motion, PR-L2-22); its cycled
+    """``ruler.build_task`` is the v1 generator, no code motion (PR-L2-22): its cycled
     prefill under the ``tok`` fixture is pinned by the constant below, computed once."""
     from kvdlra.eval import ruler
 
-    assert make_trial_v1 is ruler.build_task
-    pre, q, targets = make_trial_v1(
+    pre, q, targets = ruler.build_task(
         tok, "niah_single", 512, trial=0, seed=0, n_keys=8, n_values=4, n_hops=3
     )
     assert hashlib.sha256(pre.numpy().tobytes()).hexdigest() == V1_NIAH_SINGLE_512_PREFILL_SHA
@@ -285,8 +277,7 @@ def test_materialize_writes_docs_and_their_digest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Short and oversized rows are skipped, ids are `d<index>` in materialization order,
-    the JSONL's sha256 is returned and written beside it -- network-free through a fake
-    stream."""
+    the JSONL's sha256 is returned -- network-free through a fake stream."""
     from kvdlra.eval import haystacks
 
     calls: list[dict[str, Any]] = []
@@ -305,7 +296,6 @@ def test_materialize_writes_docs_and_their_digest(
     assert re.fullmatch(r"[0-9a-f]{40}", kw["revision"]) and "trust_remote_code" not in kw
     payload = (tmp_path / "essays.jsonl").read_bytes()
     assert sha == hashlib.sha256(payload).hexdigest()
-    assert (tmp_path / "essays.sha256").read_text().strip() == sha
     docs = [json.loads(x) for x in payload.decode().splitlines()]
     assert [d["id"] for d in docs] == ["d0", "d1"] and docs[0]["text"] == "a" * 2500
     assert all(d["source"] == "essays" for d in docs)
@@ -340,13 +330,7 @@ def test_run_materializes_the_haystacks_a_v2_task_names(
     again = pod._haystack_sha256(cfg)  # second call: every file is on disk, none re-made
     assert len(made) == 4 and set(again) == set(got)
     assert all(re.fullmatch(r"[0-9a-f]{64}", v) for v in again.values())  # from the bytes
-
-
-def test_prepare_is_a_subcommand() -> None:
-    out = subprocess.run(
-        [sys.executable, "scripts/pod.py", "prepare"], capture_output=True, text=True, cwd=REPO
-    )
-    assert out.returncode == 2 and "--pod" in out.stderr  # argparse: the subcommand exists
+    assert pod.prepare("l2_smoke") == 0 and len(made) == 4  # the same step on its own
 
 
 # ------------------------------------------------------------------ the config

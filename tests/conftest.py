@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 import torch
-from transformers import LlamaConfig, LlamaForCausalLM
+from transformers import BatchEncoding, LlamaConfig, LlamaForCausalLM
 
 # Tiny Llama: 2 layers, 2 KV heads x head_dim 16 => n_features = 32.
 H, D = 2, 16
@@ -54,15 +54,6 @@ def tiny_model(request: pytest.FixtureRequest) -> LlamaForCausalLM:
 # --------------------------------------------------------------- the `tok` fixture
 
 
-class _Enc(dict[str, Any]):
-    """The two faces of HF's ``BatchEncoding`` the eval code reads: ``enc.input_ids``
-    (``ruler._filler_cached``) and ``enc["input_ids"]`` (``templated_official``)."""
-
-    @property
-    def input_ids(self) -> Any:
-        return self["input_ids"]
-
-
 class WhitespaceTok:
     """A whitespace tokenizer with a chat template and STABLE ids -- ``crc32(word)`` -- so
     a golden hash computed on one machine reproduces on CI (a grow-on-demand vocabulary
@@ -84,9 +75,9 @@ class WhitespaceTok:
         self._words.update(zip(ids, words, strict=True))
         return ids
 
-    def __call__(self, text: str, return_tensors: str | None = None, **_: Any) -> _Enc:
+    def __call__(self, text: str, return_tensors: str | None = None, **_: Any) -> BatchEncoding:
         ids = self._ids(text.split())
-        return _Enc(input_ids=torch.tensor([ids]) if return_tensors else ids)
+        return BatchEncoding({"input_ids": torch.tensor([ids]) if return_tensors else ids})
 
     def apply_chat_template(
         self,

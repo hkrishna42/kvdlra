@@ -2,8 +2,8 @@
 
 `materialize` streams the first ``n_docs`` documents of `MIN_CHARS` to `MAX_CHARS`
 characters from one Hub dataset into ``data/haystacks/<source>.jsonl`` (one `gen.Doc`
-per line, ids ``d<index>`` in stream order) and writes the JSONL's sha256 beside it; the
-run prints that digest as a ``[stage] dataset_sha256 haystack:<source> <sha>`` line and
+per line, ids ``d<index>`` in stream order) and returns the JSONL's sha256; the run
+prints that digest as a ``[stage] dataset_sha256 haystack:<source> <sha>`` line and
 `scripts/pod.py harvest` writes it into ``manifest.dataset_sha256`` (the manifest the run
 writes stays on the instance), so the text a cell was built on is named by the evidence
 that cites it. ``data/haystacks/`` is gitignored: `scripts/pod.py prepare --pod <pod>`
@@ -87,10 +87,10 @@ SOURCES: dict[str, tuple[dict[str, Any], str]] = {
 
 
 def materialize(source: str, n_docs: int = 64, out: Path = HAYSTACKS) -> str:
-    """Stream ``source`` into ``<out>/<source>.jsonl`` + ``<source>.sha256``; returns the
-    sha256 of the JSONL bytes. Rows shorter than `MIN_CHARS` or longer than `MAX_CHARS`
-    are skipped. Fails loud if the stream ends before ``n_docs`` documents: fewer would be
-    a different corpus than the one the design names."""
+    """Stream ``source`` into ``<out>/<source>.jsonl``; returns the sha256 of the JSONL
+    bytes. Rows shorter than `MIN_CHARS` or longer than `MAX_CHARS` are skipped. Fails
+    loud if the stream ends before ``n_docs`` documents: fewer would be a different corpus
+    than the one the design names."""
     kwargs, field = SOURCES[source]
     t0 = time.perf_counter()
     docs: list[Doc] = []
@@ -110,7 +110,6 @@ def materialize(source: str, n_docs: int = 64, out: Path = HAYSTACKS) -> str:
     payload = "".join(json.dumps(d, sort_keys=True) + "\n" for d in docs).encode()
     (out / f"{source}.jsonl").write_bytes(payload)
     digest = hashlib.sha256(payload).hexdigest()
-    (out / f"{source}.sha256").write_text(digest + "\n")
     print(
         f"[stage] materialize {source} -> {n_docs} docs ({time.perf_counter() - t0:.1f} s)",
         flush=True,
@@ -121,7 +120,7 @@ def materialize(source: str, n_docs: int = 64, out: Path = HAYSTACKS) -> str:
 def ensure(sources: Iterable[str], out: Path | None = None) -> dict[str, str]:
     """``source -> sha256`` of ``<out>/<source>.jsonl`` (default `HAYSTACKS`) for each
     source, materializing the ones not on disk. The digest of a file already there is
-    recomputed from its bytes, never read off the ``.sha256`` sidecar."""
+    recomputed from its bytes."""
     out = out or HAYSTACKS
     shas = {}
     for s in sources:

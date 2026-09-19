@@ -3,8 +3,8 @@ quantized store built post hoc (Liu et al. 2024). The streaming arm (``kivi_cach
 chunked prefill, later chunks attending to already-quantized context) is the arm the
 paper-v1 tables used and stays as it is; CLAUDE.md names this one as a separate arm.
 
-hqq backend throughout: pure torch on CPU, no JIT. Two layers, T <= 300: the suite's
-90-second gate.
+hqq backend throughout: pure torch on CPU, no JIT. The shared tiny Llama (tests/conftest.py:
+two layers, 2 KV heads x 16), T <= 300: the suite's 90-second gate.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 import torch
-from transformers import DynamicCache, Qwen2Config, Qwen2ForCausalLM
+from transformers import DynamicCache, LlamaForCausalLM
 
 from kvdlra import accounting as acc
 from kvdlra.eval import frontier, longbench, ruler
@@ -25,20 +25,6 @@ from kvdlra.quant.kivi_cache import aux_words, make_quant_cache
 
 H_KV, D = 2, 16  # KV heads x head_dim -> n = 32 features per layer
 TOK = SimpleNamespace(decode=lambda ids: " ".join(str(i) for i in ids))
-
-
-def _tiny() -> tuple[Qwen2ForCausalLM, Qwen2Config]:
-    cfg = Qwen2Config(
-        hidden_size=64,
-        num_attention_heads=4,
-        num_key_value_heads=H_KV,
-        num_hidden_layers=2,
-        intermediate_size=128,
-        vocab_size=256,
-        max_position_embeddings=1024,
-    )
-    torch.manual_seed(0)
-    return Qwen2ForCausalLM(cfg).eval(), cfg  # type: ignore[no-untyped-call]
 
 
 def _deq(cache: Any) -> tuple[torch.Tensor, torch.Tensor]:
@@ -60,12 +46,14 @@ def _want(t: int) -> acc.Footprint:
     )
 
 
-def test_faithful_prefill_never_calls_quantized_update(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_faithful_prefill_never_calls_quantized_update(
+    tiny_model: LlamaForCausalLM, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Prefill attention sees fp16 only (the QuantizedCache's update never runs), the
     trailing T mod R tokens stay fp16 in the residual, and decode continues from the
     post-hoc state: the length advances and the residual grows -- a re-initialised layer
     would have started over with an empty residual."""
-    model, cfg = _tiny()
+    model, cfg = tiny_model, tiny_model.config
     cache = make_kivi(cfg, nbits=4, backend="hqq")
     calls = {"n": 0}
     orig = type(cache).update
@@ -88,10 +76,12 @@ def test_faithful_prefill_never_calls_quantized_update(monkeypatch: pytest.Monke
     assert cache.get_seq_length() == 301 and residual_tokens(cache) == 300 % 128 + 1
 
 
-def test_posthoc_quantization_equals_the_upstream_update_on_the_same_slab() -> None:
+def test_posthoc_quantization_equals_the_upstream_update_on_the_same_slab(
+    tiny_model: LlamaForCausalLM,
+) -> None:
     """ONE quantize call per layer over the slab -- bit-identical to what the layer's own
     update produces from the same slab (residual 0: everything quantized, both ways)."""
-    _, cfg = _tiny()
+    cfg = tiny_model.config
     torch.manual_seed(0)
     k, v = torch.randn(1, 2, 256, 32), torch.randn(1, 2, 256, 32)
     upstream = make_quant_cache(cfg, nbits=4, scheme="kivi", backend="hqq", group=32, residual=0)
@@ -105,12 +95,12 @@ def test_posthoc_quantization_equals_the_upstream_update_on_the_same_slab() -> N
     assert residual_tokens(post) == 0
 
 
-def test_the_residual_folds_as_a_streamed_layer_folds_it() -> None:
+def test_the_residual_folds_as_a_streamed_layer_folds_it(tiny_model: LlamaForCausalLM) -> None:
     """A post-hoc layer whose prefill left no residual (T mod R = 0) holds upstream's own
     1-D empty tensor, not a 4-D ``(1, H, 0, D)`` slice (``update`` tests ``keys.dim() == 4``
     before it counts the residual); and the fold R decode steps later is the streamed
     layer's: everything quantized, the residual empty again, the length advanced."""
-    model, cfg = _tiny()
+    model, cfg = tiny_model, tiny_model.config
     cache = make_kivi(cfg, nbits=4, backend="hqq", residual=4)
     ids = torch.randint(0, 256, (1, 8))
     dyn = DynamicCache()
@@ -128,10 +118,10 @@ def test_the_residual_folds_as_a_streamed_layer_folds_it() -> None:
     assert cache.get_seq_length() == 12 and _deq(cache)[0].shape[-2] == 12
 
 
-def test_per_channel_keys_survive_an_outlier_channel() -> None:
+def test_per_channel_keys_survive_an_outlier_channel(tiny_model: LlamaForCausalLM) -> None:
     """Per-channel keys give the outlier channel its own scale; per-token keys let it set
     the scale of every other channel in its token (the Week-18 0.00 retrieval)."""
-    _, cfg = _tiny()
+    cfg = tiny_model.config
     torch.manual_seed(1)
     k = torch.randn(1, 2, 256, 32)
     k[..., 7] *= 200.0  # one massive channel (Qwen-style key bias)
@@ -150,8 +140,8 @@ def test_per_channel_keys_survive_an_outlier_channel() -> None:
     assert err(faithful) < 0.5 * err(token)
 
 
-def test_bytes_include_scales_zeros_and_actual_residual() -> None:
-    _, cfg = _tiny()
+def test_bytes_include_scales_zeros_and_actual_residual(tiny_model: LlamaForCausalLM) -> None:
+    cfg = tiny_model.config
     dyn = DynamicCache()
     dyn.update(torch.randn(1, 2, 300, 32), torch.randn(1, 2, 300, 32), 0)
     c = make_kivi(cfg, nbits=2, backend="hqq")
@@ -184,11 +174,13 @@ def test_the_faithful_arm_refuses_a_yaml_that_is_not_the_kivi_scheme() -> None:
         build_arm(cfg, model=None, t=16384)
 
 
-def test_retrieve_runs_the_faithful_arm_and_bills_the_actual_residual() -> None:
+def test_retrieve_runs_the_faithful_arm_and_bills_the_actual_residual(
+    tiny_model: LlamaForCausalLM,
+) -> None:
     """The retrieval axis: fp16 single-shot prefill, post-hoc quantization, block decode;
     the footprint bills the T mod R residual the prefill actually left, not the
     configured 128 the streaming arm is billed."""
-    model, _ = _tiny()
+    model = tiny_model
     ids = torch.randint(0, 256, (1, 208))
     hit, ratio, _frac, sbits = ruler.retrieve(
         model, TOK, _faithful_arm(model, 200), ids[:, :200], ids[:, 200:], ["1"], "cpu", 0, 32, 2, 4
@@ -196,10 +188,12 @@ def test_retrieve_runs_the_faithful_arm_and_bills_the_actual_residual() -> None:
     assert isinstance(hit, bool) and ratio == sbits == _want(200).ratio_fp16(200, 32)
 
 
-def test_run_ppl_scores_the_faithful_arm_over_the_quantized_cache() -> None:
+def test_run_ppl_scores_the_faithful_arm_over_the_quantized_cache(
+    tiny_model: LlamaForCausalLM,
+) -> None:
     """The perplexity axis takes the kind (no fall-through into the press branch): the row
     is ok and billed like the retrieval axis; ``chunkable: false`` ignores the sweep's chunk."""
-    model, _ = _tiny()
+    model = tiny_model
     t, window = 160, 16
     ids = torch.randint(0, 256, ((t + window) * 2,))
     (row,) = frontier.run_ppl(
@@ -210,8 +204,8 @@ def test_run_ppl_scores_the_faithful_arm_over_the_quantized_cache() -> None:
     assert row["kind"] == "quant_faithful" and row["ratio_fp16"] == _want(t).ratio_fp16(t, 32)
 
 
-def test_longbench_generates_with_the_faithful_arm() -> None:
-    model, _ = _tiny()
+def test_longbench_generates_with_the_faithful_arm(tiny_model: LlamaForCausalLM) -> None:
+    model = tiny_model
     ids = torch.randint(0, 256, (1, 201))  # 200 prefilled + the last token generated from
     text, ratio, sbits = longbench.generate(
         model, TOK, _faithful_arm(model, 200), ids, "cpu", 0, 32, 2, 3

@@ -11,7 +11,8 @@
 % Honesty invariants enforced throughout (Week-18/19 review panels):
 %  * memory = float-equivalent STORED STATE; stored/persisted state is
 %    distinguished from resident memory everywhere (reconstruct-then-attend;
-%    workspace ~0.98x, decode residency ~1.06x). Honest fp32-at-rest bytes
+%    workspace ~0.98x; MEASURED decode KV peak 1.6x full KV and decode 4-14x
+%    slower, superseding the old analytic ~1.06x residency). Honest fp32-at-rest bytes
 %    (0.15x flagship / 0.28x marquee) lead every headline; fp16-equiv secondary.
 %  * "beats" ONLY for the Wilson-separated marquee vt vs think-c0.5; "leads"
 %    everywhere else; comparators think-c0.5 / palu-r0.5 always named.
@@ -22,7 +23,8 @@
 %  * the online axis was OPENED by OjaKV; BUG occupies it with a near-oracle
 %    rank-adaptive integrator + a content-selected exact tier.
 %  * stored ratio -> 2r/n (0.125x), NOT zero; the 1/T term is the O(rn+hn)
-%    overhead amortizing. "below the 2-bit floor" only for the composed q4 cell.
+%    overhead amortizing. "below the 2-bit floor" only for the composed q4 cell,
+%    and that cell is in-house-generator-only (0.00 on the official RULER anchor).
 \documentclass[11pt]{article}
 \usepackage[margin=1in]{geometry}
 \usepackage{amsmath,amssymb}
@@ -150,11 +152,12 @@ ratio, plus a measured persisted-cache cold start (\S\ref{sec:memory}).
 \item The crux comparison: a KIVI-scheme 2-bit baseline at matched stored
 bytes, paired needle-for-needle, which bounds the contribution honestly---BUG
 buys multi-value (and at 32K multi-key on Mistral, variable-tracking on Qwen)
-retrieval that 2-bit quantization loses; 4-bit quantization at twice the bytes is
+retrieval that 2-bit quantization loses under chunked prefill; 4-bit quantization at twice the bytes is
 not separated from it in any cell; and the composed
 gist-plus-4-bit-coordinates cell reaches $0.048\times$, a depth neither fixed-bit
 quantization nor the eviction$\times$quantization composites we measured reach with
-retrieval, at a fluency cost
+retrieval \emph{on our in-house generator}, at a fluency cost and with no external
+validity yet---on the official RULER anchor that cell scores $0.00$
 (\S\ref{sec:quantbaseline}, \S\ref{sec:subcliff}).
 \end{itemize}
 
@@ -413,8 +416,10 @@ On real Llama-3.2-1B KV, the streaming BUG tracker matches the truncated-SVD
 (Eckart--Young~\citep{eckart1936approximation}) optimum to within
 $1.01$--$1.03\times$ at every rank and beats Oja's
 rule~\citep{oja1982simplified,zhu2025ojakv} by $1.3$--$3.0\times$; the pre-RoPE
-operating point roughly halves the error at matched budget. Two honesty notes scope
-this. First, at the flagship's operating point (no truncation tolerance, floor off)
+operating point roughly halves the error at matched budget. Both figures score the
+final basis by re-projecting the full matrix onto it, so they are not the fidelity
+of the rotated coordinates the deployed cache stores, on which we make no claim
+here. Two honesty notes scope this. First, at the flagship's operating point (no truncation tolerance, floor off)
 the augmented BUG step \emph{is} blocked fixed-rank incremental
 SVD~\citep{brand2006fast}: the ``beats incremental SVD'' gap of our earlier study
 was a \emph{reconstruction-convention} difference (re-projecting the raw matrix onto
@@ -422,36 +427,23 @@ the final basis vs.\ carrying tracked coordinates), and the deployed cache carri
 tracked coordinates. ``Near-oracle'' is therefore a property of the basis the update
 produces, and what the DLRA framing adds is the rank-adaptive truncation criterion
 and the stability floor (\S\ref{sec:floor}), not a different update. Second, a
-basis-quality gap need not be an end-to-end gap: the tracker-swap ablation---the
-same cache with Oja's rule or Frequent Directions~\citep{liberty2013simple} as the
-gist tracker---is the test of whether the tracker is load-bearing. It is
-(Table~\ref{tab:swap}): with Oja's rule (its validated schedule, $\eta_0{=}1$ with
-$1/(1{+}10^{-3}t)$ decay) the same cache keeps single-needle retrieval ($11/12$) but
-loses multi-key ($1/12$), multi-value ($1/12$) and variable tracking ($0/12$), and
-its perplexity diverges ($733$ vs $5.31$); with Frequent Directions the shrinkage
-drives the core to a repeated-zero spectrum on which the augmented step's SVD fails
-to converge, so it produced no valid cell. A tuned Oja step size might narrow the
-gap; the plug-in comparison nevertheless shows the incremental-SVD update is not
-interchangeable with either classical alternative.
-% source: results/w19-swap-llama-lines.txt (swap pod @e79dd59: oja 0.92/0.08/0.08/0.00 ppl 732.9; fd SKIP on all four tasks + ppl, torch _LinAlgError).
-
-\begin{table}[t]
-\centering
-\caption{Tracker-swap ablation: the flagship cache with only its gist tracker
-swapped, Llama-3.1-8B, 16K, $n{=}12$, same needles (accuracy; perplexity on the
-same windows). At its defaults the flagship's BUG step is fixed-rank incremental SVD.}
-\label{tab:swap}
-\small
-\begin{tabular}{llccccc}
-\toprule
-gist tracker & arm & single & multi-key & multi-value & var-track & ppl \\
-\midrule
-incremental SVD (BUG step) & \texttt{bugSseed-r64-h256} & $1.00$ & $1.00$ & $1.00$ & $0.58$ & $5.31$ \\
-Oja's rule & \texttt{-oja} & $0.92$ & $0.08$ & $0.08$ & $0.00$ & $732.9$ \\
-Frequent Directions & \texttt{-fd} & \multicolumn{5}{c}{no valid cell (augmented SVD fails to converge)} \\
-\bottomrule
-\end{tabular}
-\end{table}
+basis-quality gap need not be an end-to-end gap, so attributing the end-to-end
+retrieval results to the tracker requires a tracker-swap ablation---the same cache
+with Oja's rule or Frequent Directions~\citep{liberty2013simple} substituted for the
+gist tracker, alongside controls that freeze the basis after prefill or remove the
+gist entirely. We do not yet have that evidence. Our first attempt at the ablation
+is invalid and is withdrawn: the Oja arm ran on the update's default step schedule
+($\eta_0{=}1$, decay $10^{-3}$) rather than the pre-RoPE schedule validated in our
+own basis study, so its divergence measures a mis-set step size rather than the
+rule; the Frequent~Directions arm raised a non-convergent SVD on every trial and
+returned no rows; and the frozen-basis and no-gist controls were never run. Whether
+the tracker is load-bearing end-to-end is therefore an open question, and a
+corrected swap is being re-run.
+% source: results/w19-swap-llama-lines.txt (swap pod @e79dd59) -- WITHDRAWN as invalid:
+% the oja arm used the eta0=1.0 / decay=1e-3 defaults (bug_cache.py oja_step passes
+% only n_seen), not the validated (20.0, 0.03) pre-RoPE schedule; the fd arm raised
+% torch _LinAlgError ("linalg.svd failed to converge") on every trial and produced no
+% rows. Frozen-prefill-SVD and no-gist controls were never run.
 % source: docs (Week-2), README "near-oracle (within ~1.01-1.03x of truncated SVD)".
 
 \subsection{Cross-model 16K retrieval: no detected loss at $0.085$--$0.149\times$}
@@ -661,12 +653,13 @@ the 2-bit arm.\footnote{An earlier Week-18 arm also labeled \texttt{q4} never
 quantized---a budget inversion demoted no coordinates, so its rows billed
 identically to the unseeded flagship; those rows are annotated invalid
 (\texttt{results/w18-g1-report.md}) and are not the cell reported here, which is
-the corrected Week-19 \texttt{a1q} run.} At 16K ($n{=}12$, same needles) this cell scores
-single/multi-key/multi-value/variable-tracking $= 1.00/1.00/1.00/0.50$ on Llama
-and $1.00/1.00/0.92/0.33$ on Mistral---multi-key and multi-value retrieval that
-the 2-bit arm at three times the bytes loses ($0.67/0.42$ and $0.58/0.50$).
+the corrected Week-19 \texttt{a1q} run.} At 16K ($n{=}12$, same needles) this cell scores, \emph{on our in-house
+generator}, single/multi-key/multi-value/variable-tracking $= 1.00/1.00/1.00/0.50$
+on Llama and $1.00/1.00/0.92/0.33$ on Mistral---multi-key and multi-value retrieval
+that the 2-bit arm at three times the bytes loses ($0.67/0.42$ and $0.58/0.50$).
 This is a compression depth no fixed-bit scalar quantizer can be configured to
-reach ($0.156\times$ at 2 bits), with retrieval intact on the sharp-needle tasks;
+reach ($0.156\times$ at 2 bits), with retrieval intact on that generator's
+sharp-needle tasks though not on the official anchor, where the cell scores $0.00$;
 nor, as we measure below, does an eviction$\times$quantization composite reach it.
 At 32K the cell falls to
 $0.034\times$ (its $1/T$ term) and holds: Llama $1.00/1.00/1.00/0.83$, Mistral
@@ -717,8 +710,9 @@ run on the same nine tasks and records, \texttt{bugSseed-r64-h256-q4} scores $0.
 on every task ($8$ of $108$ records with a partial match; no harness error), where
 the unquantized flagship scores $0.79$ on the same records---the 4-bit coordinate
 codes that survive our fixed-pool filler do not survive the essay haystack. The
-band therefore has no external validity yet; it is a our-generator result
-(\S\ref{sec:limits}).
+band therefore has no external validity yet: it is an in-house-generator result,
+and stays one until a filler diagnostic and a re-run on a corrected generator say
+otherwise (\S\ref{sec:limits}).
 % source: results/w19-q4off-llama-lines.txt + results/w19_pertrial/q4off-llama-trials.txt (q4off pod @45d036a: 9 official tasks x 12, all acc=0.00; 100/108 frac=0, 8 partial).
 % source: results/w20-fork-report.md (scripts/w19_fork_report.py over the fork pod raws @5d3239f; composite = build_arms press_quant, paired on a1q needles in-repo and a2 needles official).
 
@@ -839,7 +833,7 @@ not separated from the flagship in any cell; and on the official RULER prompts
 (\S\ref{sec:realistic}) the multi-value edge does not reproduce and the two arms
 are not separated on any task (the flagship trails $0.79$ vs $0.87$ on average).
 What a fixed-bit scalar quantizer cannot do is reach below its own $b/16$ floor;
-an eviction$\times$quantization composite cannot reach the band with retrieval either
+on our generator an eviction$\times$quantization composite cannot reach the band with retrieval either
 (\S\ref{sec:subcliff}, Table~\ref{tab:composite}), which is where \S\ref{sec:subcliff}
 goes with pure low-rank$\times$quantization.
 % source: results/w19-a1-report.md (scripts/w19_a1_report.py over results/w19_intervals/*.json, W19 a1 pods qwen/mistral/llama @6734afa, paired with W18 g1 per-trial records); mechanism: results/w18_harvest/quant-findings.md.
@@ -889,7 +883,9 @@ per arm. The flagship (blue circles, $0.15\times$ on Llama/Mistral, $0.27\times$
 Qwen) sits beside the 2-bit KIVI arm (orange squares, $0.16\times$); the 4-bit arm
 (aqua triangles, $0.28\times$) is perfect almost everywhere; the composed cell
 (hollow blue diamonds, $0.048\times$) retrieves single/multi-key/multi-value on
-Llama and Mistral below any 2-bit floor and collapses on Qwen. Source:
+Llama and Mistral below any 2-bit floor and collapses on Qwen. All points are our
+in-house generator; on the official RULER anchor the composed cell scores $0.00$
+(\S\ref{sec:subcliff}). Source:
 \texttt{scripts/w19\_figures.py} over the committed line-files.}
 \label{fig:fairquant}
 \end{figure}
@@ -1043,8 +1039,8 @@ released \texttt{w16\_storage} logs also carry a \texttt{peak\_ratio} of
 $5$--$9\times$; this is peak process VRAM divided by the \emph{KV-cache} bytes, so
 it is dominated by model weights (it halves as context doubles, $9.1\times$ at
 16K vs $5.3\times$ at 32K) and is \emph{not} a residency-vs-full-KV metric. The
-residency comparison is the workspace number ($\approx0.98\times$) plus stored
-state.} Decode latency,
+residency comparison is the measured head-to-head KV peak in the table, which the
+analytic workspace-plus-stored sum ($\approx1.06\times$) understated.} Decode latency,
 measured the same way (one token per forward, batch 1, A100-40GB), is where the
 absence of a kernel bites hardest: the flagship decodes at $103$/$188$/$508$\,ms per
 token at 16K/32K/64K against full KV's $26$/$28$/$37$\,ms ($4$--$14\times$ slower;
@@ -1115,7 +1111,7 @@ quantized cache both take $0.1$--$0.2$\,s.}
 \label{fig:coldstart}
 \end{figure}
 % source: results/w19-a3-llama2-lines.txt (w19_persist.py, SHA 5e8b275: 16K full 2147MB cold 1.226s | flagship 325MB 0.134s (load .067 h2d .028 ready .039) | kivi-2bit 336MB 0.137s; 32K full 4295MB 2.351s | flagship 600MB 0.227s | kivi-2bit 671MB 0.212s).
-% source: results/w18-g5 (CUDA w16_storage: bugSseed-r64-h256 16K stored 0.084 coldload 0.150 workspace 0.982 peak 9.09; 32K stored 0.074 coldload 0.139 workspace 0.991; bug-r64 16K workspace 0.998 coldload 0.135; integrity 0). Latency/residency 1.06x from review-systems.md.
+% source: results/w18-g5 (CUDA w16_storage: bugSseed-r64-h256 16K stored 0.084 coldload 0.150 workspace 0.982 peak 9.09; 32K stored 0.074 coldload 0.139 workspace 0.991; bug-r64 16K workspace 0.998 coldload 0.135; integrity 0). The analytic 1.06x latency/residency estimate from review-systems.md is superseded by the measured table above (results/w19-sysfix-llama-lines.txt).
 
 \FloatBarrier
 \section{Limitations}
@@ -1159,8 +1155,9 @@ from the flagship in any cell (the flagship leads its variable-tracking on Mistr
 on point estimate, at half the bytes), and on Qwen---where the $n{=}512$ gist's
 fp32-at-rest state costs $0.275\times$, the same bytes as 4-bit---the $r{=}64$
 flagship is dominated outright. The band quantization cannot enter
-(\S\ref{sec:subcliff}) holds on Llama and Mistral only, costs fluency, and fails
-on Qwen. A fp16-storable gist (halving BUG's honest bytes) would change this
+(\S\ref{sec:subcliff}) holds on Llama and Mistral only, costs fluency, fails
+on Qwen, and is an in-house-generator result---on the official anchor that cell
+scores $0.00$. A fp16-storable gist (halving BUG's honest bytes) would change this
 comparison materially and is the most valuable single follow-up.
 
 \paragraph{Benchmark external validity: the official anchor cuts both ways.}

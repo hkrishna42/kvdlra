@@ -21,7 +21,9 @@ it is what lets this pod's records pair with those cells on `(seed, trial)` — 
 same filler is, as of this writing, the subject of the filler-realism diagnostic
 (`prereg/filler_realism.md`, DECISIONS D-005, running on instances 51553610 / 51559661): its
 decision rule retires the cycled generator from every headline claim if the r64 configuration or
-its q4 cell drops by more than 0.25 on any task on real-text filler. The unharvested rows of that
+its q4 cell drops by more than 0.25 on a task inside that rule on real-text filler (its
+Amendment 2 / D-005 addendum 2 took `vt` out of the rule once the `full` ceiling fell to 0.08
+there). The unharvested rows of that
 pod visible in the watchdog's raw capture at the time of writing (`results/filler_realism/
 filler_realism-51553610.raw`, 2026-09-19 06:47) read `bugSseed-r64-h256` **0.25 / 0.08 / 0.00**
 on single / multikey / multivalue on WikiText filler against the archived cycled **1.00 / 1.00 /
@@ -33,10 +35,9 @@ section is load-bearing.
 
 1. **Launch waits for D-005.** None of the three pods is launched until D-005 is closed in
    `DECISIONS.md` with the harvested evidence path.
-2. **If D-005 retains the cycled generator** (the r64 configuration and the q4 cell within 0.25 of
-   their archived rows on every task, and the cycle control within 0.25 of its archived row), the
-   pods run exactly as §3 describes, and every within-pod and cross-pod comparison in §4–§7 is
-   read as written.
+2. **If D-005 retains the cycled generator** — as D-005's closing `DECISIONS.md` entry reads it;
+   the rule is not restated here — the pods run exactly as §3 describes, and every within-pod and
+   cross-pod comparison in §4–§7 is read as written.
 3. **If D-005 retires the cycled generator from headline claims**, this pre-registration is
    **amended before launch** — as a dated *Amendment 1* appended below, §1–§11 left untouched, in
    the pattern of `prereg/hygiene_table4.md` — to run **`ruler_v2_16k` / `ruler_v2_32k`**
@@ -47,10 +48,11 @@ section is load-bearing.
    - **the cross-pod pairing with the archive is dropped** — no record of these pods is paired
      with, or read against, any `results/paper-v1/` row (§2's archived cells then serve only as
      the *predictions'* basis, not as a comparison base); the harness-consistency replication of
-     §7(c), the chunked-vs-single-shot recovery of §7(d) and the archived Llama 16K contrast of
-     §6 are all withdrawn;
+     §7(c) — including its direct replication of the v1 ss2 cell (this pod's `kivi2_singleshot`
+     against the archived Llama 16K row) — and the chunked-vs-single-shot recovery of §7(d) are
+     all withdrawn;
    - **only the within-pod pairing remains**: the primary contrast of §4, the Holm families of §6
-     (the 32K family of 12 and the 16K family of 8, both entirely within-pod) and the
+     (two families of 12, one per context, both entirely within-pod) and the
      within-pod secondaries §7(a), (b), (e) are unchanged in form and are read exactly as written,
      on the v2 records — every arm in a pod sees byte-identical prompts per `(task, ctx, seed,
      trial)` (the v2 pairing invariant, `prompt_sha256` in every record), which is all the
@@ -62,7 +64,11 @@ section is load-bearing.
      here on the cycled filler and are not expected to transfer — the diagnostic's own reading is
      that they do not);
    - the budget of §9 is re-derived there (v2 adds haystack materialisation and per-trial
-     prompt construction that the cycled path does not pay; the arm rates stand).
+     prompt construction that the cycled path does not pay; the arm rates stand);
+   - the amendment commit is the one that edits the three pod YAMLs — `tasks:` and, from the
+     re-derived §9, `gpu_budget_h` — so their config hashes change and the manifests record the
+     amended hashes; the `# --- L2.5` block of `tests/test_pod_manifest.py`, which pins the task
+     list, changes in the same commit. No other file moves.
 4. Whichever branch applies, the outcome of D-005 and the branch taken are named in the launch
    entry in `DECISIONS.md`, with this file's first-commit SHA and (if any) the amendment's.
 
@@ -86,10 +92,13 @@ store built post hoc (`configs/arms/kivi2_faithful.yaml`, `kivi4_faithful.yaml`;
 `kvdlra.quant.kivi`). That arm, not the streaming mixin, is the baseline a reviewer means by
 "KIVI-2".
 
-**The question these pods answer:** on Mistral-7B-v0.3 and Qwen2.5-7B at 16K and 32K, and on
-Llama-3.1-8B at 32K, does the r64 configuration remain **separated** from 2-bit KIVI on the
-in-house multi-value task once KIVI runs its own protocol — or does the faithful arm close the
-gap everywhere, as the one Llama 16K cell suggests?
+**The question these pods answer:** on Mistral-7B-v0.3, Qwen2.5-7B and Llama-3.1-8B, at 16K
+and 32K, does the r64 configuration remain **separated** from 2-bit KIVI on the in-house
+multi-value task once KIVI runs its own protocol — or does the faithful arm close the gap
+everywhere, as the one Llama 16K cell suggests? Llama runs 16K as well as 32K (ruling R-L2-6):
+the archived Llama 16K single-shot cell is the G = 64 mixin prefilled in one shot —
+`kivi2_singleshot`'s protocol — not the faithful arm, so the faithful-vs-r64 contrast on the
+paper's headline cell has never been measured and is bought here.
 
 - **Separated after Holm in a cell** → the multi-value claim survives *in that cell* and the
   paper may state it there, against the faithful arm, with the corrected p-value.
@@ -177,10 +186,11 @@ The v1 ss2 cell itself, paired the same way: r64 vs single-shot 2-bit on Llama 1
 streaming 2-bit on Llama 16K: multikey 4 / 0 (p = 0.125), multivalue 6 / 1 (p = 0.125), vt 3 / 3
 — the "recovery" the v1 reading rests on is itself a 6-of-12 swing that n = 12 cannot separate.
 
-**Consequence for this run.** The faithful arm has finer groups (32 against 64), keeps its
+**Consequence for this run.** The faithful arm has finer groups (32 against 64) and keeps its
 trailing `T mod 128` prompt tokens in fp16 into decode (folded only once the residual reaches
-128) where the streaming mixin flushes them before the first decode step, and it never attends
-to a dequantized token during prefill. It is therefore expected to score **at least
+128) where the streaming mixin flushes them before the first decode step; that neither arm
+attends to a dequantized token during prefill is shared with the G = 64 single-shot arm and is
+not a difference between them. It is therefore expected to score **at least
 as well as** the G = 64 single-shot arm on every task, and the Llama 16K precedent puts single-shot
 2-bit at 0.83 on multi-value against 0.42 chunked. Against an r64 arm that is at 12/12 on
 multi-value in five of the six archived (family, ctx) cells — and at 10/12 on Mistral 32K —
@@ -211,25 +221,35 @@ arm.chunkable else 0`); arm 1 takes the task's `chunk: 4096`, exactly as its arc
 no `_diag4096` variant of it is created: §8 works the log volume through and finds the default
 `diag_every` (64) inside the watchdog's margin. The arm runs under the shipped default
 orthonormality guard (repair above `‖UᵀU − I‖_F` = 1e-3, abort above 1e-1), which its archived
-rows — produced before L1 — did not have; at rank 64 (n/16 on Llama and Mistral, n/8 on Qwen)
-the trace is not expected to reach the repair threshold, and `fixed_k` / `fixed_v` in
-`diag.jsonl` is the read (§7(f)).
+rows — produced before L1 — did not have. **At bf16 the repair fires in essentially every
+64-absorb window, and is expected to here.** The filler-realism pod running this arm at the same
+default (`results/filler_realism/filler_realism-51553610.raw`, read 2026-09-19 07:13: 19,968
+deduped `[diag]` rows of `bugSseed-r64-h256`, all 48 of its 16K samples drained; the snippet is
+in §7(f)) has `fixed_k` true in 100.0 % of those rows and `fixed_v` in 99.2 %, with the window's
+pre-repair maximum `orth_err_k` sitting at the threshold — min 1.00e-3, median 1.02e-3, max
+1.41e-3; `orth_err_v` max 8.14e-3 — and no row within an order of magnitude of the 1e-1 abort.
+`_flush_diag_window` resets `fixed_*` per window, so a true reads "repaired at least once in
+these 64 absorbs", not "diverged". The read is therefore not *whether* the guard fires but the
+maximum pre-repair `orth_err_k` / `orth_err_v` per layer and the abort count, expected 0
+(§7(f)); the evidence that the repaired arm reproduces its unguarded archived rows is the D-005
+cycle control (1.00 / 1.00 / 1.00 so far on the archived cells it has reached) and §7(c).
 
 | pod | model | tasks | cells |
 | --- | --- | --- | --- |
 | `ss2_families_mistral` | `mistralai/Mistral-7B-Instruct-v0.3` | `ruler_inhouse_16k`, `ruler_inhouse_32k` | 4 arms × 4 tasks × 2 ctx = 32 |
 | `ss2_families_qwen` | `Qwen/Qwen2.5-7B-Instruct` | `ruler_inhouse_16k`, `ruler_inhouse_32k` | 32 |
-| `ss2_families_llama` | `unsloth/Meta-Llama-3.1-8B-Instruct` | `ruler_inhouse_32k` | 16 |
+| `ss2_families_llama` | `unsloth/Meta-Llama-3.1-8B-Instruct` | `ruler_inhouse_16k`, `ruler_inhouse_32k` | 32 |
 
-Llama runs **32K only**: its 16K single-shot cell is the archived v1 observation of §1
-(`w19-sysfix-llama`) and is not re-bought. All three: `dtype: bfloat16`, the `-devel` image
-(quanto JIT-builds its kernel).
+All three: `dtype: bfloat16`, the `-devel` image (quanto JIT-builds its kernel). Llama's 16K
+cells are bought (R-L2-6, §1): the archived Llama 16K single-shot row is `kivi2_singleshot`'s
+protocol, not the faithful arm's, and this pod's `kivi2_singleshot` Llama 16K cell is that row's
+direct replication (§7(c)).
 
 **Tasks and n.** Both tasks are the shipped in-house configs, unchanged: `generator: inhouse`,
 the four sub-tasks `niah_single`, `niah_multikey`, `niah_multivalue`, `vt` in one call per arm
 (so `max_new` resolves to 40 as it did for every archived row), `n_trials: 6` × `seeds: [0, 1]` =
 **12 records per (arm, task, ctx)**, `filler: cycle`, `chunk: 4096`, depths drawn by the
-generator. `pod.py check` requires every one of the 32 / 32 / 16 cells to hold exactly 12
+generator. `pod.py check` requires every one of the 32 / 32 / 32 cells to hold exactly 12
 records, errors counted (a trial that raises is a row with `hit = 0` and the exception in
 `error`; one error row fails the pod's gate, ruling R29 — the cell is then excluded from the
 decision rule and the pod is citable only by an L6 per-case ruling naming the cell and the
@@ -258,27 +278,33 @@ a chunked prefill, which would make the arm the streaming one.
 **`isvd_r64_h256_seed` vs `kivi2_faithful`**, the **exact paired McNemar** over the 12 shared
 `(seed, trial)` keys — `kvdlra.eval.stats.mcnemar_exact`, as `scripts/tables.py paired` computes
 it (the two cells' Bernoulli outcomes keyed by `(seed, trial)`, the two-sided exact binomial on
-the discordant pairs) — with the r64 arm as *a*. Five cells: Mistral 16K, Mistral 32K, Qwen 16K,
-Qwen 32K, Llama 32K. Each p-value is a member of its context's Holm family (§6); the reading is
-on the **Holm-adjusted** p-value.
+the discordant pairs) — with the r64 arm as *a*. Six cells: Mistral 16K, Mistral 32K, Qwen 16K,
+Qwen 32K, Llama 16K, Llama 32K. Each p-value is a member of its context's Holm family (§6); the
+reading is on the **Holm-adjusted** p-value.
 
-**Decision rule, fixed now.** For each of the five cells:
+**Decision rule, fixed now.** For each of the six cells, exactly one branch applies:
 
 1. **Separated** — the adjusted p-value is < 0.05 **and** the discordance is in the r64 arm's
    favour (`a_favored > b_favored`) → *the multi-value claim survives in that cell*: the paper
    states the r64 configuration's multi-value edge over KIVI-2 at its published protocol for
    that family and context, with the adjusted p.
-2. **Not separated** — the adjusted p-value is ≥ 0.05, or the discordance favours the faithful
-   arm → *the claim does not survive in that cell*: the paper's §4 states that the multi-value
-   edge in that cell is against the streaming arm only, and the v1 ss2 reading (protocol-bound)
-   is confirmed for that family and context.
-3. **The reverse** — adjusted p < 0.05 with the discordance in the faithful arm's favour → a
-   finding, not a failure: reported as a KIVI-2 win on multi-value in that cell, and the
-   paper's multi-value sentence for that family is withdrawn rather than softened.
+2. **Not separated** — the adjusted p-value is ≥ 0.05, whichever way the discordance leans →
+   *the claim does not survive in that cell*: the paper's §4 states that the multi-value edge in
+   that cell is against the streaming arm only, and the v1 ss2 reading (protocol-bound) is
+   confirmed for that family and context.
+3. **The reverse** — the adjusted p-value is < 0.05 **and** the discordance is in the faithful
+   arm's favour (`b_favored > a_favored`) → a finding, not a failure: reported as a KIVI-2 win
+   on multi-value in that cell, and the paper's multi-value sentence for that family is
+   withdrawn rather than softened.
+
+The three branches partition every non-excluded cell: branches 1 and 3 split adjusted p < 0.05
+by the sign of `a_favored − b_favored`, and a tie (`a_favored == b_favored`, 0 / 0 included)
+has an exact p of 1 — `mcnemar_exact` returns 1.0 there — so it can reach neither and lands in
+branch 2 with every other adjusted p ≥ 0.05. Consistency check when the table is written: **one
+applied branch per cell** — six cells (fewer only by §3's exclusion rule), none in two branches.
 
 The reading is **per cell**; it is not pooled. A claim that "survives" survives where it
-survives, and the paper's §4 lists the cells. The Llama 16K cell is not re-run and its v1 reading
-— not separated (2 / 0, p = 0.50, §2) — stands as the archived observation.
+survives, and the paper's §4 lists the cells.
 
 The statistic, once the records are harvested (`scripts/tables.py`'s `paired()` reads the
 archive under `results/paper-v1/`; pointing it at a live `results/<pod>/` directory is Task 8's
@@ -289,7 +315,7 @@ table work and is not pre-registered here — the statistic is the function, app
 from kvdlra.eval.stats import mcnemar_exact, holm
 # a, b: {(seed, trial): hit} for bugSseed-r64-h256 / kivi2_faithful, one pod, one task, one ctx
 m = mcnemar_exact(a, b)          # n_paired, a_favored, b_favored, p_value
-adjusted = holm([...])           # the 12 (32K) or 8 (16K) raw p-values of §6, together
+adjusted = holm([...])           # the 12 raw p-values of that context's family (§6): 12 at 16K, 12 at 32K
 ```
 
 ## 5. Prediction per arm and family, written before the run
@@ -301,14 +327,15 @@ Accuracy = hits/12 on the cycled filler. "Separated" refers to the §4/§6 readi
 | `isvd_r64_h256_seed` | all | **replicates its archived row within 0.25 on every task** (§2 r64 table; the cycle-control pod of `prereg/filler_realism.md` A1.3 is at 1.00 / 1.00 on the cells it has reached). Multi-value 12/12 everywhere except Mistral 32K (10/12 archived). A cell more than 0.25 from its archived row is harness drift (§7(c)). |
 | `kivi2_faithful` | Mistral 16K | multi-value **≥ 0.75** (streaming 0.50; the Llama precedent adds +0.42 for single-shot alone, and G = 32 with the residual kept adds, not subtracts); multikey ≥ 0.83 (from 0.58); vt ≥ 0.33. → **not separated**: ≤ 3 discordant pairs in the r64 arm's favour. |
 | `kivi2_faithful` | Qwen 16K | multi-value **≥ 0.67** (streaming 0.33); multikey ≥ 0.92; vt ≥ 0.92. → **not separated** (≤ 4 / 0). |
+| `kivi2_faithful` | Llama 16K | multi-value **≥ 0.83** (streaming 0.42; the archived G = 64 single-shot arm is at 0.83 on this very cell — 12 / 12 / 10 / 8 — and §2's ordering puts the faithful arm at or above it); multikey 1.00 (single-shot already 12/12); vt ≥ 0.67. → **not separated**: ≤ 2 / 0 against an r64 arm at 12/12 — the v1 ss2 reading (2 / 0, p = 0.50) reproduced against the faithful arm. |
 | `kivi2_faithful` | Llama 32K | multi-value ≥ 0.92 (streaming already 0.92); nothing to separate. → **not separated**. |
 | `kivi2_faithful` | Mistral 32K | multi-value **0.50–0.75** (streaming 0.08 — the weakest archived cell; single-shot recovers most of it); multikey ≥ 0.58 (from 0.25); vt ≥ 0.17 (from 0.00). → **not separated**: the r64 arm is itself at 10/12 here, so a (≥ 9, 0) pattern would need the faithful arm at ≤ 1/12 with both r64 misses coinciding with faithful misses. |
 | `kivi2_faithful` | Qwen 32K | multi-value **0.50–0.75** (streaming 0.17); multikey ≥ 0.75; vt ≥ 0.50 (from 0.25). → **not separated** — but this is the **one live cell**: the r64 arm is 12/12 on all four tasks, streaming 2-bit is at 0.17 / 0.25 on multivalue / vt, and if the faithful arm recovers to ≤ 0.25 on either task the (≥ 9, 0) pattern §6 needs is reached. A separation here on multi-value is the one outcome that keeps a multi-value sentence in the paper against the faithful arm. |
-| `kivi2_singleshot` | all | between the streaming row and the faithful arm on every task; **never above the faithful arm by more than 0.25** (finer groups and a kept residual cannot make the faithful arm worse). Its Llama 16K archived row (12 / 12 / 10 / 8) is the shape expected on Mistral/Qwen 16K. A cell where it beats the faithful arm by ≥ 3 pairs is a finding about the residual mechanics, §7(a). |
+| `kivi2_singleshot` | all | between the streaming row and the faithful arm on every task; **never above the faithful arm by more than 0.25** (finer groups and a kept residual cannot make the faithful arm worse). Its Llama 16K archived row (12 / 12 / 10 / 8) is the shape expected on Mistral/Qwen 16K. A cell where it beats the faithful arm by ≥ 3 pairs is a finding about the residual mechanics, §7(a). **Llama 16K is its direct replication target**: the same protocol as the archived `w19-sysfix-llama` `quant-2bit-kivi` row (G = 64, R = 128, chunk 0, residual flushed), so this cell is predicted **within 0.25 of 12 / 12 / 10 / 8 on every task** (§7(c), the harness-consistency check for the single-shot path). |
 | `kivi4_faithful` | all | **12/12 on single / multikey / multivalue** in every cell (the streaming 4-bit arm already is, bar Qwen 16K multivalue 11/12); vt 12/12 on Llama and Qwen; **Mistral vt stays low (≈ 0.25)** — the archived 4-bit and 8-bit arms both sit at 0.25 there and the r64 arm at 0.50 / 0.42, so Mistral vt is hard for every method under this template. Descriptive. |
 
 **Summary prediction:** the multi-value claim **does not survive against the faithful arm in any
-of the five cells**; the v1 ss2 reading generalizes. The pre-registered alternative is a
+of the six cells**; the v1 ss2 reading generalizes. The pre-registered alternative is a
 separation on Qwen 32K. A separation anywhere else would contradict the Llama 16K precedent and
 would be reported as such, with its discordant pairs listed.
 
@@ -327,28 +354,38 @@ its own):
 - **The 32K family: 3 families × 4 tasks = 12 members.** `isvd_r64_h256_seed` vs
   `kivi2_faithful` on each of `niah_single`, `niah_multikey`, `niah_multivalue`, `vt`, on Mistral
   32K, Qwen 32K and Llama 32K — every member within its pod. This is the family the lane's
-  reading names ("Holm over 3 families × 4 tasks"), and the only context at which all three
-  families run the faithful arm.
-- **The 16K family: 2 families × 4 tasks = 8 members.** The same contrast on the four tasks on
-  Mistral 16K and Qwen 16K, within-pod. The third family's 16K cell is the archived v1
-  observation — r64 (`w18-g1-llama`) vs single-shot G = 64 2-bit (`w19-sysfix-llama`), cross-pod,
-  a different arm from `kivi2_faithful` — and is the observation under replication, not a test
-  this pod runs; it is reported beside the family (§2: 2 / 0, p = 0.50) and does not enter it.
+  reading names ("Holm over 3 families × 4 tasks").
+- **The 16K family: 3 families × 4 tasks = 12 members.** The same contrast on the four tasks on
+  Mistral 16K, Qwen 16K and Llama 16K, within-pod (R-L2-6). The archived v1 ss2 observation —
+  r64 (`w18-g1-llama`) vs single-shot G = 64 2-bit (`w19-sysfix-llama`), cross-pod, a different
+  arm from `kivi2_faithful` — is a member of neither family: it is the row this pod's
+  `kivi2_singleshot` Llama 16K cell replicates directly, and is reported there (§7(c)).
 
-The three primary multi-value p-values at 32K are three of the twelve members of the 32K family;
-the two at 16K are two of the eight members of the 16K family; the twelve (and eight) raw
-p-values are corrected together, and every member's adjusted p-value is reported, not only the multi-value ones — a
+**A member is defined by its pairing-key set** — the 12 `(seed, trial)` keys of one (family,
+ctx, task) cell, both arms — and **a cell excluded under §3's rule (an `error` row in either
+arm) leaves its family**: the family is then the remaining members (m = 11 for one excluded
+cell), `holm` runs over their raw p-values alone, and the others' thresholds are decided at that
+m (first slot 0.05/11 = 0.0045), so they stay decidable; the excluded member is listed beside
+the family with its error and carries no adjusted p-value. A `prompt_sha256` drop under §7(e)
+does not remove a member — it shrinks that member's paired n.
+
+The three primary multi-value p-values at each context are three of the twelve members of that
+context's family; each family's twelve raw p-values are corrected together, and every member's
+adjusted p-value is reported, not only the multi-value ones — a
 separation on `vt` or `niah_multikey` in a family is a finding about that task and is reported as
 such, but only the multi-value members feed the decision rule of §4.
 
 **The 12-key resolution, stated once.** One flipped pair moves an accuracy by 1/12 = 0.083. The
 exact two-sided McNemar p-value at *a* discordant pairs in the r64 arm's favour and *b* against
 is `2 · P(Bin(a + b, ½) ≤ min(a, b))`: (9, 0) gives 0.0039, (8, 0) 0.0078, (12, 0) 0.00049, (9, 1)
-0.0215, (11, 1) 0.0064. Holm's first step in the 12-member family needs p ≤ 0.05/12 = 0.0042, and
-in the 8-member family p ≤ 0.00625: **a member separates after Holm essentially only when the r64
-arm wins at least nine of the twelve pairs and loses none.** (8, 0) can pass only as the seventh
-or later member of the 32K family, behind six members at p ≤ 0.0071 (which means (≥ 9, 0) or
-(11, 1)); a single pair in the KIVI arm's favour takes (9, 1) out of reach entirely. That is the resolution n = 12 buys, and it is
+0.0215, (11, 1) 0.0064. Holm's first step in a 12-member family needs p ≤ 0.05/12 = 0.0042 (its
+slots in order: 0.0042, 0.0045, 0.0050, 0.0056, 0.0063, 0.0071, 0.0083, 0.0100, 0.0125, 0.0167,
+0.025, 0.05): **a member separates after Holm essentially only when the r64 arm wins at least
+nine of the twelve pairs and loses none.** (8, 0) can pass only as the seventh or later member
+of either family, behind six members that each clear their own slot — five at p ≤ 0.00625, i.e.
+(≥ 9, 0), and at most one (11, 1), whose 0.00635 clears the sixth slot (0.0071) and none of the
+first five. (9, 1) at 0.0215 is not out of reach, only far: it clears the eleventh slot (0.025)
+behind ten separations. That is the resolution n = 12 buys, and it is
 why §5 predicts "not separated" as the default and names the one cell where (≥ 9, 0) is reachable.
 
 Everything not in the two families is **descriptive** and carries no corrected p-value: §7's
@@ -369,18 +406,30 @@ recovery comparison and the `diag.jsonl` traces.
   beside the streaming 4-bit rows of §2. Its role is the 4-bit reference the paper's fair-quant
   table needs at the published operating point; no contrast is pre-registered on it.
 - **(c) Harness-consistency replication of the r64 arm.** This pod's `bugSseed-r64-h256` cells
-  against the archived `w18-g1-<family>` cells at the same context, per task, on point
+  against the archived `w18-g1-<family>` cells at the same context — all three families at both
+  contexts, Llama's 16K cells against `w18-g1-llama` 16K — per task, on point
   estimates at the 0.25 resolution (three flipped trials) — the rule of `prereg/filler_realism.md`
   A1.3: a cell more than 0.25 from its archived row is **harness drift** (the archived rows came
   from `w10_ruler.py` on an older `transformers`; the L0 runner's parity with it rests on CPU
   bit-identity tests and on the cycle-control pod of D-005), and every cross-pod comparison in
-  this file — (d) and the archived Llama 16K contrast — is suspended for that family until the
+  this file — (d) and the single-shot replication below — is suspended for that family until the
   drift is explained. The within-pod primary contrast is unaffected: it pairs two arms that ran on
   the same harness. The flipped `(seed, trial)` keys are listed as descriptive evidence of where
   any drift sits.
+
+  **The same check on the single-shot path — the direct replication of the v1 ss2 cell.** This
+  pod's `kivi2_singleshot` Llama 16K cell against the archived `w19-sysfix-llama`
+  `quant-2bit-kivi` row (12 / 12 / 10 / 8; the same protocol, G = 64, R = 128, chunk 0, residual
+  flushed), cross-pod on `(seed, trial)`, per task, descriptive, the same 0.25 rule: a task more
+  than 0.25 from the archived row is harness drift on the single-shot path (the quantized-cache
+  mixin under the L0 runner against `w10_ruler.py`), suspends (d) for Llama until explained, and
+  is reported with its flipped keys. Within 0.25 on every task, the v1 observation is replicated
+  on the current harness and the faithful arm's Llama 16K cell reads against a reproduced base.
 - **(d) Single-shot recovery over the streaming arm, per family.** `kivi2_faithful` (this pod)
   against the archived streaming `quant-2bit-kivi` (`w19-a1-<family>`), cross-pod on
-  `(seed, trial)`, per task and context, descriptive (`CROSS_POD` caveat). This is the replication
+  `(seed, trial)`, per task and context, descriptive (`CROSS_POD` caveat) — on Llama 16K the
+  archived streaming row (12 / 8 / 5 / 8) is the base, so the v1 recovery is re-measured on its
+  own cell against the faithful arm. This is the replication
   of the v1 recovery (+0.42 on Llama 16K multi-value, 6 / 1 pairs) on two more families and a
   second context, and it is what the paper's fair-quant table gains: a row for KIVI-2 at its
   published protocol beside the streaming row it printed.
@@ -388,10 +437,29 @@ recovery comparison and the `diag.jsonl` traces.
   four arms' `prompt_sha256` must be identical. A key where they differ is dropped from every
   paired statistic in that pod and the drop is reported with the key; the paired n is then below
   12 for that cell and §6's resolution note applies with the smaller n.
-- **(f) The guard on the r64 arm.** `fixed_k` / `fixed_v` and the maximum `orth_err_k` /
-  `orth_err_v` per layer from `diag.jsonl`: whether the shipped default guard ever fired at rank 64
-  on any family or context. Expected never (§3); a firing is reported beside §7(c), since it is
-  the one knob that differs between this arm and its archived rows.
+- **(f) The guard on the r64 arm.** From `diag.jsonl`, per layer: the maximum pre-repair
+  `orth_err_k` / `orth_err_v` over the run, the share of windows with `fixed_k` / `fixed_v` true,
+  and the abort count (`OrthonormalityError` rows in `trials.jsonl`). **Expected: the repair
+  fires in essentially every window at bf16** (`fixed_k` ≈ 100 %, `fixed_v` ≈ 99 %), the
+  pre-repair maxima sit at the 1e-3 threshold (K ≈ 1.0–1.4e-3, V up to ≈ 1e-2), and the abort
+  count is 0 — the filler-realism capture of §3, recomputed over its deduped `[diag]` rows:
+
+  ```python
+  import json, pathlib, statistics
+  raw = pathlib.Path("results/filler_realism/filler_realism-51553610.raw")
+  rows = {l for l in raw.read_text().splitlines() if l.startswith("[diag] ")}
+  d = [r for r in (json.loads(l[7:]) for l in rows) if r["arm"] == "bugSseed-r64-h256"]
+  ek = sorted(r["orth_err_k"] for r in d)
+  print(len(d), sum(r["fixed_k"] for r in d) / len(d), sum(r["fixed_v"] for r in d) / len(d),
+        ek[0], statistics.median(ek), ek[-1], max(r["orth_err_v"] for r in d),
+        sum(1 for r in d if max(r["orth_err_k"], r["orth_err_v"]) > 1e-1))
+  # read 2026-09-19 07:13 (rounded): 19968 1.0 0.992 1.00e-3 1.02e-3 1.41e-3 8.14e-3 0
+  ```
+
+  A firing is therefore not a finding. A pre-repair maximum an order of magnitude above the
+  threshold, or any abort, is one, and is reported beside §7(c): the guard is the one knob that
+  differs between this arm and its archived rows, and §7(c) with the D-005 cycle control is what
+  shows the repaired arm reproducing them.
 
 ## 8. Log volume, and what counts as a complete `<label>.log`
 
@@ -402,26 +470,32 @@ drained — the three KIVI arms emit none.
 
 **`isvd_r64_h256_seed.yaml` sets no `diag_every`, so the cache default (64) applies.** The
 per-sample count is measured, not estimated: the filler-realism pod running this very arm at 16K
-(`results/filler_realism/filler_realism-51553610.raw`, read 2026-09-19 06:47, 41 of its r64
-samples drained) records **804–810 absorbs per layer per 16K sample** (`absorbs` in the `[diag]`
-payload; the Table-4 note's 800) and **416 `[diag]` rows per sample** = 13 rows per layer × 32
-layers (twelve completed 64-absorb windows plus `drain_diag`'s end-of-sample flush of the open
-one). At 32K each further 16 tokens is one absorb: 806 + 1024 ≈ **1830 absorbs → 29 rows per
-layer** (28 completed windows + the flush).
+(`results/filler_realism/filler_realism-51553610.raw`, read 2026-09-19 07:13, all 48 of its
+r64 samples drained) records **804–810 absorbs per layer per 16K sample** (`absorbs` in the
+`[diag]` payload; the Table-4 note's 800) and **416 `[diag]` rows per sample** = 13 rows per
+layer × 32 layers (twelve completed 64-absorb windows plus `drain_diag`'s end-of-sample flush of
+the open one). At 16 tokens per absorb a ≈ 16,400-token prompt would give 1025 absorbs; the
+measured 806 is ≈ 220 short, and whether that shortfall is a fixed count (tokens the seed, sinks,
+ring and tier hold before the gist sees them) or a fraction of the prompt is not settled by a
+16K capture. The 32K count is therefore bracketed, not known: **fixed → 806 + 1024 ≈ 1830
+absorbs → 29 rows per layer** (28 completed windows + the flush); **proportional → 2 × 806 ≈
+1612 absorbs → 26 rows per layer** (25 + the flush). The tables use the larger figure, so every
+32K `[diag]` count below is approximate and an upper bound; the no-`_diag4096` conclusion holds
+either way, since fewer rows only widen the margin.
 
 | sample | Llama / Mistral (32 layers) | Qwen (28 layers) |
 | --- | --- | --- |
 | r64, 16K | 416 `[diag]` + 1 `[trial]` | 364 + 1 |
-| r64, 32K | 928 + 1 | 812 + 1 |
+| r64, 32K | ≈ 928 + 1 (832 if proportional) | ≈ 812 + 1 (728) |
 | any KIVI arm | 0 + 1 | 0 + 1 |
 
 Per pod (48 r64 samples per context):
 
-| pod | `[diag]` | `[trial]` | cell rows | `[stage]` + banners | expected `<label>.log` |
+| pod | `[diag]` (≈, upper bound) | `[trial]` | cell rows | `[stage]` + banners | expected `<label>.log` |
 | --- | --- | --- | --- | --- | --- |
 | `ss2_families_mistral` | 48 × 416 + 48 × 928 = 64,512 | 384 | 32 | ~30 | **≈ 65,000** |
 | `ss2_families_qwen` | 48 × 364 + 48 × 812 = 56,448 | 384 | 32 | ~30 | **≈ 56,900** |
-| `ss2_families_llama` | 48 × 928 = 44,544 | 192 | 16 | ~30 | **≈ 44,800** |
+| `ss2_families_llama` | 48 × 416 + 48 × 928 = 64,512 | 384 | 32 | ~30 | **≈ 65,000** |
 
 **Does the pod need a `_diag4096` variant of the r64 arm? No — by the arithmetic that decides
 it.** The only way the watchdog loses a row for good is a **poll-to-poll gap**: more raw log lines
@@ -441,9 +515,10 @@ pair by — instead of a new name the pairing would have to map.
 **The cost of that choice, stated.** `scripts/pod/watchdog.sh` appends *every* matched row of
 each fetch to `<label>.raw` and dedupes only at the end (`sort -u` → `<label>.log`). Once the
 instance log passes 30,000 lines the tail is saturated and each poll re-appends up to ~30,000
-matched rows: over a ≈ 20 h run (§9, ≈ 480 polls) `<label>.raw` can reach several million lines
-(≈ 2–3 GB) before the terminal-marker `sort -u` — the live filler-realism pod's `.raw` is at
-238,000 lines for 17,000 distinct `[diag]` rows after three hours. That is disk and a slow
+matched rows: over a ≈ 20 h run (§9, ≈ 480 polls) `<label>.raw` can reach ≈ 14 million lines —
+480 polls × 30,000 rows × ≈ 275 B per row ≈ **4 GB** — before the terminal-marker `sort -u`; the
+live filler-realism pod's `.raw` measures 275 B per line (78.5 MB over 286,000 lines, read
+2026-09-19 07:13) and holds 20,000 distinct `[diag]` rows after three and a half hours. That is disk and a slow
 dedupe, not loss; `pod.py harvest` reads the deduped `.log`. The launch machine needs ≈ 3× that
 headroom under `results/<pod>/` (gitignored, but inside the iCloud-synced tree — D-007). A
 one-line per-poll dedupe in the watchdog (`sort -u -o "$H/${lab}.raw" "$H/${lab}.raw"` after the
@@ -457,10 +532,11 @@ pods, the records then key by that name, and the pairing is on `(seed, trial)`, 
 string.
 
 **The completeness test is on the deduped `<label>.log`.** Exact: `grep -c '^\[trial\]'` must be
-**384** (Mistral, Qwen) or **192** (Llama), and `pod.py check` must find all 32 / 32 / 16 cells at
-n = 12 — that is the gate. Approximate: `grep -c '^\[diag'` ≈ 64,500 / 56,400 / 44,500 (the
-per-layer window count moves by one if a sample's absorb count crosses a multiple of 64; the
-cycled haystack is a fixed token count per context, so it should not). A `.log` whose `[trial]`
+**384** on all three pods, and `pod.py check` must find all 32 / 32 / 32 cells at
+n = 12 — that is the gate. Approximate: `grep -c '^\[diag'` ≈ 64,500 / 56,400 / 64,500 at the
+upper bound above (≈ 59,900 / 52,400 / 59,900 if the 32K absorb count is proportional; the
+per-layer window count also moves by one if a sample's absorb count crosses a multiple of 64 —
+the cycled haystack is a fixed token count per context, so within a context it should not). A `.log` whose `[trial]`
 count is short is short by construction — read `trials.jsonl` and the `error` lines before
 concluding truncation, and do not harvest it as final.
 
@@ -496,22 +572,25 @@ concluding truncation, and do not harvest it as final.
 | --- | --- | --- | --- | --- |
 | `ss2_families_mistral` | 360 + 792 = 1152 min | + 60 | 1212 min = **20.2 h** | **40.4** |
 | `ss2_families_qwen` | 1152 min | + 60 | **20.2 h** | **40.4** |
-| `ss2_families_llama` | 792 min | + 60 | 852 min = **14.2 h** | **28.4** |
-| **total** | | | **54.6 GPU-h** | **109.2 GPU-h** |
+| `ss2_families_llama` | 1152 min | + 60 | **20.2 h** | **40.4** |
+| **total** | | | **60.6 GPU-h** | **121.2 GPU-h** |
 
 At the **$0.40–0.74/h** the Table-4 and filler pods paid for an A100 40 GB (D-011 and its addenda;
 `prereg/filler_realism.md` A1.4, A1.7):
 
 | | GPU-h | × $0.40 | × $0.74 |
 | --- | --- | --- | --- |
-| three pods, point | 54.6 | $21.8 | $40.4 |
-| **three pods, bar** | **109.2** | **$43.7** | **$80.8** |
-| after the first two arms only (the primary contrast landed; §3 order), with overhead | 12.2 + 12.2 + 8.6 = 33.0 | $13.2 | $24.4 |
-| without `kivi4_faithful` (descriptive, §7(b)) | 54.6 − 10.8 = 43.8 | $17.5 | $32.4 |
+| three pods, point | 60.6 | $24.2 | $44.8 |
+| **three pods, bar** | **121.2** | **$48.5** | **$89.7** |
+| after the first two arms only (the primary contrast landed; §3 order), with overhead | 12.2 × 3 = 36.6 | $14.6 | $27.1 |
+| without `kivi4_faithful` (descriptive, §7(b)) | 60.6 − 12.0 = 48.6 | $19.4 | $36.0 |
 
-**This experiment asks for ≈ 55 GPU-hours expected, ≈ 109 GPU-hours at the bar — $22–40 expected,
-$44–81 at the bar — against a credit of $97.2 before the filler-realism pods' own spend (D-005
-addendum 2; their bars come to ≈ $13 at most).** The three pods run on three instances at once,
+**This experiment asks for ≈ 61 GPU-hours expected, ≈ 121 GPU-hours at the bar — $24–45 expected,
+$48–90 at the bar — against a credit of $97.2 before the filler-realism pods' own spend (D-005
+addendum 2; their bars come to ≈ $13 at most).** At the top rate the bar total ($89.7) exceeds
+what is left of that credit once the filler pods' bars are taken out (≈ $84) and comes within $8
+of it before they are: the launch waits on a top-up (D-003) as well as on D-005, and the top-up
+precedes the launch commit. The three pods run on three instances at once,
 so the wall clock is the longest of them (≈ 20 h expected, 40 h at its bar), not the sum. The
 owner decides; the two rows below the total are the pre-registered ways to spend less, and the arm
 order of §3 is what makes the first of them a design and not a salvage: after `isvd_r64_h256_seed`
@@ -546,7 +625,7 @@ first thing to read against the 6.0 assumption.
 - Outputs: `results/ss2_families_mistral/`, `results/ss2_families_qwen/`,
   `results/ss2_families_llama/`, each with `manifest.json` (git SHA, config hash, model revision,
   torch/CUDA/transformers versions, GPU, wall clock, command line, `errors`, `records`),
-  `trials.jsonl` (32 / 32 / 16 cells × 12 records; every row carries `prompt_sha256`),
+  `trials.jsonl` (32 / 32 / 32 cells × 12 records; every row carries `prompt_sha256`),
   `diag.jsonl` (the r64 arm's rows), `env.txt` (rebuilt from the log's ENV block), `pods.txt`.
 - A number from these pods is citable only once `scripts/pod.py check` passes on its directory
   (config hash, commit order, every cell at n = 12 with zero errors, `env.txt` at the pyproject
@@ -560,6 +639,6 @@ on generator v2 unless the filler condition's amendment applies; the memory or s
 comparison between the r64 configuration and KIVI (billed elsewhere; no arm here changes it);
 the perplexity axis (no `ppl` task); the 4-bit KIVI baseline's standing beyond a descriptive row;
 official RULER or LongBench; anything about the tracker, the guard's defaults, the exact tier or
-the kernel; and the Llama 16K cell, which is not re-run. Lane item 4 asks one question — does the
+the kernel. Lane item 4 asks one question — does the
 multi-value claim survive KIVI-2 at its published protocol, per family and context — and these
 pods answer that one.

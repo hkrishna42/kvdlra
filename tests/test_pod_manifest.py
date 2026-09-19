@@ -893,8 +893,7 @@ SS2_ARMS = ["isvd_r64_h256_seed", "kivi2_faithful", "kivi2_singleshot", "kivi4_f
 
 def test_the_ss2_pods_resolve_end_to_end() -> None:
     """All three pods load, hash, name the shared prereg, carry a budget to enforce, and
-    every arm and task they reference loads; three models (and one task list against
-    two) keep the three hashes apart."""
+    every arm and task they reference loads; three models keep the three hashes apart."""
     hashes = set()
     for name in SS2_PODS:
         p = load_pod(name)
@@ -912,20 +911,18 @@ def test_the_ss2_pods_resolve_end_to_end() -> None:
 def test_the_ss2_pods_are_the_prereg_design() -> None:
     """The arm list is the pre-registered one IN ORDER -- the r64 arm first, because it is
     the paired reference every contrast needs and a pod that dies early must still land
-    an interpretable pair; no `full` (every contrast is paired within the pod). Llama runs
-    32K only (its 16K single-shot cell is the archived v1 observation), the other two
-    16K + 32K. Every task is the cycled-filler in-house protocol at the archived n and
-    chunk, so each record pairs on (seed, trial) with the w19-a1 / w18-g1 rows; the three
-    KIVI arms are the ones the runner prefills in one shot."""
+    an interpretable pair; no `full` (every contrast is paired within the pod). All three
+    run 16K + 32K (R-L2-6: the archived Llama 16K single-shot cell is the G=64 mixin, not
+    the faithful arm, so Llama's 16K contrast is bought too). Every task is the
+    cycled-filler in-house protocol at the archived n and chunk, so each record pairs on
+    (seed, trial) with the w19-a1 / w18-g1 rows; the three KIVI arms are the ones the
+    runner prefills in one shot; bf16 on the -devel image (quanto JIT-builds its kernel)."""
     for name in SS2_PODS:
         p = load_pod(name)
         assert p.arms == SS2_ARMS, f"{name}: not the pre-registered arm order"
         assert "full" not in p.arms
-        want = ["ruler_inhouse_32k"] if name.endswith("llama") else [
-            "ruler_inhouse_16k",
-            "ruler_inhouse_32k",
-        ]  # fmt: skip
-        assert p.tasks == want, f"{name}: tasks {p.tasks}"
+        assert p.tasks == ["ruler_inhouse_16k", "ruler_inhouse_32k"], f"{name}: tasks {p.tasks}"
+        assert p.dtype == "bfloat16" and "-devel" in p.image, f"{name}: {p.dtype} {p.image}"
         for tname in p.tasks:
             t = load_task(tname)
             assert t.generator == "inhouse" and t.filler == "cycle"

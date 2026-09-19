@@ -3,24 +3,27 @@ model: "unsloth/Meta-Llama-3.1-8B-Instruct"
 dtype: bfloat16
 doc: >-
   ss2 across families (lane L2 item 4, gate G2 line 4; prereg/ss2_families.md): the Llama
-  32K cell of the single-shot KIVI-2 question -- does the r64 configuration's multi-value
+  cells of the single-shot KIVI-2 question -- does the r64 configuration's multi-value
   edge over 2-bit KIVI survive KIVI at its published protocol (full-precision single-shot
-  prefill, G=32, R=128: kivi2_faithful)? 32K only: the Llama 16K single-shot cell is the
-  archived v1 observation itself (results/paper-v1/w19-sysfix-llama, G=64 single-shot,
-  multi-value 0.83 against the r64 arm's 1.00) and is not re-bought. The four in-house tasks,
-  n = 12 (6 trials x 2 seeds), cycled filler, chunk 4096, so every record pairs on (seed,
-  trial) with the archived w19-a1-llama KIVI rows and w18-g1-llama r64 rows at 32K. Arm
+  prefill, G=32, R=128: kivi2_faithful)? 16K and 32K (ruling R-L2-6): the archived Llama 16K
+  single-shot cell (results/paper-v1/w19-sysfix-llama, multi-value 0.83 against the r64
+  arm's 1.00) is the G=64 mixin prefilled in one shot -- kivi2_singleshot's protocol, not the
+  faithful arm's -- so the faithful-vs-r64 contrast on the paper's headline cell is bought
+  here, and this pod's kivi2_singleshot 16K cell replicates that archived row directly. The
+  four in-house tasks, n = 12 (6 trials x 2 seeds), cycled filler, chunk 4096, so every
+  record pairs on (seed, trial) with the archived w19-a1-llama KIVI rows and w18-g1-llama
+  r64 rows at 16K and 32K. Arm
   order is the prereg's: the r64 arm first (the paired reference every contrast needs), then
   the faithful 2-bit arm (the primary contrast), the G=64 single-shot control (protocol-bound
   or grouping-bound), and the faithful 4-bit arm (descriptive). No full arm: every contrast
   is paired within the pod on identical prompts. The three quant arms are chunkable: false.
   The -devel image: quanto JIT-builds its kernel. gpu_budget_h is the prereg's 2x bar over
-  the measured-anchor point estimate (14.2 h), enforced on the pod by `pod.py launch
+  the measured-anchor point estimate (20.2 h), enforced on the pod by `pod.py launch
   --max-hours`. Launch = DECISIONS, after D-005 closes: the prereg runs the cycled filler by
-  design and is amended to ruler_v2_32k before launch if D-005 retires it from headline
+  design and is amended to ruler_v2_* before launch if D-005 retires it from headline
   claims. Shares prereg/ss2_families.md with ss2_families_mistral and ss2_families_qwen.
 prereg: prereg/ss2_families.md
 arms: ["isvd_r64_h256_seed", "kivi2_faithful", "kivi2_singleshot", "kivi4_faithful"]
-tasks: ["ruler_inhouse_32k"]
+tasks: ["ruler_inhouse_16k", "ruler_inhouse_32k"]
 image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
-gpu_budget_h: 28.4
+gpu_budget_h: 40.4

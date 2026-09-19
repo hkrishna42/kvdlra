@@ -18,9 +18,11 @@ produced nothing impossible to pass off as a clean run. And because recording ra
 skipping keeps every cell full, the error COUNT is its own rule: any recorded failure
 fails the pod (ruling R29), with no tolerance knob.
 
-`run` writes the manifest and the environment, then hands the pod config to
-`kvdlra.eval.runner.run_pod`, which is the eval loop; `--dry-run` stops after the manifest,
-which is what the tests and `make check` exercise. Archived paper-v1 manifests carry
+`run` writes the manifest and the environment, materializes any haystack source a
+generator-v2 task names that is not on disk (`prepare` is that step alone) and records
+the sources' digests, then hands the pod config to `kvdlra.eval.runner.run_pod`, which
+is the eval loop; `--dry-run` stops after the manifest, which is what the tests and
+`make check` exercise. Archived paper-v1 manifests carry
 `converted_by` and are skipped: they are static evidence of runs that happened before this
 entrypoint existed.
 """
@@ -35,6 +37,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 import tomllib
 from collections import Counter
 from datetime import UTC, datetime
@@ -44,7 +47,7 @@ from typing import Any, cast
 
 import _paths  # noqa: F401
 
-from kvdlra.eval.config import PodCfg, config_hash, load_arm, load_pod, load_task
+from kvdlra.eval.config import PodCfg, TaskV2Cfg, config_hash, load_arm, load_pod, load_task
 from kvdlra.eval.records import (
     TrialRecord,
     parse_diag_lines,
@@ -161,7 +164,27 @@ def _read_manifest(out: Path) -> dict[str, Any] | None:
     return cast(dict[str, Any], json.loads(p.read_text())) if p.is_file() else None
 
 
-# --- run ----------------------------------------------------------------------
+# --- run / prepare --------------------------------------------------------------
+
+
+def _haystack_sha256(pod: PodCfg) -> dict[str, str]:
+    """``haystack:<source>`` -> sha256 of ``data/haystacks/<source>.jsonl`` for every
+    source the pod's v2 tasks name, materializing (`kvdlra.eval.haystacks.ensure`) the
+    ones not on disk. Empty for a pod with no v2 task."""
+    # Imported here: `check` and `--dry-run` never need the eval stack it pulls in.
+    from kvdlra.eval.haystacks import ensure
+
+    tasks = [load_task(t) for t in pod.tasks]
+    sources = sorted({s for t in tasks if isinstance(t, TaskV2Cfg) for s in t.haystacks})
+    return {f"haystack:{s}": sha for s, sha in ensure(sources).items()}
+
+
+def prepare(name: str) -> int:
+    """Materialize the haystacks a pod's v2 tasks name (`run` does it too, before the
+    model loads; this is the same step on its own, for a laptop or a warm pod)."""
+    for key, sha in _haystack_sha256(load_pod(name)).items():
+        print(f"{key} {sha}")
+    return 0
 
 
 def run(name: str, out: Path, dry_run: bool) -> int:
@@ -184,8 +207,15 @@ def run(name: str, out: Path, dry_run: bool) -> int:
     from kvdlra.eval.data import load_model
     from kvdlra.eval.runner import run_pod
 
+    # The haystacks before the weights: a source that will not download fails the pod
+    # in seconds, not after the model load; their digests are evidence, so the manifest
+    # carries them from here on.
+    m["dataset_sha256"] = {**m["dataset_sha256"], **_haystack_sha256(pod)}
+    _write_manifest(out, m)
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    t0 = time.perf_counter()
     loaded = load_model(pod.model, device, pod.dtype)
+    print(f"[stage] load_model {pod.model} ({time.perf_counter() - t0:.1f} s)", flush=True)
     m["model_revision"] = getattr(loaded[0].config, "_commit_hash", None)
     _write_manifest(out, m)
     run_pod(pod, out, loaded)
@@ -784,6 +814,8 @@ def main() -> int:
     r.add_argument("--pod", required=True)
     r.add_argument("--out", default=None, help="default: results/<pod>")
     r.add_argument("--dry-run", action="store_true", help="manifest + env only, no eval")
+    pr = sub.add_parser("prepare", help="materialize the haystacks a pod's v2 tasks name")
+    pr.add_argument("--pod", required=True)
     ln = sub.add_parser("launch", help="create the vast.ai instance that runs a pod")
     ln.add_argument("--pod", required=True)
     ln.add_argument("--offer", required=True)
@@ -811,6 +843,8 @@ def main() -> int:
     out = Path(a.out) if getattr(a, "out", None) else REPO_ROOT / "results" / name
     if a.cmd == "run":
         return run(name, out, a.dry_run)
+    if a.cmd == "prepare":
+        return prepare(name)
     if a.cmd == "launch":
         return launch(name, a.offer, a.dry_run, a.max_hours)
     return harvest(name, Path(a.log) if a.log else None, out, a.force)

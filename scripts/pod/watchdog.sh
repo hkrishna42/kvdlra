@@ -34,8 +34,10 @@ FLOOR="${FLOOR:-6.0}"; BUDGET_ITERS="${BUDGET_ITERS:-600}"
 # `pod.py harvest` rebuilds results/<pod>/env.txt from them -- the file `pod.py run`
 # writes stays on the destroyed instance, and a rebuilt one is what `check` reads. The
 # `===ENV_` markers alone are not enough: `sort -u` scatters the block's contents, so
-# every line the harvest needs has to match on its own.
-ROWS='^\[(niah|vt|persist|latency)[^]]*\] +[^ ].* (acc=|SKIP|bytes=|ms/tok=)|^ +[^ ].* \[T=[0-9]+\] (ppl=|OOM|error|mem alloc)|^\[pplw|^\[diag|^\[trial\]|^\[error\]|^===(ALL_DONE|RUN_FAILED|RUN_TIMEOUT|SELF_DESTRUCT|CLONE_FAILED|CHECKOUT_FAILED|DEPS_FAILED|MODEL_FAILED|POD_|RUN_SHA|ENV_|QUANTO|HQQ|MODEL_)|^run_sha=|^device=|^python=|^torch=|^triton=|^transformers=|NVIDIA'
+# every line the harvest needs has to match on its own. `[stage]` rows are the runner's
+# load timings (model, corpora, haystacks): kept so a slow pod's log says where the
+# hours went.
+ROWS='^\[(niah|vt|persist|latency)[^]]*\] +[^ ].* (acc=|SKIP|bytes=|ms/tok=)|^ +[^ ].* \[T=[0-9]+\] (ppl=|OOM|error|mem alloc)|^\[pplw|^\[diag|^\[stage|^\[trial\]|^\[error\]|^===(ALL_DONE|RUN_FAILED|RUN_TIMEOUT|SELF_DESTRUCT|CLONE_FAILED|CHECKOUT_FAILED|DEPS_FAILED|MODEL_FAILED|POD_|RUN_SHA|ENV_|QUANTO|HQQ|MODEL_)|^run_sha=|^device=|^python=|^torch=|^triton=|^transformers=|NVIDIA'
 # boot.sh's pre-run failures. The instance is destroyed on any of them exactly as on
 # ALL_DONE -- a pod that could not clone, check out, install, load the model or import
 # its quant backend has nothing left to do but bill. `pod.py harvest` reads the same

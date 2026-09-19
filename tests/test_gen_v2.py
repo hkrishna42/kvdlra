@@ -13,10 +13,13 @@ import hashlib
 import json
 import math
 import re
+import subprocess
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
+import pod
 import pytest
 
 from kvdlra.eval.config import PodCfg, TaskV2Cfg, config_hash, load_pod, load_task
@@ -207,6 +210,71 @@ def test_load_corpora_reads_the_fixture_and_skips_its_provenance_row(
     assert d["sha256"] == hashlib.sha256(d["text"].encode()).hexdigest()
 
 
+def test_materialize_writes_docs_and_their_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Short rows are skipped, ids are `d<index>` in materialization order, the JSONL's
+    sha256 is returned and written beside it -- network-free through a fake stream."""
+    from kvdlra.eval import haystacks
+
+    calls: list[dict[str, Any]] = []
+    rows = [{"text": "x" * 10}, {"text": "a" * 2500}, {"text": "b" * 3000}, {"text": "c" * 4000}]
+
+    def fake_load_dataset(**kw: Any) -> list[dict[str, Any]]:
+        calls.append(kw)
+        return rows
+
+    monkeypatch.setattr(haystacks, "load_dataset", fake_load_dataset)
+    sha = haystacks.materialize("essays", n_docs=2, out=tmp_path)
+    (kw,) = calls
+    assert kw["streaming"] is True and kw["path"] == "sgoel9/paul_graham_essays"
+    assert re.fullmatch(r"[0-9a-f]{40}", kw["revision"]) and "trust_remote_code" not in kw
+    payload = (tmp_path / "essays.jsonl").read_bytes()
+    assert sha == hashlib.sha256(payload).hexdigest()
+    assert (tmp_path / "essays.sha256").read_text().strip() == sha
+    docs = [json.loads(x) for x in payload.decode().splitlines()]
+    assert [d["id"] for d in docs] == ["d0", "d1"] and docs[0]["text"] == "a" * 2500
+    assert all(d["source"] == "essays" for d in docs)
+    assert haystacks.ensure(["essays"], out=tmp_path) == {"essays": sha}  # on disk: no reload
+    assert len(calls) == 1
+    assert {s for s, (kw, _) in haystacks.SOURCES.items()} == set(CFG.haystacks)
+    assert haystacks.SOURCES["pg19"][0]["trust_remote_code"] is True
+
+
+def test_run_materializes_the_haystacks_a_v2_task_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`pod.py run` (and `prepare`) fills `dataset_sha256` with `haystack:<source>` for
+    every source the pod's v2 tasks name, materializing only what is not on disk."""
+    from kvdlra.eval import haystacks
+
+    made: list[str] = []
+
+    def fake_materialize(source: str, n_docs: int = 64, out: Path = tmp_path) -> str:
+        made.append(source)
+        (out / f"{source}.jsonl").write_text(f'{{"source": "{source}"}}\n')
+        return "sha-" + source
+
+    monkeypatch.setattr(haystacks, "HAYSTACKS", tmp_path)
+    monkeypatch.setattr(haystacks, "materialize", fake_materialize)
+    cfg = load_pod("w18_g1")
+    assert pod._haystack_sha256(cfg) == {}  # no v2 task: nothing named, nothing made
+    cfg.tasks = ["ruler_v2_16k", "ppl_16k"]
+    got = pod._haystack_sha256(cfg)
+    assert sorted(made) == ["arxiv", "essays", "pg19", "wikipedia"]
+    assert got == {f"haystack:{s}": f"sha-{s}" for s in made}  # what materialize returned
+    again = pod._haystack_sha256(cfg)  # second call: every file is on disk, none re-made
+    assert len(made) == 4 and set(again) == set(got)
+    assert all(re.fullmatch(r"[0-9a-f]{64}", v) for v in again.values())  # from the bytes
+
+
+def test_prepare_is_a_subcommand() -> None:
+    out = subprocess.run(
+        [sys.executable, "scripts/pod.py", "prepare"], capture_output=True, text=True, cwd=REPO
+    )
+    assert out.returncode == 2 and "--pod" in out.stderr  # argparse: the subcommand exists
+
+
 # ------------------------------------------------------------------ the config
 
 
@@ -253,3 +321,56 @@ def test_load_task_refuses_a_v2_design_that_does_not_match_n_trials(
         load_task("bad")
     (tmp_path / "tasks" / "bad.yaml").write_text(head + "n_trials: 24\n")  # the default design
     assert isinstance(load_task("bad"), TaskV2Cfg)
+
+
+# ------------------------------------------------------------------ the log line
+
+
+def test_trial_line_round_trips_the_pairing_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """What the runner prints is what `parse_trial_lines` reads back -- the four pairing
+    fields included -- so a harvested pod can verify byte-identical prompts across arms."""
+    from kvdlra.eval.records import parse_trial_lines
+    from kvdlra.eval.runner import run_pod
+
+    def fake_trial(*a: Any, **k: Any) -> tuple[int, float, dict[str, Any]]:
+        trial = a[6]
+        meta = {"haystack_id": "pg19:d1..d2:2", "depth": 0.05, "code_family": "words",
+                "prompt_sha256": "ab" * 32, "ratio": 0.15, "sbits": 0.15}  # fmt: skip
+        if trial == 1:
+            raise RuntimeError("boom: x=1")
+        if trial == 2:
+            meta = {"ratio": 0.15, "sbits": 0.15}  # a generator that sets none of them
+        return 1, 1.0, meta
+
+    monkeypatch.setattr("kvdlra.eval.gen.run_trial", fake_trial)
+    cfg = load_pod("w18_g1")
+    cfg.arms, cfg.tasks = ["full"], ["ruler_v2_16k"]
+    run_pod(cfg, out=tmp_path, model=None, dry_model=True)
+    rows = [json.loads(x) for x in (tmp_path / "trials.jsonl").read_text().splitlines()]
+    parsed = parse_trial_lines(capsys.readouterr().out, cfg.model, "log")
+    assert len(rows) == len(parsed) == 5 * 12
+    keys = ("task", "ctx", "arm", "seed", "trial", "hit", "frac", "generator",
+            "haystack_id", "depth", "code_family", "prompt_sha256", "error")  # fmt: skip
+    trim = [{k: v for k, v in r.items() if k in keys} for r in rows]
+    assert trim == [{k: v for k, v in dict(p).items() if k in keys} for p in parsed]
+    assert rows[0]["generator"] == "v2" and rows[0]["depth"] == 0.05
+    assert rows[0]["haystack_id"] == "pg19:d1..d2:2" and rows[0]["prompt_sha256"] == "ab" * 32
+    assert rows[1]["error"] == "RuntimeError: boom: x=1" and rows[1]["haystack_id"] is None
+    assert rows[2]["haystack_id"] is None and rows[2]["depth"] is None
+
+
+def test_archived_trial_line_still_parses() -> None:
+    from kvdlra.eval.records import parse_trial_lines
+
+    v1 = "[trial] task=vt ctx=16384 arm=bugSseed-r64-h256 seed=1 trial=3 hit=0 frac=0.500\n"
+    l0 = (
+        "[trial] task=vt ctx=16384 arm=full seed=0 trial=0 hit=0 frac=0.000 generator=inhouse"
+        " error=RuntimeError: a=b\n"
+    )
+    (a, b) = parse_trial_lines(v1 + l0, "m", "log")
+    assert a["hit"] == 0 and a["frac"] == 0.5 and a["generator"] is None and a["error"] is None
+    assert b["generator"] == "inhouse" and b["error"] == "RuntimeError: a=b"
+    for r in (a, b):
+        assert (r["haystack_id"], r["depth"], r["code_family"], r["prompt_sha256"]) == (None,) * 4

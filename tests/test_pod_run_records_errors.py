@@ -153,6 +153,7 @@ def test_a_perplexity_arm_that_raises_is_logged_and_counted(
 
     out = capsys.readouterr().out
     assert "[error] axis=ppl arm=full ctx=16384 error=RuntimeError: boom" in out
+    assert "[stage] load_corpus_ids wikitext-103 (" in out  # the corpus load is timed
     (err,) = parse_error_lines(out, "log")
     assert err["axis"] == "ppl" and err["arm"] == "full" and err["ctx"] == 16384
     assert err["error"] == "RuntimeError: boom" and str(err["source"]).startswith("log:")

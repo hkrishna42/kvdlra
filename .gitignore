@@ -30,6 +30,10 @@ uv.lock
 # Claude Code local worktrees (never commit)
 .claude/worktrees/
 
+# Generator-v2 haystacks: `scripts/pod.py prepare` materializes them from the pinned Hub
+# revisions (kvdlra/eval/haystacks.py); the manifest records each file's sha256.
+data/haystacks/
+
 # scratch plots from local smoke runs (never clobber tracked figures)
 figures/scratch/
 

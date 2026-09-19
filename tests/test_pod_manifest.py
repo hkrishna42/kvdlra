@@ -638,6 +638,7 @@ def test_the_watchdog_keeps_the_env_block_rows() -> None:
         "triton=3.5.0 omegaconf=2.3.0 datasets=2.21.0 numpy=2.1.3 scipy=1.14.1",
         "===RUN_TIMEOUT_w18_g1_18.3h===",  # L2.1: boot.sh's budget and self-destruct
         "===SELF_DESTRUCT_FAILED_w18_g1===",  # markers reach the harvested log
+        "[stage] load_model unsloth/Meta-Llama-3.1-8B-Instruct (61.3 s)",  # L2.3b timings
     ]
     r = subprocess.run(
         ["grep", "-aE", rows],

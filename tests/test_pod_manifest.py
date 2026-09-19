@@ -334,6 +334,10 @@ def test_launch_max_hours_defaults_to_the_pod_budget() -> None:
         pod.launch_command("filler_realism", "1", "deadbeef", max_hours=0.0)
     with pytest.raises(ValueError, match="max-hours"):  # nan <= 0 is False: needs its own check
         pod.launch_command("filler_realism", "1", "deadbeef", max_hours=float("nan"))
+    with pytest.raises(ValueError, match="max-hours"):  # +inf > 0 is True: needs isfinite too
+        pod.launch_command("filler_realism", "1", "deadbeef", max_hours=float("inf"))
+    with pytest.raises(ValueError, match="max-hours"):
+        pod.launch_command("filler_realism", "1", "deadbeef", max_hours=-float("inf"))
 
 
 # w18_g1's expected cell set, spelled out rather than re-derived: three arms by their

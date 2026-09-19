@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import math
 import re
 import shlex
 import subprocess
@@ -206,9 +207,10 @@ def launch_command(name: str, offer: str, sha: str, max_hours: float | None = No
     """
     pod = load_pod(name)
     hours = pod.gpu_budget_h if max_hours is None else max_hours
-    if not (hours > 0):  # catches <= 0 AND nan (nan > 0 is False; nan <= 0 is also False)
+    if not (math.isfinite(hours) and hours > 0):  # catches <= 0, nan, AND +/-inf
+        # (nan > 0 is False; +inf > 0 is True but not finite -- `timeout infh` is no bar)
         raise ValueError(
-            f"--max-hours {hours:g} is no bar: pre-register gpu_budget_h > 0 in"
+            f"--max-hours {hours:g} is no bar: pre-register a finite gpu_budget_h > 0 in"
             f" configs/pods/{name}.yaml or pass --max-hours"
         )
     return [

@@ -296,7 +296,7 @@ def _evict_factory(cfg: ArmCfg) -> Any:
 def _press(cfg: ArmCfg) -> dict[str, Any]:
     """A prefill press, dispatched on which parameter its ``press:`` block carries:
     ``ratio`` is ThinK's channel-wise key pruning, ``rank`` the per-sequence SVD oracle
-    (the rows published as ``palu-*``), ``keep`` an eviction press's kept fraction.
+    (:mod:`kvdlra.baselines.svd_oracle`), ``keep`` an eviction press's kept fraction.
     ``press_type`` is what `_footprint` branches on for the two analytic footprints."""
     p = cfg.press
     if "ratio" in p:
@@ -313,9 +313,9 @@ def _press(cfg: ArmCfg) -> dict[str, Any]:
 
         ratio, group = float(p["rank"]), int(p["group"])
         return {
-            "press_type": "palu",
-            "palu_rank_ratio": ratio,
-            "palu_group": group,
+            "press_type": "svd_oracle",
+            "oracle_rank_ratio": ratio,
+            "oracle_group": group,
             "make": lambda: SVDOraclePress(rank_ratio=ratio, group=group),
         }
     return {"keep": float(p["keep"]), "make": _evict_factory(cfg)}
@@ -425,11 +425,11 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
         # ThinK zeros channels (no measured gain) -> analytic footprint (K pruned).
         head_dim = n // h_kv
         return acc.think_footprint(t, n, head_dim, h_kv, float(arm["think_ratio"]))
-    if arm.get("press_type") == "palu":
-        # Palu reconstructs same-shape K/V (Mode A); analytic low-rank footprint.
+    if arm.get("press_type") == "svd_oracle":
+        # The SVD oracle reconstructs same-shape K/V (Mode A); analytic low-rank footprint.
         head_dim = n // h_kv
-        return acc.palu_footprint(
-            t, n, head_dim, h_kv, float(arm["palu_rank_ratio"]), group=int(arm["palu_group"])
+        return acc.lowrank_footprint(
+            t, n, head_dim, h_kv, float(arm["oracle_rank_ratio"]), group=int(arm["oracle_group"])
         )
     # eviction press: measure kept fraction from the compressed DynamicCache
     assert isinstance(cache, DynamicCache)

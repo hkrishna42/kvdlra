@@ -1,18 +1,9 @@
-"""Truncated-SVD low-rank baseline: the static upper bound BUG is measured against.
-
-Per sequence, per head-group of ``group`` KV heads, this press replaces the prefill
-K/V with their Eckart--Young-optimal rank-``r`` reconstruction, computed once from
-the sequence's own activations. It is the *best any static low-rank scheme can do*
-at that rank -- no tracker, no streaming, one SVD over the whole context -- so a
-streaming tracker that matches it has lost nothing to being online.
-
-**This is not Palu** (arXiv:2407.21118). Palu low-rank-decomposes the projection
-*weights* offline, searches the per-group rank with Fisher information, groups heads,
-and may fine-tune; none of that is here. This press decomposes *activations* after
-the fact, at a uniform rank, and is therefore an upper bound on that scheme rather
-than an implementation of it -- and, needing the whole context at once, it is not
-computable online. The v1 records and ``configs/arms/svd_oracle_r0.5.yaml`` keep the
-legacy arm string ``palu-r0.5``.
+"""Per-sequence, per-head truncated SVD of the prefill K and V (rank ratio
+``rank_ratio``), sinks kept exact. It is an *upper bound* for static low-rank
+methods on this sequence (Eckart--Young in Frobenius norm on the sequence's own
+K/V) -- it is not Palu (no weight decomposition, no grouped heads, no Fisher rank
+allocation, no fine-tuning, cannot be computed online). The paper-v1 records name
+it ``palu-r0.5``; that name is retired.
 
 Mechanics: a reconstruct-then-attend press (Mode A, same-shape output, like
 :class:`BUGPress`). Per group we form the pre-RoPE key matrix ``(group*head_dim, T)``
@@ -21,7 +12,7 @@ and its value matrix, keep the ``n_sink`` leading token columns **exact** (the
 Week-15 audit fix), truncate the rest to rank ``r = round(rank_ratio * group *
 head_dim)``, and write back the rank-r reconstruction (keys re-rotated to post-RoPE).
 ``rank_ratio in (0, 1]``; ``rank_ratio = 1`` is lossless. Memory is billed by
-:func:`kvdlra.accounting.palu_footprint` (exact sinks + per-token latent
+:func:`kvdlra.accounting.lowrank_footprint` (exact sinks + per-token latent
 ``r*(T - n_sink)`` + basis ``r*group*head_dim``, K+V) -- **not** the same-shape
 DynamicCache tensor, which is uncompressed by construction (Mode A). Single-shot
 pre-fill only (inherits :class:`BUGPress`'s guard).

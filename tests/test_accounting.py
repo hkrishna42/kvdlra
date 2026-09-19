@@ -304,27 +304,27 @@ def test_think_ratio_is_one_minus_half_cr() -> None:
         assert fp.ratio_fp16(t, n) == pytest.approx(1.0 - cr / 2, abs=2e-3)
 
 
-def test_palu_ratio_tracks_rank_ratio() -> None:
-    """Palu low-rank K+V latents -> ratio ~ rank_ratio at long t (basis + exact
+def test_oracle_ratio_tracks_rank_ratio() -> None:
+    """SVD-oracle low-rank K+V latents -> ratio ~ rank_ratio at long t (basis + exact
     sinks amortize)."""
     t, n, head_dim, h_kv = 8192, 512, 64, 8
     for rr in (0.25, 0.5):
-        fp = acc.palu_footprint(t, n, head_dim, h_kv, rr)
+        fp = acc.lowrank_footprint(t, n, head_dim, h_kv, rr)
         assert fp.ratio_fp16(t, n) == pytest.approx(rr, abs=0.03)
 
 
-def test_palu_footprint_counts_sinks() -> None:
+def test_oracle_footprint_counts_sinks() -> None:
     """Week-15: ``SVDOraclePress`` keeps the ``n_sink`` leading columns exact, so the
     footprint counts them verbatim (``2*n*n_sink``, K+V at full feature width)
     and pays the per-token latent only over ``t - n_sink`` columns -- the exact
     sinks are stored, never free (the one-unit ethos)."""
     t, n, head_dim, h_kv, rr, sink = 8192, 512, 64, 8, 0.5, 4
     r = round(rr * head_dim)  # per-head rank (group=1)
-    fp = acc.palu_footprint(t, n, head_dim, h_kv, rr)  # default n_sink=4
+    fp = acc.lowrank_footprint(t, n, head_dim, h_kv, rr)  # default n_sink=4
     expected = 2 * n * sink + 2 * (t - sink) * r * h_kv + 2 * r * head_dim * h_kv
     assert fp.float_equiv() == expected
     # n_sink=0 reproduces the pre-fix latent+basis-only formula ...
-    fp0 = acc.palu_footprint(t, n, head_dim, h_kv, rr, n_sink=0)
+    fp0 = acc.lowrank_footprint(t, n, head_dim, h_kv, rr, n_sink=0)
     assert fp0.float_equiv() == 2 * t * r * h_kv + 2 * r * head_dim * h_kv
     # ... and the delta is exactly (verbatim sinks added) - (sink latents removed).
     assert fp.float_equiv() - fp0.float_equiv() == 2 * n * sink - 2 * sink * r * h_kv
@@ -349,13 +349,13 @@ def test_assert_all_within_gate() -> None:
 
 
 def test_ratio_stored_bits_equals_fp16_for_baselines() -> None:
-    """Every method with no fp32-at-rest state (ThinK/Palu/eviction/full) bills the
+    """Every method with no fp32-at-rest state (ThinK/low-rank/eviction/full) bills the
     same honest ratio as ratio_fp16: fp32_verbatim_elems is 0, so the two coincide.
     This is what makes the dual-billing safe to report for the baselines."""
     t, n, head_dim, h_kv = 16384, 1024, 128, 8
     fps = {
         "think": acc.think_footprint(t, n, head_dim, h_kv, key_channel_ratio=0.5),
-        "palu": acc.palu_footprint(t, n, head_dim, h_kv, rank_ratio=0.5),
+        "svd_oracle": acc.lowrank_footprint(t, n, head_dim, h_kv, rank_ratio=0.5),
         "evict": acc.evict_footprint(t, n, keep_frac=0.1),
         "full": acc.full_cache_footprint(t, n),
     }
@@ -422,7 +422,7 @@ def test_quant_footprint_asymptotic_ratios() -> None:
 def test_quant_footprint_stored_equals_fp16() -> None:
     """The quant baseline has no fp32-at-rest state (residual is model dtype), so its
     honest ratio_stored_bits equals ratio_fp16 -- billed on the same footing as
-    ThinK/Palu, unlike BUG."""
+    ThinK and the SVD oracle, unlike BUG."""
     t, n = 16384, 1024
     fp = acc.quant_footprint(t, n, nbits=2)
     assert fp.fp32_verbatim_elems == 0.0

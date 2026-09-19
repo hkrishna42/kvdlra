@@ -80,7 +80,7 @@ class Footprint:
         """At-rest bits / layer: the ``fp32_verbatim_elems`` subset of
         ``verbatim_elems`` billed at its actual 32 bits, the remainder at 16, codes
         native, aux at 32. Equals ``bits(16)`` for any method with no fp32-at-rest
-        state (ThinK/Palu/eviction/full/ShadowKV, ``fp32_verbatim_elems == 0``);
+        state (ThinK/low-rank/eviction/full/ShadowKV, ``fp32_verbatim_elems == 0``);
         for BUG the fp32 basis ``U`` and coordinates ``C`` push it above ``bits(16)``.
         This is what a naive ``ratio_fp16`` under-bills (Week-18 dual-billing)."""
         fp16_part = (self.verbatim_elems - self.fp32_verbatim_elems) * FP16_BITS
@@ -293,10 +293,10 @@ def think_footprint(
     return Footprint(verbatim_elems=verbatim, aux_words=aux)
 
 
-# ------------------------------------------------------------------ Palu
+# ------------------------------------------------------------------ SVD oracle
 
 
-def palu_footprint(
+def lowrank_footprint(
     t: int,
     n: int,
     head_dim: int,
@@ -306,14 +306,16 @@ def palu_footprint(
     group: int = 1,
     n_sink: int = N_SINK,
 ) -> Footprint:
-    """Per-layer footprint of Palu (arXiv:2407.21118): low-rank projection of K AND
-    V into a rank-``r`` latent per head-group, ``r = rank_ratio * head_dim * group``.
-    Stores the ``n_sink`` leading token columns **verbatim** (the sink exemption
-    :class:`kvdlra.baselines.svd_oracle.SVDOraclePress` applies since the Week-15 audit fix -- only
-    columns ``n_sink:`` are low-ranked, K+V), the per-token latent ``H``
-    (``(t-n_sink)*r``) for K and V, plus the reconstruction basis ``B``
-    (``r*head_dim*group``) per group -- all counted. ``group`` = KV heads sharing
-    one projection (Palu's grouped low-rank; group=1 = per-head).
+    """Per-layer footprint of a static low-rank projection of K AND V into a
+    rank-``r`` latent per head-group, ``r = rank_ratio * head_dim * group`` -- the
+    memory model that paper (arXiv:2407.21118) would have; used to bill the SVD
+    oracle (:class:`kvdlra.baselines.svd_oracle.SVDOraclePress`), which reconstructs
+    same-shape K/V. Stores the ``n_sink`` leading token columns **verbatim** (the
+    sink exemption applies since the Week-15 audit fix -- only columns ``n_sink:``
+    are low-ranked, K+V), the per-token latent ``H`` (``(t-n_sink)*r``) for K and V,
+    plus the reconstruction basis ``B`` (``r*head_dim*group``) per group -- all
+    counted. ``group`` = KV heads sharing one projection (that paper's grouped
+    low-rank; group=1 = per-head).
 
     ratio_fp16 ~ (r / (head_dim*group)) = rank_ratio at long t (the basis and the
     tiny exact-sink block amortize), i.e. it compresses BOTH K and V to the rank
@@ -414,8 +416,8 @@ def quant_footprint(
     -> 2-bit/g64 = 0.1875x, 4-bit/g64 = 0.3125x (the KIVI/KVQuant 0.125-0.19x band).
 
     ``fp32_verbatim_elems`` is 0 (the residual is model-dtype), so its
-    ``ratio_stored_bits`` equals ``ratio_fp16`` -- billed on the same footing as ThinK/
-    Palu, unlike BUG whose fp32 state splits the two."""
+    ``ratio_stored_bits`` equals ``ratio_fp16`` -- billed on the same footing as
+    ThinK and the SVD oracle, unlike BUG whose fp32 state splits the two."""
     resid = min(residual_length, t)
     payload = max(0, t - resid)
     verbatim = 2 * resid * n  # K+V fp16 residual window

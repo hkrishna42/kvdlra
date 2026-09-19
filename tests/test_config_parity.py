@@ -13,7 +13,10 @@ needs no model.
 L1.3b renamed the cache's tracker string from ``bug`` to ``isvd``; the eight ``tracker``
 values were rewritten by hand, and the Oja arm gained the two schedule knobs its config now
 names (``oja_eta0``/``oja_decay``) because that arm deliberately is no longer the legacy arm
--- the Week-20 cell it froze ran the library defaults and is void. Nothing else in the
+-- the Week-20 cell it froze ran the library defaults and is void. L2.1 (the ``svd_oracle``
+rename) hand-rewrote the ``svd_oracle_r0.5`` arm's golden ``params`` keys to
+``oracle_group``/``oracle_rank_ratio`` (matching frontier's ``_press``/``_footprint``); the
+entry's top-level key is untouched -- the archived legacy arm string. Nothing else in the
 golden changed.
 """
 

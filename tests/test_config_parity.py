@@ -68,6 +68,19 @@ POST_V1 = {
     "isvd_r256_f0.01_tol",
     "isvd_r256_f0.01_qr64",
     "oja_r64_h256_seed_tuned",
+    # L2.4: the matched-budget eviction/structured baselines at k in {0.10, 0.15, 0.25}
+    # (prereg to come); `ea_k0.10` is the archived `ea_k0.1` operating point under the
+    # new naming, keyed by its own name. `think_c0.5_snapkv_k0.15` is ThinK composed as
+    # its paper intends.
+    "snapkv_k0.10",
+    "snapkv_k0.15",
+    "snapkv_k0.25",
+    "pyramidkv_k0.10",
+    "pyramidkv_k0.15",
+    "pyramidkv_k0.25",
+    "ea_k0.10",
+    "ea_k0.15",
+    "think_c0.5_snapkv_k0.15",
 }
 
 

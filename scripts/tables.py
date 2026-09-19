@@ -326,7 +326,11 @@ def _tex(s: str) -> str:
 
 
 def _table(
-    n: int, title: str, notes: Sequence[str], header: Sequence[str], rows: Sequence[Sequence[str]]
+    n: int | str,
+    title: str,
+    notes: Sequence[str],
+    header: Sequence[str],
+    rows: Sequence[Sequence[str]],
 ) -> tuple[str, str]:
     """One table as (markdown, latex). The markdown is the contract the golden pins;
     the .tex mirrors it. No blank line closes a file: the next table's `##` heading
@@ -589,13 +593,67 @@ def table_8() -> tuple[str, str]:
     return _table(8, "official NVIDIA RULER at 16K on Llama-3.1-8B", notes, head, rows)
 
 
-TABLES: dict[int, Callable[[], tuple[str, str]]] = {
+def table_baselines() -> tuple[str, str]:
+    """The two v1 baseline rows the paper omitted (docs/plan/CODE_AUDIT.md Part B, Q4/Q5):
+    ShadowKV after the Week-15 attach-scope fix, and plain eviction at 0.25x. Both are
+    pre-Week-18 aggregate rows -- no per-trial records, so no hits/n and no interval: the
+    archived point estimates are printed as they are, and a row that DID carry an n would
+    belong in `cell()` with the others, so one here is refused."""
+    src = (("w15-confirm", "shadow-r64"), ("w11-goalA-ruler", "ea-k0.25"))
+    rows = []
+    for pod, arm in src:
+        cells = {r["task"]: r for r in _cells(pod) if r["arm"] == arm and r["ctx"] == K16}
+        if not cells:
+            raise SystemExit(f"no aggregate rows: {pod} {arm} ctx={K16}")
+        if any(r["n"] is not None or r["hits"] is not None for r in cells.values()):
+            raise SystemExit(f"{pod} {arm} carries hits/n: count it from records, not here")
+        ratios = {r["ratio"] for r in cells.values()}
+        if len(ratios) != 1 or None in ratios:
+            raise SystemExit(f"no single ratio= across tasks: {pod} {arm} {ratios}")
+        (ratio,) = cast(set[float], ratios)
+        rows.append(
+            [
+                arm,
+                f"{ratio:.3f}x",
+                *(f"{cells[t]['acc']:.2f}" if t in cells else "---" for t in TASKS),
+                "---",
+                pod,
+            ]
+        )
+    notes = [
+        "not in paper-v1: the two competitive baseline rows the v1 tables omitted"
+        " (docs/plan/CODE_AUDIT.md Part B, Q4 and Q5; PR-L2-13)",
+        "source: results/paper-v1/w15-confirm/cells.jsonl (shadow-r64, the post-fix ShadowKV"
+        " re-measure) and results/paper-v1/w11-goalA-ruler/cells.jsonl (ea-k0.25), the"
+        " archived `[task ctx16384] arm acc= ratio=` rows; 16K, in-house generator",
+        "cell: the archived acc, a point estimate -- these pre-Week-18 rows carry no per-trial"
+        " records, so n is unknown (shown ---) and no Wilson interval is printed; a task the"
+        " pod did not run is --- (shadow-r64 ran no multi-value)",
+        "model: the archive rows record `unknown` (the pre-Week-16 line files named no"
+        " model); CODE_AUDIT attributes both runs to Llama-3.1-8B",
+        "stored state = the archived `ratio=` (float-equivalent); neither method holds"
+        " fp32-at-rest state, so the stored-bits convention gives the same number; one value"
+        " per row, shared by its task rows (checked)",
+    ]
+    return _table(
+        "B",
+        "the v1 baseline rows the paper omitted: ShadowKV post-fix and eviction at 0.25x",
+        notes,
+        ["arm", "stored state", "single", "multi-key", "multi-value", "var-track", "n", "source"],
+        rows,
+    )
+
+
+# `_baselines` sorts after every digit in the `table*.md` glob the Makefile cats, so the
+# appended block of docs/plan/paper-v1-tables.md is where the build puts it.
+TABLES: dict[int | str, Callable[[], tuple[str, str]]] = {
     1: table_1,
     2: table_2,
     3: table_3,
     6: table_6,
     7: table_7,
     8: table_8,
+    "_baselines": table_baselines,
 }
 
 

@@ -1,0 +1,11 @@
+name: think_c0.5_snapkv_k0.15
+kind: press
+chunkable: false
+doc: >-
+  ThinK composed as its paper intends -- SnapKV evicts to 15% of the tokens, then ThinK prunes
+  half of every kept key's channels (kvpress ComposedPress, in that order); billed the measured
+  kept fraction with the channel ratio applied to the K half; single-shot prefill.
+press:
+  family: think_snapkv
+  keep: 0.15
+  ratio: 0.5

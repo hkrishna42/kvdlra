@@ -28,6 +28,7 @@ from torch.nn.functional import cross_entropy
 from transformers.cache_utils import Cache, DynamicCache
 
 from kvdlra import accounting as acc
+from kvdlra.baselines.presses import make_press, press_family
 from kvdlra.cache import BugStreamingCache, ShadowKVCache
 from kvdlra.eval.config import ArmCfg, arm_kwargs
 from kvdlra.eval.records import drained
@@ -235,7 +236,7 @@ def build_arm(cfg: ArmCfg, model: Any, t: int) -> dict[str, Any]:
             **arm,
             "keep": float(cfg.press["keep"]),
             **_quant_fields(cfg),
-            "make_press": _evict_factory(cfg),
+            "make_press": _press_factory(cfg),
             "make_cache": _quant_factory(cfg, model),
         }
     if kind == "press":
@@ -284,30 +285,22 @@ def _quant_factory(cfg: ArmCfg, model: Any) -> Any:
     )
 
 
-def _evict_factory(cfg: ArmCfg) -> Any:
-    """SnapKV for a config named ``snapkv*``, ExpectedAttention otherwise -- the two
-    scorer presses take the same single parameter, so the name is what separates them."""
-    from kvpress import ExpectedAttentionPress, SnapKVPress
-
-    cls = SnapKVPress if cfg.name.startswith("snapkv") else ExpectedAttentionPress
-    return lambda: cls(compression_ratio=1.0 - float(cfg.press["keep"]))
+def _press_factory(cfg: ArmCfg) -> Any:
+    """A factory for the arm's kvpress press (`presses.make_press` decides the family).
+    The family is resolved NOW, so a bad ``press:`` block fails at build, not at first use;
+    a ``kind: press`` arm with no press parameters would otherwise run as the full cache."""
+    if press_family(cfg) is None:
+        raise ValueError(f"configs/arms/{cfg.name}.yaml: press names no keep/ratio/rank")
+    return lambda: make_press(cfg)
 
 
 def _press(cfg: ArmCfg) -> dict[str, Any]:
-    """A prefill press, dispatched on which parameter its ``press:`` block carries:
-    ``ratio`` is ThinK's channel-wise key pruning, ``rank`` the per-sequence SVD oracle
-    (:mod:`kvdlra.baselines.svd_oracle`), ``keep`` an eviction press's kept fraction.
-    ``press_type`` is what `_footprint` branches on for the two analytic footprints."""
+    """A prefill press. ``rank`` is the per-sequence SVD oracle
+    (:mod:`kvdlra.baselines.svd_oracle`); everything else is a kvpress press of
+    `presses.make_press`'s family, carrying ``keep`` (an eviction press's kept fraction)
+    and/or ``think_ratio`` (ThinK's channel ratio). ``press_type`` is what `_footprint`
+    branches on for the analytic footprints; a plain eviction press has none."""
     p = cfg.press
-    if "ratio" in p:
-        from kvpress import ThinKPress
-
-        ratio = float(p["ratio"])
-        return {
-            "press_type": "think",
-            "think_ratio": ratio,
-            "make": lambda: ThinKPress(key_channel_compression_ratio=ratio),
-        }
     if "rank" in p:
         from kvdlra.baselines.svd_oracle import SVDOraclePress
 
@@ -318,7 +311,13 @@ def _press(cfg: ArmCfg) -> dict[str, Any]:
             "oracle_group": group,
             "make": lambda: SVDOraclePress(rank_ratio=ratio, group=group),
         }
-    return {"keep": float(p["keep"]), "make": _evict_factory(cfg)}
+    arm: dict[str, Any] = {"make": _press_factory(cfg)}
+    if "keep" in p:
+        arm["keep"] = float(p["keep"])
+    if "ratio" in p:
+        arm["press_type"] = press_family(cfg)
+        arm["think_ratio"] = float(p["ratio"])
+    return arm
 
 
 def _tracked_rank(u: torch.Tensor | None) -> int:
@@ -425,6 +424,12 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
         # ThinK zeros channels (no measured gain) -> analytic footprint (K pruned).
         head_dim = n // h_kv
         return acc.think_footprint(t, n, head_dim, h_kv, float(arm["think_ratio"]))
+    if arm.get("press_type") == "think_snapkv":
+        # Evicted (measured, as below) AND channel-pruned (analytic, as above).
+        head_dim = n // h_kv
+        return acc.think_evict_footprint(
+            t, n, head_dim, h_kv, float(arm["think_ratio"]), _kept_tokens(cache) / t
+        )
     if arm.get("press_type") == "svd_oracle":
         # The SVD oracle reconstructs same-shape K/V (Mode A); analytic low-rank footprint.
         head_dim = n // h_kv
@@ -432,9 +437,18 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
             t, n, head_dim, h_kv, float(arm["oracle_rank_ratio"]), group=int(arm["oracle_group"])
         )
     # eviction press: measure kept fraction from the compressed DynamicCache
+    return acc.evict_footprint(t, n, _kept_tokens(cache) / t)
+
+
+def _kept_tokens(cache: Cache) -> float:
+    """Tokens a pruned DynamicCache holds, as the MEAN over its layers -- not layer 0's
+    count. PyramidKV keeps more tokens in the lower layers and fewer in the upper (the
+    mean is the configured budget; layer 0 alone is ~2x it at 16K), and this one
+    per-layer footprint is what every axis multiplies by the layer count. The uniform
+    presses keep the same count on every layer, so their bill is byte-identical."""
     assert isinstance(cache, DynamicCache)
-    kept = int(cast(Any, cache.layers[0]).keys.shape[2])
-    return acc.evict_footprint(t, n, kept / t)
+    layers = cast(Any, cache.layers)
+    return sum(int(la.keys.shape[2]) for la in layers) / len(layers)
 
 
 # -------------------------------------------------------------------- runner

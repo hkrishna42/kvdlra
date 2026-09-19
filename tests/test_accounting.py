@@ -304,6 +304,20 @@ def test_think_ratio_is_one_minus_half_cr() -> None:
         assert fp.ratio_fp16(t, n) == pytest.approx(1.0 - cr / 2, abs=2e-3)
 
 
+def test_think_evict_footprint_reduces_to_its_two_parents() -> None:
+    """ThinK composed with an eviction press: no channel pruned is the eviction bill
+    exactly, every token kept is ThinK's bill exactly; in between, keep x (1 - ratio/2)."""
+    t, n, head_dim, h_kv = 4096, 512, 64, 8
+    assert acc.think_evict_footprint(t, n, head_dim, h_kv, 0.0, 0.15) == acc.evict_footprint(
+        t, n, 0.15
+    )
+    assert acc.think_evict_footprint(t, n, head_dim, h_kv, 0.5, 1.0) == acc.think_footprint(
+        t, n, head_dim, h_kv, 0.5
+    )
+    fp = acc.think_evict_footprint(t, n, head_dim, h_kv, 0.5, 0.15)
+    assert fp.ratio_fp16(t, n) == pytest.approx(0.15 * 0.75, abs=2e-3)
+
+
 def test_oracle_ratio_tracks_rank_ratio() -> None:
     """SVD-oracle low-rank K+V latents -> ratio ~ rank_ratio at long t (basis + exact
     sinks amortize)."""

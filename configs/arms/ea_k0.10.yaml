@@ -1,0 +1,11 @@
+name: ea_k0.10
+kind: press
+chunkable: false
+doc: >-
+  ExpectedAttention eviction keeping 10% of the tokens at prefill, one point of the L2
+  matched-budget eviction grid k in {0.10, 0.15, 0.25}; single-shot prefill (a scorer press).
+  The same operating point as the archived `ea_k0.1` (kept as is: archive pods pin its hash),
+  under the k in {0.10, 0.15, 0.25} naming; records key by this name.
+press:
+  family: expected_attention
+  keep: 0.10

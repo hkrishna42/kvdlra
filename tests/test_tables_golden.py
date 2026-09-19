@@ -1,5 +1,5 @@
 """`make tables` regenerates the paper-v1 tables: the build output must equal the
-hand-transcribed golden (docs/plan/paper-v1-tables.md), byte for byte, and the six
+hand-transcribed golden (docs/plan/paper-v1-tables.md), byte for byte, and the seven
 committed .tex deliverables must be exactly what the current build emits."""
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def test_committed_tex_files_are_the_built_ones(tmp_path: Path) -> None:
     out = tmp_path / "tables"
     _build(out)
     built = sorted(out.glob("table*.tex"))
-    assert [p.name for p in built] == [f"table{n}.tex" for n in (1, 2, 3, 6, 7, 8)]
+    assert [p.name for p in built] == [f"table{n}.tex" for n in (1, 2, 3, 6, 7, 8, "_baselines")]
     for p in built:
         assert (COMMITTED / p.name).read_text() == p.read_text(), p.name
 

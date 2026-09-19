@@ -277,7 +277,7 @@ def evict_footprint(
 
 
 def think_footprint(
-    t: int, n: int, head_dim: int, h_kv: int, key_channel_ratio: float, window_size: int = 32
+    t: float, n: int, head_dim: int, h_kv: int, key_channel_ratio: float, window_size: int = 32
 ) -> Footprint:
     """Per-layer footprint of ThinK (arXiv:2407.21018): prune a ``key_channel_ratio``
     fraction of the KEY channels (dimensions), values untouched. So only K is
@@ -291,6 +291,17 @@ def think_footprint(
     verbatim = t * kept_ch * h_kv + t * n  # pruned K + full V
     aux = h_kv * kept_ch  # kept-channel indices, per head (one-time)
     return Footprint(verbatim_elems=verbatim, aux_words=aux)
+
+
+def think_evict_footprint(
+    t: int, n: int, head_dim: int, h_kv: int, key_channel_ratio: float, keep_frac: float
+) -> Footprint:
+    """ThinK composed with an eviction press, the pairing its paper evaluates (SnapKV/H2O,
+    then ThinK): the ``keep_frac`` kept tokens billed as `think_footprint` bills a token.
+    ``key_channel_ratio=0`` is `evict_footprint`; ``keep_frac=1`` is `think_footprint`."""
+    if key_channel_ratio == 0:  # nothing pruned -> no channel index set to store
+        return evict_footprint(t, n, keep_frac)
+    return think_footprint(keep_frac * t, n, head_dim, h_kv, key_channel_ratio)
 
 
 # ------------------------------------------------------------------ SVD oracle

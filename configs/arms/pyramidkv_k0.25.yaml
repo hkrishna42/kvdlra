@@ -1,0 +1,12 @@
+name: pyramidkv_k0.25
+kind: press
+chunkable: false
+doc: >-
+  PyramidKV eviction keeping 25% of the tokens at prefill, one point of the L2 matched-budget
+  eviction grid k in {0.10, 0.15, 0.25}; single-shot prefill (a scorer press). kvpress 0.5.1's
+  PyramidKVPress at its defaults (window 64, kernel 5, beta 20): the budget is a pyramid over
+  the layers, more tokens kept in the lower layers and fewer in the upper, whose mean over the
+  layers is the keep fraction -- and the mean is what is billed.
+press:
+  family: pyramidkv
+  keep: 0.25

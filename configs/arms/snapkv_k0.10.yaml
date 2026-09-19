@@ -1,0 +1,9 @@
+name: snapkv_k0.10
+kind: press
+chunkable: false
+doc: >-
+  SnapKV eviction keeping 10% of the tokens at prefill, one point of the L2 matched-budget
+  eviction grid k in {0.10, 0.15, 0.25}; single-shot prefill (a scorer press).
+press:
+  family: snapkv
+  keep: 0.10

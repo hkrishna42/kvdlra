@@ -1,0 +1,13 @@
+name: kivi2_faithful
+kind: quant_faithful
+chunkable: false
+doc: >-
+  KIVI's published operating point (Liu et al. 2024): per-channel keys, per-token values, G=32,
+  R=128, full-precision prefill; quanto backend — no fused 2-bit kernel, so decode dequantizes
+  (deviation recorded)
+quant:
+  nbits: 2
+  scheme: "kivi"
+  backend: "quanto"
+  group: 32
+  residual: 128

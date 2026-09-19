@@ -34,7 +34,7 @@ from transformers.cache_utils import Cache, DynamicCache
 
 from kvdlra.eval.config import TaskCfg
 from kvdlra.eval.data import FILLER, LABELS
-from kvdlra.eval.frontier import _footprint, _prefill_chunked, _prefill_plain
+from kvdlra.eval.frontier import _footprint, _prefill_chunked, _prefill_faithful, _prefill_plain
 from kvdlra.eval.records import drained
 
 _TAIL_K = 48  # FLOOR for the decoded query tail (question + assistant header, as in
@@ -338,6 +338,15 @@ def retrieve(
         # so decode starts fully quantized, as after a single-shot prefill.
         cache = arm["make"]()
         _prefill_plain(model, cache, hay, chunk)
+        fp = _footprint(arm, cache, ctx_len, n, h_kv)
+        text = _decode(
+            model, tok, cache, query.to(device), ctx_len, device, block=True, max_new=max_new
+        )
+    elif arm["kind"] == "quant_faithful":
+        # KIVI's own protocol (L2.2): full-precision single-shot prefill, the quantized
+        # store built post hoc, then decode as the streaming quant arm above.
+        cache = arm["make"]()
+        _prefill_faithful(model, cache, hay)
         fp = _footprint(arm, cache, ctx_len, n, h_kv)
         text = _decode(
             model, tok, cache, query.to(device), ctx_len, device, block=True, max_new=max_new

@@ -46,9 +46,14 @@ PARAMS = sorted(k for k, v in GOLDEN.items() if "params" in v)
 # (`prereg/hygiene_table4.md`) -- post-v1 arms, no `legacy_name`, nothing to be parity
 # with. `oja_r64_h256_seed_tuned` (L1.4b) is the Week-2 Oja arm's schedule re-tuned on
 # the 1B stored-representation study (`results/recon_1b/`); it is a new arm, not a
-# rebuild of the legacy one. A plain set on purpose: the next lane's arm is one line here.
+# rebuild of the legacy one. The two `kivi*_faithful` arms are L2.2's KIVI at its published
+# operating point (G=32, R=128, fp16 single-shot prefill) -- a different arm from the
+# streaming mixin the tables used. A plain set on purpose: the next lane's arm is one line
+# here.
 POST_V1 = {
     "kivi2_singleshot",
+    "kivi2_faithful",
+    "kivi4_faithful",
     "isvd_r128_noguard",
     "isvd_r128_tol",
     "isvd_r128_qr64",
@@ -116,15 +121,6 @@ def test_build_arm_rejects_an_unknown_kind() -> None:
     cfg = load_arm("full")
     cfg.kind = "telepathy"
     with pytest.raises(ValueError, match="unknown arm kind"):
-        build_arm(cfg, model=None, t=1024)
-
-
-def test_faithful_quant_is_reserved_not_silently_wrong() -> None:
-    """A faithful KIVI (G=32, R=128, full-precision prefill) is a different arm from the
-    QuantizedCache mixin, and L2 owns it. Until then it must refuse, not approximate."""
-    cfg = load_arm("kivi2_streaming")
-    cfg.kind = "quant_faithful"
-    with pytest.raises(NotImplementedError, match="L2"):
         build_arm(cfg, model=None, t=1024)
 
 

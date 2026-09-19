@@ -49,7 +49,7 @@ class ArmCfg:
     """One compression method at one operating point."""
 
     name: str
-    kind: str  # bug | full | press | quant | composite | shadow
+    kind: str  # bug | full | press | quant | quant_faithful | composite | shadow
     legacy_name: str | None = None  # the arm string in results/paper-v1 records
     chunkable: bool = True
     doc: str = ""

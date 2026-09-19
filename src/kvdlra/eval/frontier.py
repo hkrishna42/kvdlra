@@ -9,8 +9,8 @@ against the live cache.
 
 This module also owns the two pieces every other eval axis shares: the prefill
 helpers (``_prefill_chunked`` for a streaming cache, ``_prefill_plain`` for a
-QuantizedCache) and ``_footprint``, which maps an arm plus its post-prefill cache to
-a ``Footprint``.
+QuantizedCache, ``_prefill_faithful`` for the KIVI arm that quantizes post hoc) and
+``_footprint``, which maps an arm plus its post-prefill cache to a ``Footprint``.
 
 The ``[pplw]`` and ``ppl=`` lines this module prints are the pod's stdout contract:
 ``kvdlra.eval.records`` parses them back out of a harvested log, so their format is
@@ -31,6 +31,7 @@ from kvdlra import accounting as acc
 from kvdlra.cache import BugStreamingCache, ShadowKVCache
 from kvdlra.eval.config import ArmCfg, arm_kwargs
 from kvdlra.eval.records import drained
+from kvdlra.quant.kivi import make_kivi, quantize_after_prefill, residual_tokens
 from kvdlra.quant.kivi_cache import aux_words, flush, make_quant_cache
 
 N_SINK = 4
@@ -156,6 +157,16 @@ def _prefill_plain(model: Any, cache: Any, ctx: torch.Tensor, chunk: int) -> Non
 
 
 @torch.no_grad()
+def _prefill_faithful(model: Any, cache: Any, ctx: torch.Tensor) -> None:
+    """KIVI's own protocol: single-shot full-precision prefill into a ``DynamicCache``
+    (``logits_to_keep=1``, the memory-safe call the presses make), then the QuantizedCache
+    is built from it post hoc -- prefill attention never sees a dequantized token."""
+    dyn = DynamicCache()
+    model(ctx, past_key_values=dyn, use_cache=True, logits_to_keep=1)
+    quantize_after_prefill(cache, dyn)
+
+
+@torch.no_grad()
 def score_quant(
     model: Any, cache: Any, ctx_ids: torch.Tensor, win_ids: torch.Tensor, chunk: int = 0
 ) -> tuple[float, int]:
@@ -230,7 +241,22 @@ def build_arm(cfg: ArmCfg, model: Any, t: int) -> dict[str, Any]:
     if kind == "press":
         return {**arm, **_press(cfg)}
     if kind == "quant_faithful":
-        raise NotImplementedError("L2")  # faithful KIVI (G=32, R=128, fp prefill)
+        # KIVI at its published operating point: the scheme IS the arm, so the factory
+        # pins it (`make_kivi`) and a YAML that says otherwise is refused, not relabelled.
+        q = cfg.quant
+        if q.get("scheme") != "kivi":
+            raise ValueError(f"configs/arms/{cfg.name}.yaml: quant_faithful is the kivi scheme")
+        return {
+            **arm,
+            **_quant_fields(cfg),
+            "make": lambda: make_kivi(
+                model.config,
+                nbits=int(q["nbits"]),
+                group=int(q["group"]),
+                residual=int(q["residual"]),
+                backend=str(q["backend"]),
+            ),
+        }
     raise ValueError(f"unknown arm kind {cfg.kind!r} in configs/arms/{cfg.name}.yaml")
 
 
@@ -368,13 +394,16 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
         )
     if kind == "full":
         return acc.full_cache_footprint(t, n)
-    if kind == "quant":  # QuantizedCache is NOT a DynamicCache subclass -> branch first
+    if kind in ("quant", "quant_faithful"):  # NOT a DynamicCache subclass -> branch first
+        # The streaming arm is billed its configured residual (flushed, then regrown at
+        # decode); the faithful arm the T mod R tokens its prefill actually left fp16.
+        resid = residual_tokens(cache) if kind == "quant_faithful" else int(arm["quant_residual"])
         return acc.quant_footprint(
             t,
             n,
             nbits=int(arm["nbits"]),
             group=int(arm["quant_group"]),
-            residual_length=int(arm["quant_residual"]),
+            residual_length=resid,
             scale_words=aux_words(cache),  # billed at the backend's real aux precision
         )
     if kind == "press_quant":  # Week-20 composite: kept fraction, survivors quantized.
@@ -460,6 +489,12 @@ def run_ppl(
                     elif arm["kind"] == "quant":
                         cache = arm["make"]()
                         nll, ntok = score_quant(model, cache, ctx_ids, win_ids, arm_chunk)
+                    elif arm["kind"] == "quant_faithful":
+                        cache = arm["make"]()
+                        _prefill_faithful(model, cache, ctx_ids.unsqueeze(0))
+                        if fp is None:  # the post-prefill state: the window grows the residual
+                            fp = _footprint(arm, cache, t, n, h_kv)
+                        nll, ntok = _score_window(model, cache, int(ctx_ids.shape[0]), win_ids)
                     else:
                         cache = arm["make"]()
                         nll, ntok = score_streaming(

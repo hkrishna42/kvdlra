@@ -382,6 +382,14 @@ def _jsonl(path: Path, rows: list[dict[str, Any]]) -> int:
 # it into stays on the destroyed instance: every harvested manifest carried
 # `dataset_sha256: {}`. The watchdog keeps `[stage]` rows; the last line for a key wins.
 DIGEST_RE = re.compile(r"^\[stage\] dataset_sha256 (\S+) ([0-9a-f]{64})\s*$", re.M)
+# `runner._cell` prints one `[stage] cell ...` line per completed (arm, sub-task) cell.
+# It is the only clock in a harvest -- `[trial]` and cell rows carry no timestamp, a
+# harvested `wall_clock_s` is null, and the watchdog's per-poll `sort -u` destroys
+# arrival order -- so a per-arm min/sample (what re-sizes the next pod) is read from
+# here. The seconds ride the line, so the dedupe cannot hurt it; last line for a key wins.
+CELL_S_RE = re.compile(
+    r"^\[stage\] cell arm=(\S+) task=(\S+) ctx=(\d+) elapsed_s=([0-9.]+) n=\d+\s*$", re.M
+)
 
 
 def _env_from_log(text: str) -> list[str] | None:
@@ -562,6 +570,9 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     m = _read_manifest(out) or manifest(name, _head(), source, False)
     m["harvested_at"] = _now()
     m["dataset_sha256"] = {**m.get("dataset_sha256", {}), **dict(DIGEST_RE.findall(text))}
+    cells_s = {f"{a}/{t}/{c}": float(s) for a, t, c, s in CELL_S_RE.findall(text)}
+    if cells_s:  # a log printed before L3.1c leaves the key absent, not empty
+        m["cell_elapsed_s"] = {**m.get("cell_elapsed_s", {}), **cells_s}
     m["records"] = records
     # Both axes: a perplexity arm that raised has no record to carry the failure, only
     # the `[error]` line, so counting trial rows alone called such a pod clean.

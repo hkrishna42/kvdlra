@@ -637,6 +637,7 @@ def test_the_watchdog_keeps_the_env_block_rows() -> None:
         "===SELF_DESTRUCT_FAILED_w18_g1===",  # markers reach the harvested log
         "[stage] load_model unsloth/Meta-Llama-3.1-8B-Instruct (61.3 s)",  # L2.3b timings
         f"[stage] dataset_sha256 haystack:pg19 {'a' * 64}",  # L2.9a: the digests' only way back
+        "[stage] cell arm=full task=vt ctx=16384 elapsed_s=41.5 n=12",  # L3.1c: the per-cell clock
     ]
     r = subprocess.run(
         ["grep", "-aE", rows],
@@ -693,6 +694,32 @@ def test_harvest_records_the_dataset_digests_the_run_printed(dry_pod: Path, tmp_
     assert pod.harvest("w18_g1", log, d, force=False) == 0
     m = json.loads((d / "manifest.json").read_text())
     assert m["dataset_sha256"] == {"haystack:pg19": "a" * 64, "pg19val": "c" * 64}
+
+
+def test_harvest_records_the_cell_timings_the_run_printed(dry_pod: Path, tmp_path: Path) -> None:
+    """The per-arm min/sample a pre-flight pod is read for (`prereg/gate1_preflight.md`
+    reading (iv)) has no other source: `[trial]` and cell rows carry no clock,
+    `wall_clock_s` is null in every harvested manifest, and the watchdog `sort -u`s
+    `<label>.raw` in place every poll, so arrival order is gone. `runner._cell` prints the
+    seconds into the line itself; the last line for a key wins, and a log without them
+    leaves the key absent rather than empty."""
+    d = _copy(dry_pod, tmp_path)
+    log = d / "pod.log"
+    log.write_text(LOG)
+    assert pod.harvest("w18_g1", log, d, force=False) == 0
+    assert "cell_elapsed_s" not in json.loads((d / "manifest.json").read_text())
+    log.write_text(
+        LOG
+        + "[stage] cell arm=full task=niah_single ctx=16384 elapsed_s=41.5 n=12\n"
+        + "[stage] cell arm=bugSseed-r64-h256 task=vt ctx=16384 elapsed_s=180.0 n=12\n"
+        + "[stage] cell arm=bugSseed-r64-h256 task=vt ctx=16384 elapsed_s=186.3 n=12\n"
+    )
+    assert pod.harvest("w18_g1", log, d, force=False) == 0
+    m = json.loads((d / "manifest.json").read_text())
+    assert m["cell_elapsed_s"] == {
+        "full/niah_single/16384": 41.5,
+        "bugSseed-r64-h256/vt/16384": 186.3,
+    }
 
 
 def _git(*args: str) -> str:

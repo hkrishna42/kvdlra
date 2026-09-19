@@ -196,5 +196,13 @@ def test_trial_rows_stream_out_and_carry_the_generators_metadata(
 
     assert len(parse_trial_lines(out, "m", "log")) == len(rows)
     cells = parse_cell_lines(out, "m", "log")
-    assert len(cells) == len(load_task("ruler_inhouse_16k").tasks)
+    subs = load_task("ruler_inhouse_16k").tasks
+    assert len(cells) == len(subs)
     assert all(c["n"] == 12 and c["acc"] == 1.0 and c["ratio"] == 0.15 for c in cells)
+
+    # One `[stage] cell` line per cell, carrying its own elapsed seconds: no other row
+    # the harvest keeps has a clock, and a per-arm rate is what sizes the next pod.
+    timings = pod.CELL_S_RE.findall(out)
+    assert [(a, t, c) for a, t, c, _ in timings] == [("full", sub, "16384") for sub in subs]
+    assert all(float(s) >= 0.0 for *_, s in timings)
+    assert out.count(" n=12\n") >= len(subs)  # the cell's record count rides the line

@@ -24,8 +24,9 @@ harvest` can rebuild the same records from a `vastai logs` capture when the resu
 directory never made it off the instance. A ``[trial]`` line carries the generator's
 pairing fields (``hay= depth= code= sha=``, ``-`` where the generator set none), so a
 harvested pod can still show that two arms of one cell were fed byte-identical prompts.
-``[stage] <what> (<s> s)`` lines time the loads (model, corpora, haystacks); the watchdog
-keeps them, so a slow pod's log says where the hours went.
+``[stage] <what> (<s> s)`` lines time the loads (model, corpora, haystacks) and a
+``[stage] cell ... elapsed_s=`` line times each completed cell; the watchdog keeps them,
+so a slow pod's log says where the hours went and `harvest` can bill them per arm.
 """
 
 from __future__ import annotations
@@ -238,6 +239,7 @@ def _cell(
         dt = time.perf_counter() - t0
         print(f"[stage] load_corpus_sentences {task.filler} ({dt:.1f} s)", flush=True)
     hits, fracs, ratios, sbits, errors = 0, [], [], [], 0
+    t_cell = time.perf_counter()
     for seed in task.seeds:
         for trial in range(task.n_trials):
             try:
@@ -304,6 +306,17 @@ def _cell(
     if ratios:
         head += f" ratio={sum(ratios) / len(ratios):.3f} sbits={sum(sbits) / len(sbits):.3f}"
     print(head + f" n={total}" + ("" if ratios else f" errors={errors}"), flush=True)
+    # The cell's wall clock, which nothing else in a harvest carries: `[trial]` and cell
+    # rows have no timestamp, a harvested `wall_clock_s` is null, and the watchdog
+    # `sort -u`s `<label>.raw` in place every poll, so arrival order is destroyed. The
+    # seconds ride the line, which makes it order-independent; `pod.py harvest` folds
+    # them into `manifest.cell_elapsed_s`, and a per-arm min/sample is the sum over its
+    # cells over its samples -- how the next pod is sized.
+    print(
+        f"[stage] cell arm={arm['name']} task={sub} ctx={task.ctx}"
+        f" elapsed_s={time.perf_counter() - t_cell:.1f} n={total}",
+        flush=True,
+    )
     return errors
 
 

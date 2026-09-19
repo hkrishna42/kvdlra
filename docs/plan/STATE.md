@@ -95,3 +95,8 @@
 
 ## 2026-09-19 · orchestrator · L1 delivered as a pull request (owner chose option 2)
 - `week7` pushed to origin (the L0 merges + docs, already public through the lane's merge commit) so the PR base is current; PR: https://github.com/hkrishna42/kvdlra/pull/4 (lane/L1-harness-hygiene @ 2bb1ed0 → week7). The worktree stays for PR feedback. The merge happens on GitHub or by the owner locally.
+
+## 2026-09-19 · orchestrator · L1 MERGED into week7 (6160315); main fast-forwarded to week7
+- Owner: "Merge the Branches to the main branch" (after choosing option 2). Merged lane/L1-harness-hygiene into week7 with `--no-ff` (6160315; PR #4 closed as merged); merged-tree verification in the main checkout: `make test` green, `make tables` diff-clean, `make check` rc 0. `main` fast-forwarded to week7 and pushed (main was a strict ancestor: ee8c0ab → 6160315, 62 commits: L0 + L1 + plan docs).
+- Post-merge duties: shared venv re-pointed at the main checkout (+ `chflags nohidden` on the .pth files); the L1 worktree and branch removed (local + origin); final ledger copy refreshed.
+- Next: L2 (approved) — create `.claude/worktrees/L2-generator-v2` from lane/L2-generator-v2 rebased onto week7 @ 6160315; L2 Task 1 is the filler-realism diagnostic pod (D-005). Owner decisions still open: D-001–D-005, D-007 (three iCloud/sleep hazards logged), D-010. Harness follow-ups for L6: harvest non-shrink guard for every record file; watchdog under `caffeinate -s` + a pod budget self-destruct; the retrieval-neutrality and 8B-sweep pods.

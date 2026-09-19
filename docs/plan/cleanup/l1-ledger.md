@@ -1,6 +1,6 @@
-# L1 lane ledger — copied verbatim from the lane SDD workspace (final, after the Table-4 harvests)
+# L1 lane ledger — copied verbatim from the lane SDD workspace (final, at merge)
 
-Source: `.claude/worktrees/L1-hygiene/.superpowers/sdd/2026-09-11-L1-harness-hygiene/progress.md`, copied 2026-09-18 after the harvests. Rulings PR-1–PR-32 and R-L1-1–R-L1-25 with every review verdict; docs/plan/STATE.md summarizes them.
+Source: `.claude/worktrees/L1-hygiene/.superpowers/sdd/2026-09-11-L1-harness-hygiene/progress.md`, copied 2026-09-19 at the merge (6160315). Rulings PR-1–PR-32 and R-L1-1–R-L1-25 with every review verdict; docs/plan/STATE.md summarizes them.
 
 ---
 
@@ -235,3 +235,5 @@ untracked/modified after targets: 0
 forbidden-word grep (text files; src configs scripts docs/paper prereg minus generated figures):
        0
 GATE PASS
+2026-09-18 23:13: Task 8 review (sonnet): all 9 verdicts confirmed, ready to merge; Important (pre-existing, next hygiene item): harvest's non-shrink guard is trials-only — generalize the parse-first/refuse pattern to all five record files. Lane head 2bb1ed0 pushed; gate PASS at 287dc45; finishing menu presented to the owner.
+2026-09-19: owner chose option 2 → week7 pushed (6b10277), PR opened: https://github.com/hkrishna42/kvdlra/pull/4; STATE line committed on the lane; worktree kept.

@@ -1,0 +1,23 @@
+{
+  "command_line": "vastai create instance 50895886 --image pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel --disk 80 --env '-e POD=gate1_preflight_rerun -e SHA=d4ed366dff81a91e947fa904275f5e58027a3f81 -e MODEL=unsloth/Meta-Llama-3.1-8B-Instruct -e DTYPE=bfloat16 -e MAX_HOURS=14' --onstart scripts/pod/boot.sh --label kvdlra-gate1_preflight_rerun",
+  "config_hash": "5af93028c94a0e6fed1885febb8fad2ac0b13121c025541fc5a9d32025095f6e",
+  "cuda": "none",
+  "dataset_sha256": {},
+  "dry_run": false,
+  "errors": 0,
+  "git_sha": "d4ed366dff81a91e947fa904275f5e58027a3f81",
+  "gpu": "none",
+  "harvested_at": null,
+  "kvpress": "0.5.1",
+  "launched_at": "2026-09-20T21:53:36+00:00",
+  "model": "unsloth/Meta-Llama-3.1-8B-Instruct",
+  "model_revision": null,
+  "pod": "gate1_preflight_rerun",
+  "records": {},
+  "status": null,
+  "timeout": false,
+  "torch": "2.11.0",
+  "transformers": "5.8.0",
+  "triton": "none",
+  "wall_clock_s": null
+}

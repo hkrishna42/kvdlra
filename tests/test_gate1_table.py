@@ -33,6 +33,7 @@ ARM = {
     "fd": "bugSseed-r64-h256-fd",
     "oja": "oja_r64_h256_seed_tuned",
     "random": "random_r64_h256_seed",
+    "bf16": "isvd_r64_h256_seed_bf16",
 }
 NOGIST = {"llama": "nogist_h2423", "qwen": "nogist_h4460"}
 TASKS = ("niah_single", "niah_multikey", "niah_multivalue", "vt")
@@ -43,7 +44,16 @@ CTX, N_TRIALS, WINDOWS, NTOK = 16384, 24, 32, 2048
 SBITS = 0.15
 # A wiggle multiplier per tracker, coprime with 11: without one, two arms' per-window
 # curves would differ by a constant and the paired t-test would divide by a zero SD.
-WIGGLE = {"full": 2, "isvd": 3, "frozen": 5, "nogist": 7, "fd": 13, "oja": 17, "random": 19}
+WIGGLE = {
+    "full": 2,
+    "isvd": 3,
+    "frozen": 5,
+    "nogist": 7,
+    "fd": 13,
+    "oja": 17,
+    "random": 19,
+    "bf16": 23,
+}
 
 
 def _arm(family: str, tracker: str) -> str:
@@ -179,6 +189,37 @@ def test_the_primary_retrieval_family_is_the_sixteen_members_the_prereg_fixes(
     assert (frozen.a_favored, frozen.b_favored, frozen.n_paired) == (12, 0, 24)
     assert frozen.p == pytest.approx(2.0**-11)
     assert {c.b for c in retr if not c.primary} == {"fd"}
+    ppl = gate1.ppl_contrasts(data)
+    assert sum(1 for c in ppl if c.p_holm is not None) == 4  # the 4-member ppl family
+
+
+# All eight arms, and what the cut ladder leaves. No pplw.jsonl: this test is about the
+# family sizes alone, and the bootstrap is the only slow thing in the module.
+ALL_EIGHT = {"full": 24, "isvd": 20, "nogist": 20, "frozen": 20, "fd": 20, "bf16": 20,
+             "oja": 20, "random": 20}  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("dropped", "secondary"),
+    [((), 24), (("random",), 16), (("random", "oja"), 8)],
+)
+def test_the_holm_families_are_the_sizes_section_6_fixes(
+    tmp_path: Path, dropped: tuple[str, ...], secondary: int
+) -> None:
+    """Primary retrieval 16 = 2 contrasts x 4 tasks x 2 families, secondary 24 = 3 x 4 x 2
+    -- and the secondary family is corrected at its REALISED m, which section 9's cut
+    ladder leaves at 16 after dropping random and 8 after dropping oja_tuned as well. The
+    bf16 arm is in the pod and in no contrast: its reading is prereg/bf16_gist.md's."""
+    hits = {k: v for k, v in ALL_EIGHT.items() if k not in dropped}
+    for family in ("llama", "qwen"):
+        d = write_pod(tmp_path, family, hits=hits)
+        (d / "pplw.jsonl").unlink()
+    data = gate1.load([tmp_path / f"gate1_v2_stage1_{f}" for f in ("llama", "qwen")])
+    retr = gate1.retrieval_contrasts(data)
+    assert sum(1 for c in retr if c.primary) == 16
+    assert sum(1 for c in retr if not c.primary) == secondary
+    assert all(c.p_holm is not None for c in retr), "no error row, so no member left a family"
+    assert "bf16" not in {c.b for c in retr}
 
 
 # --- (c) one family separated -------------------------------------------------------

@@ -28,6 +28,7 @@ import pytest
 import torch
 from transformers import LlamaConfig, LlamaForCausalLM
 
+from kvdlra.baselines.compat import install_kvpress_prefill_compat
 from kvdlra.eval import frontier, records
 from kvdlra.eval.config import ArmCfg
 
@@ -64,6 +65,9 @@ def _tiny_model() -> LlamaForCausalLM:
 
 ARMS = {
     "full": ArmCfg(name="full", kind="full"),
+    "snapkv_k0.25": ArmCfg(
+        name="snapkv_k0.25", kind="press", press={"family": "snapkv", "keep": 0.25}
+    ),
     "bug-r8": ArmCfg(
         name="bug-r8",
         kind="bug",
@@ -99,7 +103,7 @@ def _ok_rows(rows: list[dict[str, Any]], t: int) -> list[dict[str, Any]]:
 
 
 def test_window_nll_consistency() -> None:
-    # full exercises score_press(None); bug (rank 8) exercises score_streaming.
+    # full exercises prefill_press(None); bug (rank 8) exercises score_streaming.
     rows = _ok_rows(_run(methods=["full", "bug-r8"], n_samples=3), 64)
     assert {r["method"] for r in rows} == {"full", "bug-r8"}
     for row in rows:
@@ -169,6 +173,33 @@ def test_pplw_line_splits_when_long(capsys: pytest.CaptureFixture[str]) -> None:
     # Equal-weight recompute from the PRINTED values (uniform windows) matches.
     printed_pooled = math.exp(sum(float(v) for v in joined) / len(joined))
     assert row["ppl"] == pytest.approx(printed_pooled, rel=1e-4)
+
+
+def test_a_press_arm_is_billed_its_kept_fraction_not_the_scored_window() -> None:
+    """The kept fraction, measured between the prefill and the window.
+
+    `score_press` handed back the DynamicCache only after `_score_window` had pushed
+    the continuation into it, so `_footprint` measured ``k*T + W`` tokens and every
+    press row published ``(k*T + W)/T``: at T=128, W=16 and k=0.25 the arm was billed
+    0.375x for a cache holding 0.25x. The prefill is split out now, exactly as the
+    faithful-KIVI branch already split its own, so the footprint is the post-prefill
+    state on both axes (the retrieval path, `ruler.retrieve`, always took it there).
+
+    `full` is the control: its footprint is analytic (`accounting.full_cache_footprint`
+    reads ``t``, never the cache), so it reported 1.0 before and after.
+    """
+    install_kvpress_prefill_compat()  # transformers 5.8: kvpress needs the prefill shim
+    t, keep = 128, 0.25
+    rows = {
+        r["method"]: r
+        for r in _ok_rows(_run(methods=["full", "snapkv_k0.25"], t=t, window=16, n_samples=2), t)
+    }
+    assert rows["full"]["ratio_fp16"] == 1.0
+    # One token of slack for where a press rounds its budget (`evict_footprint`'s
+    # ratio_fp16 IS the kept fraction; the count comes off the compressed cache). The
+    # window's 16 tokens would be 8x that.
+    assert rows["snapkv_k0.25"]["ratio_fp16"] == pytest.approx(keep, abs=1.0 / t)
+    assert rows["snapkv_k0.25"]["ratio_stored_bits"] == pytest.approx(keep, abs=1.0 / t)
 
 
 def test_window_nll_is_accumulated_in_fp32() -> None:

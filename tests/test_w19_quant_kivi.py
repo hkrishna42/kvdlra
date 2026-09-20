@@ -200,17 +200,21 @@ def test_quant_arm_retrieves_with_chunked_prefill() -> None:
         assert 0.0 < ratio <= 1.0 and ratio == sratio
 
 
-def test_score_quant_runs_without_autograd() -> None:
+def test_the_quant_ppl_path_runs_without_autograd() -> None:
     """The ppl path must not retain the prefill graph: the W18/W19 quant-ppl OOMs (38 GB
-    allocated during a 4K chunk on Qwen-7B) were an undecorated score_quant building
-    autograd history across the whole prefill. Dequantized state must carry no grad."""
-    from kvdlra.eval.frontier import score_quant
+    allocated during a 4K chunk on Qwen-7B) were an undecorated scorer building autograd
+    history across the whole prefill. Dequantized state must carry no grad. Both halves
+    of the path are decorated -- `score_quant` was split into them (L3.3c) so the
+    footprint can be taken between the prefill and the window."""
+    from kvdlra.eval.frontier import _prefill_plain, _score_window
 
     m = _model()
-    cache = _quant_arm(m)["make"]()
+    arm = _quant_arm(m)
+    cache = arm["make"]()
     ctx = torch.randint(0, 256, (256,))
     win = torch.randint(0, 256, (16,))
-    nll, ntok = score_quant(m, cache, ctx, win, chunk=64)
+    _prefill_plain(m, cache, ctx.unsqueeze(0), 64)
+    nll, ntok = _score_window(m, cache, 256, win)
     assert ntok == 15 and nll > 0.0
     layer: Any = cache.layers[0]
     assert not layer._dequantize(layer._quantized_keys).requires_grad

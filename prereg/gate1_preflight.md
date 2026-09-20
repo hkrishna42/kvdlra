@@ -841,3 +841,60 @@ committed before the Stage-1 launch commit.
 
 **STATUS: harvested PARTIAL (8d10483); the re-run `gate1_preflight_rerun` is pre-registered here
 and awaits launch (DECISIONS, under D-011).**
+
+### Amendment 1 — correction (2026-09-20 17:42 EDT, before the re-run's launch commit)
+
+Nothing above is edited — §1–§9 and Amendment 1 itself stand as committed. This note narrows how
+two of Amendment 1's own readings are worded and names two of its evidence paths as local-only.
+No reading, threshold, trigger or number changes.
+
+**A1.2 (iv): `isvd_r64_h256_seed` and `frozen_r64_h256_seed` read `fail (not reached)`, not "not
+fired."** §4's consistency check (l. 311): a fail on reading (i) makes (ii) and (iv)
+**unreadable** for the affected arm, written `fail (not reached)`, never as a pass or a decision.
+Reading (i) fails for `isvd_r64_h256_seed` (2 of its 5 cells captured, 3 short/absent) and for
+`frozen_r64_h256_seed` (1 of 5, 4 short/absent) — the same capture loss A1.2 (i) already names.
+"Not fired" (l. 690–691) reads as a trigger legitimately evaluated and cleared; on an arm (i)
+fails for, it is not that, and those two outcome cells are corrected here to `fail (not reached)`.
+(`nogist_h2423`'s existing `not measured` / "read on the re-run" wording already carries that
+meaning and needs no correction.) The measured 3.27–3.42 min/sample (`isvd`) and 1.58 (`frozen`)
+are unchanged and still stand — but as A1.2 already called them, **descriptively**, from the
+cells that survived: no re-size followed from them there, and none follows from this correction
+either. Amendment 1b's anchor for Stage 1 is the re-run's own five-cell-per-arm rates (A1.4), not
+these partial ones. Reading (ii) is **not** touched by this note: it is decided on the `full` arm
+alone, whose 5 of 5 cells are complete — (i) does not fail for `full`, so (ii) was never
+"unreadable" under the rule this note applies to (iv).
+
+**Two evidence paths A1.1/A1.2/A1.4 cite are not in the repository.**
+`results/gate1_preflight/watchdog.out` — A1.1's sleep/wake timeline and dollar figures, and
+A1.4's "against credit $86.12 (`watchdog.out`, 14:11)" — was never committed and is now removed
+from the working tree. The deduped `<label>.log` A1.2 lists among the kept evidence
+(`results/gate1_preflight/gate1_preflight-51722149.log`) is gitignored (`.gitignore:54`,
+`results/*/*.log`) and present only on this laptop. Both are **local-only**: reproducible by
+whoever ran the pod, not from `git log` alone. This does not weaken A1.1's finding — the poll gap
+it is evidence for is independently readable from what committed evidence and system logs give on
+their own: `pmset -g log`'s sleep-at-06:23:23-EDT / wake-at-14:09:35-EDT entries (cited in A1.1
+itself, and not sourced from `watchdog.out`), and the committed `manifest.json`'s `launched_at`
+(08:44:33Z) vs `harvested_at` (18:11:09Z) — a 9.44 h span that alone brackets the same gap. The
+one place the two evidence sources disagree, at the second decimal, is the dollar figure: A1.1's
+**$6.40** was read off `watchdog.out`'s last two polls before the destroy, a file that no longer
+exists to re-check; `docs/plan/DECISIONS.md`'s D-011 addendum 10 states the settled **$6.44**
+(credit $92.52 at launch, addendum 9, → $86.08). DECISIONS is the append-only ledger CLAUDE.md
+names for gate outcomes and their evidence path — its figure is the one to cite going forward;
+A1.1's $6.40 stands as what the amendment read at the time, not as a second, competing cost.
+
+**The "16 → 12" aside.** A1.2 (ii)'s consequence — `vt` leaving the primary Holm family — is that
+family (§6: 2 contrasts × 4 tasks × 2 models = **16**) losing `vt`'s share (2 contrasts × 1 task
+× 2 models = **4**), **16 → 12**. `prereg/gate1_tracker_swap_v2.md`'s own preamble already states
+the rule ("16 − 4 per excluded task on retrieval") and D-011 addendum 10 already uses the same
+"16 → 12" shorthand; that file's own **Amendment 1b — not yet committed —** is where the shrink is
+formally landed, not here. This sentence only closes the loop this file's own cross-reference left
+open.
+
+**A third limit on the repair, beside A1.3's two (l. 724–726).** The replay does not survive a run
+killed at the `MAX_HOURS` bar: `scripts/pod/boot.sh:140` runs `pod.py run` under `timeout
+--signal=TERM --kill-after=60`, and Python's default disposition for `SIGTERM` ends the process
+without running any `finally` — including `replayed()`'s — so a pod that hit its bar mid-run would
+have printed no replay block at all, the same loss A1.3 exists to repair. Fixed at commit
+**4a5f71e** (`L3.4c`, this branch): `scripts/pod.py run` now installs
+`signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))` before `run_pod` starts, turning
+`SIGTERM` into `SystemExit` so `replayed()`'s `finally` runs inside the 60 s kill grace.

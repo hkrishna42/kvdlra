@@ -242,6 +242,35 @@ def test_harvest_refuses_to_shrink_an_existing_trials_file(dry_pod: Path, tmp_pa
     assert len(_rows(tmp_path, "trials.jsonl")) == 1
 
 
+def test_harvest_refuses_to_shrink_any_record_file(
+    dry_pod: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The guard covered `trials.jsonl` alone. A fetch that came back with every
+    `[trial]` line but a `[pplw]` group short -- the 5000-line fallback, a truncated
+    fetch -- passed it and silently replaced a good `pplw.jsonl` with the shorter parse,
+    beside a `trials.jsonl` that had not shrunk at all. Every record file the harvest
+    writes is guarded now, the refusal names the file and both counts, `--force` still
+    overrides, and the all-or-nothing rule holds: a refused harvest writes NOTHING --
+    not the records that did not shrink, and not the manifest."""
+    d = _copy(dry_pod, tmp_path)
+    log = d / "pod.log"
+    log.write_text(LOG)
+    assert pod.harvest("w18_g1", log, d, force=False) == 0
+    before = {p.name: p.read_text() for p in d.glob("*.jsonl")}
+    before_manifest = (d / "manifest.json").read_text()
+
+    short = d / "short.log"  # both [trial] lines, the 32K [pplw] group gone: 7 rows -> 2
+    short.write_text("\n".join(x for x in LOG.splitlines() if "T=32768" not in x) + "\n")
+    capsys.readouterr()
+    assert pod.harvest("w18_g1", short, d, force=False) == 1
+    assert "REFUSE: pplw.jsonl would shrink from 7 to 2 rows" in capsys.readouterr().out
+    assert {p.name: p.read_text() for p in d.glob("*.jsonl")} == before
+    assert (d / "manifest.json").read_text() == before_manifest
+
+    assert pod.harvest("w18_g1", short, d, force=True) == 0
+    assert len(_rows(d, "pplw.jsonl")) == 2
+
+
 def test_harvest_writes_nothing_when_a_pplw_part_set_is_incomplete(
     dry_pod: Path, tmp_path: Path
 ) -> None:

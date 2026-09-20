@@ -394,9 +394,21 @@ def launch(name: str, offer: str, dry_run: bool, max_hours: float | None = None)
 # --- harvest ------------------------------------------------------------------
 
 
-def _jsonl(path: Path, rows: list[dict[str, Any]]) -> int:
-    path.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
-    return len(rows)
+def _shrink_refusal(out: Path, name: str, n_new: int) -> str | None:
+    """Why writing `n_new` rows over `out/name` is a harvest to redo, or None.
+
+    A re-harvest whose parse came back SHORTER than what is on disk is the 5000-line
+    fallback fetch, a truncated log, or a `[pplw]` group whose fragments did not all
+    arrive -- never a pod that produced less. The rule covered `trials.jsonl` alone,
+    so a fetch carrying every `[trial]` line but half a sweep silently replaced a good
+    `pplw.jsonl`; it covers every record file the harvest writes now. `--force` is the
+    override, as before.
+    """
+    p = out / name
+    n_old = len(read_jsonl(p)) if p.is_file() else 0
+    if n_old <= n_new:
+        return None
+    return f"REFUSE: {name} would shrink from {n_old} to {n_new} rows; pass --force to overwrite"
 
 
 # `run` (the haystack sources) and `runner._ppl_rows` (the perplexity corpora) print one
@@ -571,28 +583,30 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     lat = parse_latency_lines(text, model, source)
     diag, diag_skipped = parse_diag_lines(text, model, source)
 
-    tpath = out / "trials.jsonl"
-    n_old = len(read_jsonl(tpath)) if tpath.is_file() else 0
-    if n_old > len(trials) and not force:
-        print(
-            f"REFUSE: trials.jsonl would shrink from {n_old} to {len(trials)} rows;"
-            " pass --force to overwrite"
-        )
+    # Every file this harvest is about to write, checked against what is on disk BEFORE
+    # any of them is written -- the same all-or-nothing rule the parse above follows.
+    parsed: dict[str, list[Any]] = {
+        "trials.jsonl": trials,
+        "pplw.jsonl": pplw,
+        "ppl.jsonl": ppl,
+        "latency.jsonl": lat,
+        "diag.jsonl": diag,
+    }
+    refusals = [r for r in (_shrink_refusal(out, f, len(x)) for f, x in parsed.items()) if r]
+    if refusals and not force:
+        for r in refusals:
+            print(r)
         return 1
 
-    write_jsonl(tpath, trials)
+    # `trials.jsonl` is written even when it is empty: it is the file `check` reads to
+    # tell a pod that produced nothing from one that was never harvested. The other four
+    # are written only when the log carried rows -- an absent file is not a short one.
+    write_jsonl(out / "trials.jsonl", trials)
     records = {"trials.jsonl": len(trials)}
-    if pplw:
-        write_jsonl(out / "pplw.jsonl", pplw)
-        records["pplw.jsonl"] = len(pplw)
-    if ppl:
-        write_jsonl(out / "ppl.jsonl", ppl)
-        records["ppl.jsonl"] = len(ppl)
-    if lat:
-        write_jsonl(out / "latency.jsonl", lat)
-        records["latency.jsonl"] = len(lat)
-    if diag:
-        records["diag.jsonl"] = _jsonl(out / "diag.jsonl", diag)
+    for fname, rows in parsed.items():
+        if fname != "trials.jsonl" and rows:
+            write_jsonl(out / fname, rows)
+            records[fname] = len(rows)
 
     m = _read_manifest(out) or manifest(name, _head(), source, False)
     m["harvested_at"] = _now()

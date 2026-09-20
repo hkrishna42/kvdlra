@@ -207,7 +207,10 @@ def test_quant_tier_demotes_then_drops_fifo(tiny_model: LlamaForCausalLM) -> Non
 def test_quant_roundtrip_error_bounded(tiny_model: LlamaForCausalLM) -> None:
     # A demoted column's dequantized coordinates must stay close to the fp32
     # coordinates it was quantized from (PolarQuant thm-1 distortion, dim=rank).
-    bank = _QuantBank(bits=8)
+    # 6 bits, not 8: the 2^8-level Lloyd--Max fit was 5 s of the suite's 90 s budget,
+    # and the bound below is unchanged, so the test gets TIGHTER -- the realised max
+    # rises from 0.007 to 0.035 against the same 0.05.
+    bank = _QuantBank(bits=6)
     layer = BugStreamingLayer(
         rope=_rope(tiny_model),
         rank=8,
@@ -215,7 +218,7 @@ def test_quant_roundtrip_error_bounded(tiny_model: LlamaForCausalLM) -> None:
         recent_window=4,
         absorb_block=4,
         n_sink=2,
-        quant_bits=8,
+        quant_bits=6,
         quant_budget=8,
         quant_bank=bank,
     )
@@ -247,7 +250,7 @@ def test_quant_roundtrip_error_bounded(tiny_model: LlamaForCausalLM) -> None:
     got = layer._dequantize(layer.qk_codes, layer.qk_norm)
     want = demote_expected["ck"]
     rel = (got - want).norm(dim=0) / want.norm(dim=0).clamp_min(1e-9)
-    assert float(rel.max()) < 0.05  # 8-bit: sqrt(2.7)*4^-8-ish per coordinate
+    assert float(rel.max()) < 0.05  # 6-bit: realised 0.035; a broken roundtrip is O(1)
 
 
 def test_quant_carry_norms_exact_under_identity_rotation(

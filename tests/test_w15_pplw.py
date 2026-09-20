@@ -148,10 +148,17 @@ def test_pplw_line_format(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_pplw_line_splits_when_long(capsys: pytest.CaptureFixture[str]) -> None:
-    # 48 windows -> single line would be ~460 chars > 400 -> 6 part-lines of 8.
-    (row,) = _ok_rows(_run(methods=["full"], t=32, window=8, n_samples=48), 32)
+    """48 windows -> a single line would be ~460 chars > 400 -> 6 part-lines of 8.
+
+    The emitter is driven directly. The split is a pure function of the value list;
+    `test_pplw_line_format` above already pins that `run_ppl` calls it with the row's
+    own per-window NLLs, and `test_window_nll_consistency` that the pooled number is
+    those values summed. Reaching the 400-character boundary through the real loop
+    needs 40+ windows, which is 40 forward passes and was 5 s of the suite's 90 s.
+    """
+    nlls = [5.5 + 0.01 * ((i * 7) % 13) for i in range(48)]
+    frontier._log_pplw(32, "full", nlls, ntok=7, corpus="wikitext-103")
     out = capsys.readouterr().out
-    assert len(row["window_nlls"]) == 48
 
     parts = [m for m in PPLW_RE.finditer(out) if m.group(2) == "full"]
     assert [(m.group(4), m.group(5)) for m in parts] == [(str(i), "6") for i in range(1, 7)]
@@ -161,18 +168,13 @@ def test_pplw_line_splits_when_long(capsys: pytest.CaptureFixture[str]) -> None:
         vals = m.group(6).split(",")
         assert len(vals) <= 8
         joined += vals
-    assert joined == [f"{v:.6f}" for v in row["window_nlls"]]
+    assert joined == [f"{v:.6f}" for v in nlls]
     # The harvest reads exactly these fragments, through kvdlra.eval.records.PPLW_RE --
     # `scripts/pod.py` dropped them until the L0.5 fix round. Reassembled, they are the
-    # row's own per-window NLLs again (nll_sum_nats / ntok undoes the sum).
+    # sweep's per-window NLLs again (nll_sum_nats / ntok undoes the sum).
     assert all(records.PPLW_RE.match(m.group(0)) for m in parts)
     back = records.parse_pplw_lines(out, model="M", source="log")
-    assert [r["nll_sum_nats"] / r["ntok"] for r in back] == pytest.approx(
-        row["window_nlls"], rel=1e-5
-    )
-    # Equal-weight recompute from the PRINTED values (uniform windows) matches.
-    printed_pooled = math.exp(sum(float(v) for v in joined) / len(joined))
-    assert row["ppl"] == pytest.approx(printed_pooled, rel=1e-4)
+    assert [r["nll_sum_nats"] / r["ntok"] for r in back] == pytest.approx(nlls, rel=1e-5)
 
 
 def test_a_press_arm_is_billed_its_kept_fraction_not_the_scored_window() -> None:

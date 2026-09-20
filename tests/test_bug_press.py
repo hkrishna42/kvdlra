@@ -96,8 +96,12 @@ def test_hybrid_quantizes_kept_tokens_when_quant_bits_set() -> None:
     # With quant_bits, the kept (non-sink) exact tokens are PolarQuant-quantized to
     # match eviction's xTurboQuant fairness -- so they are NO LONGER byte-exact, but
     # stay a close (bounded) approximation of the originals; sinks remain fp16-exact.
+    # 64 feature rows, not N_FEATURES: the quantizer's dim is the matrix's row count
+    # and its Lloyd--Max fit is the whole cost of this test (3.3 s at 512, 1.0 s at 64).
+    # Every assertion below is about the exact tier, which the dim does not move (the
+    # realised `rel` is 0.086 at 64 against 0.096 at 512).
     g = torch.Generator().manual_seed(9)
-    mat = (torch.randn(N_FEATURES, 220, generator=g) * 0.3).to(torch.float32)
+    mat = (torch.randn(64, 220, generator=g) * 0.3).to(torch.float32)
     mat[:, torch.tensor([30, 90, 150])] *= 8.0  # high-norm kept tokens
     press = BUGPress(rank=32, n_exact=3, quant_bits=4)
     mask = press._exact_mask(mat)

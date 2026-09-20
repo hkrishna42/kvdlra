@@ -7,7 +7,11 @@ import torch
 
 from kvdlra.baselines.turbo_press import TurboQuantPress
 
-H, D = 8, 64
+# The cost of every test here is `PolarQuant(dim=H*D, bits=...)`'s Lloyd--Max fit, which
+# scales with the dim and not with T. At 8 x 64 the four quantizing tests cost 14 s of the
+# suite's 90 s budget; at 4 x 16 they cost 3 s and every relative error below moves in the
+# fourth decimal. Nothing here reads the dim: raise it only for a test that does.
+H, D = 4, 16
 
 
 def _kv(t: int, seed: int = 0) -> torch.Tensor:

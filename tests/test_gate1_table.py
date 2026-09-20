@@ -619,6 +619,69 @@ def test_a_truncated_task_set_is_never_a_branch_c(tmp_path: Path) -> None:
     assert "incomplete task set: qwen lacks niah_multivalue, vt" in v.reason
 
 
+# --- the pre-flight's task exclusion (section 6, by amendment) ----------------------
+
+
+def _vt_separates(d: Path) -> Path:
+    """Rewrite the pod's `vt` rows so the r64 arm alone scores there: 20/24 against 4/24
+    on every control, which is 16 discordant pairs won and none lost."""
+    rows = [json.loads(x) for x in (d / "trials.jsonl").read_text().splitlines()]
+    for r in rows:
+        if r["task"] == "vt" and r["arm"] not in (ARM["isvd"], ARM["full"]):
+            r["hit"] = int(r["trial"] < 4)
+    (d / "trials.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    return d
+
+
+def test_an_excluded_task_leaves_every_family_and_blocks_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A task the pre-flight's ceiling rule excludes (`full` < 0.9, section 6 by
+    amendment) leaves the primary retrieval family, the secondary family and both of C's
+    per-task readings -- 16 - 4 = 12 and 24 - 6 = 18, "the perplexity family is
+    unaffected -- it has no task axis".
+
+    `vt` separates the r64 arm from both controls in both families here, which is A/B
+    with the knob empty. Excluded, it decides nothing: the branch is C off the three
+    tasks that remain. "The excluded task is still run, still reported descriptively",
+    so its cells stay in the table."""
+    monkeypatch.setattr(gate1, "EXCLUDED_TASKS", frozenset({"vt"}))
+    dirs = [_vt_separates(write_pod(tmp_path, f, hits=ALL_EIGHT, delta=TIGHT))
+            for f in ("llama", "qwen")]  # fmt: skip
+    data = gate1.load(dirs)
+    retr, ppl = gate1.retrieval_contrasts(data), gate1.ppl_contrasts(data)
+    assert sum(1 for c in retr if c.primary) == 12  # 2 contrasts x 3 tasks x 2 families
+    assert sum(1 for c in retr if not c.primary) == 18  # 3 x 3 x 2
+    assert sum(1 for c in ppl if c.p_holm is not None) == 4  # untouched: no task axis
+    assert "vt" not in {c.task for c in retr}
+    v = gate1.gate1_verdict(retr, ppl, data)
+    assert v.branch == "C", v.reason
+    assert "vt" not in v.reason
+    out = tmp_path / "out" / "gate1.md"
+    tables.gate1_table(dirs, out)
+    md = out.read_text()
+    assert "| tracker | niah_single | niah_multikey | niah_multivalue | vt |" in md
+    assert "(4/24)" in md, "the excluded task's cells still render, descriptively"
+    assert "primary retrieval m=12, secondary retrieval m=18, primary perplexity m=4" in md
+
+
+def test_an_excluded_task_the_pod_never_ran_does_not_block_c(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The completeness check of rule 3 (i) reads TASK_ORDER minus the exclusions: an
+    excluded task the pod never ran is not a truncated task set. No `pplw.jsonl` here --
+    the perplexity blockers are another test's, and this one is about the task axis."""
+    monkeypatch.setattr(gate1, "EXCLUDED_TASKS", frozenset({"vt"}))
+    dirs = [write_pod(tmp_path, f, hits=FLAT) for f in ("llama", "qwen")]
+    for d in dirs:
+        rows = (d / "trials.jsonl").read_text().splitlines(keepends=True)
+        (d / "trials.jsonl").write_text("".join(x for x in rows if '"task": "vt"' not in x))
+        (d / "pplw.jsonl").unlink()
+    data = gate1.load(dirs)
+    v = gate1.gate1_verdict(gate1.retrieval_contrasts(data), gate1.ppl_contrasts(data), data)
+    assert "incomplete task set" not in v.reason, v.reason
+
+
 # --- section 6's third TOST state ---------------------------------------------------
 
 # 32 windows at +/-0.02 are decidable only for a paired SD below 0.0667 (section 6's

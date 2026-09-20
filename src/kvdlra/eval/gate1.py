@@ -190,6 +190,12 @@ FROZEN_ARM = "frozen_r64_h256_seed"
 TRACKERS = tuple(dict.fromkeys(ARM_TRACKER.values()))  # the row order, deduplicated
 FAMILIES = ("llama", "qwen", "mistral")  # the three model families, matched by substring
 TASK_ORDER = ("niah_single", "niah_multikey", "niah_multivalue", "vt")
+# A task the pre-flight's ceiling rule excludes (`full` < 0.9 -- section 6, by
+# amendment, which is the only thing that sets this). It leaves the primary retrieval
+# family, the secondary family and both of C's per-task readings (16 - 4 = 12 and
+# 24 - 6 = 18); the perplexity family has no task axis and is untouched. Its cells are
+# still run, still scored and still rendered -- descriptively, in no family.
+EXCLUDED_TASKS: frozenset[str] = frozenset()
 
 CellKey = tuple[str, int, str, str]  # family, ctx, task, tracker
 # The corpus is part of the perplexity key, exactly as in `tables.ppl_stats`: two ppl
@@ -481,7 +487,9 @@ def _draft_retrieval(data: Gate1Data) -> list[Contrast]:
     the refusals are known (ruling R-L3-16), and refusal 2 is itself read off these
     members (``p is None``, which no correction changes)."""
     draft: list[Contrast] = []
-    for f, c, t in sorted({(f, c, t) for f, c, t, k in data.hits if k == REFERENCE}):
+    for f, c, t in sorted(
+        {(f, c, t) for f, c, t, k in data.hits if k == REFERENCE and t not in EXCLUDED_TASKS}
+    ):
         for b in (*PRIMARY_CONTROLS, *SECONDARY_CONTROLS):
             if (f, c, t, b) not in data.hits:
                 continue
@@ -711,7 +719,9 @@ def gate1_verdict(retrieval: list[Contrast], ppl: list[PplContrast], data: Gate1
     # 16K family at all, which is what an empty pod directory or a 32K-only set is --
     # carries no member to read, and C is a positive claim that needs one.
     readable = sorted({f for f, ctx, _, k in data.hits if ctx == VERDICT_CTX and k == REFERENCE})
-    tasks = sorted({t for _, ctx, t, _ in data.hits if ctx == VERDICT_CTX})
+    tasks = sorted(
+        {t for _, ctx, t, _ in data.hits if ctx == VERDICT_CTX and t not in EXCLUDED_TASKS}
+    )
     refused, notes = _refusals(data, retrieval)
 
     separated: list[str] = []
@@ -737,7 +747,11 @@ def gate1_verdict(retrieval: list[Contrast], ppl: list[PplContrast], data: Gate1
         # A task the pre-flight's ceiling rule excludes (section 6, by Amendment) is NOT
         # this case and is not handled here: that exclusion shrinks the Holm families
         # too, and the knob for it lands with the amendment that names the task.
-        absent = [t for t in TASK_ORDER if (family, VERDICT_CTX, t, REFERENCE) not in data.hits]
+        absent = [
+            t
+            for t in TASK_ORDER
+            if t not in EXCLUDED_TASKS and (family, VERDICT_CTX, t, REFERENCE) not in data.hits
+        ]
         if absent:
             blockers.append(f"incomplete task set: {family} lacks {', '.join(absent)}")
         for b in C_CONTROLS:

@@ -178,10 +178,11 @@ def bug_footprint(
     n_cols = coord_count + quant_count  # all low-rank columns carry bookkeeping
 
     verbatim = 2 * n * n_sink + 2 * n * recent_len + 2 * rank * coord_count + 2 * n * hh_count
-    # fp32-at-rest subset of ``verbatim`` (bug_cache.py:575-577): the coordinate
-    # columns C and the basis U. Sinks/recent/hh are verbatim KV in the model dtype
-    # (fp16/bf16), so they are NOT fp32-at-rest. Reported via ratio_stored_bits. A
-    # ``gist_bits=16`` arm stores C and U in bf16 too, so the subset is empty there.
+    # fp32-at-rest subset of ``verbatim`` (``BugStreamingLayer._reset_state``, where U and
+    # C are declared): the coordinate columns C and the basis U. Sinks/recent/hh are
+    # verbatim KV in the model dtype (fp16/bf16), so they are NOT fp32-at-rest. Reported
+    # via ratio_stored_bits. A ``gist_bits=16`` arm stores C and U in bf16 too, so the
+    # subset is empty there.
     fp32_verbatim = 2.0 * rank * coord_count if gist_fp32 else 0.0
     aux = 0.0
     if u_present:

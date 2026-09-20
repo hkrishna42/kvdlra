@@ -474,7 +474,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         # 64-absorb window (``fixed_k`` 100 %, ``fixed_v`` 99.2 %, pre-repair max
         # ``orth_err_k`` at the 1e-3 threshold), and under ``gist_dtype=bfloat16`` the
         # stored basis is re-rounded every absorb (‖UᵀU - I‖_F ~ 5e-3 at n=1024, r=64), so
-        # the repair fires on every one of them by design.
+        # the repair fires every absorb but the first (which builds its basis from
+        # nothing, so the step returns a fresh orthonormal factor) by design.
         self.orth_fix_tol = orth_fix_tol
         self.orth_abort_tol = orth_abort_tol
         self.qr_every = qr_every
@@ -757,9 +758,16 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         gist -- the step, the coordinate carry, the quantized-tier rotation, the guard's
         repair and the new coordinates -- and the store is rounded back once, at the end.
         The basis reaching the step is therefore the bf16-rounded one (‖UᵀU - I‖_F ~ 5e-3
-        at n=1024, r=64), which is above ``orth_fix_tol`` and is why the guard repairs on
-        every absorb there; the coordinates, re-rounded at every carry, are the path where
-        rounding compounds with the absorb count."""
+        at n=1024, r=64), which is above ``orth_fix_tol`` and is why the guard repairs
+        every absorb there but the first (which builds its basis from nothing); the
+        coordinates, re-rounded at every carry, are the path where rounding compounds
+        with the absorb count.
+
+        If :class:`OrthonormalityError` aborts out of :meth:`_guard_orthonormality`, the
+        final downcast below never runs and the gist is left in fp32 even under
+        ``gist_dtype=bfloat16`` -- inert, since the runners (``kvdlra.eval.frontier``)
+        build a fresh cache per sample and record the failure instead of reusing the
+        aborted one, so no footprint is ever taken on that path."""
         m = int(block_k.shape[1])
         if m == 0:
             return

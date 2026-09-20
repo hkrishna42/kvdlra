@@ -34,10 +34,21 @@ from typing import Any, Literal, get_args
 import torch
 from torch import Tensor
 
+from kvdlra.cache.bug_cache import BugStreamingLayer, _RopeAngles
 from kvdlra.eval.records import write_jsonl
 from kvdlra.tracker import TRACKERS
+from kvdlra.tracker.isvd import orth_error
 
-__all__ = ["METHODS", "OJA_GRID", "Method", "load_stream", "run_study", "stored_error", "tune_oja"]
+__all__ = [
+    "METHODS",
+    "OJA_GRID",
+    "Method",
+    "bf16_gist_drift",
+    "load_stream",
+    "run_study",
+    "stored_error",
+    "tune_oja",
+]
 
 Method = Literal["svd_oracle", "isvd", "fd", "fd2", "oja", "frozen_prefill_svd", "random_basis"]
 METHODS: tuple[Method, ...] = get_args(Method)
@@ -293,3 +304,72 @@ def run_study(
         + "\n"
     )
     print(f"[wrote {out}/recon.jsonl: {len(rows)} rows in {time.perf_counter() - t0:.0f}s]")
+
+
+def _drift_stream(n: int, t: int, seed: int) -> Tensor:
+    """A rank-40 signal (decaying spectrum) + 1e-2 noise, bf16-rounded like the pods'
+    model dtype -- ``tests/test_orth_guard.py::ratchet_stream`` without its four
+    massive-activation channels (:func:`bf16_gist_drift` is a benign-stream measurement;
+    the massive-activation ratchet is what that other test drives to a failure)."""
+    g = torch.Generator().manual_seed(seed)
+    k = min(40, n)
+    q = torch.linalg.qr(torch.randn(n, k, generator=g))[0]
+    sig = q @ (torch.randn(k, t, generator=g) * torch.linspace(3.0, 0.5, k).unsqueeze(1))
+    m = sig + 1e-2 * torch.randn(n, t, generator=g)
+    out: Tensor = m.to(torch.bfloat16).to(torch.float32)
+    return out
+
+
+def bf16_gist_drift(n: int, rank: int, block: int, absorbs: int, seed: int) -> dict[str, float]:
+    """CPU synthetic-stream rate claim for ``gist_dtype=bfloat16`` storage (L5.1 fix1
+    Important #2): how far a bf16-stored gist drifts from an fp32-stored one as absorbs
+    accumulate, and how far a bf16-rounded basis sits from orthonormal.
+
+    Builds two :class:`~kvdlra.cache.bug_cache.BugStreamingLayer` directly -- one
+    ``gist_dtype=torch.float32`` (the archived path), one ``torch.bfloat16`` -- and feeds
+    both ``absorbs`` blocks of ``block`` columns of the same seeded :func:`_drift_stream`
+    through ``_absorb_columns`` directly: no model, no RoPE, no attention, since the
+    absorb step (tracker step + coordinate carry + orthonormality guard + store) is what
+    is under measurement. ``coord_budget`` holds the whole stream so nothing is evicted
+    and the two layers' coordinate tiers stay column-aligned; the same block is fed as
+    both K and V (only the K side is read back).
+
+    Returns three numbers, all CPU synthetic-stream RATE claims, not transferable
+    magnitudes (a real key stream's spectrum and the exact tier's removal of outliers
+    would move the constants):
+
+    * ``rel_error``: ``‖U_bf16 C_bf16 - U_fp32 C_fp32‖_F / ‖U_fp32 C_fp32‖_F`` -- the
+      stored-gist reconstruction gap. Grows roughly with ``sqrt(absorbs)``: the
+      coordinates are re-rounded to bf16 at every basis carry and nothing repairs them,
+      so their error compounds with the absorb count.
+    * ``orth_error_bf16`` / ``orth_error_fp32``: ``‖UᵀU - I‖_F`` of each layer's STORED
+      basis (in its own stored dtype). ``orth_error_bf16`` stays flat across absorbs --
+      the guard's thin QR repairs the bf16 rounding every absorb after the first (which
+      builds its basis from nothing), so it never compounds; ``orth_error_fp32`` stays
+      at roundoff throughout.
+    """
+    rope = _RopeAngles(torch.nn.Identity())  # never read: _absorb_columns doesn't touch rope
+    m = _drift_stream(n, absorbs * block, seed)
+    l32 = BugStreamingLayer(
+        rope=rope, rank=rank, coord_budget=absorbs * block, absorb_block=block,
+        gist_dtype=torch.float32,
+    )  # fmt: skip
+    l16 = BugStreamingLayer(
+        rope=rope, rank=rank, coord_budget=absorbs * block, absorb_block=block,
+        gist_dtype=torch.bfloat16,
+    )  # fmt: skip
+    for i in range(absorbs):
+        blk = m[:, i * block : (i + 1) * block]
+        positions = torch.arange(i * block, (i + 1) * block, dtype=torch.int64)
+        l32._absorb_columns(blk, blk, positions)
+        l16._absorb_columns(blk, blk, positions)
+    u32, c32 = l32.u_k, l32.c_k
+    u16, c16 = l16.u_k, l16.c_k
+    assert u32 is not None and c32 is not None and u16 is not None and c16 is not None
+    k32 = u32 @ c32
+    k16 = u16.float() @ c16.float()
+    return {
+        "rel_error": float(torch.linalg.norm(k32 - k16) / torch.linalg.norm(k32)),
+        "orth_error_bf16": orth_error(u16),
+        "orth_error_fp32": orth_error(u32),
+    }

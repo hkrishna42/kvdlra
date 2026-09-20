@@ -175,21 +175,27 @@ for a, b in itertools.combinations(sorted(per), 2):     # the arm-vs-arm paired 
 | Qwen `isvd_r256_tol` − `isvd_r256_qr64` (the repair schedule only) | −0.0029 | 0.0165 |
 | Llama `isvd_r256_tol` − `isvd_r256_qr64` | −0.0006 | 0.0016 |
 | Llama `isvd_r256_noguard` − `isvd_r256_tol` | +0.0016 | 0.0019 |
+| Qwen `isvd_r256_f0.01_qr64` − `isvd_r256_qr64` (population maximum, `hygiene_table4_qwen_r256`) | −0.1546 | **0.0563** |
 
-So the measured range of arm-vs-arm paired SD on this protocol is **0.0016 to 0.0490
-bits/token** — a range over the contrasts between arms whose basis stayed orthonormal: every
-guard-on arm, plus Llama's `isvd_r256_noguard`, the one unguarded arm in those pods that did not
-diverge. The two unguarded arms that **did** diverge sit two to three orders of magnitude above it,
-from the same snippet on the same pods: Qwen `isvd_r256_noguard` − `isvd_r256_tol` has SD **0.6132**
-at a mean of +10.77 bits/token, and Qwen `isvd_r128_noguard` − `isvd_r128_tol` SD **1.1934** at
-+0.6043. Neither bounds anything here — **no Stage-1 arm runs unguarded** (§3 fixes the shipped
-guard at `orth_fix_tol` 1e-3 / `orth_abort_tol` 1e-1 on every arm), and a basis that diverged past
-the abort tolerance would raise `OrthonormalityError`, which is an `error` row and §4's refusal
-rule, not a wide TOST. It is the *Qwen guard-on* end that bounds the C branch, and it is the reason
-§9 buys **32** windows: §6 computes that a ±0.02 TOST at n = 32 is decidable at d̄ = 0 for
-SD < **0.0667**, so the 0.046–0.049 those contrasts showed sits inside the bound with a ≈ 1.4×
-margin, where at 16 windows (bound 0.0456) the same spread would have been undecidable. §6
-pre-registers the residual as a condition with a stated failure mode, not as an assumption.
+So the measured range of arm-vs-arm paired SD on this protocol — enumerated over every
+compression-arm-vs-compression-arm contrast within that population (every guard-on arm, plus
+Llama's `isvd_r256_noguard`) across the three Table-4 pods, 15 contrasts in all (3 on
+`hygiene_table4_llama`, 6 each on `hygiene_table4_qwen_r128` and `hygiene_table4_qwen_r256`) — is
+**0.0010 to 0.0563 bits/token**; the table above keeps the five contrasts worth naming for their
+substantive meaning and adds the population maximum. The two unguarded arms that **did** diverge
+sit two to three orders of magnitude above it, from the same snippet on the same pods: Qwen
+`isvd_r256_noguard` − `isvd_r256_tol` has SD **0.6132** at a mean of +10.77 bits/token, and Qwen
+`isvd_r128_noguard` − `isvd_r128_tol` SD **1.1934** at +0.6043. Neither bounds anything here —
+**no Stage-1 arm runs unguarded** (§3 fixes the shipped guard at `orth_fix_tol` 1e-3 /
+`orth_abort_tol` 1e-1 on every arm), and a basis that diverged past the abort tolerance would raise
+`OrthonormalityError`, which is an `error` row and §4's refusal rule, not a wide TOST. It is the
+*Qwen guard-on* end that bounds the C branch, and it is the reason §9 buys **32** windows: §6
+computes that a ±0.02 TOST at n = 32 is decidable at d̄ = 0 for SD < **0.0667**, so the population
+maximum, **0.0563** (`isvd_r256_f0.01_qr64` − `isvd_r256_qr64` on `hygiene_table4_qwen_r256`), sits
+inside the bound with a ≈ 1.2× margin (0.0667 / 0.0563 = 1.18), where at 16 windows (bound 0.0456)
+it would have been outside and undecidable. No branch flips: the C branch was, and remains,
+reachable on this population; only the stated range and margin move. §6 pre-registers the residual
+as a condition with a stated failure mode, not as an assumption.
 
 ### (c) The tracker ordering, measured — reconstruction on the 1B dumps at exactly r = 64
 
@@ -361,7 +367,7 @@ these cells *mechanism* comparisons rather than budget comparisons.
   heads × 128 = **1024** channels per layer: arm 2 bills **80,717,568** bits/layer and this arm
   bills `1,245,376 + 32,800·H`, so **H = 79,472,192 / 32,800 = 2422.93 → 2423**, a **1.00003×**
   match. Qwen2.5-7B stores 4 × 128 = **512**: arm 2 bills 73,836,288 and the twin bills
-  `622,784 + 16,416·H` → **H = 4459.89 → 4460**, a **1.00002×** match. One H cannot serve both
+  `622,784 + 16,416·H` → **H = 4459.89 → 4460**, a **1.00003×** match. One H cannot serve both
   widths, which is why there are two files. The arithmetic is each arm file's `doc:` and is pinned
   within 5 % by `tests/test_gate1_arms.py::test_the_nogist_arms_are_byte_matched_to_isvd_r64_at_16k`.
   The tier still selects by residual, but against a rank-1 basis — approximately norm-ordering,
@@ -379,8 +385,8 @@ these cells *mechanism* comparisons rather than budget comparisons.
   read. ℓ = 2r stays in the reconstruction study, where the plan also puts it (item 1.2).
 - **`oja_r64_h256_seed_tuned`** — the schedule tuned by `kvdlra.eval.recon.tune_oja` on the **1B**
   dumps (**tuned on** doc63 + doc718 at r = 16, layer 8 — `results/recon_1b/provenance.json`
-  `oja_tuning.docs`, the same two documents for both streams; the three documents §2 (c) restricts
-  to are the held-out ones), where the
+  `oja_tuning.docs`, the same two documents for both streams; the three documents §2 (c)'s
+  sensitivity check restricts to are the held-out ones), where the
   surface falls away from the Week-2 (20.0, 0.03) point: the arm's `doc:` records 0.8115 for
   (20, 0.03) against 0.3991 tuned on `k_pre` r16 doc63, and D-014 records 0.821 against 0.405 for
   the same comparison (two write-ups of one measurement; the arm file is what the config hash
@@ -711,6 +717,14 @@ retrieval family and the secondary family by Amendment: **16 − 4 per excluded 
 and 12. The perplexity family is unaffected — it has no task axis. The excluded task is still run,
 still reported descriptively, and is fixed in `kvdlra.eval.gen` before any pod runs it again.
 
+**The arm-drop and task-exclusion shrinks to the secondary family compose by members, not by
+subtracting counts.** Both remove **members** from the 24-member secondary family (3 contrasts ×
+4 tasks × 2 families), not fixed counts from 24: the realised size is **m = (contrasts running) ×
+(tasks in the family) × 2 families**. If, e.g., one secondary arm is dropped by the §9 ladder
+(contrasts running 3 → 2) *and* one task is excluded by the ceiling rule (tasks 4 → 3) at the same
+time, the family is **not** 24 − 8 − 6 = 10; it is 2 × 3 × 2 = **12**. Each shrink above is correct
+in isolation, holding the other axis at its full value — they do not sum when both fire.
+
 **Two things that rule does not cover, fixed here rather than later.** (i) **The pre-flight runs
 Llama only** (`prereg/gate1_preflight.md` §9 decides nothing about Qwen), so an exclusion is
 decided on a Llama ceiling and applies to the task in **both** families — which is the right
@@ -774,11 +788,13 @@ n = 32 and d̄ ≈ 0, with t(0.95, 31) = 1.6955:
 | decidable at **δ = 0.02** for | **s < 0.0667** | s < 0.0456 |
 | decidable at δ = 0.05 for | s < 0.1668 | s < 0.1141 |
 
-The measured arm-vs-arm paired SD on this protocol, over the arms whose basis stayed orthonormal,
-spans **0.0016 to 0.0490** bits/token (§2 b): the Llama contrasts sit at 0.0016–0.0019, a 35×
-margin, and the **Qwen** contrasts between arms that really differ sit at 0.046–0.049 — *inside*
-the 0.0667 bound by ≈ 1.4×, where on 16 windows they would have been outside 0.0456 and Branch C
-would have been unreachable on that family for a reason having nothing to do with the tracker.
+The measured arm-vs-arm paired SD on this protocol, over every contrast between arms whose basis
+stayed orthonormal (§2 b: 15 contrasts across the three Table-4 pods), spans **0.0010 to 0.0563**
+bits/token: the Llama contrasts sit at 0.0016–0.0019, a 35× margin, and the **Qwen** contrasts
+between arms that really differ reach as high as **0.0563** — *inside* the 0.0667 bound by
+≈ 1.2× (0.0667 / 0.0563 = 1.18), where on 16 windows they would have been outside 0.0456 and
+Branch C would have been unreachable on that family for a reason having nothing to do with the
+tracker.
 That decidability is what §9's 32 windows are bought for. **The residual is pre-registered, with
 its reporting obligation** (the pattern of `prereg/hygiene_table4.md` A1.2):
 
@@ -878,7 +894,7 @@ pre-flight's rows, and `niah_multiquery` if it is ever run on these pods.
   key and the arms.
 - **(f) Stored bits, on the pod.** `ratio` and `sbits` are recorded on every row. Arms 2, 4, 5, 7
   and 8 should print identical `sbits` (all bill the **live tracked rank** — D-015 — which is the
-  cap at these settings), arm 3 within ≈ 0.1 % of them (§3's 1.00003× / 1.00002× match), and arm 6
+  cap at these settings), arm 3 within ≈ 0.1 % of them (§3's 1.00003× / 1.00003× match), and arm 6
   below them by its coordinate dtype. The pin §4's refusal rule reads is the **measured** ratio
   `median(sbits of nogist_*) / median(sbits of isvd_r64_h256_seed)` over that pod's records, which
   must lie within **1 ± 0.05**; outside it the byte match that makes the `nogist` contrast a
@@ -1076,7 +1092,7 @@ states the arm list, the Holm families and the re-derived budget before any laun
 | Stage-2 pod | arms | rate basis | point | bar |
 | --- | --- | --- | --- | --- |
 | Mistral-7B-v0.3, 16K (`nogist_h2423`, the 1024-wide twin) | all 8 | the table above, at 128 samples | **41.0** | **82.0** |
-| each of Llama / Qwen / Mistral at 32K | the **five** arms the rule reads — `full`, `isvd`, the 32K `nogist` twin (below), `frozen`, `fd` | **2× the 16K rates** (twice the absorbs): 1.2 + 6.2 + 3.1 + 4.2 + 6.2 = 20.9 min/sample × 128 = 2,675 min = 44.6 h, + 60 min | **45.6** | **91.2** |
+| each of Llama / Qwen / Mistral at 32K | the **five** arms the rule reads at 16K — `full`, `isvd`, the 32K `nogist` twin (below), `frozen`, `fd` | **2× the 16K rates** (twice the absorbs): 1.2 + 6.2 + 3.1 + 4.2 + 6.2 = 20.9 min/sample × 128 = 2,675 min = 44.6 h, + 60 min | **45.6** | **91.2** |
 | **Stage 2 total** | | | **178 GPU-h** | **356 GPU-h** |
 
 At $0.45–0.74/h: **$80–132 point, $160–263 at the bar** (41.0 + 3 × 45.6 = 177.8 → 178;

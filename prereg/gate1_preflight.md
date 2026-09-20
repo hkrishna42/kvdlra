@@ -14,21 +14,22 @@ lane L3, Task 1b. This pod is **not** a Gate-1 pod: it protects one.
 
 Gate 1 Stage 1 (`docs/plan/lanes/L3_gate1_tracker_swap_v2.md`, `docs/plan/ICML2027_PLAN.md` §2
 Gate 1, `docs/plan/lanes/GATES.md` §G3) is two pods — Llama and Qwen, eight arms each, the Gate-1
-tasks at n = 24 plus 16 paired perplexity windows — whose readings are paired contrasts on
-generator v2. Its size, at §7's rates — each arm **112 samples** (4 tasks × 24 trials + 16
-perplexity windows):
+tasks at n = 24 plus 32 paired perplexity windows — whose readings are paired contrasts on
+generator v2. Its size, at §7's rates — each arm **128 samples** (4 × 24 + 32 windows):
 
 | §7 rate (min/sample) | arms at it | minutes |
 | --- | --- | --- |
-| 0.6 | `full` | 112 × 0.6 = **67** |
-| 3.1 | `isvd_r64_h256_seed`, `isvd_r64_h256_seed_bf16`, `fd_r64_h256_seed`, `oja_r64_h256_seed` | 4 × (112 × 3.1 = 347) = **1,388** |
-| 2.1 | `frozen_r64_h256_seed`, `random_r64_h256_seed` | 2 × (112 × 2.1 = 235) = **470** |
-| 1.55 | `nogist_h2423` (Llama) / `nogist_h4460` (Qwen) | 112 × 1.55 = **174** |
-| | **compute per pod** (8 arms) | 67 + 1,388 + 470 + 174 = **2,099 min = 35.0 h** |
+| 0.6 | `full` | 128 × 0.6 = **76.8** |
+| 3.1 | `isvd_r64_h256_seed`, `isvd_r64_h256_seed_bf16`, `fd_r64_h256_seed`, `oja_r64_h256_seed` | 4 × (128 × 3.1 = 396.8) = **1,587.2** |
+| 2.1 | `frozen_r64_h256_seed`, `random_r64_h256_seed` | 2 × (128 × 2.1 = 268.8) = **537.6** |
+| 1.55 | `nogist_h2423` (Llama) / `nogist_h4460` (Qwen) | 128 × 1.55 = **198.4** |
+| | **compute per pod** (8 arms) | 76.8 + 1,587.2 + 537.6 + 198.4 = **2,400 min = 40.0 h** |
 
-Plus §7's 60 min boot → **≈ 36 GPU-h per pod**; two families (Llama, Qwen) → **72 GPU-h at the
-point estimate, 144 at the 2× bar**, and at the $0.45–0.74/h of §7 **$32–53 point, $65–107 at the
-bar**. This is the sizing L3 Task 3 commits with the Stage-1 pod YAMLs and
+Plus §7's 60 min boot → **≈ 41 GPU-h per pod**; two families (Llama, Qwen) → **82 GPU-h at the
+point estimate, 164 at the 2× bar**, and at the $0.45–0.74/h of §7 **$37–61 point, $74–121 at the
+bar**. The perplexity task is `ppl_16k_pg19val` (32 windows, not 16): at 16 windows the ±0.02
+TOST is undecidable at the measured Qwen spread (`prereg/gate1_tracker_swap_v2.md` §6). This is
+the sizing L3 Task 3 commits with the Stage-1 pod YAMLs and
 `prereg/gate1_tracker_swap_v2.md` §9 carries, and it **supersedes** the lane plan's "≈ 41 GPU-h;
 with the 2× safety factor 82 h" (`docs/plan/plans/2026-09-11-L3-L5-gate1-bf16-prereg.md` "Pod
 sizing"), which predates the L2 pods' rate measurements (§7) — as it supersedes the lane file's
@@ -500,10 +501,10 @@ such reason is a **fail** of reading (i), reported as one: `frozen_r64_h256_seed
 anywhere (§2d), which is precisely the kind of cell a mid-run judgement would quietly delete.
 
 **Credit.** $92.52 (`vastai show user --raw`, 2026-09-19 13:50). This pod's bar fits inside it with
-room; **Stage 1 does not** — 144 GPU-h at the bar, $65–107 (the rates above over Stage 1's design,
+room; **Stage 1 does not** — 164 GPU-h at the bar, $74–121 (the rates above over Stage 1's design,
 §1), against pre-registered bars of 121 GPU-h (`prereg/ss2_families.md` §9) and 168 GPU-h
 (`prereg/l2_smoke.md` §7) already queued. D-003 (the top-up) is open and **precedes the
-Stage-1 launch commit**, not this one: the pre-flight is exactly the $4–6 that keeps the $65–107
+Stage-1 launch commit**, not this one: the pre-flight is exactly the $4–6 that keeps the $74–121
 from being spent on a broken task.
 
 `gpu_budget_h` is the pre-registered bar, enforced on the pod itself by `pod.py launch
@@ -568,7 +569,7 @@ not yet built — it is a Stage-1 arm, not a pre-flight one); the ss2 question
 `ppl` task here); whether the r64 configuration has a real-text retrieval niche (a Gate-1
 question, explicitly left open by D-005's closing entry); the exact tier, the tracker, the guard's
 tolerances, the kernel, or which arms belong in the paper. Task 1b asks one question — does the
-Gate-1 design run, and at what rate, before 144 GPU-h are committed to it — and this pod answers
+Gate-1 design run, and at what rate, before 164 GPU-h are committed to it — and this pod answers
 that one.
 
 **STATUS: awaiting launch (DECISIONS, under D-011).**

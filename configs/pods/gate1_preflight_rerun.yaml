@@ -1,0 +1,21 @@
+name: gate1_preflight_rerun
+model: "unsloth/Meta-Llama-3.1-8B-Instruct"
+dtype: bfloat16
+doc: >-
+  The Gate-1 pre-flight, re-run for the records the first one lost (lane L3 Task 7;
+  prereg/gate1_preflight.md Amendment 1): the same model, task and design, the three compressed
+  arms only. Instance 51722149 reached ALL_DONE with 0 errors, but 143 of its 240 trial rows died
+  with it -- this Mac slept on battery 06:23-14:09 EDT and vast.ai's log endpoint returns only a
+  ~4 MB tail, 15,381 of whose 15,519 lines were diagnostics (D-011 addendum 10). The `full` arm's
+  five cells came back whole, so reading (ii) is decided (vt 0.75) and the ceiling is not re-run;
+  readings (i), (iii) and (iv) are. Arm order unchanged for the arms that remain, so a pod that
+  dies early still lands the primary contrast. The repair that makes the capture robust to a
+  polling gap is the records replay (L3.4a): the compact lines print again at the end of the run,
+  and a gap now costs diagnostics only. gpu_budget_h is the 2x bar over the 6.8 h point at the
+  measured rates (isvd 3.27, frozen 1.58 min/sample; nogist at the sizing table's 1.55) plus the
+  20 min boot. Harness validation; no number here is cited as a result. Launch = DECISIONS, D-011.
+prereg: prereg/gate1_preflight.md
+arms: ["isvd_r64_h256_seed", "nogist_h2423", "frozen_r64_h256_seed"]
+tasks: ["ruler_v2_16k"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+gpu_budget_h: 14.0

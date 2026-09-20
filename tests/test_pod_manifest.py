@@ -994,7 +994,9 @@ INHOUSE_SUBTASKS = ["niah_single", "niah_multikey", "niah_multivalue", "vt"]
 # cheap ceiling control (filler, pre-flight) or the paired r64 reference (cycle, ss2)
 # comes first, so a pod that dies early still lands an interpretable result -- for the
 # pre-flight pod, the ceiling plus both Gate-1 primary-contrast arms by arm 3
-# (`prereg/gate1_preflight.md` §3, §7). The smoke pod's arm set is a rule, not a list
+# (`prereg/gate1_preflight.md` §3, §7); its re-run keeps that order with the ceiling
+# dropped, the arm whose cells survived the first instance. The smoke pod's arm set is a
+# rule, not a list
 # (`test_the_smoke_pod_names_every_arm_but_the_table4_variants`), and its single-shot arms
 # are each arm's own protocol. `gpu_budget_h` and the v2 design are not echoed here: the
 # launch manifest's config_hash and the prereg pin those.
@@ -1008,6 +1010,15 @@ L2_PODS: dict[str, tuple[str, list[str] | None, list[str], list[str] | None]] = 
     "ss2_families_llama": (SS2, SS2_ARMS, INHOUSE, SS2_ARMS[1:]),
     "l2_smoke": ("prereg/l2_smoke.md", None, ["ruler_v2_16k"], None),
     "gate1_preflight": ("prereg/gate1_preflight.md", PREFLIGHT_ARMS, ["ruler_v2_16k"], []),
+    # The re-run of the three compressed arms, under the SAME prereg by its Amendment 1: the
+    # `full` arm's five cells came back whole from the first instance and its reading is
+    # decided, so the ceiling is not paid for twice (D-011 addendum 10).
+    "gate1_preflight_rerun": (
+        "prereg/gate1_preflight.md",
+        PREFLIGHT_ARMS[1:],
+        ["ruler_v2_16k"],
+        [],
+    ),
 }
 
 
@@ -1036,10 +1047,11 @@ def test_the_l2_pods_are_their_prereg_designs() -> None:
     """Row by row against `L2_PODS`: arm order, task list, the single-shot arms; every task
     at n = 12 (6 trials x 2 seeds, or the v2 design's 12 from one seed) and chunk 4096,
     the in-house pods on the four archived sub-tasks with generator-drawn depths and the
-    cycled filler (`wikitext` on the real-text pod), the two v2 pods (smoke, pre-flight) on
-    generator v2's five at 16K on the paper's model; bf16 on the -devel image (quanto
-    JIT-builds its kernel); seven pods, seven hashes (one arm list against another, one
-    filler or model against another keeps them apart)."""
+    cycled filler (`wikitext` on the real-text pod), the three v2 pods (smoke, pre-flight,
+    its re-run) on generator v2's five at 16K on the paper's model; bf16 on the -devel image
+    (quanto JIT-builds its kernel); eight pods, eight hashes (one arm list against another,
+    one filler or model against another keeps them apart -- the re-run's dropped `full` arm
+    is what separates it from the pre-flight it repeats)."""
     for name, (_, arms, tasks, single_shot) in L2_PODS.items():
         p = load_pod(name)
         assert p.tasks == tasks, f"{name}: tasks {p.tasks}"
@@ -1058,8 +1070,11 @@ def test_the_l2_pods_are_their_prereg_designs() -> None:
                 assert t.generator == "inhouse" and t.tasks == INHOUSE_SUBTASKS, tname
                 filler = "wikitext" if name == "filler_realism" else "cycle"
                 assert t.depths is None and t.filler == filler, tname
-    for name in ("l2_smoke", "gate1_preflight"):
+    for name in ("l2_smoke", "gate1_preflight", "gate1_preflight_rerun"):
         assert load_pod(name).model == "unsloth/Meta-Llama-3.1-8B-Instruct", name
+    # The re-run's bar, pre-registered by `prereg/gate1_preflight.md` Amendment 1 (A1.4):
+    # 2x the 6.8 h point estimate at the rates the first instance measured.
+    assert load_pod("gate1_preflight_rerun").gpu_budget_h == 14.0
     assert len({config_hash(load_pod(n)) for n in L2_PODS}) == len(L2_PODS)
 
 

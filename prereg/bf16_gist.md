@@ -95,7 +95,7 @@ Two consequences worth stating as identities rather than as approximations:
   / `39,831,296` — verified `True` at both widths by the snippet above. The bf16 arm is what the
   fp16-equivalent `ratio` column always claimed the fp32 arm was; the dual-billing gap
   (`ratio` 0.085 vs `sbits` 0.150) is what it closes.
-- **The saving is 0.566× (n = 1024) and 0.540× (n = 512)**, not 0.5: the sinks, the ring, the
+- **The saving is 0.566× (n = 1024) and 0.539× (n = 512)**, not 0.5: the sinks, the ring, the
   256-token exact tier and the `aux_words` (32,568 per layer: 2r core + 2 per coordinate column
   + one position per tier token) do not move, and only the gist's `2nr + 2·r·coord_count`
   elements are re-billed.
@@ -232,32 +232,49 @@ compute (its `retrieval_contrasts` loops over `PRIMARY_CONTROLS + SECONDARY_CONT
 frozen / nogist / oja / fd / random, and `bf16` is in neither), so this file states the retrieval
 member as the snippet that produces it — the pattern of `prereg/hygiene_table4.md` §6, where the
 Holm step is likewise applied by hand over shipped functions. **No code change is pre-registered
-here and none is needed.**
+here and none is needed.** The snippet reuses `gate1.load` for the parsing (its `ARM_TRACKER`
+already maps both arms' stems, §3) and, on top of it, implements §4 (4)'s error-refusal and
+§7 (e)'s `prompt_sha256` drop by hand — mirroring `gate1.py`'s `_mismatched` and the refusal
+`gate1_verdict` reads from `errors`/`sha`, since `retrieval_contrasts` never builds this member to
+do it for us.
 
 ```python
-import json, collections
 from pathlib import Path
 from kvdlra.eval.stats import mcnemar_exact, holm
 from kvdlra.eval import gate1
 
 # Retrieval: one member per (family, task). `a` = the fp32 arm, `b` = the bf16 arm, so
 # `a_favored` counts the pairs the bf16 arm LOST.
-cells = collections.defaultdict(dict)
-for pod, family in (("gate1_v2_stage1_llama", "llama"), ("gate1_v2_stage1_qwen", "qwen")):
-    for r in map(json.loads, open(f"results/{pod}/trials.jsonl")):
-        cells[(family, r["task"], r["arm"])][(r["seed"], r["trial"])] = r["hit"]
-members = {
-    (f, t): mcnemar_exact(cells[(f, t, "bugSseed-r64-h256")],
-                          cells[(f, t, "isvd_r64_h256_seed_bf16")])
-    for f, t, a in cells if a == "bugSseed-r64-h256"
-}                                    # 8 members at Stage 1: 2 families x 4 tasks
-p_holm = dict(zip(members, holm([m["p_value"] for m in members.values()])))
+FAMILIES, TASKS = ("llama", "qwen"), ("niah_single", "niah_multikey", "niah_multivalue", "vt")
+data = gate1.load([Path("results/gate1_v2_stage1_llama"), Path("results/gate1_v2_stage1_qwen")])
+
+members, dropped, errs = {}, {}, {}
+for f in FAMILIES:
+    for t in TASKS:
+        a, b = (f, 16384, t, "isvd"), (f, 16384, t, "bf16")
+        errs[f, t] = data.errors.get(a, []) + data.errors.get(b, [])   # read before pairing
+        a_hits, b_hits, a_sha, b_sha = data.hits[a], data.hits[b], data.sha[a], data.sha[b]
+        shared = set(a_hits) & set(b_hits)
+        bad = sorted(k for k in shared if a_sha.get(k) is None or a_sha[k] != b_sha.get(k))
+        if bad:
+            dropped[f, t] = bad                 # mirrors `_mismatched`; reported with the key
+        keep = shared - set(bad)
+        members[f, t] = None if errs[f, t] else mcnemar_exact(
+            {k: a_hits[k] for k in keep}, {k: b_hits[k] for k in keep}
+        )
+# Every family with an error anywhere, or a member with nothing left to pair after the drop,
+# is REFUSED (§4 (4)) rather than entered into Holm as a silent miss:
+refused = {f for f in FAMILIES if any(errs[f, t] for t in TASKS)
+                                or any(members[f, t] is None for t in TASKS)}
+eligible = {k: v for k, v in members.items() if v is not None and not errs[k]}
+p_holm = dict(zip(eligible, holm([v["p_value"] for v in eligible.values()])))
+                                     # 8 members at Stage 1: 2 families x 4 tasks; Holm runs
+                                     # over whichever are eligible (§6's "smaller m")
 
 # Perplexity: `gate1.ppl_contrasts` already emits the bf16 member -- it loops over every
 # tracker -- with d = isvd - bf16 per window, the paired bootstrap CI, the two-sided paired
 # t-test and `stats.tost(d, 0.02)`'s boolean. `make gate1` prints it in the per-family
 # perplexity table (columns: bits/token, delta, 95% CI, TOST +/-0.02, Holm p, paired t p).
-data = gate1.load([Path("results/gate1_v2_stage1_llama"), Path("results/gate1_v2_stage1_qwen")])
 ppl = {(c.family, c.b): c for c in gate1.ppl_contrasts(data) if c.b == "bf16" and c.ctx == 16384}
 ```
 
@@ -272,13 +289,17 @@ snippet above.
 ### The rule
 
 1. **Retrieval, per (family, task).** The bf16 arm is **non-inferior on that task** unless **both**
-   hold: (i) it loses by more than **0.03** on the point estimate (`(a_favored − b_favored)/24`),
-   and (ii) that member's **Holm-adjusted p < 0.05** in this file's 8-member retrieval family
-   (§6). Both conditions, together, are what "the bf16 arm is worse on this task" means here.
-   - **The 0.03 clause does not bind at n = 24, and that is stated rather than left to be
-     discovered.** One flipped pair moves the point estimate by 1/24 = **0.0417**, so *any*
+   hold: (i) it loses by more than **0.03** on the point estimate (`(a_favored − b_favored) /
+   n_paired`, the member's paired n **after** §4 (4)'s `prompt_sha256` drops, never the design's
+   raw 24), and (ii) that member's **Holm-adjusted p < 0.05** in this file's 8-member retrieval
+   family (§6). Both conditions, together, are what "the bf16 arm is worse on this task" means
+   here.
+   - **The 0.03 clause does not bind at the design's n = 24, and that is stated rather than left
+     to be discovered.** One flipped pair moves the point estimate by 1/24 = **0.0417**, so *any*
      net loss of one or more pairs already exceeds 0.03 and condition (i) is satisfied whenever
-     (ii) can be. The decision at Stage 1's n is therefore carried by the Holm test; the margin
+     (ii) can be — and a drop can only shrink `n_paired` below 24, which raises 1/n_paired above
+     0.0417 and binds the clause even less. The decision at Stage 1's n is therefore carried by
+     the Holm test; the margin
      binds only at an n where 0.03 is resolvable (≥ 34 paired keys), which **no pod in this
      design runs** — Stage 2's conditional pods carry the same n = 24 cells
      (`prereg/gate1_tracker_swap_v2.md` §9). It is kept in the rule because it is the rule, and
@@ -304,14 +325,26 @@ snippet above.
    - The shipped `tost` is **two-sided equivalence**, so passing it is strictly stronger than
      one-sided non-inferiority: it also rules out the bf16 arm being *better* by more than 0.02.
      The stronger reading is the one registered, because it is the one the shipped tool and
-     `make gate1`'s table compute. The one-sided non-inferiority p-value is the `p_lo` of
-     `stats.tost` (H₀: mean d ≤ −0.02, tested `greater`) and is **reported beside the boolean**;
-     no rule below reads it.
+     `make gate1`'s table compute. The one-sided non-inferiority p-value is `stats.tost`'s `p_lo`
+     (H₀: mean d ≤ −0.02, tested `greater`); it is **not** separately stored or printed —
+     `gate1.PplContrast` carries only `p_tost = max(p_lo, p_hi)`, and that is the value in
+     `make gate1`'s six printed columns (§4's snippet). If the one-sided value is wanted it is
+     **recomputed by hand**: `stats.tost(d, 0.02)` on the per-window differences pulled from
+     `pplw.jsonl` returns `(p_lo, p_hi, equivalent)` directly. No rule below reads it either way.
 3. **Overall.** The arm **passes** iff, at 16K, it is non-inferior **on all four tasks in both
    families** (8 retrieval members) **and** both families' perplexity TOSTs pass (2 members). Any
-   other outcome is a **fail**, and the report names which member failed and on which axis. There
-   is no partial pass and no per-family pass: the consequence below moves bytes for the
-   whole project, so it is bought on both families or not at all.
+   other outcome that is not a refusal is a **fail**, and the report names which member failed and
+   on which axis. There is no partial pass and no per-family pass: the consequence below moves
+   bytes for the whole project, so it is bought on both families or not at all.
+   - **`REFUSED` is a third overall state, not a kind of fail.** A family whose reading never ran
+     — an error row or a broken pairing on retrieval (§4 (4), below), or a perplexity member that
+     is `not decidable` (§6) — is `REFUSED`, and its consequence is narrower than a fail's: **the
+     fp32 arm stays the default, exactly as after a fail, but no cost figure is recorded** —
+     nothing was measured to report a cost from. The three states compose as: **pass** iff both
+     families pass; **fail** iff at least one family fails and none is refused; **`REFUSED`**
+     otherwise, i.e. whenever any family is refused, whatever the other family shows. Refusal is
+     read first for exactly this reason (§4 (4)'s heading) — it is never swallowed by a pass or a
+     fail the other family reaches.
 4. **Refusals, read before the rule above is applied.**
    - **An `error` row on the bf16 arm or on `isvd_r64_h256_seed` in a cell refuses the reading for
      that family** — the member is listed with its exception text and no adjusted p-value, and the
@@ -444,7 +477,10 @@ already set** (the discipline of `prereg/gate1_tracker_swap_v2.md` §6). If the 
 uncorrected like the others. **No Stage-2 member is pooled with a Stage-1 member and no Stage-1
 p-value is recomputed when Stage 2 lands**: §4 (3)'s pass is read over Stage 1's two families and
 stands as read, and Mistral is a third family's reading recorded beside it by the amendment that
-runs it. A 32K pod, if an amendment ever puts this arm in one, carries the same 4 / 1 sizes and is
+runs it. **A Mistral failure does not suspend or retract §4's re-planning consequence**: that
+consequence is Stage 1's alone, already fired the moment Stage 1 passed, and a later negative
+family is recorded beside it, for whoever reviews the re-plan, rather than undoing it. A 32K pod,
+if an amendment ever puts this arm in one, carries the same 4 / 1 sizes and is
 **descriptive** — it reports whether the 16K reading generalizes to twice the context and to
 ≈ 1,600 absorbs, and it does not retract a Stage-1 pass.
 
@@ -474,13 +510,16 @@ diagnostics, the Wilson intervals (`kvdlra.eval.stats.wilson`) printed beside ea
 
 ## 7. Secondary outcomes
 
-- **(a) The guard did its job — a pass/fail check, from `diag.jsonl`.** Per layer, over this arm's
-  rows: the share of 64-absorb windows with `fixed_k` / `fixed_v` **true**, the maximum
-  **pre-repair** `orth_err_k` / `orth_err_v`, and the abort count. **Pass = `fixed_k` and
-  `fixed_v` true in ≥ 99 % of this arm's windows on every layer, and zero aborts.** §2 (b)
-  predicts essentially 100 %: a `[diag]` row ORs the window's repairs, the guard fires on every
-  absorb but the first, so every window of 64 absorbs carries at least one. **Below that share is
-  the finding** — it would mean the store is not being rounded where this file says it is.
+- **(a) The guard did its job — a diagnostic, from `diag.jsonl`, not a gate.** Per layer, over
+  this arm's rows: the share of 64-absorb windows with `fixed_k` / `fixed_v` **true**, the maximum
+  **pre-repair** `orth_err_k` / `orth_err_v`, and the abort count. §2 (b) predicts a share of
+  essentially 100 %: a `[diag]` row ORs the window's repairs, the guard fires on every absorb but
+  the first, so every window of 64 absorbs carries at least one. **A share below 99 % (with zero
+  aborts) is reported as the finding — not as a refusal**: it would mean the store is not being
+  rounded where this file says it is, which is informative about the arm rather than disqualifying
+  of the reading — a run the guard could not repair at all is already an `OrthonormalityError`, an
+  `error` row, and §4 (4)'s refusal (§2 (b)); this check is descriptive on top of that, the way
+  (b), (d) and (e) below are.
   - **The share alone cannot distinguish this arm from the fp32 one, and that is stated now.** At
     the pods' bf16 *model* dtype the fp32 arm already repairs in essentially every window:
     `results/filler_realism/diag.jsonl`, 19,968 rows of `bugSseed-r64-h256`, reads `fixed_k`
@@ -512,7 +551,7 @@ diagnostics, the Wilson intervals (`kvdlra.eval.stats.wilson`) printed beside ea
     model pins as "0.151× / 0.086× at 16K r64". Because of that spread the load-bearing pin is the
     **ratio of the two arms on the same pod**: `median(sbits of isvd_r64_h256_seed_bf16) /
     median(sbits of isvd_r64_h256_seed)` must lie within **1 %** of **0.566** (Llama, n = 1024) /
-    **0.540** (Qwen, n = 512) — the occupancy nearly cancels there (0.5657 at ring 32 against
+    **0.539** (Qwen, n = 512) — the occupancy nearly cancels there (0.5657 at ring 32 against
     0.5684 at ring 47). Outside it, the arm did not store what this file says it stores, and the
     reading is **refused** pending a dated amendment. Read **before** §4's rule, never after.
   - `prereg/gate1_tracker_swap_v2.md` §7 (f) expects arm 6 to print `sbits` "below them by its
@@ -586,7 +625,9 @@ arm 6: a partial arm is `not run` for the missing cells and the family is refuse
   by `tests/test_pod_manifest.py`'s `GATE1_STAGE1_ARMS` (and its exclusion from the smoke pod by
   that file's `GATE1` set); the drift generator by
   `tests/test_bf16_gist.py::test_bf16_gist_drift_shape_and_direction`; the default-off fp32 path by
-  `tests/test_golden_cache.py`. **The commit that adds this file adds nothing else and launches
+  `tests/test_bf16_gist.py::test_default_gist_dtype_is_fp32_and_bit_identical` (`test_golden_cache.py`
+  pins bit-identity across refactors at rank 64 but never mentions `gist_dtype`). **The commit that
+  adds this file adds nothing else and launches
   nothing.**
 - **The commit order, and the two mechanisms that enforce it — stated as
   `prereg/gate1_tracker_swap_v2.md` §10 states them, because the situation is that file's second
@@ -615,8 +656,9 @@ arm 6: a partial arm is `not run` for the missing cells and the family is refuse
   `prereg/hygiene_table4.md` — including the Stage-2 / 32K amendment §3 names and any re-statement
   of §5 that the pre-flight's rows justify — each committed before the launch commit it governs.
 - **Outputs.** `results/gate1_v2_stage1_llama/` and `results/gate1_v2_stage1_qwen/`: this arm's
-  96 rows in `trials.jsonl` (each with `prompt_sha256`, `haystack_id`, `depth`, `code_family`,
-  `ratio`, `sbits`), its 32 rows in `pplw.jsonl`, its one row in `ppl.jsonl` (the `sbits` §7 (c)
+  96 rows in `trials.jsonl` (each with `prompt_sha256`, `haystack_id`, `depth`, `code_family` —
+  `TrialRecord` carries no `ratio` or `sbits`, §7 (c)), its 32 rows in `pplw.jsonl`, its one row
+  in `ppl.jsonl` (the `sbits` §7 (c)
   reads), its `[diag]` rows in `diag.jsonl`, and its four `cell_elapsed_s` entries in
   `manifest.json`.
 - **Rendering, and citability.** The bf16 arm appears as the `bf16` row of `make gate1`'s

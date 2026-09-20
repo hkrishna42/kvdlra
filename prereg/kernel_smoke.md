@@ -35,10 +35,11 @@ and, verbatim from `docs/plan/lanes/GATES.md` §G4 line 3:
 > `results/kernel_smoke/manifest.json`: full / reconstruct / kernel at 16K/32K/64K, b=1,4;
 > kernel KV peak < full at 32K; ms/token < reconstruct by ≥ 3×
 
-Both are read from `latency.jsonl` by §4. **This pod measures decode cost and peak VRAM and
-nothing else** (§11): no accuracy claim beyond the correctness precondition §4 requires *before*
-the pod is launched, no Gate-1 or Gate-2 reading, and not the Week-5 Gate-3 target, which §4
-states as the later bar it is not.
+Both are read from `latency.jsonl` by §4. **This pod as pre-registered is cell list A — batch 1
+only (§3) — so line 3's "b=1,4" is ticked in two halves, not one: §4 (3) and §10 name which.**
+**This pod measures decode cost and peak VRAM and nothing else** (§11): no accuracy claim beyond
+the correctness precondition §4 requires *before* the pod is launched, no Gate-1 or Gate-2
+reading, and not the Week-5 Gate-3 target, which §4 states as the later bar it is not.
 
 ## 2. Measured baseline — the numbers to beat, and exactly where they live
 
@@ -189,14 +190,21 @@ pod that cannot pass, so the cell list is pre-registered rather than discovered:
 **Correctness first, and it gates the launch.** From `docs/plan/lanes/L4_kernel.md` item 2 and
 `GATES.md` §G4 line 2, verbatim: single-layer **`max |Δ| < 1e-2` in bf16 vs reconstruct-then-attend**
 on random tensors **and** on dumped 8B KV, and full-model greedy decode **token-exact on ≥ 14/16
-prompts, mismatches logged**. Neither is a decode-latency measurement and neither is produced by
-the `latency` axis, so both must have **passed and been recorded before the launch commit**, with
-their evidence path (L4's test module and, for the full-model check, the GPU run that produced it)
-named in the launch entry in `docs/plan/DECISIONS.md`. **A kernel whose correctness precondition
-has not passed is not measured for speed**: a fast wrong kernel is not a result, and a pod launched
-without the precondition is reported as launched without it. If L4 instead runs the full-model
-check on this pod, that needs a runner axis the repository does not have and is an **amendment to
-this file**, committed before the launch commit, which also states how its output is recorded.
+prompts, mismatches logged**. **The dumped 8B KV this needs names a dependency this file does not
+supply**: `GATES.md` §G1 line 6 records the rank-sweep figure's 8B half as still open (1B dumps
+landed 2026-09-18; the 8B dump pod has not run), so the single-layer check is blocked on that pod
+as well as on the kernel, and the launch entry names whichever one unblocked it. **The 16 prompts
+are fixed before the kernel is written, not chosen after seeing its output**: they are committed in
+L4's test module, and the launch entry in `docs/plan/DECISIONS.md` names their source and
+selection and the path of the mismatch log the < 14/16 case would read. Neither check is a
+decode-latency measurement and neither is produced by the `latency` axis, so both must have
+**passed and been recorded before the launch commit**, with their evidence path (L4's test module
+and, for the full-model check, the GPU run that produced it) named in the launch entry in
+`docs/plan/DECISIONS.md`. **A kernel whose correctness precondition has not passed is not measured
+for speed**: a fast wrong kernel is not a result, and a pod launched without the precondition is
+reported as launched without it. If L4 instead runs the full-model check on this pod, that needs a
+runner axis the repository does not have and is an **amendment to this file**, committed before
+the launch commit, which also states how its output is recorded.
 
 ### The Week-3 gate, read from `latency.jsonl`
 
@@ -204,15 +212,20 @@ The two conditions below are read **within this pod**, per batch, with the arms'
 `(ctx, batch)`:
 
 1. **Memory.** `kv_peak_gb(kernel, 32768, b) < kv_peak_gb(full, 32768, b)`. The gate names 32K;
-   16K and 64K are reported beside it and do not enter the pass.
+   16K and 64K are reported beside it and do not enter the pass. **A pass whose margin is under
+   10 %** — `(kv_peak_gb(full, 32768, b) − kv_peak_gb(kernel, 32768, b)) / kv_peak_gb(full, 32768,
+   b) < 0.10` — **is reported as marginal, with both raw peaks printed beside it**: a single
+   measurement per cell carries no error bar to fall back on (§6), so a thin margin is named
+   rather than shown with the same confidence as a wide one.
 2. **Speed.** `ms_per_token_p50(reconstruct, 32768, b) / ms_per_token_p50(kernel, 32768, b) ≥ 3.0`.
    Against this pod's own reconstruct row; if that row is within 10 % of the archived 188.27 ms the
    two agree and both are printed, and if it is not, the pod's own row is the one the ratio uses
    and the discrepancy is reported (§2 a).
-3. **Pass = both, at batch 1** (cell list A), the batch the gate was written at. Cell list B's
-   batch-4 cells, if they run, are reported the same way and are **descriptive**: they do not
-   change the Week-3 verdict, because the batch-4 grid is conditional on a cache that does not
-   exist at the time this file is committed and its card may differ.
+3. **Pass = both, at batch 1** (cell list A). **This ticks `GATES.md` §G4 line 3 AS AMENDED: the
+   b = 1 half of "b=1,4"; the b = 4 half stays open until cell list B runs**, under the card §3's
+   amendment names. Cell list B's batch-4 cells, if they run, are reported the same way and are
+   **descriptive**: they do not change the Week-3 verdict, because the batch-4 grid is conditional
+   on a cache that does not exist at the time this file is committed and its card may differ.
 
 **Refusals, read before the rule.**
 
@@ -222,11 +235,17 @@ The two conditions below are read **within this pod**, per batch, with the arms'
   (arm, ctx, batch) record fails `_latency_fails` independently. An OOM is an error like any other.
   Nothing is re-run on the pod with a knob changed; a fix is a later commit and a later pod.
 - **A `spikes` count above 8 of 56 steps on any arm refuses that arm's p50 as a steady-state
-  number** — it is reported with `ms_mean` and `ms_max` beside it and the cell is read as "not a
-  steady state", never as a faster median. The reconstruct arm's archived rows carry
-  **4 spikes at 16K and 32K and 0 at 64K** (its absorb-event rebuild), so a handful is expected
-  there and **zero** is expected on `full`; a spiking *kernel* arm would mean the absorb-event
-  rebuild did not actually leave the decode path, which is the claim the kernel rests on.
+  number** — **8 is twice the archived handful of 4** (below), a margin rather than a fitted
+  threshold: no distributional model of `spikes` is claimed here, only that the archived rate
+  doubled is still an anomaly. It is reported with `ms_mean` and `ms_max` beside it and the cell
+  is read as "not a steady state", never as a faster median. **A refused p50 on the reconstruct
+  arm or the kernel arm at 32K refuses the Week-3 gate's speed condition** — §4 (2) above reads
+  exactly those two p50s — **and therefore refuses the pass** (§4 (3)): a numerator or denominator
+  that is not a steady-state number cannot be compared to the 3.0× threshold, whatever the ratio
+  would print. The reconstruct arm's archived rows carry **4 spikes at 16K and 32K and 0 at 64K**
+  (its absorb-event rebuild), so a handful is expected there and **zero** is expected on `full`; a
+  spiking *kernel* arm would mean the absorb-event rebuild did not actually leave the decode path,
+  which is the claim the kernel rests on.
 - **No arm is ever printed as `--`.** An arm that did not run reads `not run` with the reason, and
   an arm that errored carries its exception text — the rule
   `prereg/gate1_tracker_swap_v2.md` §4 fixes, applied here for the same reason.
@@ -261,8 +280,9 @@ is D-002's, not this file's.
 There is **no inferential statistic on this pod and no p-value anywhere in it.** A cell is one
 measurement, not a sample of trials: one prefill, 64 timed forwards, a median over 56 of them, and
 two VRAM reads. The dispersion that exists is reported directly — `ms_mean`, `ms_max` and `spikes`
-beside every `ms_per_token_p50` — and the gate's two conditions are ratios of medians against
-fixed thresholds (3.0×, and "<"), not tests. Inventing a family here would be the cheapest way to
+beside every `ms_per_token_p50`, and a thin memory margin flagged the same way (§4's 10 % rule) —
+and the gate's two conditions are ratios of medians against fixed thresholds (3.0×, and "<"), not
+tests. Inventing a family here would be the cheapest way to
 dress a systems measurement as an inference. The pod's discipline is elsewhere: the grid is
 complete or the pod fails (§3), the arms are matched on `(ctx, batch)` within one pod and one
 session (§4), and the precondition is met before the launch (§4).
@@ -415,8 +435,10 @@ does not queue behind Stage 1 on money — only on the kernel existing.
   refusal if one fired, the archived-vs-remeasured comparison, and the deviations §3 and §7 name —
   goes to `docs/plan/DECISIONS.md` as the **Gate-3 Week-3 outcome**, under D-002, with the
   evidence path `results/kernel_smoke/` and the table path. **`GATES.md` §G4 line 3 is this pod's
-  to tick, and only that one**: line 2 is ticked by the correctness precondition's own evidence
-  (§4) and line 1 by D-002 accepting or rejecting ADR 0001 — neither is a reading of these cells.
+  to tick, and only that one** — **cell list A ticks it AS AMENDED: the b = 1 half of "b=1,4"
+  (§1, §4 (3)); the b = 4 half is ticked only once cell list B's amendment runs and reports it** —
+  line 2 is ticked by the correctness precondition's own evidence (§4) and line 1 by D-002
+  accepting or rejecting ADR 0001 — neither is a reading of these cells.
 
 ## 11. What this does not decide
 

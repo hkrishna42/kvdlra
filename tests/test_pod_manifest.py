@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -1276,6 +1277,29 @@ def test_the_run_replays_its_records_before_the_wall_clock_line(
     assert trial in body and out.count(trial) == 2
     digest = f"[stage] dataset_sha256 haystack:pg19 {'a' * 64}"
     assert digest in body and out.count(digest) == 2
+
+
+# --- L3.4c: SIGTERM -> the replay survives the MAX_HOURS bar ---------------------------
+
+
+def test_run_installs_a_sigterm_handler_before_run_pod(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """boot.sh's `timeout --signal=TERM --kill-after=60` sends TERM at the MAX_HOURS bar;
+    Python's default TERM disposition kills the process outright, so a run killed at the
+    bar would print no replay (L3.4a) at all. `run` installs a handler that turns TERM into
+    `SystemExit` before `run_pod` starts, so the 60 s kill grace is enough for `replayed()`'s
+    `finally` to run. `signal.signal` itself is substituted, so this test sets no real
+    process-wide disposition."""
+    model = SimpleNamespace(config=SimpleNamespace())
+    calls = []
+    monkeypatch.setattr(pod, "_haystack_sha256", lambda p: {})
+    monkeypatch.setattr("kvdlra.eval.data.load_model", lambda *a, **k: (model, None))
+    monkeypatch.setattr("kvdlra.eval.runner.run_pod", lambda *a, **k: None)
+    monkeypatch.setattr(signal, "signal", lambda sig, handler: calls.append(sig))
+
+    assert pod.run("w18_g1", tmp_path, dry_run=False) == 0
+    assert calls == [signal.SIGTERM]
 
 
 def test_harvest_reads_a_log_with_the_replay_as_one_without_it(

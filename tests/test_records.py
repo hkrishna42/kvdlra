@@ -10,6 +10,7 @@ re-derive the whole count audit from the archive alone, forever.
 
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 
@@ -17,6 +18,7 @@ import pytest
 import tables
 
 from kvdlra.eval.records import (
+    _Tee,
     parse_cell_lines,
     parse_diag_lines,
     parse_error_lines,
@@ -412,3 +414,11 @@ def test_parse_diag_lines_counts_a_payload_it_cannot_parse() -> None:
     text = '[diag] {"layer": 0, "rank": 64}\n[diag] {"layer": 1, "rank": 6\n'
     rows, skipped = parse_diag_lines(text, model="M", source="f.txt")
     assert [r["layer"] for r in rows] == [0] and skipped == 1
+
+
+def test_tee_discards_an_unterminated_buffer_past_64kb() -> None:
+    """A `\\r`-only writer (a progress bar) never sends `_Tee` a newline; uncapped, `_buf`
+    would grow for the life of the run. Past 65,536 chars it is dropped, not replayed."""
+    tee = _Tee(io.StringIO())
+    tee.write("x" * 70_000)
+    assert tee._buf == "" and tee.rows == []

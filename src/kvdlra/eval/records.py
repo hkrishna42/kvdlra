@@ -510,6 +510,8 @@ class _Tee:
             line, _, self._buf = self._buf.partition("\n")
             if replayable(line):
                 self.rows.append(line)
+        if len(self._buf) > 65_536:  # a `\r`-only writer (a progress bar) never sends
+            self._buf = ""  # a newline -- discard rather than grow this forever
         return int(self.inner.write(s))
 
     def flush(self) -> None:

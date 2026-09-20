@@ -35,6 +35,7 @@ import json
 import math
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import time
@@ -217,6 +218,13 @@ def run(name: str, out: Path, dry_run: bool) -> int:
         (out / "trials.jsonl").write_text("")
         print(f"{out}: manifest.json, env.txt, empty trials.jsonl (dry run)")
         return 0
+
+    # boot.sh's `timeout --signal=TERM --kill-after=60` sends TERM at the MAX_HOURS bar.
+    # Python's default TERM disposition kills the process outright -- no `finally` runs,
+    # so `replayed()`'s replay (L3.4a) never prints and a run killed at the bar loses every
+    # reading it had, not just the ones after the last poll. Turning TERM into `SystemExit`
+    # lets `finally` run inside the 60 s kill grace instead.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
 
     # Imported here, not at module scope: `--dry-run` and `check` must work on a laptop
     # without pulling in the eval stack (and, through it, kvpress).

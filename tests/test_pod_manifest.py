@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pod
 import pytest
@@ -672,6 +673,10 @@ def test_the_watchdog_keeps_the_env_block_rows() -> None:
         # name would also match the pattern's bare NVIDIA alternative).
         "[stage] gpu NVIDIA H100 80GB HBM3",
         "[stage] wall_clock_s 4213.7",
+        # L3.4a: the replay block's markers, so a reader of the deduped log can see that
+        # the rows below them are a repeat and not a second pod (D-011 addendum 10).
+        "===RECORDS_REPLAY_BEGIN===",
+        "===RECORDS_REPLAY_END===",
     ]
     r = subprocess.run(
         ["grep", "-aE", rows],
@@ -1225,3 +1230,59 @@ def test_the_smoke_pod_names_every_arm_but_the_table4_variants() -> None:
     assert kinds[-n_gist:] == ["bug"] * n_gist, kinds
     assert set(SMOKE_GATE_ARMS) <= set(p.arms)
     assert not [a for a in p.arms if a.startswith("ojakv")]
+
+
+# --- L3.4a: the records replay (D-011 addendum 10) ---------------------------------------
+
+REPLAY = ("===RECORDS_REPLAY_BEGIN===", "===RECORDS_REPLAY_END===")
+
+
+def test_the_run_replays_its_records_before_the_wall_clock_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`run` wraps everything it and the runner print, so the digest lines it prints before
+    the model load -- the only way `dataset_sha256` survives the instance -- are replayed
+    too, not just the runner's rows. The block lands before the final `[stage] wall_clock_s`
+    line and before boot.sh's `===ALL_DONE_...===`, at the end of the log where a tail fetch
+    keeps it. The model load and the pod itself are substituted: this test is about the
+    wiring, and `run`'s real body needs a GPU."""
+    model = SimpleNamespace(config=SimpleNamespace())
+    trial = "[trial] task=niah_single ctx=16384 arm=full seed=0 trial=0 hit=1 frac=1.000"
+    monkeypatch.setattr(pod, "_haystack_sha256", lambda p: {"haystack:pg19": "a" * 64})
+    monkeypatch.setattr("kvdlra.eval.data.load_model", lambda *a, **k: (model, None))
+    monkeypatch.setattr("kvdlra.eval.runner.run_pod", lambda *a, **k: print(trial, flush=True))
+
+    assert pod.run("w18_g1", tmp_path, dry_run=False) == 0
+
+    out = capsys.readouterr().out
+    begin, end = (out.index(m) for m in REPLAY)
+    assert begin < end < out.index("[stage] wall_clock_s ")
+    body = out[begin:end]
+    assert trial in body and out.count(trial) == 2
+    digest = f"[stage] dataset_sha256 haystack:pg19 {'a' * 64}"
+    assert digest in body and out.count(digest) == 2
+
+
+def test_harvest_reads_a_log_with_the_replay_as_one_without_it(
+    dry_pod: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The watchdog's `sort -u` already collapses the replay into the rows it repeats, but a
+    log fetched by hand (`pod.py harvest` with no watchdog, the recovery path a lost harvest
+    runs) carries both copies. Every record line is deduped before parsing, so the harvest of
+    a log with the replay is the harvest of the same log without it -- byte for byte, the
+    `source:line` citations included."""
+    tmp_path = _copy(dry_pod, tmp_path)
+    log = tmp_path / "pod.log"
+    files = ("trials.jsonl", "ppl.jsonl", "pplw.jsonl", "diag.jsonl")
+
+    log.write_text(LOG)
+    assert pod.harvest("w18_g1", log, tmp_path, force=False) == 0
+    plain = {f: (tmp_path / f).read_text() for f in files}
+    records = json.loads((tmp_path / "manifest.json").read_text())["records"]
+
+    repeat = [x for x in LOG.splitlines() if not x.startswith(("===", "[diag]"))]
+    log.write_text(LOG + "\n".join([REPLAY[0], *repeat, REPLAY[1], ""]))
+    assert pod.harvest("w18_g1", log, tmp_path, force=False) == 0
+    assert {f: (tmp_path / f).read_text() for f in files} == plain
+    assert json.loads((tmp_path / "manifest.json").read_text())["records"] == records
+    capsys.readouterr()

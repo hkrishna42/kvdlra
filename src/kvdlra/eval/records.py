@@ -29,9 +29,10 @@ from __future__ import annotations
 import json
 import math
 import re
+import sys
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
 from typing import Any, TypedDict, TypeVar
 
@@ -468,6 +469,77 @@ def parse_diag_lines(text: str, model: str, source: str) -> tuple[list[dict[str,
             continue
         out.append({"model": model, **payload, "source": f"{source}:{i}"})
     return out, skipped
+
+
+# --- the replay: the same lines a second time, at the end of the log -------------------
+
+REPLAY_BEGIN, REPLAY_END = "===RECORDS_REPLAY_BEGIN===", "===RECORDS_REPLAY_END==="
+# Which printed lines the replay repeats: the ones a parser above reads back, plus every
+# `[stage]` line (the digests, the pod's card, the per-cell clock). `[diag]` is left out on
+# purpose -- it is the volume, not the reading: the pre-flight's 4 MB tail came back as
+# 15,381 diag rows and 138 of everything else, which is why 143 of its 240 `[trial]` rows
+# were lost with the instance (D-011 addendum 10). ~1,000 lines for a Stage-1 pod.
+_REPLAY_RES = (TRIAL_RE, CELL_RE, ERROR_RE, PPL_RE, PPLW_RE, LATENCY_RE)
+
+
+def replayable(line: str) -> bool:
+    """Is this a line the replay repeats?"""
+    if line.startswith("[diag] "):
+        return False
+    return line.startswith("[stage] ") or any(r.match(line) for r in _REPLAY_RES)
+
+
+class _Tee:
+    """A stdout stand-in: writes through, and keeps the lines :func:`replayable` accepts.
+
+    A filter on the stream rather than a call at each print site -- the record lines come
+    from five modules (`scripts/pod.py`, this package's `runner`, `frontier`, `gen`,
+    `latency`), and a print site added later would silently not be replayed. Attribute
+    lookups fall through to the real stream, which is what a library asking stdout whether
+    it is a tty gets.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self.inner = inner
+        self.rows: list[str] = []
+        self._buf = ""
+
+    def write(self, s: str) -> int:
+        self._buf += s
+        while "\n" in self._buf:
+            line, _, self._buf = self._buf.partition("\n")
+            if replayable(line):
+                self.rows.append(line)
+        return int(self.inner.write(s))
+
+    def flush(self) -> None:
+        self.inner.flush()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+
+@contextmanager
+def replayed() -> Iterator[list[str]]:
+    """Run a pod with its record lines teed, and print them again between the markers.
+
+    `vastai logs` returns a ~4 MB TAIL, and the log dies with the instance: the pre-flight
+    pod reached ALL_DONE with every trial recorded and 143 of its 240 `[trial]` rows never
+    reached the laptop (D-011 addendum 10). Repeating the compact lines at the end puts
+    every reading inside any tail that holds the last ~1,000 record lines. The block is
+    printed on the way out of a raised run too -- a pod that crashed is exactly the one
+    whose rows are worth keeping -- and `scripts/pod.py harvest` dedupes exact-duplicate
+    lines before parsing, so the repeat is not a second set of records.
+    """
+    tee = _Tee(sys.stdout)
+    try:
+        with redirect_stdout(tee):
+            yield tee.rows
+    finally:
+        print(REPLAY_BEGIN, flush=True)
+        for line in tee.rows:
+            print(line)
+        print(REPLAY_END, flush=True)
 
 
 # The diagnostic rows the eval axes have drained from the caches of THIS process, each

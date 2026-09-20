@@ -57,6 +57,7 @@ from kvdlra.eval.records import (
     parse_pplw_lines,
     parse_trial_lines,
     read_jsonl,
+    replayed,
     write_jsonl,
 )
 
@@ -224,24 +225,31 @@ def run(name: str, out: Path, dry_run: bool) -> int:
     from kvdlra.eval.data import load_model
     from kvdlra.eval.runner import run_pod
 
-    # The haystacks before the weights: a source that will not download fails the pod
-    # in seconds, not after the model load; their digests are evidence, so the manifest
-    # carries them from here on -- and the log too: this manifest dies with the instance,
-    # and `harvest` rebuilds `dataset_sha256` from these lines (`DIGEST_RE`).
-    m["dataset_sha256"] = {**m["dataset_sha256"], **_haystack_sha256(pod)}
-    for key, sha in m["dataset_sha256"].items():
-        print(f"[stage] dataset_sha256 {key} {sha}", flush=True)
-    _write_manifest(out, m)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    t0 = time.perf_counter()
-    loaded = load_model(pod.model, device, pod.dtype)
-    print(f"[stage] load_model {pod.model} ({time.perf_counter() - t0:.1f} s)", flush=True)
-    m["model_revision"] = getattr(loaded[0].config, "_commit_hash", None)
-    _write_manifest(out, m)
-    for line in _stage_lines(m):
-        print(line, flush=True)
-    t_run = time.perf_counter()
-    run_pod(pod, out, loaded)
+    # Everything from here to the end of the pod prints inside `replayed`, which repeats
+    # the compact record lines between its markers when the block exits (L3.4a): the log
+    # dies with the instance and `vastai logs` returns only its tail, so the digests and
+    # the rows have to be at the END of the log as well as where they happened. The
+    # digest lines are the reason the block starts here rather than at `run_pod`: nothing
+    # else carries `dataset_sha256` off the pod.
+    with replayed():
+        # The haystacks before the weights: a source that will not download fails the pod
+        # in seconds, not after the model load; their digests are evidence, so the manifest
+        # carries them from here on -- and the log too: this manifest dies with the
+        # instance, and `harvest` rebuilds `dataset_sha256` from these lines (`DIGEST_RE`).
+        m["dataset_sha256"] = {**m["dataset_sha256"], **_haystack_sha256(pod)}
+        for key, sha in m["dataset_sha256"].items():
+            print(f"[stage] dataset_sha256 {key} {sha}", flush=True)
+        _write_manifest(out, m)
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        t0 = time.perf_counter()
+        loaded = load_model(pod.model, device, pod.dtype)
+        print(f"[stage] load_model {pod.model} ({time.perf_counter() - t0:.1f} s)", flush=True)
+        m["model_revision"] = getattr(loaded[0].config, "_commit_hash", None)
+        _write_manifest(out, m)
+        for line in _stage_lines(m):
+            print(line, flush=True)
+        t_run = time.perf_counter()
+        run_pod(pod, out, loaded)
     # The run's OWN span, printed for the same reason as the lines above: `_finish` puts
     # it in the manifest on the pod, and boot.sh's timestamps (which `_wall_clock_s`
     # reads, and which cover the boot too) are not always in the fetched log.
@@ -575,6 +583,13 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     out.mkdir(parents=True, exist_ok=True)
     text = log.read_text() if log else _fetch_log(out, name)
     source = str(log) if log else f"vastai logs ({_now()})"
+    # Exact-duplicate lines, dropped in place (L3.4a). The pod repeats its record lines at
+    # the end of the run (`records.replayed`), and a fetch of the pod's own stdout carries
+    # both copies -- the watchdog's `sort -u` collapses them in `<label>.raw`, a hand-fetched
+    # dump does not. Order-preserving, so the `source:<line>` a record cites is still the
+    # line it was first printed on. A `[diag]` row this drops is a row printed twice
+    # byte-for-byte, which is what the watchdog path has always kept one of.
+    text = "\n".join(dict.fromkeys(text.splitlines()))
 
     # Parse EVERY artifact before writing ANY of them. An incomplete [pplw] part set
     # raises SystemExit, and the 5000-line fallback fetch returns a shorter log than the

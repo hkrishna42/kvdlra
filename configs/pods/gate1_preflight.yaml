@@ -7,8 +7,8 @@ doc: >-
   stored bits at 16K) and its learn-then-freeze control -- under the uncompressed ceiling, on
   generator v2 at 16K, five tasks, n = 12, one seed, chunked prefill, Llama only. Generator v2 has
   never run on a GPU and its official-RULER `vt` never scored at all, while the v1 `vt` fell to
-  0.08 uncompressed on real text (D-005 addendum 2): Stage 1's 72 GPU-h point / 144 GPU-h bar (8
-  arms x 112 samples x 2 pods, derived arm by arm in prereg section 1) must not be the run that
+  0.08 uncompressed on real text (D-005 addendum 2): Stage 1's 82 GPU-h point / 164 GPU-h bar (8
+  arms x 128 samples x 2 pods, derived arm by arm in prereg section 1) must not be the run that
   finds that out. It also measures the per-arm min/sample that re-sizes Stage 1 (reading (iv),
   manifest cell_elapsed_s). Arm order -- ceiling, the two primary-contrast arms, frozen -- so a
   pod that dies early still lands the contrast. Harness validation; the Gate-1 prereg quotes the

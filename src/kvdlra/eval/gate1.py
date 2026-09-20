@@ -675,8 +675,13 @@ def gate1_verdict(retrieval: list[Contrast], ppl: list[PplContrast], data: Gate1
     is_c = not blockers and not refusals
     # Prereg section 4: "A/B and C are mutually exclusive by construction, and the +/-0.02
     # margin is what makes them so." Every route to a separation contradicts one of C's
-    # conditions, so both true at once is a bug in this function, not an outcome.
-    assert not (is_ab and is_c), "A/B and C are mutually exclusive (prereg section 4)"
+    # conditions, so both true at once is a bug in this function, not an outcome. A raise
+    # and not an `assert`: this one has to hold under `python -O` too.
+    if is_ab and is_c:
+        raise RuntimeError(
+            f"A/B and C both selected (prereg section 4 makes them exclusive):"
+            f" separated {separated}, no blockers, no refusals"
+        )
     blocked = ("C blocked by: " + "; ".join(blockers)) if blockers else ""
     # R-L3-15 (header): A/B and C are checked FIRST, on the families that remain --
     # both loops above already skip a refused one -- and REFUSED only decides once

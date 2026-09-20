@@ -1127,7 +1127,10 @@ def test_the_gate1_stage1_pods_resolve_end_to_end(name: str) -> None:
     model, arms = GATE1_PODS[name]
     assert p.model == model and p.prereg == GATE1_PREREG
     assert (REPO_ROOT / GATE1_PREREG).is_file(), "the prereg must be in the launch's ancestry"
-    assert p.gpu_budget_h > 0, f"{name}: a pod to be launched needs a pre-registered budget"
+    # Section 9's bar exactly, not just "some budget": 41.0 h point x the 2x factor
+    # `pod.py launch --max-hours` enforces. "The pods are never launched over their
+    # pre-registered bar", and a silent edit here is a pod that outspends the prereg.
+    assert p.gpu_budget_h == 82.0, f"{name}: prereg section 9 bars this pod at 82.0 h"
     assert config_hash(p)
     for a in arms:
         cfg = load_arm(a)

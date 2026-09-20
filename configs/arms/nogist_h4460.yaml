@@ -14,7 +14,7 @@ doc: >-
   at t=16384 against isvd_r64_h256_seed: the reference (rank 64, 16092 coordinate columns,
   32-token ring, 4 sinks, 256 exact) bills 73,836,288 bits/layer, and this arm bills
   622,784 + 16,416*H (2*n*16 = 16,384 fp16 K+V bits per exact token, +32 for its position
-  word), so H = 73,213,504 / 16,416 = 4459.89 -> 4460, a 1.00002x match. That is 4.4x the
+  word), so H = 73,213,504 / 16,416 = 4459.89 -> 4460, a 1.00003x match. That is 4.4x the
   ICML plan's "h ~ 1024", which was an fp16-equivalent estimate; the fp16-equivalent solve
   on the same inputs gives H = 2389.
 cache:

@@ -573,3 +573,271 @@ Gate-1 design run, and at what rate, before 164 GPU-h are committed to it — an
 that one.
 
 **STATUS: awaiting launch (DECISIONS, under D-011).**
+
+---
+
+## Amendment 1 (2026-09-20, after the partial harvest; committed strictly before the re-run's launch commit)
+
+**STATUS: launched 2026-09-20 under D-011's standing authorization (DECISIONS D-011 addendum 9),
+harvested PARTIAL at 8d10483** — this supersedes the "awaiting launch" line at the top of the
+file and the one that closes it. The instance is destroyed. This amendment records what the pod
+returned and what it lost, reads the readings that survived, and pre-registers the two repairs:
+the harness change that makes a harvest robust to a polling gap, and a re-run pod
+`gate1_preflight_rerun` — the three compressed arms, under **this** file, whose first commit
+(**8db2db2**) precedes every commit on this branch and so is a strict ancestor of any launch
+commit `scripts/pod.py launch` will accept.
+
+§1–§9 above are the design as it was written before the launch and are left untouched. Nothing
+below changes a reading, a threshold or a trigger: §4's four readings are read here exactly as
+they are written there, and the two that the capture loss leaves undecided are re-read on the
+re-run under the same rules. The incident is the harvest commit **8d10483** and
+`docs/plan/STATE.md`'s 2026-09-20 14:30 EDT addendum; in `docs/plan/DECISIONS.md` it is **D-011
+addendum 10** (the orchestrator's entry — that file is append-only and not this lane's).
+
+### A1.1 What happened: the pod finished, the log did not come back
+
+Instance **51722149** (offer 31632919, A100 SXM4 40 GB at $0.668/h, launch SHA 9e77314, bar 17 h
+— D-011 addendum 9) was created at **08:44:33 UTC** (`manifest.launched_at`) and ran to the end:
+the harvested log carries `===ALL_DONE_gate1_preflight_9e77314…===`, the manifest records
+`status: ALL_DONE`, `errors: 0`, `diag_skipped: 0`, and the log holds the `[stage] cell` line for
+`frozen_r64_h256_seed / vt` — the **last cell of the last arm** — at `n=12`. The pod did what §3
+asked of it.
+
+What failed is the capture, on this laptop:
+
+- **The Mac slept on battery.** `pmset -g log`: `Entering Sleep state due to 'Low Power Sleep'
+  … Using Batt (Charge:1%)` at **06:23:23 EDT**, and a wake from hibernate at **14:09:35 EDT**
+  when it was put back on AC. The watchdog was running under `caffeinate -s -i` as §8 requires —
+  but `caffeinate -s` asserts only while the machine is on **AC power** (macOS `caffeinate(1)`:
+  the flag "is valid only when system is running on AC power"), so on battery it held nothing.
+- **The watchdog therefore polled nothing for 7h 49m.** `results/gate1_preflight/watchdog.out`:
+  `06:22 iter=39 done=0/1`, then the next line is `14:11 gate1_preflight-51722149 ALL_DONE ->
+  destroy`. Its credit column brackets the bill: $92.5218 at 04:44 → $86.1195 at 14:11, i.e.
+  **$6.40 for a 9.44 h instance** (`launched_at` → `harvested_at`), of which the run itself was
+  ≈ 6.5 h (at A1.2's rates, `nogist` at its budgeted 1.55) — the rest is the boot and the idle
+  hours the sleeping watchdog could not end.
+- **The log endpoint returns a tail of about 4 MB.** The 14:11 fetch asked for 30,000 lines
+  (`--tail 30000`) and returned **15,519** of them, **4,265,336 bytes** — so the cap is bytes,
+  not lines. `[diag]` filled it: **15,381 of the 15,519 lines** are diagnostic rows (the gist
+  arms emit ≈ 416 per sample), leaving **97 of the 240 `[trial]` rows**, **8 of the 20
+  `[stage] cell` lines** and 8 cell-summary lines. The other 143 trial rows were printed on the
+  pod, never fetched, and died with the instance at 14:11.
+- **§6 sized the log in rows, not in bytes**, and that is the miss: it counted ≈ 40k diagnostic
+  rows against a 30,000-line fetch and concluded the `<label>.log` would hold the records, when
+  what the endpoint enforces is a byte ceiling the diagnostics reach first. A1.3 is the repair.
+
+The instance was still alive at 14:11 only because it was inside `GRACE_S` = 2 h from its final
+marker; a gap longer than that returns **nothing at all**. So the repair cannot be the replay
+alone (A1.3).
+
+### A1.2 What is void, what is kept — §4's four readings, read now
+
+`results/gate1_preflight/` is kept as the evidence it is: `trials.jsonl` (97 rows),
+`manifest.json` (8 `cell_elapsed_s` entries), the deduped `<label>.log` and `diag.jsonl`
+(15,381 rows). `scripts/pod.py check results/gate1_preflight` returns **1** — 12 of the 20 cells
+are short or absent — and that is the correct recorded state of a partial harvest, not a
+finding about the pod. **No number from this pod is cited as a result** (§1, §8): `make tables`
+reads nothing from that directory, and nothing below enters the paper.
+
+**(i) Completeness — `fail (capture)`, and never written as `pass`.** 97 of 240 records reached
+the laptop; of the 20 cells, 8 hold their 12 records and 12 are short or absent. The pod's own
+evidence says the loss is the fetch and not the run (ALL_DONE, `errors: 0`, the last cell present
+at `n=12`), but §4 (i) is a reading on the harvested records, and on those it fails. It is
+**re-read on the re-run**.
+
+**(ii) The `full` ceiling per task — READ NOW, and decided.** The `full` arm is the one arm whose
+five cells came back whole (60 records, 0 errors), so this reading does not depend on a lost row:
+
+| task | `full` | ≥ 0.9? |
+| --- | --- | --- |
+| `niah_single` | 12/12 = **1.00** | pass |
+| `niah_multikey` | 12/12 = **1.00** | pass |
+| `niah_multivalue` | 11/12 = **0.92** | pass |
+| `niah_multiquery` | 11/12 = **0.92** | pass |
+| `vt` | 9/12 = **0.75** | **FIRES** |
+
+The rule fires on `vt` and on nothing else. Both consequences §4 (ii) pre-registers follow, and
+neither is re-opened by the capture loss:
+
+- **`vt` leaves the Gate-1 primary Holm family**, by a dated amendment to
+  `prereg/gate1_tracker_swap_v2.md` committed before the Stage-1 launch commit — that file's
+  **Amendment 1b**, which sets the `EXCLUDED_TASKS` knob its Amendment 1a (A1a.8) shipped empty
+  and re-states §6's family sizes at the smaller family. Which task the knob names was left to
+  1b precisely so it could not be written before this row existed; this is the row.
+- **`vt` is repaired in `kvdlra.eval.gen` before any pod runs it again**, and the repair starts
+  from **a comparison of the generator's template against official RULER's**, which precedes any
+  pod: the v1 `vt` collapsed the same way on real text (0.08 uncompressed, D-005 addendum 2) and
+  §1's recorded hypothesis is a generator/template interaction.
+
+**The three misses are spread, not stacked.** They are trials 5, 8 and 11 of the 12-point design:
+`words`×2 and `numbers`×1 (both code families), depths **0.95**×2 and **0.40**×1 (two of the
+three depths the 12-trial grid draws), haystacks `essays`×2 and `arxiv`×1. So the ceiling is not
+one bad haystack, one depth or one code family — which is what a single-cell defect would look
+like, and is not what this is.
+
+**(iii) Pairing — `pass` on every key that came back.** The 97 rows fall into **60 keys**
+(5 tasks × 1 seed × 12 trials), **0 disagree**, and no digest is `None`; **37 of the 60** keys
+hold two or more arms, so the cross-arm invariant is exercised on 37 keys and is unbroken
+wherever it could be tested. The keys with one row are not evidence either way. The reading is
+**re-read on the re-run, and across the two pods** (A1.4).
+
+**(iv) Rates — two arms measured, one not; no trigger fires.** From the 8 surviving
+`cell_elapsed_s` entries (seconds ÷ 12 records ÷ 60):
+
+| arm | cells measured | min/sample | §7 budget | trigger | outcome |
+| --- | --- | --- | --- | --- | --- |
+| `full` | 5 of 5 (197.3 s total) | **0.055** | 0.6 | — | 11× under budget |
+| `isvd_r64_h256_seed` | 2 of 5 (`niah_single` 2351.6 s, `niah_multikey` 2464.4 s) | **3.27 / 3.42** | 3.1 | > 4.7 | **not fired** |
+| `frozen_r64_h256_seed` | 1 of 5 (`vt` 1137.8 s) | **1.58** | 2.1 | > 3.1 | **not fired** |
+| `nogist_h2423` | 0 of 5 | **not measured** | 1.55 | > 3.1 | read on the re-run |
+
+§4 (iv)'s fallback (the aggregate κ) is **not** used: `cell_elapsed_s` exists, for 8 cells. The
+measured `isvd` rate is 5–10% above the 3.1 §7 sizes Stage 1 with and well inside its trigger, so
+**§9 of `prereg/gate1_tracker_swap_v2.md` is not re-sized by this pod**; Amendment 1b records
+3.27–3.42 as the measured anchor Stage 1 is read against. `frozen` at 1.58 is *faster* than its
+derived 2.1. The one rate §7 named as reading (iv)'s "first suspect" — `nogist_h2423`, whose
+2423-token tier is re-scored every absorb — is exactly the one the gap swallowed, which is a
+reason the re-run keeps all three arms rather than the two that are undecided.
+
+**§5's descriptive rows, as far as they go.** Two complete compressed cells survive:
+`isvd_r64_h256_seed` `niah_single` **10/12 = 0.83** and `niah_multikey` **3/12 = 0.25**, and
+`frozen_r64_h256_seed` `vt` **4/12 = 0.33** (a task now outside the primary family). A cell short
+of 12 records is **not** quoted as a rate anywhere — the single `niah_multivalue` row is one
+trial, not a cell. These are the rows `prereg/gate1_tracker_swap_v2.md` Amendment 1b may carry
+into its §2 as the measured real-text baseline, superseded cell by cell by the re-run's.
+
+### A1.3 The repair: the pod replays its records, and the laptop stays on AC
+
+**(a) The records replay** (commit **049c66b**, `kvdlra.eval.records.replayed`, wired into
+`scripts/pod.py run`). At the end of the run — after `run_pod` returns, before the final
+`[stage] wall_clock_s` line, and before boot.sh prints `===ALL_DONE_…===` — the pod prints every
+compact record line a second time, between `===RECORDS_REPLAY_BEGIN===` and
+`===RECORDS_REPLAY_END===`: the `[trial]` rows, the cell summaries, the `[pplw]` and `ppl=`
+rows, the `[error]` lines and every `[stage]` line (the four `dataset_sha256` digests included —
+the manifest that holds them dies with the instance). **`[diag]` rows are not replayed**: they
+are the volume, not the reading, and replaying them would reproduce the failure.
+
+**Why it makes the harvest robust to a polling gap.** For the re-run the block is ≈ 180 `[trial]`
++ 15 cell summaries + 15 `[stage] cell` + ≈ 10 other `[stage]` lines ≈ **220 lines, under 30 KB**
+— 0.7% of a 4 MB tail; a Stage-1 pod's block is ≈ 1,000 lines. Since it is printed last, any tail
+that reaches back past it carries **every reading**, and a polling gap of any length costs
+`[diag]` rows and nothing else. Two limits, stated rather than left to be discovered: the block
+does not help a pod whose **instance is destroyed before the run ends** (nothing is printed yet),
+and it does not help a tail smaller than the block.
+
+Two mechanical consequences, both already shipped and tested:
+
+- `scripts/pod.py harvest` **dedupes exact-duplicate lines** (order-preserving) before parsing,
+  so a log fetched by hand — which carries both copies — yields byte-identical records to one
+  without the replay. The watchdog's per-poll `sort -u` already did this for `<label>.log`.
+- §4 (i)'s `grep -c '^\[trial\]' <label>.log` = 240 is read on the **deduped** `<label>.log` the
+  watchdog writes, where the replay collapses into the rows it repeats. On a raw dump the count
+  is doubled; the harvest's own dedupe is what the records are parsed from either way.
+
+**(b) The launch procedure gains one line, and §8's launch bullet is amended to it:** the Mac
+runs the watchdog under `caffeinate -s -i` **and stays on AC power** — `caffeinate -s` holds
+only on AC, so a watchdog started on battery is a launch to postpone, not a launch to watch. The
+pod's own `GRACE_S` = 2 h self-destruct bounds the idle billing a gap can cost (it did here:
+$6.40 against a $5.6 estimate) but also bounds the window in which the log can still be fetched,
+which is why (a) and (b) are both required and neither replaces the other.
+
+### A1.4 The re-run: `gate1_preflight_rerun`
+
+`configs/pods/gate1_preflight_rerun.yaml` — the same model, dtype, image and task as
+`configs/pods/gate1_preflight.yaml` (`ruler_v2_16k`: generator v2, five tasks, the 2 × 3 × 2
+design, n = 12, one seed, chunk 4096, Llama-3.1-8B at 16K), under **this** pre-registration
+(`prereg: prereg/gate1_preflight.md`), with the arms:
+
+| # | arm | why |
+| --- | --- | --- |
+| 1 | `isvd_r64_h256_seed` | reading (iii)'s and (iv)'s primary arm; 3 of its 5 cells were lost |
+| 2 | `nogist_h2423` | the byte-matched control; **all 5** cells lost, and the unmeasured rate |
+| 3 | `frozen_r64_h256_seed` | the learn-then-freeze control; 4 of its 5 cells lost |
+
+**`full` is not re-run.** Its five cells are complete and its reading (ii) is decided above; the
+arm would add 60 samples of ceiling for a row that already exists, and the re-run's arms are
+compared against **the ceiling this pod measured**. The arm order is §3's with that arm removed,
+so the pod still lands the primary contrast first if it dies early.
+
+**How the two pods are shown to be one experiment.** The generator is seeded and its inputs are
+pinned — both manifests must carry the same four `dataset_sha256` haystack digests
+(`4c2b7e03…` arxiv, `12a16c81…` essays, `7a9b488c…` pg19, `6e37fe2f…` wikipedia) — so the
+re-run's prompts must be byte-identical to the first pod's, key by key:
+
+```python
+import json, collections
+rows = [json.loads(l) for d in ("gate1_preflight", "gate1_preflight_rerun")
+        for l in open(f"results/{d}/trials.jsonl")]
+sha = collections.defaultdict(set)
+for r in rows: sha[(r["task"], r["seed"], r["trial"])].add(r["prompt_sha256"])
+bad = {k: v for k, v in sha.items() if len(v) != 1 or None in v}
+print(len(sha), "keys;", len(bad), "disagree")
+```
+
+Expected `60 keys; 0 disagree`. A key that disagrees is a **fail of reading (iii) on the re-run**
+and the two pods are **not pooled**: the surviving `full` rows would then be a ceiling for other
+prompts, and the re-run would be read on its own with the ceiling recorded as not re-measured.
+
+**The readings on the re-run are §4's, unchanged.** (i) completeness at **15 cells × 12 = 180**
+records, 0 errors, `scripts/pod.py check results/gate1_preflight_rerun` = 0; (iii) the pairing
+invariant, within the pod (60 keys × 3 arms) and across the two pods as above; (iv) the same
+three triggers — `isvd` > 4.7, `nogist` > 3.1, `frozen` > 3.1 — now read off 15
+`cell_elapsed_s` entries, five per arm, with §4 (iv)'s κ fallback standing if the lines are
+absent. Reading (ii) is **not** re-read: it is decided in A1.2, and no arm in this pod can
+measure it.
+
+**Budget, at the rates this pod measured.** 60 samples per arm; `isvd` at the lower of its two
+measured rates, `frozen` at its measured one, `nogist` at §7's derived 1.55 (it is the rate that
+is unmeasured, so it is budgeted, not assumed away):
+
+| arm | min/sample | source | × 60 | minutes |
+| --- | --- | --- | --- | --- |
+| `isvd_r64_h256_seed` | 3.27 | measured (A1.2; 3.42 on the other cell) | | 196 |
+| `nogist_h2423` | 1.55 | §7, derived — not measured | | 93 |
+| `frozen_r64_h256_seed` | 1.58 | measured (A1.2) | | 95 |
+| | **compute** | | | **384 min = 6.4 h** |
+
+Plus **20 min boot**: `prereg/l2_smoke.md` §7's measured 15–20 min bracket for this image and
+host family, at its top; this pod's own in-run setup is in its log and sits inside it
+(`load_model` 194.7 s + the four `materialize` lines 46.1 s + `load_corpora` 0.1 s = **4.0 min**).
+
+| pod | compute | + boot | point estimate | **`gpu_budget_h` (2× bar)** |
+| --- | --- | --- | --- | --- |
+| `gate1_preflight_rerun` | 6.4 h | + 20 min | **6.8 h** | **14.0** |
+
+14.0 is 2.06× the point. The sensitivity is stated rather than hidden: at `isvd`'s upper measured
+rate (3.42) the point is 6.9 h, and at §7's *unamended* 60 min overhead it is 7.4 h — 14.0 is
+still 1.9× the worse of the two. At **$0.68–0.74/h** (the first instance billed $0.668/h; the top
+is §7's observed band) that is **$4.6–5.0 expected, $9.5–10.4 at the bar**, against credit
+$86.12 (`watchdog.out`, 14:11). The bar is enforced on the pod by `pod.py launch --max-hours`
+(default `gpu_budget_h`), and §7's overrun rule — a pod past its bar is killed and diagnosed —
+stands unchanged.
+
+**Provenance, as §8 requires of the original.** Pod config `configs/pods/gate1_preflight_rerun.yaml`,
+no arm or task file edited; pinned in `tests/test_pod_manifest.py` (the launch-pod table: prereg
+path, arm order, task list, n = 12, the 14.0 bar, every arm through `frontier.build_arm` at
+t = 16384, and a `config_hash` distinct from every other pinned pod's — the dropped `full` arm is
+what separates it from the pod it repeats). This file's first commit **8db2db2** is a strict
+ancestor of every commit on this branch, and this amendment is committed before the re-run's
+launch commit. Launch: `scripts/pod.py launch --pod gate1_preflight_rerun --offer <id>` from a
+pushed SHA on a clean tree, the watchdog under `caffeinate -s -i scripts/pod/watchdog.sh
+gate1_preflight_rerun` **on AC power** (A1.3 (b)), recorded in `docs/plan/DECISIONS.md` under
+D-011's standing authorization with the offer id, the hourly rate, the bar and the credit before
+launch. Outputs: `results/gate1_preflight_rerun/` — `manifest.json` (15 `cell_elapsed_s`
+entries), `trials.jsonl` (180 rows), `diag.jsonl`, `env.txt`, `pods.txt`.
+
+### A1.5 What does not change
+
+§1–§9 stand as written, and this amendment adds no reading and moves no threshold: §3's design,
+§4's four readings with their triggers and their fallback, §5's descriptive expectations, §6's
+log-volume rule (its byte miss is recorded in A1.1 and repaired in A1.3, not re-derived here),
+§7's rates, its 2× bar rule and its overrun rule, §8's provenance and ordering requirements, and
+§9's list of what this pod does not decide — which the re-run does not decide either. The
+`full` arm's absence from the re-run changes no reading's definition: reading (ii) is **decided**,
+not dropped. No number from either instance is cited as a result, and `make tables` reads neither
+directory. The pre-flight's three returns to `prereg/gate1_tracker_swap_v2.md` — the §2 rows, the
+`vt` exclusion and the §9 re-size (not triggered) — remain that file's **Amendment 1b**, to be
+committed before the Stage-1 launch commit.
+
+**STATUS: harvested PARTIAL (8d10483); the re-run `gate1_preflight_rerun` is pre-registered here
+and awaits launch (DECISIONS, under D-011).**

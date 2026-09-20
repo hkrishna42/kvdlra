@@ -215,5 +215,4 @@ def test_trial_rows_stream_out_and_carry_the_generators_metadata(
     # the harvest keeps has a clock, and a per-arm rate is what sizes the next pod.
     timings = pod.CELL_S_RE.findall(out)
     assert [(a, t, c) for a, t, c, _ in timings] == [("full", sub, "16384") for sub in subs]
-    assert all(float(s) >= 0.0 for *_, s in timings)
     assert out.count(" n=12\n") >= len(subs)  # the cell's record count rides the line

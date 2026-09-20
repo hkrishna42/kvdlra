@@ -1232,14 +1232,27 @@ one, on two families at one context.
 
 ---
 
-## Amendment 1a (2026-09-20, before the pre-flight harvest; committed at this commit)
+## Amendment 1a (2026-09-20, before the Stage-1 launch commit; first committed at 5f2cdcf)
 
 §1–§11 above are the design as it was written before either pod was launched and before any
 generator-v2 row existed on hardware. They are left untouched. This section records only what
 **does not depend on pre-flight data**: the places where the shipped `kvdlra.eval.gate1` and
 `scripts/pod.py` are narrower, or differently worded, than the body describes, and the lane
-rulings that fixed them. It is committed before the pre-flight harvests, so that nothing in it
-can be a reaction to a number.
+rulings that fixed them. No Stage-1 pod has launched, so this is committed before the launch
+commit exactly as §10 and the head of this file require.
+
+**Order, stated exactly, because this amendment's heading first got it wrong.** It was drafted
+against the code alone, to land before the pre-flight harvested — and the pre-flight did not
+wait: instance 51722149 was destroyed at 14:11 EDT and its **PARTIAL** harvest was committed at
+**8d10483** (14:25:53 EDT, 97 of 240 trials; the capture loss and its repair are D-011 addendum
+10), three minutes before this section was first committed at **5f2cdcf** (14:29:04 EDT). The
+original heading said "before the pre-flight harvest", which is false in commit order; that
+line is corrected here rather than left standing. **What it claimed of the content is
+unchanged and is checkable**: every item below is read off the code at HEAD and names the
+`file:line` it matches, not one is read off `results/gate1_preflight/`, and the pre-flight's
+three promised returns — the §2 baseline rows, the `vt` ceiling decision and the §9 re-size —
+are **not** here. They are Amendment 1b's, and that amendment must also say what the partial
+capture leaves readable.
 
 **Amendment 1b, after that harvest, carries the rest** — the pre-flight's per-task rows into §2
 (the promise at the head of this file, item 1), the `vt` ceiling decision (item 2), and the §9
@@ -1249,15 +1262,16 @@ re-size against the measured rates (item 3). Nothing below anticipates any of th
 threshold; §6's three families keep their composition; §9's bars do not move. What changes is
 the *description* of machinery that §1–§11 were written before.
 
-Line numbers are as of this commit; the symbol names beside them are the durable anchor.
+Line numbers are as of the commit that corrected this heading (the cleanup commits after
+5f2cdcf moved `gate1.py`); the symbol names beside them are the durable anchor.
 
 ### A1a.1 The `prompt_sha256` drop is scoped to the member — §4 governs, §7 (e) is withdrawn on this point
 
 §4 ("Primary contrasts, written exactly") drops a key whose two digests disagree "from that
 member and the drop is reported with the key". §7 (e) says instead that such a key "is dropped
 from **every paired statistic in that pod**". Those are two different rules, and the code
-implements §4's: `_mismatched` (`src/kvdlra/eval/gate1.py:540`) is computed per **cell pair**
-inside `_draft_retrieval` (`:489`), so only the keys *those two arms* disagree on leave
+implements §4's: `_mismatched` (`src/kvdlra/eval/gate1.py:441`) is computed per **cell pair**
+inside `_draft_retrieval` (`:401`), so only the keys *those two arms* disagree on leave
 *that one* McNemar; every other member of the pod keeps its 24 keys.
 
 **§7 (e)'s "from every paired statistic in that pod" is withdrawn.** A digest disagreement is a
@@ -1275,8 +1289,8 @@ returning `"A/B" | "C" | "UNDECIDED"`. Two corrections.
 **(i) Ruling R-L3-12 — a refusal is its own branch value.** "The rule ran and neither branch
 held" (`UNDECIDED`) and "the rule never ran on that family" (`REFUSED`) are different findings,
 and a table that prints one for the other misreports the pod. `Verdict.branch`
-(`gate1.py:265-274`) therefore takes **four** values, and the precedence the module applies is
-**A/B, then C, then REFUSED, then UNDECIDED** (`gate1_verdict`, `:794-829`). Every sentence of
+(`gate1.py:184-190`) therefore takes **four** values, and the precedence the module applies is
+**A/B, then C, then REFUSED, then UNDECIDED** (`gate1_verdict`, `:689-722`). Every sentence of
 §4's "Refusal, and the `--` rule" that says a refusal "returns `UNDECIDED`" reads **`REFUSED`**.
 Nothing else about those five refusals moves: they are still read before the rules, still
 *return* rather than raise (a raise would leave `make gate1` with no table in which to print the
@@ -1298,7 +1312,7 @@ verdict   = gate1.gate1_verdict(retrieval, ppl, data)            # -> Verdict
 ```
 
 `diag` and `sbits` are not parameters. `Gate1Data` carries both — `frozen_defects` read from
-`diag.jsonl` and `sbits` from `ppl.jsonl` (`gate1.load`, `:354-421`) — so refusals 1, 3 and 4 are
+`diag.jsonl` and `sbits` from `ppl.jsonl` (`gate1.load`, `:274-342`) — so refusals 1, 3 and 4 are
 still decided "from the records, not by eye", through one object instead of three arguments. The
 readings are identical and no shim is added. Two smaller restatements of the same sketch: the
 contrasts come back as **lists** of `Contrast` / `PplContrast`, not as dicts keyed by tuple, and
@@ -1308,19 +1322,19 @@ contrasts come back as **lists** of `Contrast` / `PplContrast`, not as dicts key
 
 **Ruling R-L3-15 — per family, not per verdict.** §4 reads as though any refusal refuses the
 whole verdict. The shipped rule scopes each refusal to the family it fires on: the per-family
-loops in `gate1_verdict` skip a refused family (`:719-725` for rule 1's separations, `:730-732`
+loops in `gate1_verdict` skip a refused family (`:613-615` for rule 1's separations, `:626-628`
 for rule 3's blockers), so **A/B is read on the families that remain** and a refusal elsewhere is
-printed beside the branch, never instead of it (`:794-805`). **C is not** read that way: a
-refused family blocks C outright (`is_c = not blockers and not refusals`, `:782`), because C is a
+printed beside the branch, never instead of it (`:689-700`). **C is not** read that way: a
+refused family blocks C outright (`is_c = not blockers and not refusals`, `:675`), because C is a
 positive claim of non-separation over *every* family in the input and a family whose members were
 never read is not evidence for it. `REFUSED` is what is left once neither branch composes
-(`:812-822`).
+(`:707-712`).
 
 **Ruling R-L3-16 — before the correction, not only before the rules.** "A refused family
 contributes no evidence, in either direction" has to hold of Holm's realised *m* as well, so
-`_refusals` (`gate1.py:596`) runs first and a refused family's members leave **every** Holm family
-— primary retrieval, secondary, perplexity — before `_holm_by_group` (`:443`) corrects it
-(`:530`, `:588`, `:715`). The realised *m* is then the members the non-refused families
+`_refusals` (`gate1.py:495`) runs first, in `load` (`:341`), and a refused family's members leave **every** Holm family
+— primary retrieval, secondary, perplexity — before `_holm_by_group` (`:363`) corrects it
+(`:435`, `:489`, `:609`). The realised *m* is then the members the non-refused families
 contribute, which is the *m* those families would have had on their own. Without it, a third
 family refused on its byte match would widen Stage 1's 16-member family to 24 and withdraw an A/B
 the two clean families earned. The excluded members are still computed and still printed, with
@@ -1329,12 +1343,12 @@ the two clean families earned. The excluded members are still computed and still
 **The Holm family is the pod set of ONE `make gate1` invocation** — one stage per call. §6's
 primary retrieval family is 16 *pooled* across Llama and Qwen, not 8 per model, so the grouping
 key is the invocation, not the model family; the context length splits the verdict's 16K family
-from a descriptive 32K one inside one invocation, which §6 also fixes (`_holm_by_group`'s note,
-`:457-467`). One stage per call is the caller's contract — `make gate1` names Stage 1's two pods —
+from a descriptive 32K one inside one invocation, which §6 also fixes (`_holm_by_group`'s docstring,
+`:372-374`). One stage per call is the caller's contract — `make gate1` names Stage 1's two pods —
 and not a check inside the function.
 
 **Neither ruling can change a Stage-1 verdict, and neither is a post-hoc widening.** Stage 1 has
-exactly two families and `MIN_FAMILIES_FOR_AB` is 2 (`gate1.py:163`). Refuse one and at most one
+exactly two families and `MIN_FAMILIES_FOR_AB` is 2 (`gate1.py:76`). Refuse one and at most one
 remains, so "≥ 2 families separated" is unreachable; C is unreachable too, since any refusal
 blocks it. Every Stage-1 input carrying a refusal therefore lands on `REFUSED`, with or without
 R-L3-15 and R-L3-16. Both rulings bite only where a *third* family is in the same invocation —
@@ -1346,23 +1360,23 @@ reach A/B, and it blocks C outright.
 
 §7 (f) opens "`ratio` and `sbits` are recorded on every row", and §10's `trials.jsonl` field list
 names "`ratio`, `sbits`". Neither is true of `trials.jsonl`: `TrialRecord`
-(`src/kvdlra/eval/records.py:98-114`) carries no such field, and none is written. The `sbits`
+(`src/kvdlra/eval/records.py:102-118`) carries no such field, and none is written. The `sbits`
 that §4's byte-match refusal reads is `PplRecord["sbits"]` in **`ppl.jsonl`**
-(`records.py:151-160`), written from the frontier row's **`ratio_stored_bits`**
-(`runner._ppl_record`, `src/kvdlra/eval/runner.py:395`) — an arm's stored bits relative to
+(`records.py:155-164`), written from the frontier row's **`ratio_stored_bits`**
+(`runner._ppl_record`, `src/kvdlra/eval/runner.py:385`) — an arm's stored bits relative to
 `full`, which is why the common denominator cancels in the `nogist`/`isvd` ratio the refusal
-takes. `gate1.load` reads it there and nowhere else (`gate1.py:407-410`) and takes the **median**
-over that arm's perplexity rows (`:420`).
+takes. `gate1.load` reads it there and nowhere else (`gate1.py:322-325`) and takes the **median**
+over that arm's perplexity rows (`:335`).
 
 So §7 (f) and §10 read: **`sbits` is a `ppl.jsonl` field, `ratio_stored_bits` at the source; a
 `trials.jsonl` row carries `prompt_sha256`, `haystack_id`, `depth` and `code_family`, and no
-footprint column.** The retrieval cell *line* does print `ratio=`/`sbits=` (`runner.py:316`) and
-`records.parse_cell_lines` (`:224`) reads them, but `pod.py harvest` writes no `cells.jsonl` for
-these pods (`scripts/pod.py:590-605`), so `ppl.jsonl` is the only committed carrier.
+footprint column.** The retrieval cell *line* does print `ratio=`/`sbits=` (`runner.py:314`) and
+`records.parse_cell_lines` (`:228`) reads them, but `pod.py harvest` writes no `cells.jsonl` for
+these pods (`scripts/pod.py:594-615`), so `ppl.jsonl` is the only committed carrier.
 
 One consequence, stated plainly: **the byte-match refusal needs the perplexity axis to have run.**
 A pod whose `ppl.jsonl` is absent, or whose rows carry no `sbits`, reads `byte match not measured
-(no sbits on the records)` and is **refused** (`gate1.py:638-639`) — an unmeasured reading is
+(no sbits on the records)` and is **refused** (`gate1.py:536-537`) — an unmeasured reading is
 never a pass (§9's rule). §7 (f)'s descriptive comparison across arms is unaffected.
 
 ### A1a.5 Two blockers `gate1_verdict` adds that §4 does not state
@@ -1375,16 +1389,16 @@ non-separation "on **any task in any 16K family**", and those tasks are §3's fo
 ones the records happen to carry: quantified over the tasks merely *present*, a pod that ran two
 of them and separated on neither would print the strongest claim this gate can make off half the
 evidence. So C is blocked unless every task of `TASK_ORDER` — `niah_single`, `niah_multikey`,
-`niah_multivalue`, `vt` (`gate1.py:192`) — is present with an `isvd` row set in **every** 16K
-family: `incomplete task set: <family> lacks <tasks>` (`:740-742`). This guards **presence**
+`niah_multivalue`, `vt` (`gate1.py:105`) — is present with an `isvd` row set in **every** 16K
+family: `incomplete task set: <family> lacks <tasks>` (`:629-635`). This guards **presence**
 only. Per-cell n-completeness (every retrieval cell at n = 24) is `scripts/pod.py check`'s job,
 exactly as §10's citability rule already has it, and the verdict does not duplicate it.
 
 **(b) An input with no 16K family is UNDECIDED, never C.** C is selected as "nothing blocks it",
 so an empty (dry-run) pod directory or a 32K-only record set would otherwise satisfy it
-vacuously — a Branch C read from no members at all. `NO_MEMBERS` (`gate1.py:202`) blocks C when
+vacuously — a Branch C read from no members at all. `NO_MEMBERS` (`gate1.py:121`) blocks C when
 no family carries the reference arm at 16K, and the branch reads `UNDECIDED` with that reason
-(`:777-778`, `:821-822`).
+(`:670-671`, `:713-714`).
 
 ### A1a.6 `manifest.cell_elapsed_s` carries 40 entries per Stage-1 pod, and the perplexity rate is measured
 
@@ -1393,8 +1407,8 @@ so the measured rate covers 96 of an arm's 128 samples", and §8's log-volume ta
 manifest bullet both count **32** entries. Lane task L3.3a made the perplexity axis print the
 same line: one per (arm, ctx) sweep, keyed by the perplexity **task** name (`ppl_16k_pg19val`,
 which no retrieval sub-task is called) so that `harvest` folds both axes into one
-`cell_elapsed_s` without pooling two cells (`src/kvdlra/eval/runner.py:374-384`; `CELL_S_RE`,
-`scripts/pod.py:426`; the fold, `pod.py:616-618`).
+`cell_elapsed_s` without pooling two cells (`src/kvdlra/eval/runner.py:368-375`; `CELL_S_RE`,
+`scripts/pod.py:430`; the fold, `pod.py:620-622`).
 
 Per Stage-1 pod, therefore, **40 entries**: 8 arms × 4 retrieval sub-tasks = 32, plus 8 arms × 1
 perplexity sweep = 8. §8's row "`[stage] cell` (§7 d): 8 × 4 | 32 | 32" reads **8 × 4 + 8 = 40**,
@@ -1420,16 +1434,16 @@ perplexity rate is reported beside the retrieval rate as a measurement, not an a
 the pod is relaunched. Lane task L3.3b widened `pod.py harvest`'s non-shrink guard from
 `trials.jsonl` to **every** record file the harvest writes (`_shrink_refusal`,
 `scripts/pod.py:399-413`), and that guard is **all-or-nothing**: if any one file would shrink,
-the whole harvest is refused and nothing is written (`pod.py:597-601`). A truncated fallback
+the whole harvest is refused and nothing is written (`pod.py:602-606`). A truncated fallback
 fetch — `vastai logs --tail` capped at 5,000 lines when the full fetch comes back empty — is
 exactly the case it exists for, and it would otherwise refuse a harvest that is good on the other
 four files.
 
 The recipe, pre-committed here: **a relaunched instance harvests into its own directory**,
-`pod.py harvest --out results/<pod>_<instance>` (`pod.py:904`), never over the first one. The two
+`pod.py harvest --out results/<pod>_<instance>` (`pod.py:908`), never over the first one. The two
 directories are then compared and the complete one is what `make gate1` reads — never both at
 once, which `gate1.load` refuses anyway ("a second `<family>` pod — one pod per family",
-`gate1.py:380`), and never a merge of the two. `--force` (`pod.py:905-907`) overwrites in place
+`gate1.py:302`), and never a merge of the two. `--force` (`pod.py:909-911`) overwrites in place
 and is used only with its reason written into the DECISIONS entry beside the instance id, because
 it discards rows already on disk. This is a harvest recipe and not a change to what is measured:
 no statistic in §4 or §6 crosses a pod boundary, and two instances of one pod are two attempts at

@@ -1003,6 +1003,82 @@ def test_the_live_filler_manifests_still_hash_to_their_configs() -> None:
         assert config_hash(load_pod(name)) == m["config_hash"], name
 
 
+# --- L3.2: Gate 1, Stage 1 (prereg/gate1_tracker_swap_v2.md) -----------------------------
+
+# The arm ORDER is that file's section 3 and it is load-bearing: it buys an ordered loss --
+# both primary contrasts have landed at 15.7 h of compute and the C branch is decidable at
+# 22.3 h (section 9) -- so a pod killed at its bar still holds every cell the decision rule
+# reads, and section 9's cut ladder drops the last two arms in the order they are listed.
+# The no-gist twin is per KV width (1024 channels on Llama, 512 on Qwen), so one H cannot
+# serve both pods and the two lists differ in exactly that arm.
+GATE1_PREREG = "prereg/gate1_tracker_swap_v2.md"
+GATE1_STAGE1_ARMS = [
+    "full",
+    "isvd_r64_h256_seed",
+    "nogist_h2423",
+    "frozen_r64_h256_seed",
+    "fd_r64_h256_seed",
+    "isvd_r64_h256_seed_bf16",
+    "oja_r64_h256_seed_tuned",
+    "random_r64_h256_seed",
+]
+GATE1_STAGE1_TASKS = ["ruler_v2_16k_g1", "ppl_16k_pg19val"]
+GATE1_SUBTASKS = ["niah_single", "niah_multikey", "niah_multivalue", "vt"]
+GATE1_PODS: dict[str, tuple[str, list[str]]] = {
+    "gate1_v2_stage1_llama": ("unsloth/Meta-Llama-3.1-8B-Instruct", GATE1_STAGE1_ARMS),
+    "gate1_v2_stage1_qwen": (
+        "Qwen/Qwen2.5-7B-Instruct",
+        ["nogist_h4460" if a == "nogist_h2423" else a for a in GATE1_STAGE1_ARMS],
+    ),
+}
+
+
+@pytest.mark.parametrize("name", list(GATE1_PODS))
+def test_the_gate1_stage1_pods_resolve_end_to_end(name: str) -> None:
+    """Each pod loads, hashes, names the prereg that must precede its launch commit (and
+    that file is in the tree, so `pod.py launch`'s ancestry check has something to check),
+    carries a budget to enforce, and builds every arm at the task's context exactly as the
+    runner builds it before the first trial (`frontier.build_arm`)."""
+    p = load_pod(name)
+    model, arms = GATE1_PODS[name]
+    assert p.model == model and p.prereg == GATE1_PREREG
+    assert (REPO_ROOT / GATE1_PREREG).is_file(), "the prereg must be in the launch's ancestry"
+    assert p.gpu_budget_h > 0, f"{name}: a pod to be launched needs a pre-registered budget"
+    assert config_hash(p)
+    for a in arms:
+        cfg = load_arm(a)
+        assert cfg.name == a
+        assert build_arm(cfg, model=None, t=16384)["name"] == (cfg.legacy_name or a)
+
+
+def test_the_gate1_stage1_pods_are_their_prereg_design() -> None:
+    """Section 3 row by row: the arm order, the two tasks, the four Gate-1 sub-tasks at
+    n = 24 from one seed on the 2 x 3 x 4 design, the 32-window perplexity sweep on PG-19
+    validation (16 would leave the +/-0.02 TOST undecidable at the spread section 2 (b)
+    measured), bfloat16 on the -devel image, and a hash distinct from every other pinned
+    pod's. `niah_multiquery` is not a Gate-1 task and no contrast in that file reads it.
+
+    128 samples per arm is also what section 8 sizes the log for: at 32 windows a `[pplw]`
+    line is ~447 characters and splits into FOUR `part=i/N` fragments per arm, which
+    `records.parse_pplw_lines` reassembles -- so no reader here may assume one line per arm.
+    """
+    for name, (_, arms) in GATE1_PODS.items():
+        p = load_pod(name)
+        assert p.arms == arms, f"{name}: not the pre-registered arm order"
+        assert p.tasks == GATE1_STAGE1_TASKS, f"{name}: tasks {p.tasks}"
+        assert p.dtype == "bfloat16" and "-devel" in p.image, f"{name}: {p.dtype} {p.image}"
+        ruler = load_task(p.tasks[0])
+        assert isinstance(ruler, TaskV2Cfg) and ruler.ctx == 16384 and ruler.chunk == 4096
+        assert ruler.tasks == GATE1_SUBTASKS and ruler.seeds == [0]
+        assert ruler.n_trials * len(ruler.seeds) == 24, f"{name}: not the pre-registered n"
+        assert ruler.design == {"haystacks": 2, "depths": 3, "codes": 4}
+        ppl = load_task(p.tasks[1])
+        assert (ppl.generator, ppl.corpus, ppl.window) == ("ppl", "pg19-val", 2048)
+        assert ppl.n_samples == 32, f"{name}: not the pre-registered window count"
+    every = [*L2_PODS, *GATE1_PODS]
+    assert len({config_hash(load_pod(n)) for n in every}) == len(every)
+
+
 # Gate G2 line 6: the k in {0.10, 0.15, 0.25} eviction grid + ThinK composed as its paper
 # intends -- ticked by the smoke pod's harvest, so the pod has to carry all nine.
 SMOKE_GATE_ARMS = [

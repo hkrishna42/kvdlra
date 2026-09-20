@@ -1,0 +1,32 @@
+name: gate1_v2_stage1_qwen
+model: "Qwen/Qwen2.5-7B-Instruct"
+dtype: bfloat16
+doc: >-
+  Gate 1, Stage 1, the Qwen half (lane L3; prereg/gate1_tracker_swap_v2.md): does the
+  online-tracked gist do work that a frozen basis, a random basis or no gist at all does not
+  (ICML2027_PLAN section 2 Gate 1 item 1.1)? Only the gist's tracker is swapped -- everything
+  else in the cache is held fixed (section 3) -- against a no-gist control byte-matched on stored
+  bits (4460 verbatim tokens, 1.00003x the r64 arm at 16K); four Gate-1 tasks at n = 24 plus 32
+  paired perplexity windows, read by section 4's branch rule (make gate1). The arm order buys an
+  ordered loss: both primary contrasts land by 15.7 h of compute and the C branch is decidable at
+  22.3 h, so a pod that dies at its bar still holds the cells the rule reads, and the cuts'
+  victims sit last. Sizing (section 9): 128 samples/arm at the measured rates (full 0.6, gist
+  3.1, frozen/random 2.1, no-gist 1.55 min/sample) = 2,400 min = 40.0 h, + 60 min boot = 41.0 h
+  point; gpu_budget_h is the 2x bar `pod.py launch --max-hours` enforces. Pre-committed cuts:
+  random (the floor control), then oja_tuned -- NOT "n = 16 on two arms", which saves less and
+  breaks the balanced 2 x 3 x 4 cell every arm's rows pair through. Launch = DECISIONS D-003 (bar
+  over credit) under D-011; Stage 2 (Mistral 16K, 32K) is sized in the prereg, by amendment only
+  if Stage 1 is not C.
+prereg: prereg/gate1_tracker_swap_v2.md
+arms:
+  - full
+  - isvd_r64_h256_seed
+  - nogist_h4460
+  - frozen_r64_h256_seed
+  - fd_r64_h256_seed
+  - isvd_r64_h256_seed_bf16
+  - oja_r64_h256_seed_tuned
+  - random_r64_h256_seed
+tasks: ["ruler_v2_16k_g1", "ppl_16k_pg19val"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+gpu_budget_h: 82.0

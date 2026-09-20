@@ -65,6 +65,11 @@ def paired_bootstrap(
     return float(x.mean()), float(lo), float(hi)
 
 
+def paired_t(d: npt.ArrayLike) -> float:
+    """Two-sided paired t-test on the differences -- the Holm member beside a `tost`."""
+    return float(ttest_1samp(np.asarray(d, dtype=float), 0.0).pvalue)
+
+
 def tost(d: npt.ArrayLike, delta: float, alpha: float = 0.05) -> tuple[float, float, bool]:
     x = np.asarray(d, dtype=float)
     p_lo = float(ttest_1samp(x, -delta, alternative="greater").pvalue)

@@ -1,0 +1,17 @@
+name: ruler_v2_32k_g1
+generator: v2
+ctx: 32768
+doc: >-
+  ruler_v2_16k_g1 at 32K: the same four Gate-1 tasks, four sources, templates and code families,
+  the same 2 x 3 x 4 = 24-trial design per seed at depths 0.05 / 0.4 / 0.95, one seed, chunked
+  prefill. Stage 2's long-context task (prereg/gate1_tracker_swap_v2.md section 3 and section 9):
+  it runs NOTHING in Stage 1, and the three 32K pods that would read it are descriptive -- they
+  report whether a 16K reading generalizes to twice the context and change no branch letter.
+  Committed with the Stage-1 pods, before the Stage-1 launch commit, so the file the amendment
+  would launch is fixed before anything is measured.
+  vt's value takes the cell's code family -- a deviation from official RULER's numbers-only vt,
+  kept so code_family is truthful per row (ruling R-L2-4).
+tasks: ["niah_single", "niah_multikey", "niah_multivalue", "vt"]
+n_trials: 24
+seeds: [0]
+design: {haystacks: 2, depths: 3, codes: 4}

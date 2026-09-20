@@ -7,7 +7,7 @@ PY ?= .venv/bin/python
 # last word names the interpreter, and `uv run` puts its own venv bin/ on PATH anyway.
 export PATH := $(dir $(abspath $(lastword $(PY)))):$(PATH)
 
-.PHONY: test tables env figures check clean
+.PHONY: test tables gate1 env figures check clean
 # No -q here: pyproject's addopts already carries one, and a second one suppresses the
 # `N passed in Ns` line -- a green run that reports no count is not a verification.
 test:
@@ -16,6 +16,12 @@ test:
 tables:
 	$(PY) scripts/tables.py build --out docs/paper/tables
 	@cat docs/paper/tables/table*.md | diff -u docs/plan/paper-v1-tables.md - && echo "tables: diff-clean vs paper-v1"
+
+# The Gate-1 table (prereg/gate1_tracker_swap_v2.md section 10's citability rule). It sits
+# outside the `table*.md` glob `tables` diffs against paper-v1, so the two are independent:
+# this reads a new pod's records, that one regenerates the frozen v1 tables.
+gate1:
+	$(PY) scripts/tables.py gate1 --pods results/gate1_v2_stage1_llama results/gate1_v2_stage1_qwen
 
 # --allow-existing: `make env` is re-run to pick up a pin change, and uv refuses an
 # existing .venv without it.

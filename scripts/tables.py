@@ -27,6 +27,7 @@ from typing import Literal, TypedDict, cast
 
 import _paths  # noqa: F401
 
+from kvdlra.eval import gate1
 from kvdlra.eval.records import (
     CellRecord,
     PplRecord,
@@ -828,6 +829,154 @@ def ppl_table(results: Path, out: Path, baseline: str = "full", delta: float = 0
     out.write_text("\n".join(md) + "\n")
 
 
+# ---------------------------------------------------------------------- Gate 1
+
+GATE1_PREREG = "prereg/gate1_tracker_swap_v2.md"
+
+
+def _gate1_cell(data: gate1.Gate1Data, key: gate1.CellKey, star: bool) -> str:
+    """One retrieval cell: `acc [Wilson 95%] (hits/n)`, or the failure that replaced it.
+
+    "No arm is ever printed as `--`" (prereg section 4): a cell with error rows prints
+    `FAILED (k errors)` and a cell that never ran prints `not run`. The `*` marks a
+    Holm-significant primary contrast against the r64 arm.
+    """
+    if errs := data.errors.get(key):
+        return f"FAILED ({len(errs)} errors)"
+    outcomes = data.hits.get(key)
+    if not outcomes:
+        return "not run"
+    h, n = sum(outcomes.values()), len(outcomes)
+    lo, hi = wilson(h, n)
+    return f"{h / n:.2f} [{lo:.2f},{hi:.2f}] ({h}/{n})" + (" *" if star else "")
+
+
+def _gate1_md(title: str, header: Sequence[str], body: Sequence[Sequence[str]]) -> list[str]:
+    return [
+        "",
+        title,
+        "",
+        "| " + " | ".join(header) + " |",
+        "|" + " --- |" * len(header),
+        *["| " + " | ".join(r) + " |" for r in body],
+    ]
+
+
+def gate1_table(pod_dirs: Sequence[Path], out: Path) -> None:
+    """The Gate-1 table: one retrieval block per family x ctx, a perplexity block per
+    family x ctx, and `gate1_verdict`'s branch as the last line.
+
+    Written outside the `table*.md` glob `make tables` diffs against the paper-v1
+    golden, exactly as `ppl_table` is: this is a new pod's reading, not a v1 table.
+    `make gate1` is its entrypoint, and a number from it is citable only once
+    `scripts/pod.py check` passes on the directories it read (prereg section 10).
+    """
+    data = gate1.load(list(pod_dirs))
+    retr = gate1.retrieval_contrasts(data)
+    ppl = gate1.ppl_contrasts(data)
+    verdict = gate1.gate1_verdict(retr, ppl, data)
+    stars = {
+        (c.family, c.ctx, c.task, c.b)
+        for c in retr
+        if c.primary and c.p_holm is not None and c.p_holm < gate1.ALPHA
+    }
+    m = {  # the realised Holm family sizes section 6 asks the table to print
+        "primary retrieval": sum(1 for c in retr if c.primary and c.p_holm is not None),
+        "secondary retrieval": sum(1 for c in retr if not c.primary and c.p_holm is not None),
+        "primary perplexity": sum(1 for c in ppl if c.p_holm is not None),
+    }
+    md = [
+        "# Gate 1 — the tracker swap",
+        "",
+        f"<!-- pre-registration: {GATE1_PREREG}; the rule is its section 4 -->",
+        "<!-- source: " + ", ".join(f"{f}={p}" for f, p in sorted(data.pods.items())) + " -->",
+        "<!-- cell: acc [Wilson 95% lo,hi] (hits/n); * = Holm-significant primary contrast"
+        " against isvd; a cell with error rows prints FAILED (k errors), never `--` -->",
+        "<!-- Holm at alpha=0.05 over each family's raw p-values, at the realised m: "
+        + ", ".join(f"{k} m={v}" for k, v in m.items())
+        + " -->",
+        "<!-- delta: isvd MINUS the row's tracker, paired per window; delta < 0 is the"
+        " r64 arm ahead -->",
+        f"<!-- TOST: two one-sided t-tests at +/-{gate1.PPL_DELTA_BITS} bits/token on the"
+        " per-window differences, alpha=0.05 uncorrected (intersection-union) -->",
+        f"<!-- the verdict reads the ctx {gate1.VERDICT_CTX} contrasts only; any other"
+        " context length is descriptive -->",
+    ]
+    for ctx, family in sorted({(k[1], k[0]) for k in data.hits}):
+        present = [t for t in gate1.TRACKERS if (family, t) in data.arms]
+        seen = {k[2] for k in data.hits if k[0] == family and k[1] == ctx}
+        tasks = [t for t in gate1.TASK_ORDER if t in seen] + sorted(seen - set(gate1.TASK_ORDER))
+        md += [
+            "",
+            "<!-- arms: " + ", ".join(f"{t}={data.arms[(family, t)]}" for t in present) + " -->",
+        ]
+        md += _gate1_md(
+            f"## {family} — ctx {ctx}",
+            ["tracker", *tasks],
+            [
+                [
+                    tracker,
+                    *[
+                        _gate1_cell(
+                            data,
+                            (family, ctx, task, tracker),
+                            (family, ctx, task, tracker) in stars,
+                        )
+                        for task in tasks
+                    ],
+                ]
+                for tracker in present
+            ],
+        )
+        # "Every arm in the Gate-1 table carries either its cells or the exception text
+        # that replaced them" (prereg section 4): the FAILED cell says how many, this says
+        # what raised.
+        failures = sorted(
+            (k[3], k[2], errs) for k, errs in data.errors.items() if k[:2] == (family, ctx) and errs
+        )
+        md += [""] + [
+            f"- `{data.arms[(family, tracker)]}` / {task}: {len(errs)} error records,"
+            f" first `{errs[0]}`"
+            for tracker, task, errs in failures
+        ]
+        sweeps = {c.b: c for c in ppl if c.family == family and c.ctx == ctx}
+        if (family, ctx, gate1.REFERENCE) not in data.bits:
+            continue
+        rows = []
+        for tracker in present:
+            w = data.bits.get((family, ctx, tracker))
+            if not w:
+                continue
+            c = sweeps.get(tracker)
+            rows.append(
+                [
+                    tracker,
+                    f"{sum(w.values()) / len(w):.4f}",
+                    "--" if c is None else f"{c.d_bits:+.4f}",
+                    "--" if c is None else f"[{c.lo:+.4f}, {c.hi:+.4f}]",
+                    "--" if c is None else ("passes" if c.equivalent else "fails"),
+                    "--" if c is None or c.p_holm is None else f"{c.p_holm:.3g}",
+                    "--" if c is None else f"{c.p:.3g}",
+                ]
+            )
+        md += _gate1_md(
+            f"### {family} — perplexity, ctx {ctx}",
+            [
+                "tracker",
+                "bits/token",
+                "delta (isvd - tracker)",
+                "95% CI",
+                f"TOST +/-{gate1.PPL_DELTA_BITS}",
+                "Holm p",
+                "paired t p",
+            ],
+            rows,
+        )
+    md += ["", f"VERDICT: {verdict.branch} — {verdict.reason}"]
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(md) + "\n")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -849,6 +998,16 @@ def main() -> None:
     p.add_argument("--out", default=None, help="default: docs/paper/tables/ppl_<pod>.md")
     p.add_argument("--baseline", default="full", help="the arm every other is paired against")
     p.add_argument("--delta", type=float, default=0.05, help="TOST margin, bits/token")
+    g = sub.add_parser(
+        "gate1",
+        help=f"the Gate-1 table ({GATE1_PREREG}): Holm-corrected retrieval contrasts, the"
+        " perplexity TOSTs, and the branch the rule selects; written outside the"
+        " `table*.md` set `build` pins",
+    )
+    g.add_argument(
+        "--pods", nargs="+", required=True, help="results/<pod> directories, one per model family"
+    )
+    g.add_argument("--out", default="docs/paper/tables/gate1.md")
     a = ap.parse_args()
     if a.cmd == "convert-v1":
         out = Path(a.out) if a.out else REPO_ROOT / "results" / "paper-v1"
@@ -856,6 +1015,8 @@ def main() -> None:
     elif a.cmd == "ppl":
         out = Path(a.out) if a.out else REPO_ROOT / "docs/paper/tables" / f"ppl_{a.pod}.md"
         ppl_table(REPO_ROOT / "results" / a.pod, out, a.baseline, a.delta)
+    elif a.cmd == "gate1":
+        gate1_table([Path(p) for p in a.pods], Path(a.out))
     else:
         build(Path(a.out))
 

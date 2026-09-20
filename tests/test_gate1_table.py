@@ -23,7 +23,11 @@ import tables
 
 from kvdlra.eval import gate1
 
-MODELS = {"llama": "unsloth/Meta-Llama-3.1-8B-Instruct", "qwen": "Qwen/Qwen2.5-7B-Instruct"}
+MODELS = {
+    "llama": "unsloth/Meta-Llama-3.1-8B-Instruct",
+    "qwen": "Qwen/Qwen2.5-7B-Instruct",
+    "mistral": "mistralai/Mistral-7B-Instruct-v0.3",
+}
 # The record key each arm writes: `legacy_name` where the arm config sets one, the stem
 # otherwise -- and the no-gist twin is per KV width (prereg section 3).
 ARM = {
@@ -35,7 +39,10 @@ ARM = {
     "random": "random_r64_h256_seed",
     "bf16": "isvd_r64_h256_seed_bf16",
 }
-NOGIST = {"llama": "nogist_h2423", "qwen": "nogist_h4460"}
+# The per-KV-width no-gist twin. Mistral is Stage 2's family and has no twin of its own
+# yet (its pod is created by amendment, prereg section 9); the Llama stem stands in where
+# a fixture needs a third family, and only its tracker label (`nogist`) is read.
+NOGIST = {"llama": "nogist_h2423", "qwen": "nogist_h4460", "mistral": "nogist_h2423"}
 TASKS = ("niah_single", "niah_multikey", "niah_multivalue", "vt")
 CTX, N_TRIALS, WINDOWS, NTOK = 16384, 24, 32, 2048
 # `sbits` on a record is `ratio_stored_bits` -- stored bits relative to `full`, which
@@ -60,10 +67,24 @@ def _arm(family: str, tracker: str) -> str:
     return NOGIST[family] if tracker == "nogist" else ARM[tracker]
 
 
-def _bits(tracker: str, w: int, delta: float) -> float:
+def _sha(tracker: str, task: str, t: int, bad: dict[str, set[int] | None]) -> str | None:
+    """The record's `prompt_sha256`: one digest per (task, trial) key across the arms
+    (prereg section 7 (e)), unless this fixture is breaking that on purpose."""
+    if tracker in bad:
+        spoil = bad[tracker]
+        if spoil is None:
+            return None  # the arm wrote no digest at all
+        if task == "niah_single" and t in spoil:
+            return f"{task}:{t}:other-prompt"
+    return f"{task}:{t}"
+
+
+def _bits(tracker: str, w: int, delta: float, spread: float = 3e-4) -> float:
     """One window's bits/token: a shared corpus term (the spread a pairing removes), the
-    arm's offset from the reference, and a small per-arm wiggle."""
-    return 3.40 + 0.01 * ((w * 7) % 13 - 6) + delta + ((w * WIGGLE[tracker]) % 11 - 5) * 3e-4
+    arm's offset from the reference, and a per-arm wiggle at amplitude ``spread`` -- which
+    is what sets the PAIRED SD the TOST's decidability bound is read against (section 6:
+    decidable at +/-0.02 over 32 windows only for s < 0.0667)."""
+    return 3.40 + 0.01 * ((w * 7) % 13 - 6) + delta + ((w * WIGGLE[tracker]) % 11 - 5) * spread
 
 
 def write_pod(
@@ -76,14 +97,21 @@ def write_pod(
     sbits: dict[str, float] | None = None,
     diag: list[dict[str, object]] | None = None,
     arms: dict[str, str] | None = None,
+    ctx: int = CTX,
+    spread: float = 3e-4,
+    bad_sha: dict[str, set[int] | None] | None = None,
 ) -> Path:
     """One pod directory. ``hits`` is hits-per-cell per tracker (nested prefixes of the
     24 trial indices, so the discordance of a pair is the difference of its counts and
     every contrast is one-directional); ``delta`` the per-arm bits/token offset;
-    ``errors`` how many of a tracker's `niah_single` trials raised."""
+    ``errors`` how many of a tracker's `niah_single` trials raised; ``bad_sha`` maps a
+    tracker to the `niah_single` trials whose `prompt_sha256` disagrees with the other
+    arms' (or to None, for an arm that wrote no digest at all) -- section 7 (e)'s pairing
+    invariant, violated on purpose."""
     d = root / f"gate1_v2_stage1_{family}"
     d.mkdir(parents=True)
     model, delta, errors, sbits = MODELS[family], delta or {}, errors or {}, sbits or {}
+    bad_sha = bad_sha or {}
     (d / "manifest.json").write_text(json.dumps({"pod": d.name, "model": model, "errors": 0}))
     trials, pplw, ppl = [], [], []
     for tracker, h in hits.items():
@@ -94,25 +122,25 @@ def write_pod(
                 bad = task == "niah_single" and t >= N_TRIALS - n_err
                 trials.append(
                     {
-                        "model": model, "arm": arm, "task": task, "ctx": CTX, "seed": 0,
+                        "model": model, "arm": arm, "task": task, "ctx": ctx, "seed": 0,
                         "trial": t, "hit": int(t < h and not bad), "frac": 0.0,
                         "generator": "v2", "haystack_id": "pg19", "depth": 0.4,
-                        "code_family": "numbers", "prompt_sha256": f"{task}:{t}",
+                        "code_family": "numbers", "prompt_sha256": _sha(tracker, task, t, bad_sha),
                         "error": "RuntimeError: boom" if bad else None, "source": "fixture",
                     }
                 )  # fmt: skip
         for w in range(WINDOWS):
             pplw.append(
                 {
-                    "model": model, "arm": arm, "ctx": CTX, "window_idx": w, "ntok": NTOK,
-                    "nll_sum_nats": _bits(tracker, w, delta.get(tracker, 0.0))
+                    "model": model, "arm": arm, "ctx": ctx, "window_idx": w, "ntok": NTOK,
+                    "nll_sum_nats": _bits(tracker, w, delta.get(tracker, 0.0), spread)
                     * NTOK * math.log(2),
                     "corpus": "pg19-val", "source": "fixture",
                 }
             )  # fmt: skip
         ppl.append(
             {
-                "model": model, "arm": arm, "ctx": CTX, "ppl": 10.0, "ratio": 0.15,
+                "model": model, "arm": arm, "ctx": ctx, "ppl": 10.0, "ratio": 0.15,
                 "sbits": sbits.get(tracker, SBITS), "tok_eq": None, "corpus": "pg19-val",
                 "source": "fixture",
             }
@@ -244,10 +272,12 @@ def test_an_fd_error_cell_refuses_and_prints_failed(tmp_path: Path) -> None:
     """`fd` is one of the four arms the rule reads, so its error rows refuse the verdict
     -- and the cell is printed as FAILED, never as `--`.
 
-    The prereg (section 4, "Refusal, and the `--` rule") says `gate1_verdict` RETURNS
-    `UNDECIDED` with the arm and the exception text named; the lane brief said it
-    raises. The prereg is the spec, and a raise would leave `make gate1` with no table
-    to print the failure in."""
+    The branch value is `REFUSED`, not `UNDECIDED`: ruling R-L3-12 overrides section 4's
+    literal wording, because the two states are different findings and a table that
+    prints one for the other misreports the pod. `UNDECIDED` means the rule ran and
+    neither branch held; `REFUSED` means it never ran on that family. `gate1_verdict`
+    still RETURNS rather than raises (section 4, "Refusal, and the `--` rule"): a raise
+    would leave `make gate1` with no table to print the failure in."""
     out = tmp_path / "gate1.md"
     dirs = [
         write_pod(tmp_path, "llama", hits=SPLIT | {"fd": 21}, delta=TIGHT, errors={"fd": 3}),
@@ -255,7 +285,7 @@ def test_an_fd_error_cell_refuses_and_prints_failed(tmp_path: Path) -> None:
     ]
     data = gate1.load(dirs)
     v = gate1.gate1_verdict(gate1.retrieval_contrasts(data), gate1.ppl_contrasts(data), data)
-    assert v.branch == "UNDECIDED"
+    assert v.branch == "REFUSED"
     assert "bugSseed-r64-h256-fd" in v.reason and "RuntimeError: boom" in v.reason
     tables.gate1_table(dirs, out)
     md = out.read_text()
@@ -327,7 +357,7 @@ def test_a_frozen_arm_still_repairing_after_the_freeze_refuses(tmp_path: Path) -
         llama={"hits": FLAT, "delta": TIGHT, "diag": [straddle, later]},
         qwen={"hits": FLAT, "delta": TIGHT},
     )
-    assert bad.branch == "UNDECIDED" and "frozen dispatch" in bad.reason
+    assert bad.branch == "REFUSED" and "frozen dispatch" in bad.reason
 
 
 def test_a_nogist_arm_off_its_byte_match_refuses(tmp_path: Path) -> None:
@@ -339,7 +369,7 @@ def test_a_nogist_arm_off_its_byte_match_refuses(tmp_path: Path) -> None:
         llama={"hits": FLAT, "delta": TIGHT, "sbits": {"nogist": SBITS * 1.2}},
         qwen={"hits": FLAT, "delta": TIGHT},
     )
-    assert v.branch == "UNDECIDED" and "byte match" in v.reason and "1.20" in v.reason
+    assert v.branch == "REFUSED" and "byte match" in v.reason and "1.20" in v.reason
 
 
 def test_the_byte_match_is_never_read_as_passed_when_it_was_not_measured(
@@ -351,7 +381,7 @@ def test_the_byte_match_is_never_read_as_passed_when_it_was_not_measured(
     (d / "ppl.jsonl").unlink()
     data = gate1.load([d, write_pod(tmp_path, "qwen", hits=FLAT, delta=TIGHT)])
     v = gate1.gate1_verdict(gate1.retrieval_contrasts(data), gate1.ppl_contrasts(data), data)
-    assert v.branch == "UNDECIDED" and "not measured" in v.reason
+    assert v.branch == "REFUSED" and "not measured" in v.reason
 
 
 # --- the table ----------------------------------------------------------------------
@@ -371,4 +401,198 @@ def test_the_gate1_subcommand_writes_the_table(tmp_path: Path) -> None:
     assert "0.92 [0.74,0.98] (22/24)" in md  # the r64 arm's cell, Wilson 95%
     assert "| frozen | 0.42 [0.24,0.61] (10/24) *" in md  # Holm-significant vs isvd
     assert "bits/token" in md and "TOST" in md
-    assert md.strip().splitlines()[-1].startswith("VERDICT: A/B — ")
+    verdict = next(x for x in md.splitlines() if x.startswith("VERDICT: "))
+    assert verdict.startswith("VERDICT: A/B — ")
+
+
+# --- nothing to read is never a Branch C -------------------------------------------
+
+
+def _bare_pod(root: Path, family: str) -> Path:
+    """A `--dry-run` directory: the manifest and an empty `trials.jsonl`, nothing else."""
+    d = root / f"gate1_v2_stage1_{family}"
+    d.mkdir(parents=True)
+    (d / "manifest.json").write_text(
+        json.dumps({"pod": d.name, "model": MODELS[family], "dry_run": True})
+    )
+    (d / "trials.jsonl").write_text("")
+    return d
+
+
+NO_16K = "no 16K family in the records (the verdict reads ctx 16384 only)"
+
+
+def test_an_empty_pod_set_is_undecided_never_a_vacuous_c(tmp_path: Path) -> None:
+    """The dry-run shape `make gate1` meets before a pod has run: C is a positive claim
+    of non-separation and "an absent member is not evidence for it" (prereg section 4
+    rule 3), so a record set with no member the rule can read selects nothing."""
+    dirs = [_bare_pod(tmp_path, "llama"), _bare_pod(tmp_path, "qwen")]
+    data = gate1.load(dirs)
+    v = gate1.gate1_verdict(gate1.retrieval_contrasts(data), gate1.ppl_contrasts(data), data)
+    assert (v.branch, v.reason) == ("UNDECIDED", NO_16K)
+    out = tmp_path / "gate1.md"
+    tables.gate1_table(dirs, out)
+    assert f"VERDICT: UNDECIDED — {NO_16K}" in out.read_text()
+
+
+def test_a_32k_only_pod_set_is_undecided_never_a_vacuous_c(tmp_path: Path) -> None:
+    """ "The verdict reads the 16K contrasts only" (prereg section 4's scope note), so a
+    32K-only set has no member for rules 1-3 -- and a 32K pod "never change[s] the
+    branch", which a C read off its cells would."""
+    v, _ = two_families(tmp_path, hits=FLAT, delta=TIGHT, ctx=32768)
+    assert (v.branch, v.reason) == ("UNDECIDED", NO_16K)
+
+
+# --- section 7 (e): the pairing invariant, verified from prompt_sha256 --------------
+
+
+def test_a_disagreeing_prompt_digest_drops_that_key_from_the_member(tmp_path: Path) -> None:
+    """Section 4: the McNemar runs "on byte-identical prompts (section 3's pairing
+    invariant, verified from `prompt_sha256` per section 7 (e); a key whose digests
+    disagree is dropped from that member and the drop is reported with the key)" --
+    and section 6: it "shrinks that member's paired n", it does not remove the member."""
+    dirs = [
+        write_pod(tmp_path, "llama", hits=FLAT, delta=TIGHT, bad_sha={"frozen": {7}}),
+        write_pod(tmp_path, "qwen", hits=FLAT, delta=TIGHT),
+    ]
+    data = gate1.load(dirs)
+    retr = {(c.family, c.task, c.b): c for c in gate1.retrieval_contrasts(data)}
+    member = retr[("llama", "niah_single", "frozen")]
+    assert (member.n_paired, member.dropped_keys) == (23, ((0, 7),))
+    assert retr[("llama", "niah_single", "nogist")].n_paired == 24, "one member, not the cell"
+    assert retr[("llama", "niah_multikey", "frozen")].n_paired == 24
+    out = tmp_path / "gate1.md"
+    tables.gate1_table(dirs, out)
+    assert "pairing: 1 key dropped (llama/niah_single: (0,7))" in out.read_text()
+
+
+def test_an_arm_that_wrote_no_digest_refuses_the_member(tmp_path: Path) -> None:
+    """A key whose digest set "contains `None` is a failure as well as a mismatch"
+    (section 7 (e)). Every key of the member goes, which leaves it with no pairing at
+    all -- section 4's `mcnemar_exact` -> None boundary, which refuses a primary
+    member's family (ruling R-L3-12: the branch value is REFUSED)."""
+    v, _ = verdict_for(
+        tmp_path,
+        llama={"hits": FLAT, "delta": TIGHT, "bad_sha": {"frozen": None}},
+        qwen={"hits": FLAT, "delta": TIGHT},
+    )
+    assert v.branch == "REFUSED" and "prompt_sha256" in v.reason
+    assert "all 24 keys dropped" in v.reason
+
+
+# --- every verdict carries every refusal and every blocker --------------------------
+
+
+def test_a_refusal_is_named_beside_the_families_that_separated(tmp_path: Path) -> None:
+    """A refusal is never silently dropped by a branch that reads the other families:
+    two families separate, the third is refused, and the verdict names all three (the
+    five-reviewer simulation reads the table alone). Ruling R-L3-12 makes the refusal
+    the branch value; the separations it does not erase are in the same reason."""
+    v, _ = verdict_for(
+        tmp_path,
+        llama={"hits": SPLIT, "delta": TIGHT},
+        qwen={"hits": SPLIT, "delta": TIGHT},
+        mistral={"hits": FLAT, "delta": TIGHT, "sbits": {"nogist": SBITS * 1.2}},
+    )
+    assert v.branch == "REFUSED"
+    assert "byte match" in v.reason and "mistral" in v.reason
+    assert "llama" in v.reason and "qwen" in v.reason
+    assert any("beats frozen" in m for m in v.members)
+
+
+# --- section 6's third TOST state ---------------------------------------------------
+
+# 32 windows at +/-0.02 are decidable only for a paired SD below 0.0667 (section 6's
+# table). This wiggle amplitude puts the paired SD an order of magnitude above it.
+TOO_WIDE = 0.02
+
+
+def test_a_spread_too_wide_for_the_margin_is_not_decidable_and_withholds_c(
+    tmp_path: Path,
+) -> None:
+    """Section 6: "If a member's realised `s` still exceeds its bound, its TOST cannot
+    fire whatever the point estimate is, and the member is recorded as `not decidable`
+    -- never as a pass, never as a quiet fail. The C branch requires every one of its
+    four TOSTs to pass, so the verdict is then UNDECIDED, and the report must say
+    which it is"."""
+    v, data = two_families(tmp_path, hits=FLAT, delta=TIGHT, spread=TOO_WIDE)
+    frozen = next(c for c in gate1.ppl_contrasts(data) if (c.family, c.b) == ("llama", "frozen"))
+    assert not frozen.decidable and not frozen.equivalent and frozen.s > 0.0667
+    assert v.branch == "UNDECIDED" and "not decidable" in v.reason
+    out = tmp_path / "gate1.md"
+    tables.gate1_table([tmp_path / f"gate1_v2_stage1_{f}" for f in ("llama", "qwen")], out)
+    assert "| not decidable |" in out.read_text(), "the TOST cell, not only the verdict"
+
+
+def test_a_not_decidable_tost_on_the_ab_route_says_so_beside_the_branch(
+    tmp_path: Path,
+) -> None:
+    """Section 6: "On the A/B side the rule reads the boolean, which is `False` in two
+    different situations ... Where a separating member's TOST is `False` because it is
+    `not decidable`, the verdict entry says so beside the branch, with `s` and the CI."
+    So a wide spread does not withhold A/B -- it annotates it."""
+    v, _ = two_families(
+        tmp_path, hits=FLAT, delta={"frozen": 0.3, "nogist": 0.3, "fd": 0.3}, spread=TOO_WIDE
+    )
+    assert v.branch == "A/B" and v.families_separated == ["llama", "qwen"]
+    assert "not decidable" in v.reason and "s=" in v.reason
+
+
+# --- the pairing key, the marks, and the cells that never ran -----------------------
+
+
+def test_two_corpora_at_one_ctx_are_paired_inside_their_own_corpus(tmp_path: Path) -> None:
+    """The window-pairing key carries the corpus, as `tables.ppl_stats` does: two ppl
+    tasks can share a ctx with different corpora, and "absolute perplexity is not
+    comparable across corpora" (`records.PplwRecord`). Keyed without it, the second
+    corpus's window 0 reads as the first's, duplicated."""
+    d = write_pod(tmp_path, "llama", hits=FLAT, delta=TIGHT)
+    rows = [json.loads(x) for x in (d / "pplw.jsonl").read_text().splitlines()]
+    other = [r | {"corpus": "wt103-test", "nll_sum_nats": r["nll_sum_nats"] * 1.01} for r in rows]
+    (d / "pplw.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows + other))
+    ppl = [c for c in gate1.ppl_contrasts(gate1.load([d])) if c.b == "frozen"]
+    assert {c.corpus for c in ppl} == {"pg19-val", "wt103-test"}
+    assert [c.n_windows for c in ppl] == [WINDOWS, WINDOWS]
+
+
+def test_a_control_that_wins_is_marked_and_a_cell_that_never_ran_says_why(
+    tmp_path: Path,
+) -> None:
+    """Section 4 rule 3 (i) reads a separation "in either direction", so the table
+    distinguishes them: `*` is a Holm-significant primary contrast favouring isvd, `‡`
+    one favouring the control. And "no arm is ever printed as `--`": a cell with no
+    records prints what is missing."""
+    hits = {"full": 24, "isvd": 8, "frozen": 22, "nogist": 8, "fd": 8, "oja": 8}
+    dirs = [write_pod(tmp_path, f, hits=hits, delta=TIGHT) for f in ("llama", "qwen")]
+    trials = dirs[0] / "trials.jsonl"
+    trials.write_text(
+        "".join(
+            x
+            for x in trials.read_text().splitlines(keepends=True)
+            if '"arm": "oja_r64_h256_seed_tuned"' not in x or '"task": "vt"' not in x
+        )
+    )
+    out = tmp_path / "gate1.md"
+    tables.gate1_table(dirs, out)
+    md = out.read_text()
+    frozen_row = next(x for x in md.splitlines() if x.startswith("| frozen |"))
+    assert "‡" in frozen_row and "*" not in frozen_row
+    assert "not run (no records for oja_r64_h256_seed_tuned at ctx 16384)" in md
+    assert "‡" in next(x for x in md.splitlines() if x.startswith("Legend:"))
+
+
+def test_the_perplexity_block_prints_no_dash(tmp_path: Path) -> None:
+    """Section 4: "No arm is ever printed as `--`". The reference row has no contrast
+    with itself and the arms outside the 4-member perplexity family have no adjusted
+    p-value -- both used to print a dash, which is the Week-20 swap table's failure."""
+    dirs = [write_pod(tmp_path, f, hits=SPLIT, delta=TIGHT) for f in ("llama", "qwen")]
+    out = tmp_path / "gate1.md"
+    tables.gate1_table(dirs, out)
+    cells = [
+        c.strip()
+        for line in out.read_text().splitlines()
+        if line.startswith("|")
+        for c in line.split("|")
+    ]
+    assert "--" not in cells
+    assert "reference" in cells and "n/a (secondary)" in cells

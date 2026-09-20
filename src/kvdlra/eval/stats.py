@@ -11,6 +11,7 @@ from typing import TypedDict
 import numpy as np
 import numpy.typing as npt
 from scipy.stats import binomtest, false_discovery_control, ttest_1samp
+from scipy.stats import t as student_t
 
 Key = tuple[int, int]  # (seed, trial)
 
@@ -68,6 +69,17 @@ def paired_bootstrap(
 def paired_t(d: npt.ArrayLike) -> float:
     """Two-sided paired t-test on the differences -- the Holm member beside a `tost`."""
     return float(ttest_1samp(np.asarray(d, dtype=float), 0.0).pvalue)
+
+
+def tost_decidable(d: npt.ArrayLike, delta: float, alpha: float = 0.05) -> bool:
+    """Could :func:`tost` have fired at all on this spread? ``t(1-alpha, n-1)*s/sqrt(n) <
+    delta``, which is the equivalence condition at its most favourable point estimate
+    (d_bar = 0). ``False`` means the interval is too wide to place against the margin, so
+    the TOST's ``False`` is "not decidable" rather than "not equivalent" -- a third state
+    the reading has to keep apart (``prereg/gate1_tracker_swap_v2.md`` section 6)."""
+    x = np.asarray(d, dtype=float)
+    half = float(student_t.ppf(1 - alpha, x.size - 1)) * float(x.std(ddof=1)) / np.sqrt(x.size)
+    return bool(half < delta)
 
 
 def tost(d: npt.ArrayLike, delta: float, alpha: float = 0.05) -> tuple[float, float, bool]:

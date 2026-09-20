@@ -142,7 +142,12 @@ def test_a_perplexity_arm_that_raises_is_logged_and_counted(
     harvest of the log alone rebuild the manifest the run wrote."""
     from kvdlra.eval import frontier
 
-    failed = [{"method": "full", "T": 16384, "status": "error", "error": "RuntimeError: boom"}]
+    failed = [
+        {
+            "method": "full", "T": 16384, "status": "error", "error": "RuntimeError: boom",
+            "elapsed_s": 3.0,  # every run_ppl row carries its arm's wall clock, ok or not
+        }
+    ]  # fmt: skip
     # A tensor, not a sentinel: the runner digests the ids into the manifest's
     # dataset_sha256 before it cuts windows out of them.
     monkeypatch.setattr("kvdlra.eval.runner.load_corpus_ids", lambda *a, **k: torch.arange(4))
@@ -154,6 +159,12 @@ def test_a_perplexity_arm_that_raises_is_logged_and_counted(
     out = capsys.readouterr().out
     assert "[error] axis=ppl arm=full ctx=16384 error=RuntimeError: boom" in out
     assert "[stage] load_corpus_ids wikitext-103 (" in out  # the corpus load is timed
+    # L3.3a: the perplexity axis prints `_cell`'s timing line too -- one per (arm, ctx),
+    # keyed by the PPL TASK name and carrying the window count, so Stage 1's per-arm rate
+    # is read off the harvested manifest the way the retrieval cells' is. A failed arm
+    # still prints it: the seconds it burned are what the next pod is sized against.
+    assert pod.CELL_S_RE.findall(out) == [("full", "ppl_16k", "16384", "3.0")]
+    assert "[stage] cell arm=full task=ppl_16k ctx=16384 elapsed_s=3.0 n=1" in out
     (err,) = parse_error_lines(out, "log")
     assert err["axis"] == "ppl" and err["arm"] == "full" and err["ctx"] == 16384
     assert err["error"] == "RuntimeError: boom" and str(err["source"]).startswith("log:")

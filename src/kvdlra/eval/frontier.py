@@ -20,6 +20,7 @@ frozen (``tests/test_w15_pplw.py``).
 from __future__ import annotations
 
 import gc
+import time
 from contextlib import nullcontext
 from typing import Any, cast
 
@@ -492,6 +493,7 @@ def run_ppl(
     """
     rows: list[dict[str, Any]] = []
     for arm in arms:
+        t_arm = time.perf_counter()
         peak_ctx = acc.measure_peak_gpu(device)
         try:
             if arm.get("per_layer_budget"):
@@ -595,6 +597,10 @@ def run_ppl(
                     flush=True,
                 )
             print(f"  {arm['name']:14s} [T={t}] {row['status']}: {row['error'][:110]}")
+        # Outside both branches: an arm that failed burned the seconds too, and the next
+        # pod is sized against what the last one actually cost. `runner._ppl_rows` prints
+        # it as this axis's `[stage] cell` line (the one clock a harvest carries).
+        row["elapsed_s"] = time.perf_counter() - t_arm
         rows.append(row)
         _log_row(row)
     return rows

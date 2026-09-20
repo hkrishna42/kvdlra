@@ -638,6 +638,11 @@ def test_the_watchdog_keeps_the_env_block_rows() -> None:
         "[stage] load_model unsloth/Meta-Llama-3.1-8B-Instruct (61.3 s)",  # L2.3b timings
         f"[stage] dataset_sha256 haystack:pg19 {'a' * 64}",  # L2.9a: the digests' only way back
         "[stage] cell arm=full task=vt ctx=16384 elapsed_s=41.5 n=12",  # L3.1c: the per-cell clock
+        # L3.3a: the pod's own environment and the run's span, the manifest fields the
+        # laptop cannot fill in. `wall_clock_s` matches on `^\[stage` alone (the GPU
+        # name would also match the pattern's bare NVIDIA alternative).
+        "[stage] gpu NVIDIA H100 80GB HBM3",
+        "[stage] wall_clock_s 4213.7",
     ]
     r = subprocess.run(
         ["grep", "-aE", rows],
@@ -696,6 +701,45 @@ def test_harvest_records_the_dataset_digests_the_run_printed(dry_pod: Path, tmp_
     assert m["dataset_sha256"] == {"haystack:pg19": "a" * 64, "pg19val": "c" * 64}
 
 
+def test_harvest_records_the_pod_environment_the_run_printed(dry_pod: Path, tmp_path: Path) -> None:
+    """The laptop cannot know the pod's card, CUDA build or model revision, and the
+    manifest `run` writes with them ON THE POD dies with the instance -- every harvested
+    manifest on disk shows the gap (`results/filler_realism/manifest.json`: gpu none,
+    cuda none, model_revision null, wall_clock_s null). They travel as `[stage] <key>
+    <value>` lines, exactly as the digests do; the emitter is `pod._stage_lines`, so the
+    format cannot drift from the regex that reads it back. A key the log does not carry
+    keeps the launch-time value rather than being overwritten with a guess."""
+    d = _copy(dry_pod, tmp_path)
+    log = d / "pod.log"
+    log.write_text(LOG)
+    launched = json.loads((d / "manifest.json").read_text())
+    assert pod.harvest("w18_g1", log, d, force=False) == 0
+    m = json.loads((d / "manifest.json").read_text())
+    kept = ("gpu", "cuda", "torch")
+    assert [m[k] for k in kept] == [launched[k] for k in kept]
+    assert m["model_revision"] is None and m["wall_clock_s"] is None
+
+    # The lines the run prints, through the emitter itself -- a copy of the format here
+    # would pass while `run` printed something the harvest cannot read.
+    printed = pod._stage_lines(
+        {"gpu": "NVIDIA H100 80GB HBM3", "cuda": "12.8", "torch": "2.11.0+cu128",
+         "model_revision": "0e9e39f"}
+    )  # fmt: skip
+    log.write_text(LOG + "".join(x + "\n" for x in [*printed, "[stage] wall_clock_s 4213.7"]))
+    assert pod.harvest("w18_g1", log, d, force=False) == 0
+    m = json.loads((d / "manifest.json").read_text())
+    assert m["gpu"] == "NVIDIA H100 80GB HBM3"  # the card's name carries spaces
+    assert (m["cuda"], m["torch"], m["model_revision"]) == ("12.8", "2.11.0+cu128", "0e9e39f")
+    assert m["wall_clock_s"] == 4213.7
+    # A value the run has none of (a model with no resolved revision) prints no line at
+    # all: "None" written into the manifest as a string would read as a real revision.
+    assert pod._stage_lines({"gpu": "x", "cuda": "y", "torch": "z", "model_revision": None}) == [
+        "[stage] gpu x",
+        "[stage] cuda y",
+        "[stage] torch z",
+    ]
+
+
 def test_harvest_records_the_cell_timings_the_run_printed(dry_pod: Path, tmp_path: Path) -> None:
     """The per-arm min/sample a pre-flight pod is read for (`prereg/gate1_preflight.md`
     reading (iv)) has no other source: `[trial]` and cell rows carry no clock,
@@ -713,12 +757,17 @@ def test_harvest_records_the_cell_timings_the_run_printed(dry_pod: Path, tmp_pat
         + "[stage] cell arm=full task=niah_single ctx=16384 elapsed_s=41.5 n=12\n"
         + "[stage] cell arm=bugSseed-r64-h256 task=vt ctx=16384 elapsed_s=180.0 n=12\n"
         + "[stage] cell arm=bugSseed-r64-h256 task=vt ctx=16384 elapsed_s=186.3 n=12\n"
+        # The perplexity axis prints the same line (L3.3a), keyed by the PPL TASK name --
+        # a name no retrieval sub-task can take (`ppl_*` / `latency_*` vs niah_*/vt/the
+        # LongBench sets), so one manifest carries both axes' clocks without collision.
+        + "[stage] cell arm=full task=ppl_16k ctx=16384 elapsed_s=305.0 n=4\n"
     )
     assert pod.harvest("w18_g1", log, d, force=False) == 0
     m = json.loads((d / "manifest.json").read_text())
     assert m["cell_elapsed_s"] == {
         "full/niah_single/16384": 41.5,
         "bugSseed-r64-h256/vt/16384": 186.3,
+        "full/ppl_16k/16384": 305.0,
     }
 
 

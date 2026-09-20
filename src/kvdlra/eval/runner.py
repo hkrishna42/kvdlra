@@ -169,6 +169,7 @@ def _latency_rows(
     for ctx in task.ctxs or [task.ctx]:
         for name in pod.arms:
             arm = _build(name, model, ctx)
+            t_cell = time.perf_counter()
             for batch in task.batch_sizes:
                 try:
                     (row,) = latency.run_latency(
@@ -200,6 +201,14 @@ def _latency_rows(
                         "source": f"{pod.name}:run",
                     }
                 )
+            # `_cell`'s timing line for this axis too: one per (arm, ctx) sweep over the
+            # batch sizes, `n` the points it attempted (a point that raised leaves no
+            # row but did cost the seconds).
+            print(
+                f"[stage] cell arm={arm['name']} task={task.name} ctx={ctx}"
+                f" elapsed_s={time.perf_counter() - t_cell:.1f} n={len(task.batch_sizes)}",
+                flush=True,
+            )
     return errors
 
 
@@ -352,7 +361,7 @@ def _ppl_rows(
         f"[T={task.ctx}] {len(samples)} window(s) of {task.ctx}+{task.window} on {task.corpus}",
         flush=True,
     )
-    return frontier.run_ppl(
+    rows = frontier.run_ppl(
         arms,
         model,
         samples,
@@ -363,6 +372,17 @@ def _ppl_rows(
         device=device,
         corpus=task.corpus,
     )
+    # `_cell`'s timing line for this axis: one per (arm, ctx) sweep, keyed by the ppl
+    # TASK name (`ppl_*`, which no retrieval sub-task is called) so `harvest` can fold
+    # both axes into one `manifest.cell_elapsed_s` without pooling two cells. `n` is the
+    # windows the sweep attempted -- a failed arm prints its seconds too.
+    for r in rows:
+        print(
+            f"[stage] cell arm={r['method']} task={task.name} ctx={task.ctx}"
+            f" elapsed_s={r['elapsed_s']:.1f} n={len(samples)}",
+            flush=True,
+        )
+    return rows
 
 
 def _ppl_record(pod: PodCfg, row: dict[str, Any]) -> PplRecord:

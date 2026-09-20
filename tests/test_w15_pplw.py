@@ -104,6 +104,9 @@ def test_window_nll_consistency() -> None:
     assert {r["method"] for r in rows} == {"full", "bug-r8"}
     for row in rows:
         nlls, toks = row["window_nlls"], row["window_toks"]
+        # The arm's own wall clock rides the row (L3.3a): `runner._ppl_rows` turns it
+        # into this axis's `[stage] cell` line, the only clock a harvest carries.
+        assert row["elapsed_s"] > 0.0
         assert len(nlls) == len(toks) == 3
         assert all(tok == 16 - 1 for tok in toks)  # scored tokens = window - 1
         assert all(math.isfinite(v) and v > 0 for v in nlls)

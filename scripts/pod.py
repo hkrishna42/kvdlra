@@ -187,6 +187,21 @@ def prepare(name: str) -> int:
     return 0
 
 
+# The manifest fields only the POD can fill in: `launch` writes the laptop's own
+# (`gpu: none`, `cuda: none`, `model_revision: null`), and the manifest `run` writes with
+# the real ones dies with the instance. `_stage_lines` is how they reach the log, and
+# `STAGE_RE` reads them back -- one tuple, so the two cannot drift apart.
+STAGE_KEYS = ("gpu", "cuda", "torch", "model_revision")
+
+
+def _stage_lines(m: dict[str, Any]) -> list[str]:
+    """The pod's own environment as `[stage] <key> <value>` lines, in the digest lines'
+    pattern. A value the run has none of (a model with no resolved revision) prints NO
+    line: the string "None" in the manifest would read as a revision, and a missing line
+    correctly leaves the launch-time value standing."""
+    return [f"[stage] {k} {m[k]}" for k in STAGE_KEYS if m.get(k) is not None]
+
+
 def run(name: str, out: Path, dry_run: bool) -> int:
     # The manifest first: it is what loads the pod config, so an unknown pod name raises
     # before a half-written directory exists on disk.
@@ -221,7 +236,14 @@ def run(name: str, out: Path, dry_run: bool) -> int:
     print(f"[stage] load_model {pod.model} ({time.perf_counter() - t0:.1f} s)", flush=True)
     m["model_revision"] = getattr(loaded[0].config, "_commit_hash", None)
     _write_manifest(out, m)
+    for line in _stage_lines(m):
+        print(line, flush=True)
+    t_run = time.perf_counter()
     run_pod(pod, out, loaded)
+    # The run's OWN span, printed for the same reason as the lines above: `_finish` puts
+    # it in the manifest on the pod, and boot.sh's timestamps (which `_wall_clock_s`
+    # reads, and which cover the boot too) are not always in the fetched log.
+    print(f"[stage] wall_clock_s {time.perf_counter() - t_run:.1f}", flush=True)
     return 0
 
 
@@ -390,6 +412,11 @@ DIGEST_RE = re.compile(r"^\[stage\] dataset_sha256 (\S+) ([0-9a-f]{64})\s*$", re
 CELL_S_RE = re.compile(
     r"^\[stage\] cell arm=(\S+) task=(\S+) ctx=(\d+) elapsed_s=([0-9.]+) n=\d+\s*$", re.M
 )
+# `run`'s `_stage_lines` (the GPU name carries spaces, so the value runs to end of line)
+# and its post-`run_pod` span. Last line for a key wins; an absent key leaves the
+# launch-time value, which is the laptop's and says so (`gpu: none`).
+STAGE_RE = re.compile(rf"^\[stage\] ({'|'.join(STAGE_KEYS)}) (\S.*?)\s*$", re.M)
+WALL_S_RE = re.compile(r"^\[stage\] wall_clock_s ([0-9.]+)\s*$", re.M)
 
 
 def _env_from_log(text: str) -> list[str] | None:
@@ -573,13 +600,20 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     cells_s = {f"{a}/{t}/{c}": float(s) for a, t, c, s in CELL_S_RE.findall(text)}
     if cells_s:  # a log printed before L3.1c leaves the key absent, not empty
         m["cell_elapsed_s"] = {**m.get("cell_elapsed_s", {}), **cells_s}
+    m.update(dict(STAGE_RE.findall(text)))  # the pod's card, CUDA build, torch, revision
     m["records"] = records
     # Both axes: a perplexity arm that raised has no record to carry the failure, only
     # the `[error]` line, so counting trial rows alone called such a pod clean.
     m["errors"] = sum(1 for t in trials if t["error"] is not None) + len(
         parse_error_lines(text, source)
     )
-    m["wall_clock_s"] = _wall_clock_s(text) or m.get("wall_clock_s")
+    # boot.sh's timestamps first (they span the boot too, and are the billable clock);
+    # `run`'s own printed span is the fallback for the logs that come back without them,
+    # which is every log `vastai logs` has returned so far.
+    ran = WALL_S_RE.findall(text)
+    m["wall_clock_s"] = (
+        _wall_clock_s(text) or (float(ran[-1]) if ran else None) or m.get("wall_clock_s")
+    )
     m["status"] = _status(text)
     m["timeout"] = "===RUN_TIMEOUT_" in text  # the RUN_FAILED was boot.sh's `timeout`
     # A `[diag]` line the fetch cut in half parses into nothing. Counted in the manifest

@@ -85,14 +85,23 @@ def _check_fails_when_a_point_is_dropped(
     )
 
 
-def test_the_loop_writes_one_row_per_arm_ctx_batch(tmp_path: Path, monkeypatch: Any) -> None:
+def test_the_loop_writes_one_row_per_arm_ctx_batch(
+    tmp_path: Path, monkeypatch: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
     monkeypatch.setattr("kvdlra.eval.latency.run_latency", _fake_run_latency)
     cfg = load_pod(POD)
     run_pod(cfg, out=tmp_path, model=None, dry_model=True)
+    # L3.3a: this axis prints `_cell`'s timing line too -- one per (arm, ctx) sweep over
+    # the batch sizes, keyed by the TASK name, which is the only clock a harvest carries.
+    timings = pod.CELL_S_RE.findall(capsys.readouterr().out)
 
     task = load_task(cfg.tasks[0])
     rows = [json.loads(x) for x in (tmp_path / "latency.jsonl").read_text().splitlines()]
     names = [load_arm(a).legacy_name or a for a in cfg.arms]
+    assert {(a, t, c) for a, t, c, _ in timings} == {
+        (a, task.name, str(c)) for a in names for c in task.ctxs or [task.ctx]
+    }
+    assert all(float(s) >= 0.0 for *_, s in timings)
     assert {(r["arm"], r["ctx"], r["batch"]) for r in rows} == {
         (a, c, b) for a in names for c in task.ctxs or [task.ctx] for b in task.batch_sizes
     }

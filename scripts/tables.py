@@ -889,6 +889,87 @@ def _gate1_ppl_cells(c: gate1.PplContrast) -> list[str]:
     ]
 
 
+BF16_LEGEND = (
+    "Legend (bf16): cell = `delta [a_favored/b_favored of n_paired] Holm p`, with"
+    " a = `isvd_r64_h256_seed` and b = `isvd_r64_h256_seed_bf16`, so `delta > 0` is the"
+    " bf16 arm losing pairs; a task is non-inferior unless `delta` > 0.03 AND its Holm p <"
+    " 0.05, both (§4 (1)). `sbits` is §7 (c)'s descriptive stored-bits ratio, no refusal"
+    " here."
+)
+
+
+def _bf16_cell(c: gate1.Contrast | None) -> str:
+    """One bf16 member, or the state that replaced it. Nothing prints as `--` here
+    either: a cell the pod never wrote says `not run` and one with error rows says so,
+    because both are refusals of the family and the block is read alone."""
+    if c is None:
+        return "not run"
+    if c.errors_a or c.errors_b:
+        return f"FAILED ({c.errors_a + c.errors_b} errors)"
+    if c.p is None or not c.n_paired:
+        return f"no pairing ({len(c.dropped_keys)} keys dropped)"
+    delta = (c.a_favored - c.b_favored) / c.n_paired
+    p = f"{c.p_holm:.3g}" if c.p_holm is not None else "no adjusted p (left the family)"
+    return f"{delta:+.3f} [{c.a_favored}/{c.b_favored} of {c.n_paired}] {p}"
+
+
+def _gate1_bf16_block(
+    data: gate1.Gate1Data,
+    contrasts: Sequence[gate1.Contrast],
+    ppl: Sequence[gate1.PplContrast],
+    verdict: gate1.Bf16Verdict,
+) -> list[str]:
+    """`prereg/bf16_gist.md` §4's retrieval reading, rendered by the code that renders
+    the gate -- the reason it exists: §4 pre-registered it as a snippet run by hand, and
+    a reading run by hand is a reading a harvest can skip.
+
+    One row per (ctx, family): the four per-task members, the family's ±0.02 perplexity
+    TOST (§4 (2)), §7 (c)'s stored-bits ratio and the family's verdict. Only the ctx
+    §4 reads carries a verdict; any other context length is descriptive (§6), and the
+    arm's own cells are already in the Gate-1 retrieval block above at every ctx.
+    """
+    if verdict.overall == "not run":
+        return []
+    idx = {(c.family, c.ctx, c.task): c for c in contrasts}
+    seen = {c.task for c in contrasts}
+    tasks = [t for t in gate1.TASK_ORDER if t in seen] + sorted(seen - set(gate1.TASK_ORDER))
+    rows = []
+    for ctx, family in sorted({(c.ctx, c.family) for c in contrasts}):
+        tosts = [t for t in ppl if (t.family, t.ctx, t.b) == (family, ctx, gate1.BF16)]
+        a_s, b_s = data.sbits.get((family, gate1.REFERENCE)), data.sbits.get((family, gate1.BF16))
+        rows.append(
+            [family, str(ctx)]
+            + [_bf16_cell(idx.get((family, ctx, t))) for t in tasks]
+            + [
+                "; ".join(
+                    ("passes" if t.equivalent else "fails" if t.decidable else "not decidable")
+                    + f" ({t.d_bits:+.4f})"
+                    for t in tosts
+                )
+                or "not run",
+                f"{b_s / a_s:.4f}" if a_s and b_s else "not measured",
+                verdict.families.get(family, "not run")
+                if ctx == gate1.VERDICT_CTX
+                else f"descriptive (§4 reads ctx {gate1.VERDICT_CTX})",
+            ]
+        )
+    realised = sum(1 for c in contrasts if c.ctx == gate1.VERDICT_CTX and c.p_holm is not None)
+    md = [
+        "",
+        "## bf16 non-inferiority — the gist stored at 16 bits",
+        f"<!-- pre-registration: {gate1.BF16_PREREG}; the reading is its §4, and no member"
+        " of it enters a Gate-1 family or moves a Gate-1 p-value (its §6) -->",
+        f"<!-- Holm at alpha={gate1.ALPHA} inside this file's own retrieval family, at the"
+        f" realised m={realised} of the {gate1.bf16_family_size()} members §6 fixes"
+        " (2 model families x the tasks left after the pre-flight's exclusions) -->",
+        f"<!-- delta: {gate1.REFERENCE} MINUS bf16, so delta > 0 is the bf16 arm losing;"
+        f" the TOST is the same +/-{gate1.PPL_DELTA_BITS} bits/token one, per family -->",
+    ]
+    md += _md_rows(["family", "ctx", *tasks, "TOST", "sbits bf16/isvd", "verdict"], rows)
+    md += ["", BF16_LEGEND, "", *[f"- {line}" for line in verdict.members]]
+    return md
+
+
 def gate1_table(pod_dirs: Sequence[Path], out: Path) -> None:
     """The Gate-1 table: one retrieval block per family x ctx, a perplexity block per
     family x ctx and corpus, then `gate1_verdict`'s branch and the members it was
@@ -903,6 +984,10 @@ def gate1_table(pod_dirs: Sequence[Path], out: Path) -> None:
     retr = gate1.retrieval_contrasts(data)
     ppl = gate1.ppl_contrasts(data)
     verdict = gate1.gate1_verdict(retr, ppl, data)
+    # The bf16 arm rides these pods and is read by its own file (prereg/bf16_gist.md §4),
+    # here rather than by hand so that a harvest cannot skip it.
+    bf16 = gate1.bf16_contrasts(data)
+    bf16_verdict = gate1.bf16_verdict(bf16, ppl, data)
     marks = {
         (c.family, c.ctx, c.task, c.b): ("*" if c.a_favored > c.b_favored else "‡")
         for c in retr
@@ -975,7 +1060,7 @@ def gate1_table(pod_dirs: Sequence[Path], out: Path) -> None:
             f"- pairing: {len(c.dropped_keys)} key{'' if len(c.dropped_keys) == 1 else 's'}"
             f" dropped ({c.family}/{c.task}: {gate1.key_list(c.dropped_keys)})"
             f" -- {c.a} vs {c.b}, n_paired {c.n_paired}"
-            for c in retr
+            for c in [*retr, *bf16]  # the bf16 members lose keys to the same invariant
             if c.dropped_keys and (c.family, c.ctx) == (family, ctx)
         ]
         md += ["", *bullets] if bullets else []
@@ -1016,6 +1101,8 @@ def gate1_table(pod_dirs: Sequence[Path], out: Path) -> None:
                 ],
                 rows,
             )
+    md += _gate1_bf16_block(data, bf16, ppl, bf16_verdict)
+    md += ["", f"BF16: {bf16_verdict.overall} — {bf16_verdict.reason}"]
     # The members the branch was decided from, in full: the five-reviewer simulation
     # reads this table alone, so nothing the verdict weighed is left in the objects.
     md += ["", f"VERDICT: {verdict.branch} — {verdict.reason}", "", "members:"]

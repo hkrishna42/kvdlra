@@ -46,6 +46,17 @@ manufacture one (prereg Amendment 1a, A1a.5): C needs every :data:`TASK_ORDER` t
 present in every 16K family (``incomplete task set``), and an input with no 16K family
 at all reads :data:`NO_MEMBERS`. Presence is all the verdict guards -- per-cell
 n-completeness is ``scripts/pod.py check``'s job (prereg section 10).
+
+**bf16 non-inferiority** (``prereg/bf16_gist.md`` section 4) rides the same pods and is
+read here so that the harvest cannot skip it. It enters no Gate-1 family and moves no
+Gate-1 p-value (that file's section 6), and its five clauses map as:
+
+- the statistic, ``isvd`` (a) vs ``bf16`` (b) per (family, task)  :func:`bf16_contrasts`
+- rule 1, a task is lost only at BOTH > 0.03 and Holm p < 0.05    :func:`_bf16_loses`
+- rule 2, the family's +/-0.02 perplexity TOST                    :func:`_bf16_family`
+- rule 3, pass / fail / REFUSED composed over the two families    :func:`bf16_verdict`
+- rule 4's refusals, read first: an error row on either arm, a broken pairing, a missing
+  cell, and section 6's ``not decidable`` TOST                    :func:`_bf16_refusals`
 """
 
 from __future__ import annotations
@@ -81,6 +92,11 @@ PRIMARY_CONTROLS = ("frozen", "nogist")  # (d) and (e): rule 1 reads both
 SECONDARY_CONTROLS = ("oja", "fd", "random")  # section 7 (a)'s family
 C_CONTROLS = ("frozen", "fd")  # (d) and (c): the two arms rule 3 reads
 RULE_ARMS = (REFERENCE, "frozen", "nogist", "fd")  # an error row on any of these refuses
+
+BF16_PREREG = "prereg/bf16_gist.md"  # the reading below is its section 4, and only that
+BF16 = "bf16"  # arm 6, `isvd_r64_h256_seed_bf16`: the gist stored at 16 bits
+BF16_MARGIN = 0.03  # its section 4 (1), on `(a_favored - b_favored) / n_paired`
+BF16_FAMILIES = 2  # its section 6's two Stage-1 model families, and section 4 (3)'s "both"
 
 # Arm stem -> tracker label, in the prereg's section 3 arm order (which is also the order
 # the table's rows take). Two no-gist stems, one per KV width: one H cannot serve both.
@@ -187,6 +203,23 @@ class Verdict:
     reason: str
     families_separated: list[str]
     members: list[str]  # the members that decided it (prereg section 4's snippet)
+
+
+@dataclass(frozen=True)
+class Bf16Verdict:
+    """The bf16 arm's reading (``prereg/bf16_gist.md`` section 4 (3)): ``pass`` iff both
+    families pass, ``fail`` iff one fails and none is refused, ``REFUSED`` whenever any
+    family is refused "whatever the other family shows", and ``not run`` where the arm
+    wrote no 16K record at all (that file's section 9).
+
+    ``families`` carries the per-family state -- ``PASS``, ``FAIL`` or ``REFUSED (why)``
+    -- and ``members`` the lines behind it, which is what the DECISIONS entry that file's
+    section 10 asks for reads."""
+
+    overall: str
+    reason: str
+    families: dict[str, str]
+    members: list[str]
 
 
 @dataclass(frozen=True)
@@ -387,33 +420,43 @@ def _holm_by_group(
     return out
 
 
+def _reference_cells(data: Gate1Data) -> list[tuple[str, int, str]]:
+    """The (family, ctx, task) cells the reference arm scored, minus the excluded tasks --
+    every contrast in this module is taken against that arm, so this is the loop both
+    :func:`_draft_retrieval` and :func:`bf16_contrasts` run."""
+    return sorted(
+        {(f, c, t) for f, c, t, k in data.hits if k == REFERENCE and t not in EXCLUDED_TASKS}
+    )
+
+
+def _member(data: Gate1Data, f: str, c: int, t: str, b: str) -> Contrast:
+    """One retrieval member: the exact paired McNemar of ``isvd`` against ``b`` over the
+    keys the two cells share and section 7 (e)'s digest kept (:func:`_mismatched`)."""
+    a_cell, b_cell = data.hits[(f, c, t, REFERENCE)], data.hits[(f, c, t, b)]
+    dropped = _mismatched(data, (f, c, t, REFERENCE), (f, c, t, b))
+    keep = {k: v for k, v in a_cell.items() if k not in dropped}
+    m = mcnemar_exact(keep, {k: v for k, v in b_cell.items() if k not in dropped})
+    return Contrast(
+        family=f, ctx=c, task=t, a=REFERENCE, b=b, primary=b in PRIMARY_CONTROLS,
+        n_paired=m["n_paired"] if m else 0,
+        a_favored=m["a_favored"] if m else 0,
+        b_favored=m["b_favored"] if m else 0,
+        p=m["p_value"] if m else None, p_holm=None,
+        errors_a=len(data.errors.get((f, c, t, REFERENCE), [])),
+        errors_b=len(data.errors.get((f, c, t, b), [])),
+        dropped_keys=dropped,
+    )  # fmt: skip
+
+
 def _draft_retrieval(data: Gate1Data) -> list[Contrast]:
     """Every retrieval member before Holm runs -- the correction needs the refusals
     first (R-L3-16, header) and refusal 2 is read off these members' ``p is None``."""
-    draft: list[Contrast] = []
-    for f, c, t in sorted(
-        {(f, c, t) for f, c, t, k in data.hits if k == REFERENCE and t not in EXCLUDED_TASKS}
-    ):
-        for b in (*PRIMARY_CONTROLS, *SECONDARY_CONTROLS):
-            if (f, c, t, b) not in data.hits:
-                continue
-            a_cell, b_cell = data.hits[(f, c, t, REFERENCE)], data.hits[(f, c, t, b)]
-            dropped = _mismatched(data, (f, c, t, REFERENCE), (f, c, t, b))
-            keep = {k: v for k, v in a_cell.items() if k not in dropped}
-            m = mcnemar_exact(keep, {k: v for k, v in b_cell.items() if k not in dropped})
-            draft.append(
-                Contrast(
-                    family=f, ctx=c, task=t, a=REFERENCE, b=b, primary=b in PRIMARY_CONTROLS,
-                    n_paired=m["n_paired"] if m else 0,
-                    a_favored=m["a_favored"] if m else 0,
-                    b_favored=m["b_favored"] if m else 0,
-                    p=m["p_value"] if m else None, p_holm=None,
-                    errors_a=len(data.errors.get((f, c, t, REFERENCE), [])),
-                    errors_b=len(data.errors.get((f, c, t, b), [])),
-                    dropped_keys=dropped,
-                )
-            )  # fmt: skip
-    return draft
+    return [
+        _member(data, f, c, t, b)
+        for f, c, t in _reference_cells(data)
+        for b in (*PRIMARY_CONTROLS, *SECONDARY_CONTROLS)
+        if (f, c, t, b) in data.hits
+    ]
 
 
 def retrieval_contrasts(data: Gate1Data) -> list[Contrast]:
@@ -513,13 +556,7 @@ def _refusals(data: Gate1Data, retrieval: list[Contrast]) -> tuple[dict[str, lis
     # Refusal 2: a primary member with no shared pairing key at all.
     for c in retrieval:
         if c.ctx == VERDICT_CTX and c.primary and c.p is None:
-            why = (
-                f"all {len(c.dropped_keys)} keys dropped on prompt_sha256"
-                f" ({key_list(c.dropped_keys)})"
-                if c.dropped_keys
-                else "share no (seed, trial)"
-            )
-            refused[c.family].append(f"{c.family}/{c.task}: {c.a} vs {c.b} {why}")
+            refused[c.family].append(f"{c.family}/{c.task}: {c.a} vs {c.b} {_why_unpaired(c)}")
     for family in sorted({f for f, ctx, _, _ in data.hits if ctx == VERDICT_CTX}):
         # Refusal 3: the frozen arm still repairing past its freeze.
         defects = data.frozen_defects.get(family, [])
@@ -541,6 +578,16 @@ def _refusals(data: Gate1Data, retrieval: list[Contrast]) -> tuple[dict[str, lis
                 f" outside 1 +/- {BYTE_MATCH_TOL}"
             )
     return dict(refused), notes
+
+
+def _why_unpaired(c: Contrast) -> str:
+    """Why a member has no pairing at all: every shared key lost its digest, or the two
+    cells never shared one. Both are "a broken pairing, not a result" (section 4)."""
+    return (
+        f"all {len(c.dropped_keys)} keys dropped on prompt_sha256 ({key_list(c.dropped_keys)})"
+        if c.dropped_keys
+        else "share no (seed, trial)"
+    )
 
 
 def _beats(
@@ -720,6 +767,225 @@ def gate1_verdict(retrieval: list[Contrast], ppl: list[PplContrast], data: Gate1
         ]
     members = [*separations, *refusals, *blockers] or ["no member separates isvd from fd or frozen"]
     return Verdict(branch, "; ".join([*(p for p in parts if p), *notes]), separated, members)
+
+
+def bf16_family_size() -> int:
+    """The retrieval family ``prereg/bf16_gist.md`` section 6 fixes: its two model
+    families times the tasks that remain, "8 - 2 per excluded task ... so one exclusion
+    gives 6 and two give 4". This is the PRE-REGISTERED size; the realised m is how many
+    members Holm actually ran over, and the table prints both."""
+    return BF16_FAMILIES * len([t for t in TASK_ORDER if t not in EXCLUDED_TASKS])
+
+
+def bf16_contrasts(data: Gate1Data) -> list[Contrast]:
+    """The bf16 arm's retrieval members: ``isvd_r64_h256_seed`` (a) against
+    ``isvd_r64_h256_seed_bf16`` (b), per family x ctx x task, through the same
+    :func:`_member` every Gate-1 contrast takes -- so ``a_favored`` counts the pairs the
+    bf16 arm LOST and section 7 (e)'s digest drop shrinks ``n_paired`` here too.
+
+    Its own Holm family, one per context length: 8 members at Stage 1 (2 families x 4
+    tasks, ``prereg/bf16_gist.md`` section 6), never pooled with a Gate-1 family and never
+    recomputing one -- "no member of this file enters a Gate-1 family".
+
+    Eligibility is that file's section 4 snippet, NOT Gate 1's ruling R-L3-16: a member
+    leaves the correction for its OWN error row or its OWN broken pairing and for nothing
+    else, so a refused family's clean members stay in and the realised m shrinks by the
+    member rather than by the family. The snippet is the registered statistic, and this
+    reproduces it.
+    """
+    draft = [
+        _member(data, f, c, t, BF16)
+        for f, c, t in _reference_cells(data)
+        if (f, c, t, BF16) in data.hits
+    ]
+    eligible = {
+        i: x.ctx
+        for i, x in enumerate(draft)
+        if x.p is not None and (x.errors_a, x.errors_b) == (0, 0)
+    }
+    adjusted = _holm_by_group(draft, cast(dict[int, object], eligible))
+    return [replace(x, p_holm=adjusted[i]) for i, x in enumerate(draft)]
+
+
+def _bf16_loses(c: Contrast) -> bool:
+    """Section 4 (1): the bf16 arm is non-inferior on a task "unless **both** hold" -- it
+    loses by more than :data:`BF16_MARGIN` on the point estimate AND that member's
+    Holm-adjusted p is below :data:`ALPHA`. Either alone is non-inferiority.
+
+    At the design's n = 24 the margin cannot bind on its own (one flipped pair is 1/24 =
+    0.0417, already past 0.03), so the decision is carried by Holm -- which that clause
+    states in advance rather than leaving to be discovered.
+    """
+    return (
+        c.n_paired > 0
+        and c.p_holm is not None
+        and c.p_holm < ALPHA
+        and (c.a_favored - c.b_favored) / c.n_paired > BF16_MARGIN
+    )
+
+
+def _bf16_refusals(
+    family: str,
+    members: list[Contrast],
+    ppl: list[PplContrast],
+    data: Gate1Data,
+    tasks: list[str],
+) -> list[tuple[str, str]]:
+    """Section 4 (4)'s refusals for one family, as (tag, line), read before its rule.
+
+    An ``error`` row on either arm; a member with no pairing left; a cell or a perplexity
+    sweep the pod never wrote ("a pod that stopped inside arm 6 leaves ``not run``, never
+    a partial reading"); and section 6's ``not decidable`` TOST, which is "never ... a
+    pass, never a quiet fail". Gate 1's own frozen-dispatch and byte-match refusals are
+    not read here: they are that gate's, and this arm is outside it.
+
+    Presence is all this guards, as in the header: whether a cell holds its full n = 24 is
+    ``scripts/pod.py check``'s job, and section 7 (c)'s stored-bits check is read off the
+    table's own descriptive column rather than refused here.
+    """
+    out: list[tuple[str, str]] = []
+    for t in tasks:
+        for k in (REFERENCE, BF16):
+            arm = data.arms.get((family, k), k)
+            if errs := data.errors.get((family, VERDICT_CTX, t, k)):
+                out.append(
+                    ("error", f"{family}/{t}: {arm} has {len(errs)} error records ({errs[0]})")
+                )
+            elif (family, VERDICT_CTX, t, k) not in data.hits:
+                out.append(("not run", f"{family}/{t}: no {arm} records at ctx {VERDICT_CTX}"))
+    out += [
+        ("no pairing", f"{family}/{c.task}: {c.a} vs {c.b} {_why_unpaired(c)}")
+        for c in members
+        if c.p is None
+    ]
+    if not ppl:
+        out.append(
+            (
+                "not run",
+                f"{family}: no perplexity member for {REFERENCE} vs {BF16} at ctx {VERDICT_CTX}",
+            )
+        )
+    out += [
+        (
+            "not decidable",
+            f"{family}: the +/-{PPL_DELTA_BITS} TOST cannot fire at the realised spread"
+            f" (s={t.s:.4f}, CI [{t.lo:+.4f}, {t.hi:+.4f}], n={t.n_windows})",
+        )
+        for t in ppl
+        if not t.equivalent and not t.decidable
+    ]
+    return out
+
+
+def _bf16_family(
+    family: str,
+    members: list[Contrast],
+    ppl: list[PplContrast],
+    data: Gate1Data,
+    tasks: list[str],
+) -> tuple[str, list[str]]:
+    """One family's state and the lines behind it: section 4 (4) first, then rule 1 on
+    every task and rule 2 on the family's TOST -- a conjunction, so one loss is a FAIL.
+
+    Every perplexity member of the family must pass, not one of them: the claim is an
+    intersection-union test over its components (section 4 (2)), so a second corpus is a
+    second component and never an alternative.
+    """
+    if refusals := _bf16_refusals(family, members, ppl, data, tasks):
+        return (
+            f"REFUSED ({refusals[0][0]})",
+            [f"{family}: REFUSED ({tag}) -- {why}" for tag, why in refusals],
+        )
+    lost = [
+        f"{family}/{c.task}: the bf16 arm loses {(c.a_favored - c.b_favored) / c.n_paired:.3f} of"
+        f" its {c.n_paired} paired keys ({c.a_favored}-{c.b_favored}, Holm p={c.p_holm:.3g}) --"
+        f" past the {BF16_MARGIN} margin AND Holm-significant (section 4 (1))"
+        for c in members
+        if _bf16_loses(c)
+    ]
+    lost += [
+        f"{family}: the +/-{PPL_DELTA_BITS} bits/token TOST fails"
+        f" (d={t.d_bits:+.4f}, p={t.p_tost:.2g}) -- section 4 (2)"
+        for t in ppl
+        if not t.equivalent  # a `not decidable` member was refused above
+    ]
+    if lost:
+        return "FAIL", [f"{family}: FAIL -- {x}" for x in lost]
+    worst = max(((c.a_favored - c.b_favored) / c.n_paired for c in members), default=0.0)
+    return "PASS", [
+        f"{family}: PASS -- {len(members)} tasks non-inferior (worst point estimate"
+        f" {worst:+.3f}, margin {BF16_MARGIN}) and the +/-{PPL_DELTA_BITS} TOST passes"
+        f" ({', '.join(f'{t.d_bits:+.4f} bits' for t in ppl)})"
+    ]
+
+
+def bf16_verdict(contrasts: list[Contrast], ppl: list[PplContrast], data: Gate1Data) -> Bf16Verdict:
+    """``prereg/bf16_gist.md`` section 4's reading, over the 16K members only.
+
+    Read per family (section 4 (4) before the rule), then composed by section 4 (3): a
+    refusal anywhere is ``REFUSED``, a fail with no refusal is ``fail``, and a pass has to
+    be bought on both families -- "there is no partial pass and no per-family pass" -- so
+    a single-family input reads ``REFUSED`` rather than a pass off half the design. A
+    fail off one family stays a fail: the cost it reports was measured.
+    """
+    tasks = [t for t in TASK_ORDER if t not in EXCLUDED_TASKS]
+    read = sorted({f for f, ctx, _, k in data.hits if ctx == VERDICT_CTX and k == BF16})
+    if not read:
+        return Bf16Verdict(
+            "not run",
+            f"no {BF16} records at ctx {VERDICT_CTX} ({BF16_PREREG} section 9: `not run`,"
+            " never a partial reading)",
+            {},
+            [],
+        )
+    families: dict[str, str] = {}
+    members: list[str] = []
+    for f in read:
+        state, lines = _bf16_family(
+            f,
+            [c for c in contrasts if (c.family, c.ctx) == (f, VERDICT_CTX)],
+            [t for t in ppl if (t.family, t.ctx, t.b) == (f, VERDICT_CTX, BF16)],
+            data,
+            tasks,
+        )
+        families[f], members = state, members + lines
+    partial = len(read) < BF16_FAMILIES
+    if partial:
+        members.append(
+            f"{len(read)} of {BF16_FAMILIES} Stage-1 families in the records"
+            f" ({', '.join(read)}) -- section 4 (3) buys the reading on both or not at all,"
+            " so a pass here is REFUSED"
+        )
+    refused = [f for f, s in families.items() if s.startswith("REFUSED")]
+    overall = (
+        "REFUSED"
+        if refused
+        else "fail"
+        if "FAIL" in families.values()
+        else "REFUSED"
+        if partial
+        else "pass"
+    )
+    realised = sum(1 for c in contrasts if c.ctx == VERDICT_CTX and c.p_holm is not None)
+    consequence = (
+        "section 4's consequence fires: every byte-matched control is re-planned at the new"
+        " bytes before it is re-run"
+        if overall == "pass"
+        else "the fp32 arm stays the default and the bf16 row is reported as the measured"
+        " cost of halving the gist's at-rest bytes"
+        if overall == "fail"
+        else "the fp32 arm stays the default and no cost figure is recorded -- nothing was"
+        " measured to report one from"
+    )
+    reason = "; ".join(
+        [
+            ", ".join(f"{f} {s}" for f, s in families.items()),
+            f"Holm at the realised m={realised} of the {bf16_family_size()} members"
+            f" {BF16_PREREG} section 6 fixes",
+            consequence,
+        ]
+    )
+    return Bf16Verdict(overall, reason, families, members)
 
 
 def key_list(keys: tuple[Key, ...]) -> str:

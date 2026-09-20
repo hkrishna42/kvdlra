@@ -7,7 +7,7 @@ a separate, later commit that spends money and is recorded in `docs/plan/DECISIO
 `scripts/pod.py launch` refuses unless this file's first commit is a *strict* ancestor of the
 launch commit, so the commit that adds this file launches nothing. The authorization for the
 launch itself is D-011's standing one (2026-09-17); the money is not there yet — Stage 1's bar is
-$65–107 against a credit of $92.52 with two other pre-registered pods already queued (§9), so
+$74–121 against a credit of $92.52 with two other pre-registered pods already queued (§9), so
 **D-003 precedes the Stage-1 launch commit**.
 
 Two pods, one pre-registration: `PodCfg` carries a single `model`, so the Llama and Qwen halves
@@ -30,6 +30,9 @@ as a reaction to a body that was fixed first:
    `manifest.cell_elapsed_s` rates** by the same amendment, and each pod YAML's `gpu_budget_h`
    moves in the commit that precedes the launch. The pods are never launched over their
    pre-registered bar.
+4. And the precondition those three rest on (§10): Stage 1 launches only if the pre-flight's
+   readings **(i) completeness** and **(iii) pairing** passed — otherwise a dated amendment names
+   the failure, its repair and the commit carrying it, before the Stage-1 launch commit.
 
 ---
 
@@ -55,7 +58,7 @@ singular-value floor off — and only the gist's tracker is swapped:
 | (f) | `random_r64_h256_seed` | any data in the basis at all (the floor control) |
 
 **Stage 1 is the two 16K pods this file sizes and reads: Llama-3.1-8B and Qwen2.5-7B, eight arms
-each, the four Gate-1 tasks at n = 24, plus 16 paired perplexity windows.** Stage 2 — Mistral
+each, the four Gate-1 tasks at n = 24, plus 32 paired perplexity windows.** Stage 2 — Mistral
 16K and all three families at 32K — is sized here as conditional (§9) and its pods are created by
 amendment only if Stage 1 does not select Branch C.
 
@@ -115,12 +118,16 @@ paired contrasts have the least to separate.
 
 ### (b) The perplexity protocol Stage 1 reuses, and what an incremental-SVD gist costs on it
 
-`ppl_16k_pg19val_w16` — PG-19 validation, 16K prefill under the arm's compression, a frozen
-2048-token scoring window, 16 **non-overlapping** windows (D-013;
-`configs/tasks/ppl_16k_pg19val_w16.yaml`). The only rows on this exact protocol are the Table-4 harvests
-(`results/hygiene_table4_{llama,qwen_r128,qwen_r256}/`, harvested 287dc45, D-011 addendum 8), on
-arms that differ from the Gate-1 configuration — rank 128/256, coordinate tier over the whole
-prefill, **no exact tier** — and are therefore an anchor for the *protocol*, not for the r64 arm:
+`ppl_16k_pg19val` — PG-19 validation, 16K prefill under the arm's compression, a frozen
+2048-token scoring window, **32 non-overlapping** windows of the 160 PG-19 validation supplies at
+this span (D-013; `configs/tasks/ppl_16k_pg19val.yaml`, unchanged and unedited). The only rows on
+this protocol are the Table-4 harvests (`results/hygiene_table4_{llama,qwen_r128,qwen_r256}/`,
+harvested 287dc45, D-011 addendum 8), which ran its **16**-window variant `ppl_16k_pg19val_w16` —
+identical corpus, context, window and non-overlap, the cut a budget decision of that lane
+(`prereg/hygiene_table4.md` Amendment 1) — on arms that differ from the Gate-1 configuration:
+rank 128/256, coordinate tier over the whole prefill, **no exact tier**. They are an anchor for the
+*protocol* and for the per-window spread, not for the r64 arm, and every SD below is measured at
+n = 16:
 
 ```python
 import json, collections, pathlib, math, statistics
@@ -150,8 +157,8 @@ for a, v in sorted(per.items()):
 +0.02 bits/token from `full` on Llama and +0.08…+0.17 on Qwen: the effect sizes Gate 1's
 perplexity axis works in are hundredths to tenths of a bit, which is the scale the ±0.02
 equivalence margin was written at. Second — and this is the number that decides whether the C
-branch is *reachable* — the **spread** of the paired per-window difference, the quantity a TOST at
-n = 16 is bounded by. Two arms differing in one substantive knob, same pod, same windows:
+branch is *reachable* — the **spread** of the paired per-window difference, the quantity a TOST is
+bounded by. Two arms differing in one substantive knob, same pod, same windows:
 
 ```python
 import itertools
@@ -170,11 +177,19 @@ for a, b in itertools.combinations(sorted(per), 2):     # the arm-vs-arm paired 
 | Llama `isvd_r256_noguard` − `isvd_r256_tol` | +0.0016 | 0.0019 |
 
 So the measured range of arm-vs-arm paired SD on this protocol is **0.0016 to 0.0490
-bits/token**, and it is the *Qwen* end that matters: §6 computes that a ±0.02 TOST at n = 16 is
-decidable at d̄ = 0 only for SD < 0.0456 uncorrected and **SD < 0.0321** at Holm's tightest slot
-in a family of four. A Qwen isvd-vs-frozen difference with the spread the floor contrast showed
-would be **undecidable at ±0.02 whatever its point estimate**. §6 pre-registers that as a
-condition with a stated failure mode, not as an assumption.
+bits/token** — a range over the contrasts between arms whose basis stayed orthonormal: every
+guard-on arm, plus Llama's `isvd_r256_noguard`, the one unguarded arm in those pods that did not
+diverge. The two unguarded arms that **did** diverge sit two to three orders of magnitude above it,
+from the same snippet on the same pods: Qwen `isvd_r256_noguard` − `isvd_r256_tol` has SD **0.6132**
+at a mean of +10.77 bits/token, and Qwen `isvd_r128_noguard` − `isvd_r128_tol` SD **1.1934** at
++0.6043. Neither bounds anything here — **no Stage-1 arm runs unguarded** (§3 fixes the shipped
+guard at `orth_fix_tol` 1e-3 / `orth_abort_tol` 1e-1 on every arm), and a basis that diverged past
+the abort tolerance would raise `OrthonormalityError`, which is an `error` row and §4's refusal
+rule, not a wide TOST. It is the *Qwen guard-on* end that bounds the C branch, and it is the reason
+§9 buys **32** windows: §6 computes that a ±0.02 TOST at n = 32 is decidable at d̄ = 0 for
+SD < **0.0667**, so the 0.046–0.049 those contrasts showed sits inside the bound with a ≈ 1.4×
+margin, where at 16 windows (bound 0.0456) the same spread would have been undecidable. §6
+pre-registers the residual as a condition with a stated failure mode, not as an assumption.
 
 ### (c) The tracker ordering, measured — reconstruction on the 1B dumps at exactly r = 64
 
@@ -211,8 +226,10 @@ for m in sorted(idx):
 | `random_basis` (64) | 0.9349 | 80/80 | 6.288 | 0.9356 | 80/80 | 1.734 |
 
 **What this fixes.** (i) The ordering is unanimous and it is not close between groups: incremental
-SVD is within 2.4–2.8 % of the Eckart–Young floor; freezing costs 5.0–7.6 %; FD at ℓ = r costs
-27 %; Oja at its tuned schedule costs 13–57 %; a random basis costs 73–529 %. (ii) The
+SVD is within **2.5–2.9 %** of the Eckart–Young floor (the table's ratios are *other ÷ isvd*, so
+the distance above the floor is 1/0.976 and 1/0.972, not 1 − 0.976); freezing costs
+5.0–7.6 %; FD at ℓ = r costs 27 %; Oja at its tuned schedule costs 13–57 %; a random basis costs
+73–529 %. (ii) The
 `isvd`-vs-`frozen` gap — the primary contrast — is **uniform in sign but small in size**: frozen
 loses on all 80 (document, layer) cells on both streams, by 5–8 %. A task-level separation
 between them requires a task sensitive to a 5–8 % reconstruction gap, which is exactly why the
@@ -237,9 +254,12 @@ Under D-005 every v1 in-house retrieval table is **diagnostic only** (the cycled
 retired from every headline claim), so the rows below are cited for the mechanism they identify
 and for nothing else; the n per cell is 2–4. `docs/plan/reports/w11-final-tables.md` at 32K:
 `bugS-r128-h256` (rank-128 gist **with** a 256-token exact tier) 100 / 75 / 100 / 75 against
-`bug-r128` (the same rank, **no** exact tier) — / 50 / 0 / 0; and `bugSdrop-r128-h1024` — the arm
-that *stores* the tier but withholds it from attention — reads — / 50 / 0 / 0, identical to the
-no-tier arm. The **visible** exact tier is the retrieval mechanism; the gist's rank is not.
+`bug-r128` (the same rank, **no** exact tier) **0 / 50 / 0 / 0**, measured on all four; and
+`bugSdrop-r128-h1024` — the arm that *stores* the tier but withholds it from attention — reads
+— / 50 / 0 / 0, where the dash is a cell that table never scored. So the two tier-less conditions
+agree on the three tasks both were scored on (50 / 0 / 0) and the withholding arm simply has no
+needle row; nothing here rests on a dash. The **visible** exact tier is the retrieval mechanism;
+the gist's rank is not.
 
 **What it predicts, and it is the sharpest prediction in this file.** The no-gist control is
 byte-matched by *enlarging the tier*: `nogist_h2423` holds **2423** verbatim tokens against the
@@ -298,6 +318,16 @@ paired reference, then the two **primary-contrast** controls, then the arm the C
 then the bf16 arm, then the two secondaries the cut ladder of §9 drops in this order. The order
 buys an *ordered loss*: a pod that dies early still lands the readings in the order they matter.
 
+**This order supersedes the lane brief's, and the reason is the ordered loss.** The brief lists the
+trackers as `isvd`, `oja`, `fd`, `frozen`, `random`, `nogist` with the bf16 arm as "a 7th arm"
+(`docs/plan/plans/2026-09-11-L3-L5-gate1-bf16-prereg.md`, Task L3.2 "Pod sizing") — an inventory,
+not a run order: it would spend the two arms with no prior anywhere (`oja`, `random`) before the two
+the decision rule reads (`frozen`, `nogist`), so a pod that died at its bar could return neither
+primary contrast nor a decidable C branch. Under the order above both primary contrasts have landed
+at 15.7 h of compute and the C branch is decidable at 22.3 h (§9), and the bf16 arm — the one arm
+whose reading is not in this file — is paid for only after that. **The Stage-1 pod YAMLs L3 Task 3
+commits carry this order**, and `tests/test_pod_manifest.py` pins it arm for arm.
+
 | # | arm config | `kind` | tracker | record key | the cache, in one line |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `full` | `full` | — | `full` | uncompressed; single-shot prefill |
@@ -348,7 +378,9 @@ these cells *mechanism* comparisons rather than budget comparisons.
   `isvd` at ℓ = 2r and loses by 27 % at ℓ = r). A byte-matched swap is the only swap this gate can
   read. ℓ = 2r stays in the reconstruction study, where the plan also puts it (item 1.2).
 - **`oja_r64_h256_seed_tuned`** — the schedule tuned by `kvdlra.eval.recon.tune_oja` on the **1B**
-  dumps (doc63 + doc718 held out, r = 16, layer 8; `results/recon_1b/provenance.json`), where the
+  dumps (**tuned on** doc63 + doc718 at r = 16, layer 8 — `results/recon_1b/provenance.json`
+  `oja_tuning.docs`, the same two documents for both streams; the three documents §2 (c) restricts
+  to are the held-out ones), where the
   surface falls away from the Week-2 (20.0, 0.03) point: the arm's `doc:` records 0.8115 for
   (20, 0.03) against 0.3991 tuned on `k_pre` r16 doc63, and D-014 records 0.821 against 0.405 for
   the same comparison (two write-ups of one measurement; the arm file is what the config hash
@@ -364,7 +396,7 @@ these cells *mechanism* comparisons rather than budget comparisons.
 
 | pod | model | dtype / image | tasks | cells |
 | --- | --- | --- | --- | --- |
-| `gate1_v2_stage1_llama` | `unsloth/Meta-Llama-3.1-8B-Instruct` | bfloat16, `pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel` | `ruler_v2_16k_g1`, `ppl_16k_pg19val_w16` | 8 × 4 = **32** retrieval + 8 perplexity sweeps |
+| `gate1_v2_stage1_llama` | `unsloth/Meta-Llama-3.1-8B-Instruct` | bfloat16, `pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel` | `ruler_v2_16k_g1`, `ppl_16k_pg19val` | 8 × 4 = **32** retrieval + 8 perplexity sweeps |
 | `gate1_v2_stage1_qwen` | `Qwen/Qwen2.5-7B-Instruct` | same | same | same |
 
 **Tasks and n.** `configs/tasks/ruler_v2_16k_g1.yaml`: `generator: v2`, `ctx: 16384`, `seeds: [0]`,
@@ -380,16 +412,19 @@ this section**, in the commit that adds the pod YAMLs and before the launch comm
 order, n = 24, the prereg path and a distinct `config_hash`, every arm through
 `frontier.build_arm` at t = 16384 as the runner builds it). `niah_multiquery` is not a Gate-1
 task and no contrast in §4–§6 reads it. **24 records per (arm, task) cell, 96 retrieval samples +
-16 perplexity windows = 112 samples per arm, 896 per pod**; a trial that raises is a record with
+32 perplexity windows = 128 samples per arm, 1,024 per pod**; a trial that raises is a record with
 `error` set and `hit = 0`, counted in n (ruling R29).
 
-`configs/tasks/ppl_16k_pg19val_w16.yaml` is unchanged: 16 non-overlapping windows, which PG-19
-validation supplies 160 of at this span (D-013). Non-overlap is what keeps the paired bootstrap's
-independence.
+`configs/tasks/ppl_16k_pg19val.yaml` is unchanged and unedited: **32** non-overlapping windows, of
+the 160 PG-19 validation supplies at this span (D-013). Non-overlap is what keeps the paired
+bootstrap's independence; 32 rather than the Table-4 pods' 16 is what makes a ±0.02 TOST decidable
+at the spread those pods measured (§2 b, §6), and the windows are budgeted as samples in §9 rather
+than absorbed into overhead.
 
-**The two 32K task files this lane also commits before the Stage-1 launch commit** —
-`ruler_v2_32k_g1` and `ppl_32k_pg19val_w16` (Stage 2, §9) — are L3 Task 3's, written to match this
-section; they run nothing in Stage 1.
+**The 32K task files Stage 2 would run** — `configs/tasks/ruler_v2_32k_g1.yaml`, committed by L3
+Task 3 before the Stage-1 launch commit and written to match this section, and
+`configs/tasks/ppl_32k_pg19val.yaml`, which exists unchanged (32 non-overlapping windows of the 84
+PG-19 validation supplies at that span, D-013) — **run nothing in Stage 1** (§9).
 
 **Pairing.** `gen.make_trial` is deterministic in `(task, seed, trial)` and never sees the arm, so
 all eight arms are fed the same token ids for a given key; the runner's `[trial]` line and record
@@ -424,10 +459,11 @@ discordant pairs — on **byte-identical prompts** (§3's pairing invariant, ver
 `prompt_sha256` per §7 (e); a key whose digests disagree is dropped from that member and the drop
 is reported with the key). **16 members**: 2 contrasts × 2 families × 4 tasks (§6).
 
-**Perplexity.** Per family, the same two contrasts on the **16 paired per-window** bits/token
+**Perplexity.** Per family, the same two contrasts on the **32 paired per-window** bits/token
 values (`nll_sum_nats / (ntok · ln 2)` from `pplw.jsonl`, never the pooled `ppl=` number): a
 two-sided paired *t*-test on the per-window differences as the Holm member, the 95 % paired
-bootstrap CI reported beside it, and a **TOST at ±0.02 bits/token** for the C branch.
+bootstrap CI reported beside it, and a **TOST at ±0.02 bits/token** whose boolean is read by
+**both** branches — it gates the A/B perplexity route as well as the C branch (the rule below).
 **4 members**: 2 contrasts × 2 families (§6).
 
 ### The statistic, as code
@@ -440,12 +476,18 @@ launch commit; it adds no statistics of its own — every statistic below is a s
 ```python
 from kvdlra.eval import gate1
 
-retr = gate1.retrieval_contrasts(trials)   # {(family, task, a, b): stats.mcnemar_exact(...)}
-ppl  = gate1.ppl_contrasts(pplw)           # {(family, a, b): (mean_d, lo, hi, p_paired, p_tost)}
-                                           #   mean_d, lo, hi = stats.paired_bootstrap(d)
-                                           #   p_paired       = scipy.stats.ttest_1samp(d, 0)
-                                           #   p_tost         = max(stats.tost(d, 0.02)[:2])
-verdict, members = gate1.gate1_verdict(retr, ppl)   # "A/B" | "C" | "UNDECIDED", + what decided it
+retr = gate1.retrieval_contrasts(trials)  # {(family, task, a, b): Contrast}
+#   Contrast: n_paired, a_favored, b_favored, p_value (= stats.mcnemar_exact), p_holm,
+#             errors_a, errors_b  -- the per-arm error counts the refusal rule reads
+ppl = gate1.ppl_contrasts(pplw)           # {(family, a, b): PplContrast}
+#   PplContrast: mean_d, lo, hi = stats.paired_bootstrap(d)
+#                p_paired       = scipy.stats.ttest_1samp(d, 0).pvalue  -> Holm inside its family
+#                tost_pass      = stats.tost(d, 0.02)[2]   -- the BOOLEAN at alpha = 0.05,
+#                                 uncorrected (§6). The two one-sided p-values are reported
+#                                 beside it; no rule below reads them.
+verdict, members = gate1.gate1_verdict(retr, ppl, diag=diag, sbits=sbits)
+#   "A/B" | "C" | "UNDECIDED", + the members that decided it. `diag` is diag.jsonl and `sbits`
+#   the records' sbits column: the two refusals below are decided from the records, not by eye.
 ```
 
 Holm is `kvdlra.eval.stats.holm` at α = 0.05, applied over each family's raw p-values as §6
@@ -453,23 +495,44 @@ defines them; `scripts/tables.py` applies no correction of its own.
 
 ### The operationalization, exactly as `gate1_verdict()` implements it
 
+**Scope: the verdict reads the 16K contrasts only.** Stage 1's two 16K pods — and, if Stage 2 runs,
+its Mistral 16K pod, which enters this same rule with the Holm families §6 fixes now — are the
+inputs to rules 1–4. The three 32K pods are **descriptive**: they report whether whatever 16K found
+generalizes to twice the context, with Holm applied inside each of their own families (§6), and
+they **never change the branch**. A 32K family that separates where its 16K twin did not, or fails
+to where it did, is written into the verdict entry as that — a generalization reading — and moves
+no letter.
+
 1. A **family is separated** iff, for **each** of `frozen` and `nogist` separately, the r64 arm
    beats it — **on retrieval on at least one task** (that member's Holm-adjusted p < 0.05 in the
-   primary retrieval family **and** `a_favored > b_favored`) **or on perplexity** (that member's
-   Holm-adjusted p < 0.05 in the primary perplexity family **and** the r64 arm's mean bits/token
-   lower). Both controls must be beaten; beating one is not a separated family.
-2. **Branch A/B** iff **≥ 2 families are separated.** Stage 1 has exactly two families, so at
-   Stage 1 "≥ 2" means **both**. A single separated family cannot reach A/B on Stage 1 alone —
-   that is precisely the outcome Stage 2's Mistral pod exists to resolve (§9), and it is recorded
-   as `UNDECIDED (one family separated)`, never rounded up.
-3. **Branch C** iff the r64 arm is **not separated from `fd` and not separated from `frozen` on
-   every task in every family** (no Holm-adjusted p < 0.05 in either direction on any of those
-   members; `fd` is read from the secondary family of §6 at that family's correction) **and every
-   `isvd`-vs-`fd` and `isvd`-vs-`frozen` TOST at ±0.02 bits/token passes** (4 TOSTs: 2 contrasts ×
-   2 families; the two `frozen` TOSTs come from the primary perplexity family, the two `fd` TOSTs
-   from the same `gate1.ppl_contrasts` call on the same 16 windows, reported descriptively in
-   §7 (a) and read here — a TOST is an equivalence reading and takes no Holm slot of its own
-   beyond the family bound §6 states).
+   primary retrieval family **and** `a_favored > b_favored`) **or on perplexity**, where the
+   perplexity route requires **all three** of: that member's Holm-adjusted p < 0.05 in the primary
+   perplexity family, **Δ < 0** (the r64 arm's mean bits/token lower), and that contrast's ±0.02
+   **TOST failing** (`stats.tost(d, 0.02)[2]` is `False`). The third condition is the ±0.02 margin
+   doing its work in both directions: an advantage that is statistically real *and* demonstrably
+   inside 0.02 bits/token is, by the practical-significance criterion this gate adopted, not the
+   tracker doing work — it is equivalence measured tightly, and it counts for neither branch. Both
+   controls must be beaten; beating one is not a separated family.
+2. **Branch A/B** iff **≥ 2 families are separated**, counting **model families separated at
+   16K**: Llama and Qwen from Stage 1, Mistral from Stage 2 if it runs. Stage 1 has exactly two, so
+   at Stage 1 "≥ 2" means **both**. A single separated family cannot reach A/B on Stage 1 alone —
+   that is precisely the outcome Stage 2's Mistral pod exists to resolve (§9): it enters rule 1
+   unchanged, at its own families (§6), and a separation there is the second. One family separated
+   is recorded as `UNDECIDED (one family separated)`, never rounded up, and no 32K pod can supply
+   the missing one.
+3. **Branch C** iff **both** of its conditions hold. **(i) Retrieval:** no Holm-significant
+   separation of the r64 arm from `fd` and none from `frozen`, on **any task in any 16K family** —
+   no Holm-adjusted p < 0.05 in either direction on any of those members, the `fd` members read
+   from the secondary family of §6 at that family's **realised** m. **(ii) Perplexity:** **every**
+   `isvd`-vs-`fd` and `isvd`-vs-`frozen` TOST at ±0.02 bits/token **passes** (4 TOSTs at Stage 1:
+   2 contrasts × 2 families; the two `frozen` TOSTs come from the primary perplexity family, the
+   two `fd` TOSTs from the same `gate1.ppl_contrasts` call on the same 32 windows, reported
+   descriptively in §7 (a) and read here). A Holm-significant perplexity *t*-test against `frozen`
+   or `fd` does not by itself block C: what blocks C is a TOST **failing**, and (ii) is that
+   condition stated positively. Because C requires *all* of its TOSTs to pass, its perplexity
+   condition is an **intersection–union test**, so each TOST is read at α = 0.05 **uncorrected**
+   (§6 states why that controls the error rate with no multiplicity correction, while the paired
+   *t*-tests keep Holm).
 4. Otherwise **UNDECIDED**, with the members that blocked each branch listed.
 
 **The plan's asymmetry is kept, and named.** Branch C reads (c) and (d) — FD and frozen — and not
@@ -479,8 +542,17 @@ DECISIONS verdict entry records it explicitly whenever it happens, beside the br
 selected. The rule is not widened here to absorb it: widening a pre-registered rule after writing
 down what the evidence probably is, is the thing pre-registration exists to prevent.
 
-**The branches partition every non-refused outcome.** 2 and 3 are mutually exclusive: A/B needs
-`frozen` separated in both families, C needs it separated in none. 4 is everything else. Only one
+**A/B and C are mutually exclusive by construction, and the ±0.02 margin is what makes them so.**
+Every route by which a family can be separated from `frozen` contradicts one of C's `frozen`
+conditions: a retrieval win is a Holm-significant separation on some task, which C (i) forbids; a
+perplexity win now additionally requires its ±0.02 TOST to **fail**, which C (ii) forbids. No
+outcome satisfies both. The third possibility — a Holm-significant perplexity difference whose TOST
+*passes* — satisfies neither route and leaves the letter to the other contrasts, and it is not
+hypothetical: Llama `isvd_r256_noguard` − `isvd_r256_tol` over the Table-4 windows has
+d̄ = **+0.0016** bits/token at s = **0.0019**, a two-sided paired *t*-test **p = 3.8e-3**, and a
+±0.02 TOST that **passes** (`stats.tost(d, 0.02)` → p_lo ≈ 6.3e-18, p_hi ≈ 6.8e-17, `True`; §2 b's
+snippet, n = 16). Under rule 1 that pair is **not** an A/B perplexity win — two arms that differ
+significantly *and* equivalently — so it cannot collide with C. 4 is everything else. Only one
 branch is applied; the consistency check when the table is written is **one branch, named, with
 its blocking members listed**.
 
@@ -493,7 +565,7 @@ its blocking members listed**.
   tolerance knob). An error on arms 6–8 removes that arm's secondary members and nothing else.
   Nothing is re-run on the pod with a knob changed; a fix is a later commit and a later pod.
 - **No arm is ever printed as `--`** (`docs/plan/lanes/L3_gate1_tracker_swap_v2.md`: "Any arm with
-  more than 0 `error` trials is reported as failed, not as `--`"). Every arm in the Gate-1 table carries
+  `> 0` `error` trials is reported as failed, not as `--`"). Every arm in the Gate-1 table carries
   either its cells or the exception text that replaced them; an arm that never ran reads `not run`
   with the reason. A dash in a Gate-1 table is what the Week-20 swap pod's FD cell looked like, and
   it is the reason that pod decides nothing.
@@ -501,6 +573,29 @@ its blocking members listed**.
   repair — the post-repair meaning fixed by `prereg/hygiene_table4.md` A2.3) is an `error` row and
   is handled by the rule above. It is a possible outcome, not an accident, and the arm is never
   re-run with the tripwire disabled.
+- **A frozen arm still repairing after its freeze voids the `isvd`-vs-`frozen` contrast.** Any
+  `diag.jsonl` row of `frozen_r64_h256_seed` with `fixed_k` or `fixed_v` **true** at
+  `tokens_seen > freeze_after` (4096) — other than the one window per (sample, layer) that
+  straddles the freeze, which §7 (c) exempts and says why — is a dispatch defect (§7 c): the arm
+  did not run the mechanism this file says it runs, so its cells are not the contrast that was
+  pre-registered. The verdict is **refused** for that family — `UNDECIDED (frozen dispatch)`, with
+  the offending rows named — **pending a dated amendment that names the defect and its repair**.
+  The frozen cells are not cited, and nothing is re-read around them.
+- **A no-gist arm off its byte match voids the `isvd`-vs-`nogist` contrast.** The **measured**
+  stored-bits ratio of each `nogist_*` arm to `isvd_r64_h256_seed`, read from the records' `sbits`
+  exactly as §7 (f) describes, must lie within **1 ± 0.05** — the tolerance
+  `tests/test_gate1_arms.py::test_the_nogist_arms_are_byte_matched_to_isvd_r64_at_16k` pins the
+  *design* at, here required of the *run*. Outside it the arm is not byte-matched on the pod
+  whatever its file solves for, the `isvd`-vs-`nogist` members of that family are void, and the
+  verdict is refused the same way, pending a dated amendment. It is read **before** the rule above
+  is applied, never after.
+- **The two `mcnemar_exact` boundaries, fixed now.** With no discordance at all (a = b = 0 — two
+  cells agreeing on all 24 keys, the likely shape of a floor-against-floor cell) it returns
+  **p = 1.0**, and that 1.0 enters Holm as an ordinary p-value; it is never read as missing and
+  never as evidence of equivalence (§6). With **no shared key** it returns **`None`**, which is not
+  a result but a broken pairing: that is §6's `prompt_sha256` mismatch rule at its limit — paired
+  n = 0, the member listed with its keys and no adjusted p-value, and a primary member at `None`
+  refuses the verdict for its family exactly as an `error` row does.
 
 Stage 2, if it runs, carries **its own Holm families** (§6) and its own amendment; no Stage-2
 member is pooled with a Stage-1 member and no Stage-1 p-value is recomputed when Stage 2 lands.
@@ -513,7 +608,7 @@ replaced, by Amendment 1 when the pre-flight harvests. Retrieval is hits/24 per 
 
 | arm | retrieval prediction | perplexity prediction |
 | --- | --- | --- |
-| `full` | the ceiling. ≥ 0.9 on every task or the task leaves the primary family (§6) | the reference every Δ is taken against |
+| `full` | the ceiling. ≥ 0.9 on every task — but a Stage-1 `full` cell below 0.9 **excludes nothing**: only the pre-flight's amendment can shrink a family, and a degraded Stage-1 ceiling is flagged beside its members instead (§6 ii) | the reference every Δ is taken against |
 | `isvd_r64_h256_seed` | **at or near the floor**: ≲ 0.25 / 0.08 / 0.00 on single / multikey / multivalue (§2 a, harder filler by construction) → ≈ 6 / 2 / 0 of 24; `vt` unknown on v2 | +0.02…+0.17 bits from `full` (§2 b, at a different rank and with an exact tier — an anchor, not a prediction of the value) |
 | `nogist_*` | **plausibly above `isvd`** — the visible exact tier is the retrieval mechanism (§2 d) and this arm holds 9.5× (Llama) / 17.4× (Qwen) as many verbatim tokens at the same stored bits | **worse than `isvd`** — higher bits/token — if the gist carries fluency: the mechanism claim, with a mixed and non-byte-matched prior (§2 e) |
 | `frozen_r64_h256_seed` | **≈ `isvd`**: same rank, same tier, same seed; reconstruction says frozen loses 5.0–7.6 % uniformly (§2 c), and a retrieval task at the floor cannot resolve 5–8 % | slightly worse than `isvd`, by the same 5–8 % of a reconstruction gap; this is the cell the perplexity axis exists for |
@@ -524,15 +619,18 @@ replaced, by Amendment 1 when the pre-flight harvests. Retrieval is hits/24 per 
 
 **The live outcome that must be named now: a perplexity-only A/B.** If the predictions above hold
 — `nogist` at or above `isvd` on retrieval because the tier retrieves, `isvd` above `nogist` and
-`frozen` on perplexity because the gist reconstructs — then **both families separate on the
-perplexity axis alone and the rule selects A/B while every retrieval cell says the tracker changes
-nothing about what is retrieved.** That outcome is legitimate under the rule as the plan wrote it
-("on retrieval **or** perplexity") and it is pre-registered as such, but what it licenses is
-narrow and is fixed here, before it happens:
+`frozen` on perplexity because the gist reconstructs — **and each of those perplexity advantages is
+larger than the ±0.02 margin, i.e. Holm-significant with its own TOST failing** (§4 rule 1; an
+advantage inside the margin licenses nothing and selects nothing) — then **both families separate
+on the perplexity axis alone and the rule selects A/B while every retrieval cell says the tracker
+changes nothing about what is retrieved.** That outcome is legitimate under the rule as the plan
+wrote it ("on retrieval **or** perplexity") and it is pre-registered as such, but what it licenses
+is narrow and is fixed here, before it happens:
 
 - **It licenses**: "the online-tracked gist reconstructs the context better than a frozen basis
-  and better than no gist at matched stored bits, measured as teacher-forced perplexity on PG-19
-  validation at 16K, on two model families" — with the paired CI and the adjusted p-value.
+  and better than no gist at matched stored bits, **by more than 0.02 bits/token**, measured as
+  teacher-forced perplexity on PG-19 validation at 16K over 32 paired windows, on two model
+  families" — with the paired CI, the adjusted p-value and the failed TOST printed beside them.
 - **It does not license**: any claim that the tracker improves retrieval, any headline built on
   needle accuracy, or the sentence in `paper/main.tex` that this gate was run to test. A
   perplexity-only A/B is recorded in DECISIONS **as** perplexity-only, with the retrieval table
@@ -548,15 +646,17 @@ narrow and is fixed here, before it happens:
   tier, not the tracker*: the contribution is the residual-selected exact tier and the cache
   around it, the tracker is an interchangeable component, and `ICML2027_PLAN.md` §3-C is the
   build-out. This is the outcome §2 (c)'s 5–8 % `isvd`-vs-`frozen` gap makes plausible: a gap that
-  small may simply not reach either axis at n = 24 and 16 windows.
+  small may simply not move either axis past what §4 asks of it — ten one-directional discordant
+  pairs of 24 on retrieval (§6), or an advantage outside ±0.02 bits/token on 32 paired windows.
 - **A/B on both axes**, retrieval included — the strongest outcome, and the least likely given
   §2 (a)'s floor.
 - **`nogist` beats `isvd` on retrieval *and* on perplexity** — the sharpest negative available:
   the byte-matched control dominates the method on both axes, the rule returns UNDECIDED or C
   depending on `fd` and `frozen`, and the paper is the analysis paper whatever the branch letter
   says. It is reported in full, with the discordant pairs listed.
-- **UNDECIDED** — including the one-family-separated case (rule 2) and the case where a TOST is
-  undecidable at n = 16 (§6). UNDECIDED is a real outcome with a real cost (Stage 2, §9), not a
+- **UNDECIDED** — including the one-family-separated case (rule 2), the two refusals of §4
+  (frozen dispatch, byte match), and the case where a TOST is **not decidable** at the realised
+  spread even on 32 windows (§6). UNDECIDED is a real outcome with a real cost (Stage 2, §9), not a
   failure to be argued away.
 
 **Abort and error are possible outcomes, not accidents.** An `OrthonormalityError` on a gist arm,
@@ -579,8 +679,25 @@ Three families, fixed now (`kvdlra.eval.stats.holm`, α = 0.05, applied over raw
   this family's correction — which is the conservative direction: a larger family makes a
   separation from `fd` harder to reach, and C requires non-separation.
 
+**The secondary family is corrected at its *realised* m.** Its 24 members assume all three
+secondary arms run. An arm the §9 cut ladder drops before launch, or one the ordered loss never
+reaches, takes **8 members with it** (4 tasks × 2 families): rung 1 (drop `random`) leaves
+**m = 16**, rungs 1 + 2 (also `oja_tuned`) leave **m = 8**, which is exactly the `fd` members. The
+C branch reads its `fd` members at whatever m actually ran (§4 rule 3 (i)) — and that is the
+direction that matters: a smaller family widens Holm's slots, so a separation from `fd` becomes
+*easier* to reach and C becomes **harder**, never easier, as the budget shrinks. The realised m is
+printed beside the family in the table, and §9's ladder names it at each rung.
+
+**Stage 2's families are fixed now, so that running it later decides nothing this file has not
+already set.** If the Mistral 16K pod runs it carries one model family's worth of the Stage-1
+sizes — **retrieval 8** (4 tasks × 2 contrasts), **perplexity 2** (2 contrasts), **secondary 12**
+(4 tasks × 3 contrasts) — with Holm inside each, and its separation enters §4 rule 2 as the third
+model family. Each 32K pod carries the same three sizes, **8 / 2 / 12** per family, Holm inside
+each family and **descriptive only** (§4's scope note). No Stage-2 member is pooled with a Stage-1
+member and no Stage-1 p-value is recomputed when Stage 2 lands.
+
 A member is defined by its pairing-key set — the 24 `(seed, trial)` keys of one (family, task)
-cell, both arms, or the 16 windows of one (family) perplexity cell. **A member whose cell holds an
+cell, both arms, or the 32 windows of one (family) perplexity cell. **A member whose cell holds an
 `error` row leaves its family** (the remaining members are corrected together at the smaller m, so
 the others stay decidable) and is listed beside the family with its exception and no adjusted
 p-value — but on the four arms §4 names, an error refuses the verdict outright, so this path
@@ -598,8 +715,14 @@ still reported descriptively, and is fixed in `kvdlra.eval.gen` before any pod r
 Llama only** (`prereg/gate1_preflight.md` §9 decides nothing about Qwen), so an exclusion is
 decided on a Llama ceiling and applies to the task in **both** families — which is the right
 scope, because a ceiling that low is a generator/template defect (the A2.6 hypothesis for v1 `vt`)
-and not a property of one checkpoint. (ii) **Qwen's own ceiling is unmeasured until Stage 1 runs
-it.** If a Stage-1 `full` cell falls below 0.9 on a task the pre-flight passed, the task is **not**
+and not a property of one checkpoint. The same argument carries the *design* gap between the two
+pods: the pre-flight measures that ceiling at **n = 12 over two code families**
+(`ruler_v2_16k`, `design: {haystacks: 2, depths: 3, codes: 2}`) and Gate 1 runs **n = 24 over
+four** (`ruler_v2_16k_g1`, `codes: 4`), and the rule transfers because the ceiling is a property of
+the generator and the template rather than of a code family. The Stage-1 `full` cells then report
+that ceiling at four code families — which is where a task the pre-flight passed can still be seen
+to sag, and (ii) below says what happens then. (ii) **Qwen's own ceiling is unmeasured until
+Stage 1 runs it.** If a Stage-1 `full` cell falls below 0.9 on a task the pre-flight passed, the task is **not**
 excluded — choosing members after seeing the data is what the pre-flight exists to avoid — but
 every member on that task is flagged in the table and in the verdict entry as resting on a
 degraded ceiling, with the `full` cell printed beside it, and a `full` cell at or near 0 makes
@@ -618,43 +741,62 @@ exact two-sided McNemar p at *a* discordant pairs in the r64 arm's favour and *b
 > at (≥ 10, 0): ten of twenty-four pairs won with none lost.** (9,0) at 0.0039 clears the fifth
 > slot at best, i.e. only behind four other separations; (8,0) at 0.0078 clears the eleventh.
 > In the 24-member secondary family the first slot is 0.00208 and (10,0) at 0.00195 still clears
-> it. If a task is excluded and the primary family falls to 12, the first slot widens to 0.00417
+> it; at that family's realised m under §9's ladder the slot widens to 0.05/16 = 0.00313 (where
+> (10,0) still clears and (9,0) at 0.0039 does not) and to 0.05/8 = 0.00625 (where (9,0) does).
+> If a task is excluded and the primary family falls to 12, the first slot widens to 0.00417
 > and **(9,0) becomes self-sufficient** — an exclusion costs a task and buys one pair of
 > resolution on the rest.
 
 Against §5's floor prediction this is the arithmetic that matters: if `isvd` scores 6/24 on
 `niah_single` and `frozen` scores 5/24, the discordance cannot plausibly reach (10, 0), and that
 cell will not separate whatever the point estimates look like. The retrieval axis at n = 24 can
-detect a **ten-pair, one-directional** swing and nothing smaller. That is stated now so that a
-table of non-separations is read as the resolution the design bought, not as evidence of
+detect, **in a member that has to clear the first Holm slot on its own**, a ten-pair
+one-directional swing and nothing smaller — a member standing behind four other separations
+resolves (9, 0), and behind ten, (8, 0). That is stated now so that a table of non-separations is
+read as the resolution the design bought, not as evidence of
 equivalence — non-separation is not equivalence, which is exactly why the C branch additionally
 requires a TOST to **pass**.
 
-**The 16-window resolution, and the condition the C branch rests on.** `kvdlra.eval.stats.tost`
-is two one-sided *t*-tests at α on the paired per-window differences, so equivalence at ±δ fires
-when `t(1−α, n−1)·s/√n < δ − |d̄|`, where `s` is the SD of the paired differences. At n = 16 and
-d̄ ≈ 0:
+**The 32-window resolution, the α the TOSTs are read at, and the condition the C branch rests
+on.** `kvdlra.eval.stats.tost` is two one-sided *t*-tests at α on the paired per-window
+differences, so equivalence at ±δ fires when `t(1−α, n−1)·s/√n < δ − |d̄|`, where `s` is the SD of
+the paired differences. **Every TOST is read at α = 0.05, uncorrected, and that is a decision, not
+an omission**: the C branch requires *all* of its TOSTs to pass, which is an **intersection–union
+test** — its null ("at least one of these contrasts is non-equivalent") is rejected only when every
+component test rejects at α, and such a test has size at most α however many components it has, so
+a multiplicity correction would buy nothing and cost power. The paired *t*-tests are the opposite
+shape — a union, where any single member can separate a family — and they keep Holm (§4). At
+n = 32 and d̄ ≈ 0, with t(0.95, 31) = 1.6955:
 
-| | α = 0.05 (uncorrected) | α = 0.0125 (Holm's tightest slot, family of 4) |
+| | **α = 0.05, n = 32** (Stage 1) | α = 0.05, n = 16 (what 16 windows would have bought) |
 | --- | --- | --- |
-| t, half-width | 1.753, 0.438·s | 2.490, 0.622·s |
-| decidable at **δ = 0.02** for | **s < 0.0456** | **s < 0.0321** |
-| decidable at δ = 0.05 for | s < 0.114 | s < 0.0803 |
+| t, half-width | 1.6955, 0.2997·s | 1.7531, 0.4383·s |
+| decidable at **δ = 0.02** for | **s < 0.0667** | s < 0.0456 |
+| decidable at δ = 0.05 for | s < 0.1668 | s < 0.1141 |
 
-The measured arm-vs-arm paired SD on this exact protocol spans **0.0016 to 0.0490** bits/token
-(§2 b): the Llama contrasts sit at 0.0016–0.0019 with a 17–20× margin, and the **Qwen** contrasts
-between arms that really differ sit at 0.046–0.049, *above* the 0.0321 bound. **Pre-registered
-consequence, with its reporting obligation** (the pattern of `prereg/hygiene_table4.md` A1.2):
+The measured arm-vs-arm paired SD on this protocol, over the arms whose basis stayed orthonormal,
+spans **0.0016 to 0.0490** bits/token (§2 b): the Llama contrasts sit at 0.0016–0.0019, a 35×
+margin, and the **Qwen** contrasts between arms that really differ sit at 0.046–0.049 — *inside*
+the 0.0667 bound by ≈ 1.4×, where on 16 windows they would have been outside 0.0456 and Branch C
+would have been unreachable on that family for a reason having nothing to do with the tracker.
+That decidability is what §9's 32 windows are bought for. **The residual is pre-registered, with
+its reporting obligation** (the pattern of `prereg/hygiene_table4.md` A1.2):
 
 - `s` is read back from the run — `tables.py ppl` / `gate1.ppl_contrasts` print the paired
   bootstrap CI, whose half-width is ≈ 1.96·s/√n, so `s ≈ (hi − lo)·√n / 3.92`.
-- If a member's realised `s` exceeds its bound, **its TOST cannot fire whatever the point estimate
-  is.** The C branch requires every one of its four TOSTs to pass, so the verdict is then
+- If a member's realised `s` still exceeds its bound, **its TOST cannot fire whatever the point
+  estimate is**, and the member is recorded as **`not decidable`** — never as a pass, never as a
+  quiet fail. The C branch requires every one of its four TOSTs to pass, so the verdict is then
   **UNDECIDED**, and the report must say **which** it is: |d̄| genuinely above the margin
-  (non-equivalence) or the interval too wide for n = 16 (undecided). Only the second is a reason
-  to spend a wider perplexity run.
-- **This failure mode cannot manufacture a Branch C**; it can only withhold one. That asymmetry is
-  the reason ±0.02 is kept at n = 16 rather than widened to the tool's ±0.05 default: the plan
+  (non-equivalence) or the interval too wide at the realised spread (not decidable). Only the
+  second is a reason to spend a wider perplexity run; neither is a reason to widen the margin.
+- **A wide interval cannot manufacture a Branch C**; it can only withhold one. On the A/B side the
+  rule reads the boolean, which is `False` in two different situations — a difference outside the
+  margin, and an interval too wide to place against it — so the conjunction §4 rule 1 requires
+  (Holm-significant **and** TOST `False`) reads *"real, and not demonstrably inside ±0.02"*, which
+  is weaker than *"demonstrably outside it"*. Where a separating member's TOST is `False` because
+  it is `not decidable`, the verdict entry says so beside the branch, with `s` and the CI. That
+  asymmetry is the reason ±0.02 is kept rather than widened to the tool's ±0.05 default: the plan
   fixed 0.02, a wider margin would make C *easier* to reach on noise, and the conservative
   direction for a gate that can retire the method's central claim is to refuse rather than to
   conclude.
@@ -666,11 +808,12 @@ pre-flight's rows, and `niah_multiquery` if it is ever run on these pods.
 ## 7. Secondary outcomes
 
 - **(a) The other three trackers.** `isvd` vs `oja_tuned`, `fd`, `random`, per family and task,
-  exact paired McNemar, **the 24-member secondary family** of §6 (the C branch reads the `fd`
-  members from it; the `oja` and `random` members are reported with adjusted p-values and feed no
-  branch). Wilson 95 % intervals (`kvdlra.eval.stats.wilson`) per cell beside the point estimates.
-  Perplexity for the same three contrasts is reported with paired bootstrap CIs, **uncorrected and
-  descriptive**, except the `fd` TOSTs the C branch names in §4.
+  exact paired McNemar, **the secondary family** of §6 — 24 members if all three arms run, at its
+  realised m otherwise (16 after the ladder's rung 1, 8 after rung 2), the C branch reading its
+  `fd` members at that m; the `oja` and `random` members are reported with adjusted p-values and
+  feed no branch. Wilson 95 % intervals (`kvdlra.eval.stats.wilson`) per cell beside the point
+  estimates. Perplexity for the same three contrasts is reported with paired bootstrap CIs,
+  **uncorrected and descriptive**, except the `fd` TOSTs the C branch names in §4.
 - **(b) The bf16 arm.** Reported here as rows only; every reading is
   `prereg/bf16_gist.md`'s, committed before the Stage-1 launch commit.
 - **(c) The guard, per arm, from `diag.jsonl`.** Per layer: maximum **pre-repair** `orth_err_k` /
@@ -683,11 +826,18 @@ pre-flight's rows, and `niah_multiquery` if it is ever run on these pods.
   - **`frozen_r64_h256_seed` should show no repairs after the freeze.** `_guard_orthonormality`
     runs on every absorb for every tracker, and past `freeze_after` = 4096 `frozen_step` returns
     `U` unchanged with `rot = I`, so the measured error stays where the last repair left it and
-    `fixed_k` / `fixed_v` should read **false in every window past the freeze**. A frozen arm still
-    repairing after the freeze is a **dispatch defect**, reported as such to lane L3.
+    `fixed_k` / `fixed_v` should read **false in every window past the freeze** — with one
+    exemption, stated now: a `[diag]` row covers a 64-absorb window and its `tokens_seen` is the
+    last absorb in it, so the **first row per (sample, layer) with `tokens_seen > 4096`** is the
+    window that straddles the freeze and can legitimately carry a repair from an absorb before it.
+    Every row after that one must read false. A frozen arm still repairing there is a **dispatch
+    defect**: §4's refusal rule voids the `isvd`-vs-`frozen` contrast for that family and refuses
+    the verdict pending a dated amendment, and the defect is reported to lane L3.
   - **`random_r64_h256_seed`'s error should be flat.** Its basis is one CPU fp32 QR cast to the
     block dtype and never touched again, so `‖UᵀU − I‖_F` is that cast's rounding error and
-    constant over the run. A rising trace on that arm is a dispatch defect, reported the same way.
+    constant over the run. A rising trace on that arm is a dispatch defect, reported to lane L3 the
+    same way — it removes that arm's secondary members (§6's realised m) and refuses nothing, since
+    no branch reads `random`.
 - **(d) The measured min/sample per arm, read from `manifest.cell_elapsed_s`.** `runner._cell`
   prints `[stage] cell arm=<arm> task=<task> ctx=<ctx> elapsed_s=<s> n=<records>` after every
   completed cell, timed with `time.perf_counter()` around that cell's trials; `scripts/pod.py
@@ -701,9 +851,12 @@ pre-flight's rows, and `niah_multiquery` if it is ever run on these pods.
   > ÷ 96 samples = Σ ÷ 5,760.**
 
   **The perplexity axis emits no cell line** — `frontier.run_ppl` is not `_cell` — so the measured
-  rate covers 96 of an arm's 112 samples and the remaining 16 windows are inside the §9 overhead
-  and the safety factor. Each arm's measured rate is reported against its §9 budgeted rate; the
-  reading is descriptive for Stage 1 and is what re-sizes Stage 2 (§9). Because each line carries
+  rate covers 96 of an arm's 128 samples. The other 32 are the perplexity windows, and they are
+  **billed in §9 as samples at the arm's rate**, not absorbed into overhead; what the run does not
+  return is a separate *measurement* of their rate, which is why §9's safety factor and not the
+  cell timings is what covers a window slower than a retrieval trial. Each arm's measured rate is
+  reported against its §9 budgeted rate; the reading is descriptive for Stage 1 and is what
+  re-sizes Stage 2 (§9). Because each line carries
   its own seconds, the watchdog's per-poll `sort -u` cannot damage it and nobody has to be watching
   the run.
 - **(e) The pairing invariant, verified.** For every `(task, seed, trial)` in a pod the eight arms'
@@ -726,17 +879,20 @@ pre-flight's rows, and `niah_multiquery` if it is ever run on these pods.
 - **(f) Stored bits, on the pod.** `ratio` and `sbits` are recorded on every row. Arms 2, 4, 5, 7
   and 8 should print identical `sbits` (all bill the **live tracked rank** — D-015 — which is the
   cap at these settings), arm 3 within ≈ 0.1 % of them (§3's 1.00003× / 1.00002× match), and arm 6
-  below them by its coordinate dtype. A wider gap is an accounting finding, reported, and it
-  invalidates the byte match that makes the `nogist` contrast a mechanism contrast — so it is read
-  **before** §4's rule is applied, not after.
+  below them by its coordinate dtype. The pin §4's refusal rule reads is the **measured** ratio
+  `median(sbits of nogist_*) / median(sbits of isvd_r64_h256_seed)` over that pod's records, which
+  must lie within **1 ± 0.05**; outside it the byte match that makes the `nogist` contrast a
+  mechanism contrast did not hold on the pod, those members are void and the verdict is refused.
+  Any other gap is an accounting finding, reported. Both are read **before** §4's rule is applied,
+  not after.
 
 ## 8. Log volume, and what counts as a complete `<label>.log`
 
 The pod log is the only channel back from a vast.ai instance (`results/<pod>/` dies with it). Rows
 per sample: one `[trial]` line per retrieval record, one cell row per (arm, task), one
-`[stage] cell` timing row per (arm, task), one `[pplw]` line and one `ppl=` line per arm, and for
-each of the **seven** `bug`-kind arms the `[diag]` rows `records.drained` prints when a sample's
-cache is drained — `full` emits none.
+`[stage] cell` timing row per (arm, task), **four** `[pplw]` lines (the 32-window split, below)
+and one `ppl=` line per arm, and for each of the **seven** `bug`-kind arms the `[diag]` rows
+`records.drained` prints when a sample's cache is drained — `full` emits none.
 
 **No arm sets `diag_every`, so the cache default (64) applies.** The per-sample count is
 **measured**: `results/filler_realism/diag.jsonl` holds 39,936 rows over 48 samples × 2 gist arms
@@ -752,13 +908,13 @@ columns the gist never absorbs.
 
 | per pod | rows (Llama) | rows (Qwen) |
 | --- | --- | --- |
-| `[diag]`: 7 gist arms × 112 samples × 416 / 364 | **326,144** (≤ 426,496) | **285,376** (≤ 373,184) |
+| `[diag]`: 7 gist arms × 128 samples × 416 / 364 | **372,736** (≤ 487,424) | **326,144** (≤ 426,496) |
 | `[trial]`: 8 arms × 4 tasks × 24 | 768 | 768 |
 | cell rows: 8 × 4 | 32 | 32 |
 | `[stage] cell` (§7 d): 8 × 4 | 32 | 32 |
-| `[pplw]` + `ppl=`: 8 + 8 | 16 | 16 |
+| `[pplw]` + `ppl=`: 8 × 4 + 8 | 40 | 40 |
 | `[stage]` other + ENV block + markers | ≈ 50 | ≈ 50 |
-| **expected deduped `<label>.log`** | **≈ 327,000 lines** (≈ 90 MB at 275 B/row) | **≈ 286,000 lines** (≈ 79 MB) |
+| **expected deduped `<label>.log`** | **≈ 374,000 lines** (≈ 103 MB at 275 B/row) | **≈ 327,000 lines** (≈ 90 MB) |
 
 (275 B/row is measured, not assumed: the live filler-realism pod's `.raw` read 78.5 MB over
 286,000 lines — `prereg/ss2_families.md` §8.)
@@ -773,20 +929,25 @@ close inside one poll: **≤ 2 × 416 + 2 = 834 rows per poll** (≤ 1,090 at th
 30,000-line window and 6× under the 5,000-line fallback. The unfiltered log would have to add
 more than 4,000 lines in 150 s on top of the worst burst to open a gap. The watchdog dedupes
 `<label>.raw` in place after every append (the L2 fix wave c437e75), so the raw stays at the size
-of its distinct rows (≈ 79–90 MB) instead of growing by the re-fetched tail each poll; the launch
+of its distinct rows (≈ 90–103 MB) instead of growing by the re-fetched tail each poll; the launch
 entry names the watchdog SHA.
 
 **The watchdog's own clock needs no override.** `BUDGET_ITERS` defaults to
-`(gpu_budget_h · 3600 + 7200) / 150 + 1` polls with a floor of 600; at the §9 bar of 72.0 h that is
-**1,777 polls = 74.0 h**, which is the bar plus exactly `boot.sh`'s 2 h `GRACE_S` self-destruct —
-the `+7200` in the formula *is* that grace. Nothing goes on the launch line.
+`(gpu_budget_h · 3600 + 7200) / 150 + 1` polls (floor 600); at the §9 bar of 82.0 h that is
+**2,017 polls = 84.0 h** — the bar plus `boot.sh`'s 2 h `GRACE_S` self-destruct. Nothing goes on
+the launch line.
 
 **The completeness test is on the deduped `<label>.log`.** Exact: `grep -c '^\[trial\]'` = **768**,
-`grep -c '^\[pplw\]'` = **8**, one per arm (`_log_pplw` splits a long line into `part=i/n`, which
-16 windows does not reach — the Table-4 pods printed one line per arm at this n), and
+`grep -c '^\[pplw\]'` = **32**, *four* per arm: `_log_pplw` prints one line while it fits in 400
+characters and otherwise splits into `part=i/n` groups of **8** values, and at 32 windows the line
+is ≈ **447** characters (32 values of 11 characters at `%.6f` for a 2048-token window's nll sum,
+31 commas, the `[pplw] T=16384 <arm> ntok=2048 nlls=` head and the ` corpus=pg19-val` tail), so
+every arm prints ⌈32/8⌉ = 4 parts — where the Table-4 pods at 16 windows printed one line of
+≈ 255 characters. `records.parse_pplw_lines` reassembles the parts and raises on a gap, so a lost
+fragment fails the harvest rather than shortening a sweep silently. And
 `scripts/pod.py check results/gate1_v2_stage1_<family>` returns 0 (config hash, commit order, all
 32 retrieval cells at n = 24, `env.txt` against the pyproject pins). Approximate:
-`grep -c '^\[diag'` ≈ 327,000 (Llama) / 286,000 (Qwen) — **± 32 rows per Llama sample and ± 28 per
+`grep -c '^\[diag'` ≈ 374,000 (Llama) / 327,000 (Qwen) — **± 32 rows per Llama sample and ± 28 per
 Qwen sample** (one per layer) is expected noise, since the per-layer window count moves by one when
 a sample's absorb count crosses a multiple of 64 and v2 prompts vary by a few tokens across
 haystacks, and `nogist_*`'s own count is one of the things the pre-flight measures — and
@@ -798,8 +959,10 @@ the `error` lines before concluding truncation, and do not harvest it as final.
 
 **Unit and anchors.** "min/sample" is the wall-clock of one `(arm, task, seed, trial)` or one
 perplexity window; a retrieval cell is 24 samples, the four-task context is 96 samples, and with
-the 16 windows each arm runs **112 samples**. All rates on an A100 40 GB, and all of them are the
-rates `prereg/gate1_preflight.md` §1 and §7 already fixed for this design:
+the **32** windows each arm runs **128 samples**. All rates on an A100 40 GB, and all of them are
+the rates `prereg/gate1_preflight.md` §1 and §7 already fixed for this design. That file's §1 table
+sizes these same eight arms at 112 samples — i.e. at 16 windows; the 32 windows §2 (b) and §6 buy
+are the only change to its arithmetic, and they move the per-pod compute from 35.0 h to **40.0 h**:
 
 - **`full` 0.6 — measured.** The D-005 real-text pod's `full` arm ran its 48 samples in ≈ 30 min
   (`docs/plan/cleanup/l2-ledger.md`, the 05:45 pod-signal line; `prereg/filler_realism.md` A2.5,
@@ -810,8 +973,8 @@ rates `prereg/gate1_preflight.md` §1 and §7 already fixed for this design:
   `prereg/l2_smoke.md` §7), against the 2.1 min/sample measured on the W19 `a1q` pod that every pod
   since has budgeted at 3.0. **3.1 sits in the lower half of that bracket, and the sensitivity is
   stated rather than hidden**: at the bracket's top (3.7, the derived rates scaling with it to
-  1.85 and 2.47) the eight arms cost 67 + 4×414 + 2×277 + 207 = 2,485 min = 41.4 h and the point
-  estimate per pod is 42.4 h — still 1.7× inside the 72 h bar.
+  1.85 and 2.47) the eight arms cost 76.8 + 4×473.6 + 2×316.2 + 236.8 = **2,840 min = 47.3 h** and
+  the point estimate per pod is 48.3 h — still 1.7× inside the 82 h bar.
 - **`frozen` and `random` 2.1 — derived, = isvd / 1.5** (no per-absorb SVD after the freeze; a
   random basis never updates). **`nogist_*` 1.55 — derived, = isvd / 2** (no gist rebuild). Both
   factors are the lane plan's (`docs/plan/plans/2026-09-11-L3-L5-gate1-bf16-prereg.md`, "Pod
@@ -824,37 +987,39 @@ rates `prereg/gate1_preflight.md` §1 and §7 already fixed for this design:
   per-trial prompt construction (`prereg/l2_smoke.md` §7), which sit **inside** the safety factor
   rather than moving the bar.
 
-| # | arm | min/sample | × 112 | minutes | cumulative compute | what has landed |
+| # | arm | min/sample | × 128 | minutes | cumulative compute | what has landed |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | `full` | 0.6 | | 67 | 1.1 h | the ceiling |
-| 2 | `isvd_r64_h256_seed` | 3.1 | | 347 | 6.9 h | the paired reference |
-| 3 | `nogist_h2423` / `nogist_h4460` | 1.55 | | 174 | 9.8 h | one primary contrast |
-| 4 | `frozen_r64_h256_seed` | 2.1 | | 235 | **13.7 h** | **both primary contrasts, both axes** |
-| 5 | `fd_r64_h256_seed` | 3.1 | | 347 | **19.5 h** | **the C branch decidable** |
-| 6 | `isvd_r64_h256_seed_bf16` | 3.1 | | 347 | 25.3 h | the bf16 reading |
-| 7 | `oja_r64_h256_seed_tuned` | 3.1 | | 347 | 31.1 h | secondary |
-| 8 | `random_r64_h256_seed` | 2.1 | | 235 | 35.0 h | the floor control |
-| | **compute per pod** | | | **2,099 min = 35.0 h** | | |
+| 1 | `full` | 0.6 | | 76.8 | 1.3 h | the ceiling |
+| 2 | `isvd_r64_h256_seed` | 3.1 | | 396.8 | 7.9 h | the paired reference |
+| 3 | `nogist_h2423` / `nogist_h4460` | 1.55 | | 198.4 | 11.2 h | one primary contrast |
+| 4 | `frozen_r64_h256_seed` | 2.1 | | 268.8 | **15.7 h** | **both primary contrasts, both axes** |
+| 5 | `fd_r64_h256_seed` | 3.1 | | 396.8 | **22.3 h** | **the C branch decidable** |
+| 6 | `isvd_r64_h256_seed_bf16` | 3.1 | | 396.8 | 28.9 h | the bf16 reading |
+| 7 | `oja_r64_h256_seed_tuned` | 3.1 | | 396.8 | 35.5 h | secondary |
+| 8 | `random_r64_h256_seed` | 2.1 | | 268.8 | 40.0 h | the floor control |
+| | **compute per pod** | | | **2,400 min = 40.0 h** | | |
+
+The total is exact, not rounded: 128 × (0.6 + 4 × 3.1 + 2 × 2.1 + 1.55) = 128 × 18.75 = 2,400 min.
 
 | pod | compute | + overhead | point estimate | **`gpu_budget_h` (2× bar)** |
 | --- | --- | --- | --- | --- |
-| `gate1_v2_stage1_llama` | 35.0 h | + 60 min | **36.0 h** | **72.0** |
-| `gate1_v2_stage1_qwen` | 35.0 h | + 60 min | **36.0 h** | **72.0** |
-| **Stage 1 total** | | | **72 GPU-h** | **144 GPU-h** |
+| `gate1_v2_stage1_llama` | 40.0 h | + 60 min | **41.0 h** | **82.0** |
+| `gate1_v2_stage1_qwen` | 40.0 h | + 60 min | **41.0 h** | **82.0** |
+| **Stage 1 total** | | | **82 GPU-h** | **164 GPU-h** |
 
 At the **$0.45–0.74/h** of `prereg/gate1_preflight.md` §7 (the floor rounded *up* from the observed
 $0.40, so the low end of every figure here is the conservative one):
 
 | | GPU-h | × $0.45 | × $0.74 |
 | --- | --- | --- | --- |
-| Stage 1, point | 72 | $32 | $53 |
-| **Stage 1, bar** | **144** | **$65** | **$107** |
-| after arms 1–4 on both pods (both primary contrasts), + overhead | 29.4 | $13 | $22 |
-| after arms 1–5 on both pods (the C branch decidable), + overhead | 41.0 | $18 | $30 |
+| Stage 1, point | 82 | $37 | $61 |
+| **Stage 1, bar** | **164** | **$74** | **$121** |
+| after arms 1–4 on both pods (both primary contrasts), + overhead | 33.4 | $15 | $25 |
+| after arms 1–5 on both pods (the C branch decidable), + overhead | 46.6 | $21 | $34 |
 
-**This experiment asks for ≈ 72 GPU-hours expected, 144 at the bar — $32–53 expected, $65–107 at
+**This experiment asks for ≈ 82 GPU-hours expected, 164 at the bar — $37–61 expected, $74–121 at
 the bar.** The two pods run on two instances at once, so the wall clock is the longer of them
-(≈ 36 h expected, 72 h at its bar), not the sum.
+(≈ 41 h expected, 82 h at its bar), not the sum.
 
 **This supersedes the plan's "Budget ~40 GPU-h" and `GATES.md` §G3's "≤ 50 GPU-h in manifest"**,
 exactly as `prereg/gate1_preflight.md` §1 already records: both numbers predate the L2 pods' rate
@@ -866,26 +1031,25 @@ a dollar is spent.
 **The pre-committed ways to spend less, in this order** — the arm order of §3 is what makes them a
 design and not a salvage:
 
-| cut | compute/pod | point/pod | bar/pod | Stage-1 point | Stage-1 bar | $ at the bar |
-| --- | --- | --- | --- | --- | --- | --- |
-| none | 35.0 h | 36.0 | 72.0 | 72 GPU-h | 144 GPU-h | $65–107 |
-| **1. drop `random`** | 31.1 h | **32.1** | **64.1** | 64 GPU-h | 128 GPU-h | $58–95 |
-| **2. also drop `oja_tuned`** | 25.3 h | **26.3** | **52.6** | 53 GPU-h | 105 GPU-h | $47–78 |
+| cut | compute/pod | point/pod | bar/pod | Stage-1 point | Stage-1 bar | $ at the bar | secondary m (§6) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| none | 40.0 h | 41.0 | 82.0 | 82 GPU-h | 164 GPU-h | $74–121 | 24 |
+| **1. drop `random`** | 35.5 h | **36.5** | **73.0** | 73 GPU-h | 146 GPU-h | $66–108 | **16** |
+| **2. also drop `oja_tuned`** | 28.9 h | **29.9** | **59.8** | 60 GPU-h | 120 GPU-h | $54–89 | **8** |
 
 Rung 1 costs the floor control: the row that says what the rank-64 storage, the tier, the sinks and
 the ring are worth with no tracking at all. Rung 2 costs plan arm (b) entirely. **Neither rung
-touches §4's rule**: every member of the primary families and the C branch's `fd` members survive
-both cuts.
+touches §4's rule**: every member of the primary families and the C branch's `fd` members survives
+both cuts, and the secondary family is corrected at the realised m each rung leaves (last column) —
+which widens Holm's slots, makes a separation from `fd` easier to reach, and so makes Branch C
+harder, never easier, to select.
 
-**Why the ladder is not "n = 16 for `oja`/`fd`".** Three reasons, in order of weight. (i) It saves
-*less*: n = 16 on those two arms drops 2 × 32 samples per pod = 198 min = **3.3 h**, against
-**3.9 h** for dropping `random` outright. (ii) It breaks the design: 24 is the balanced
-2 haystacks × 3 depths × 4 codes cell of `ruler_v2_16k_g1`, and 16 is not a sub-design of it — the
-cells would no longer be balanced in depth or code family, and the arm's rows would stop being
-comparable to every other arm's. (iii) It spends the resolution where there is least of it: at
-n = 16 a self-sufficient Holm separation needs (≥ 10, 0) of *sixteen* pairs — a 0.63 swing instead
-of 0.42 — on exactly the two arms with no prior on hardware. An arm measured at a resolution it
-cannot reach is worse than an arm not measured: it prints a non-separation that means nothing.
+**Why the ladder is not "n = 16 for `oja`/`fd`".** It saves *less* (n = 16 on those two arms drops
+2 × 32 samples per pod = 198 min = **3.3 h**, against **4.5 h** for dropping `random` outright), it
+breaks the balanced 2 haystacks × 3 depths × 4 codes cell of `ruler_v2_16k_g1` that every other
+arm's rows are comparable through, and at n = 16 a self-sufficient Holm separation needs (≥ 10, 0)
+of *sixteen* pairs — a 0.63 swing instead of 0.42 — on exactly the two arms with no prior on
+hardware.
 
 **Overrun is a stop-and-report, not a silent extension.** `gpu_budget_h` is the pre-registered bar,
 enforced on the pod itself by `pod.py launch --max-hours` (`boot.sh` runs the entrypoint under
@@ -893,8 +1057,8 @@ enforced on the pod itself by `pod.py launch --max-hours` (`boot.sh` runs the en
 `RUN_FAILED` with `timeout: true`). A pod still running past its bar is a pod to kill and diagnose
 (`prereg/hygiene_table4.md` §9), and the **first arm-2 cell's `cell_elapsed_s`** (§7 d) is the
 first thing to read against the 3.1 assumption — at 24 samples a cell that is 74 budgeted minutes
-of compute, so the reading lands ≈ **3.4 h** into the run (60 min boot + `full`'s 67 min + 74),
-against a 72 h bar.
+of compute, so the reading lands ≈ **3.5 h** into the run (60 min boot + `full`'s 77 min + 74),
+against an 82 h bar.
 
 **Re-sizing by amendment, before the launch commit.** If any pre-flight trigger fires —
 `isvd_r64_h256_seed` **> 4.7** min/sample, `nogist_h2423` **> 3.1**, `frozen_r64_h256_seed`
@@ -911,22 +1075,42 @@ states the arm list, the Holm families and the re-derived budget before any laun
 
 | Stage-2 pod | arms | rate basis | point | bar |
 | --- | --- | --- | --- | --- |
-| Mistral-7B-v0.3, 16K (`nogist_h2423`, the 1024-wide twin) | all 8 | the table above | **36.0** | **72.0** |
-| each of Llama / Qwen / Mistral at 32K | the **five** arms the rule reads — `full`, `isvd`, `nogist_*`, `frozen`, `fd` | **2× the 16K rates** (twice the absorbs): 1.2 + 6.2 + 3.1 + 4.2 + 6.2 = 20.9 min/sample × 112 = 2,341 min = 39.0 h, + 60 min | **40.0** | **80.0** |
-| **Stage 2 total** | | | **156 GPU-h** | **312 GPU-h** |
+| Mistral-7B-v0.3, 16K (`nogist_h2423`, the 1024-wide twin) | all 8 | the table above, at 128 samples | **41.0** | **82.0** |
+| each of Llama / Qwen / Mistral at 32K | the **five** arms the rule reads — `full`, `isvd`, the 32K `nogist` twin (below), `frozen`, `fd` | **2× the 16K rates** (twice the absorbs): 1.2 + 6.2 + 3.1 + 4.2 + 6.2 = 20.9 min/sample × 128 = 2,675 min = 44.6 h, + 60 min | **45.6** | **91.2** |
+| **Stage 2 total** | | | **178 GPU-h** | **356 GPU-h** |
 
-At $0.45–0.74/h: **$70–115 point, $140–231 at the bar.** Stage 2 at 32K uses
-`ruler_v2_32k_g1` and `ppl_32k_pg19val_w16` (PG-19 validation supplies 84 windows at that span,
-D-013); `isvd_r64_h256_seed_bf16`, `oja_r64_h256_seed_tuned` and `random_r64_h256_seed` are not in
+At $0.45–0.74/h: **$80–132 point, $160–263 at the bar** (41.0 + 3 × 45.6 = 177.8 → 178;
+82.0 + 3 × 91.2 = 355.6 → 356). Stage 2 at 32K uses `ruler_v2_32k_g1` and
+`configs/tasks/ppl_32k_pg19val.yaml` — 32 non-overlapping windows of the 84 PG-19 validation
+supplies at that span (D-013), the same 128 samples per arm;
+`isvd_r64_h256_seed_bf16`, `oja_r64_h256_seed_tuned` and `random_r64_h256_seed` are not in
 the 32K pods, which is the cut ladder applied in advance — the bf16 arm joins by
-`prereg/bf16_gist.md`'s own amendment if its Stage-1 reading passes.
+`prereg/bf16_gist.md`'s own amendment if its Stage-1 reading passes. The Mistral 16K pod enters
+§4's rule as a third model family; the three 32K pods are **descriptive** (§4's scope note, §6's
+families) and change no letter.
+
+**The 32K no-gist arms are new arm files, and here is their arithmetic.** The byte match is solved
+at the context the pod runs (§3), so `nogist_h2423` / `nogist_h4460` — solved at t = 16384 — are
+**not** byte-matched at 32K and are not the arms those pods run. Re-solving with
+`kvdlra.accounting.bug_footprint` exactly as the 16K arm docs did, at **t = 32768**, where the r64
+arm holds 32768 − 256 − 4 − 32 = **32,476** coordinate columns: for a **1024**-wide layer
+(Llama-3.1-8B, Mistral-7B-v0.3) the reference bills **148,875,008** stored bits/layer and the twin
+bills `1,245,376 + 32,800·H`, so **H = 147,629,632 / 32,800 = 4500.90 → 4501**, a **1.00002×**
+match; for a **512**-wide layer (Qwen2.5-7B) the reference bills **141,993,728** and the twin
+`622,784 + 16,416·H`, so **H = 141,370,944 / 16,416 = 8611.78 → 8612**, a **1.00003×** match.
+`nogist_h4501` and `nogist_h8612` are **committed by the Stage-2 amendment** — each with this
+arithmetic in its `doc:`, the same 5 % test pin as the 16K twins, and a **re-derived rate**: the
+2× rule above bills them at 3.1 min/sample, but a 4501 / 8612-token exact tier is re-scored every
+absorb (the caveat above, with 1.9× more tier than at 16K), so the amendment re-derives that rate
+from Stage 1's measured `cell_elapsed_s` and not from the factor alone.
 
 **Credit.** **$92.52** (`vastai show user --raw`, 2026-09-19 13:50, as `prereg/gate1_preflight.md`
-§7 records it). Stage 1's bar of $65–107 does not fit inside it at the top rate, and it is not the
-only pod queued: `prereg/ss2_families.md` §9 carries a 121 GPU-h bar and `prereg/l2_smoke.md` §7 a
-168 GPU-h bar, both also waiting. **D-003 (the top-up) is open and precedes the Stage-1 launch
-commit.** The pre-flight's own $4–6 is what keeps this $65–107 from being spent on a design that
-does not run (`prereg/gate1_preflight.md` §7).
+§7 records it). Stage 1's point estimate of $37–61 fits inside it; **its bar of $74–121 does
+not**, at any rate above $0.56/h — and it is not the only pod queued: `prereg/ss2_families.md` §9
+carries a 121 GPU-h bar and `prereg/l2_smoke.md` §7 a 168 GPU-h bar, both also waiting. **D-003
+(the top-up) is open and precedes the Stage-1 launch commit.** The pre-flight's own $4–6 is what
+keeps this $74–121 from being spent on a design that does not run
+(`prereg/gate1_preflight.md` §7).
 
 ## 10. Provenance
 
@@ -946,18 +1130,33 @@ does not run (`prereg/gate1_preflight.md` §7).
 - **This file must be committed strictly before the launch commit**, and before
   `prereg/gate1_preflight.md`'s own launch commit as well (`prereg/gate1_preflight.md` §1 and §8:
   the Gate-1 body is fixed before the pre-flight runs, so every row the pre-flight returns enters
-  here as a dated amendment and never as an authored premise). `scripts/pod.py launch` refuses
-  otherwise — `prereg_error` covers missing, uncommitted, not-a-strict-ancestor and
+  here as a dated amendment and never as an authored premise). **The two orderings are enforced
+  differently, and the difference is stated rather than blurred.** For the **Stage-1** pods this
+  file *is* the launching pod's prereg, so `scripts/pod.py launch` refuses outright —
+  `prereg_error` covers missing, uncommitted, not-a-strict-ancestor and
   committed-by-the-launch-itself, plus a dirty tree and an unpushed SHA — and `scripts/pod.py
-  check` re-checks the order against the manifest's `git_sha` at harvest. Both orderings are
-  checkable after the fact with `git merge-base --is-ancestor <this file's first commit> <SHA>`.
+  check` re-checks the order against the manifest's `git_sha` at harvest. For the **pre-flight**
+  launch there is no machine refusal: `pod.py launch` checks only the launching pod's own prereg
+  (`prereg/gate1_preflight.md` §8 says the same), so this file's precedence over *that* commit is a
+  **lane rule**, evidenced after the fact with
+  `git merge-base --is-ancestor <this file's first commit> <pre-flight launch SHA>` and recorded in
+  the pre-flight's DECISIONS launch entry, which names both SHAs. The same command checks the
+  Stage-1 ordering that `launch` already refused on.
   **The commit that adds this file launches nothing and adds nothing else.**
+- **The Stage-1 launch precondition the pre-flight sets.** Stage 1 may be launched only if the
+  pre-flight's readings **(i) completeness** and **(iii) pairing** passed
+  (`prereg/gate1_preflight.md` §4) — an arm that does not run on the pod path, or a broken
+  `prompt_sha256` pairing, is a defect in the machinery every paired statistic in §4 rests on. If
+  either failed, a **dated amendment here names the failure, its repair and the commit that
+  carries it, before the Stage-1 launch commit**; reading (ii) fires the task exclusion of §6 and
+  reading (iv) the §9 re-sizing, both by the same route. No reading is waived by being
+  inconvenient, and none of the four is read as "passed" when it was `not measured`.
 - **Amendments only, never edits.** §1–§11 are not edited after the launch commit. Every later
   change is a dated Amendment appended below, in the pattern of `prereg/hygiene_table4.md`:
   Amendment 1 (§2's generator-v2 rows), the §4 (ii) task exclusion, the §9 re-sizing, and Stage 2's
   own amendment — each committed before the launch commit it governs.
 - **Launch**: `scripts/pod.py launch --pod gate1_v2_stage1_<family> --offer <id>` (`--max-hours`
-  defaulting to `gpu_budget_h` = 72.0), from a pushed SHA on a clean tree; the watchdog under
+  defaulting to `gpu_budget_h` = 82.0), from a pushed SHA on a clean tree; the watchdog under
   `caffeinate -s -i scripts/pod/watchdog.sh gate1_v2_stage1_<family>` (no `BUDGET_ITERS` override,
   §8); the pod self-destructs `GRACE_S` = 2 h after its final marker. Each launch is a
   `docs/plan/DECISIONS.md` entry under D-011's standing authorization naming the pod, this file's
@@ -969,7 +1168,8 @@ does not run (`prereg/gate1_preflight.md` §7).
   sources and for `pg19-val`, `cell_elapsed_s` for the 32 retrieval cells, torch / CUDA / triton /
   transformers versions, GPU, wall clock, command line, `errors`, `records`, `diag_skipped`,
   `timeout`), `trials.jsonl` (32 cells × 24, every row with `prompt_sha256`, `haystack_id`,
-  `depth`, `code_family`, `ratio`, `sbits`), `ppl.jsonl`, `pplw.jsonl` (8 arms × 16 windows),
+  `depth`, `code_family`, `ratio`, `sbits`), `ppl.jsonl`, `pplw.jsonl` (8 arms × 32 windows = 256
+  rows, reassembled from the four `[pplw]` parts per arm — §8),
   `diag.jsonl` (the seven gist arms' rows), `env.txt` (rebuilt from the log's ENV block),
   `pods.txt`.
 - **Citability.** A number from these pods is citable only once `scripts/pod.py check` passes on
@@ -988,7 +1188,12 @@ does not run (`prereg/gate1_preflight.md` §7).
   perplexity-only reading of §5 with what it does and does not license, go to
   `docs/plan/DECISIONS.md` as the **Gate-1 outcome**, with the evidence path
   `results/gate1_v2_stage1_{llama,qwen}/` and the table path. `GATES.md` §G3's four lines are
-  ticked against that entry.
+  ticked against that entry — **and Stage 1 alone can tick only three of them**: line 1 (prereg SHA
+  precedes launch SHA; its "≤ 50 GPU-h in manifest" superseded by §9, the supersession recorded in
+  the launch entry), line 3 (`make tables` renders Holm-corrected retrieval + TOST perplexity) and
+  line 4 (DECISIONS names the branch with the rule from `ICML2027_PLAN.md`). **Line 2 — "6 trackers
+  × 3 families × 2 ctx × 4 tasks × n = 24 harvested"** — needs the third model family and the 32K
+  context, so it is tickable **only with Stage 2**, and it stays open while Stage 1 stands alone.
 
 ## 11. What this does not decide
 

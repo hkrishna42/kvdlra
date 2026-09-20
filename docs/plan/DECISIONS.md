@@ -189,3 +189,32 @@
 - Pod `gate1_preflight_rerun` (configs/pods/gate1_preflight_rerun.yaml at dc3047f): Llama-3.1-8B, `ruler_v2_16k`, arms `isvd_r64_h256_seed`, `nogist_h2423`, `frozen_r64_h256_seed` (the `full` arm's five cells stand from results/gate1_preflight/, reading (ii) decided: vt 0.75); pre-registration `prereg/gate1_preflight.md` Amendment 1 (8eb7f56) + its correction (d4ed366): readings (i) and (iv) on this pod, (iii) across both pods by `prompt_sha256`. Harness on the pod: the end-of-run records replay (049c66b) with the SIGTERM handler that keeps it alive at the `MAX_HOURS` bar (4a5f71e); harvest dedupes exact-duplicate lines.
 - Launch: instance 51815080, offer 50895886 (A100 SXM4 40 GB, $0.601/h, reliability 0.998, 5.6 Gbps, UK), launch SHA d4ed366 (`lane/L3-gate1-tracker-swap-v2`, pushed), `--max-hours` 14 (= `gpu_budget_h`, 2× the 6.8 h point at the measured rates), watchdog pid 9161 under `caffeinate -s -i` with the Mac on AC (battery 83 %+, charging) and its log kept outside the tree; the pod self-destructs 2 h after its final marker. Expected ≈ 6.8 h ≈ $4.1; ceiling ≈ $8.4. Credit before launch $86.08.
 - Outcome: recorded here at harvest with the evidence path results/gate1_preflight_rerun/, then the Gate-1 prereg's Amendment 1b (the pre-flight rows, the vt exclusion 16 → 12, the §9 re-size from `cell_elapsed_s`) before any Stage-1 launch commit; Stage 1 waits on D-003.
+
+## 2026-09-20 (evening) — owner decisions delegated ("Go ahead finish them") and taken
+
+### D-003 CLOSED (owner, 2026-09-20: "Start it; let me know if you are running low, I'll top up") — Stage 1 launches on the current credit
+- Stage 1 (`gate1_v2_stage1_llama` + `_qwen`, 41 h point / 82 h bar each, 82/164 GPU-h, $37–61 expected / $74–121 at the bar) launches after the pre-flight re-run harvests and `prereg/gate1_tracker_swap_v2.md` Amendment 1b is committed, on the credit then available (≈ $82 after the re-run). The orchestrator asks for a top-up when the credit falls under $35 with pods running, or when the next launch's bar exceeds the credit; the watchdog's credit floor ($6) is the hard stop. The ss2 pods (121 GPU-h bar) and the smoke pod (168) wait behind Gate 1's reading.
+
+### D-018 CLOSED (owner, 2026-09-20) — `vt` stays DESCRIPTIVE in Gate 1 as pre-registered
+- The pre-flight's `full` ceiling on generator v2's `vt` is 0.75 (9/12; D-011 addendum 10), below the pre-registered 0.9; `vt` leaves the Gate-1 primary Holm family (16 → 12) by Amendment 1b and is reported descriptively. A numbers-only `vt` re-run is NOT planned; if the template comparison against official RULER (task in flight, report to `docs/plan/reports/vt-template-comparison.md`) finds a generator deviation, that becomes a separate decision, not a silent change.
+
+### GATES §G3 line 1 — "≤ 50 GPU-h" retired (owner asked "what can be done"; orchestrator's answer taken)
+- The 50 was the plan's sizing estimate (41 GPU-h for Stage 1 at rates 2× lower than L2 measured); the scientific constraint is that the bar is pre-registered and enforced (`--max-hours` = `gpu_budget_h`). GATES.md §G3 line 1 now reads "the pre-registered bar (prereg §9) in the manifest". Nothing else changes.
+
+### D-001 CLOSED (delegated) — arXiv v1 was never posted; no v2
+- Evidence unchanged (no ID, no receipt, empty title search; the tarball was assembled locally). The corrected `paper/main.tex` (L7) is the only manuscript text; posting is a Phase-3 decision after Gate 1 reads. No action.
+
+### D-002 CLOSED (delegated) — ADR 0001 ACCEPTED: (iii) Triton tile-wise reconstruct-inside-attention primary, (i) post-RoPE tracking as the parallel accuracy row `isvd_postrope_r128`
+- `docs/adr/0001-factored-attention-kernel.md` status lines updated to ACCEPTED (this commit). Concern (1) (batch > 1 raises in `lazy_initialization`) is lane L4's first Week-2 task; concern (2) (64K batch 4 does not fit an A100-40GB) is the H100-or-max-batch contrast `prereg/kernel_smoke.md` cell list B names; concern (3) (the traffic model predicts floors only) stands.
+
+### D-004 CLOSED (delegated) — real Palu port deferred to Phase 2, conditional on Gate 1 selecting Branch A/B
+- The rename to `svd_oracle` is complete (D-004 evidence addendum); the oracle stays the explicit static-low-rank upper bound in every table. A faithful Palu port is scheduled only under Branch A/B, as a Phase-2 lane item.
+
+### D-006 CLOSED (delegated) — KVQuant deferred to Phase 2 unless Gate 2 turns on the 3-bit operating point
+- The faithful KIVI arm (G = 32, R = 128, fp16 single-shot prefill) is the 2-bit quantization baseline the panel asked for; a pre-RoPE dense-and-sparse arm (≈ 2 engineer-days + a GPU cell) is not built unless Gate 2 makes the 3-bit point load-bearing.
+
+### D-010 CLOSED (delegated) — the parked litter moved to the Trash
+- `~/Desktop/kv-dlra-litter-2026-09-14` (2.7 MB) moved to `~/.Trash/` on 2026-09-20; nothing in the repository references it; the owner empties the Trash at will (the orchestrator does not permanently delete).
+
+### D-017 CLOSED (delegated) — OjaKV: option (A)
+- OjaKV is compared through the authors' own harness on its own pod at their published ratios (0.5–0.8×) in Phase 2, after Gate 1 reads, labelled "OjaKV at its published range"; our `oja_*` tracker-swap arms are Oja subspace tracking in our harness and are never called OjaKV. G2 line 7 stays open until that pod runs.

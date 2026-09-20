@@ -36,7 +36,7 @@ G2  generator v2 + baselines
     ✔ G2 2026-09-19: lines 1, 2, 3, 8 met; 5 met as amended; 4 and 6 pre-registered, open until launched; 7 open (D-017). Evidence: docs/plan/STATE.md, docs/plan/DECISIONS.md D-004/D-005/D-006/D-017, docs/plan/cleanup/l2-ledger.md.
 
 G3  gate 1 v2
-    [ ] prereg SHA precedes launch SHA; ≤ 50 GPU-h in manifest — the 50 h is superseded by prereg/gate1_tracker_swap_v2.md §9 (41.0 h point, 82.0 h bar per pod, two pods), pending D-003
+    [ ] prereg SHA precedes launch SHA; the PRE-REGISTERED bar (prereg/gate1_tracker_swap_v2.md §9: 41.0 h point, 82.0 h bar per Stage-1 pod at the L2-measured rates) in the manifest — the plan's "≤ 50 GPU-h" was a sizing estimate written before those rates (2× low) and is retired by D-003 (2026-09-20)
     [ ] 6 trackers × 3 families × 2 ctx × 4 tasks × n=24 harvested; 0 arms with error > budget
     [ ] make tables renders Holm-corrected retrieval + TOST perplexity
     [ ] DECISIONS.md names the branch with the rule from ICML2027_PLAN.md

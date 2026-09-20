@@ -418,11 +418,15 @@ def _shrink_refusal(out: Path, name: str, n_new: int) -> str | None:
 # it into stays on the destroyed instance: every harvested manifest carried
 # `dataset_sha256: {}`. The watchdog keeps `[stage]` rows; the last line for a key wins.
 DIGEST_RE = re.compile(r"^\[stage\] dataset_sha256 (\S+) ([0-9a-f]{64})\s*$", re.M)
-# `runner._cell` prints one `[stage] cell ...` line per completed (arm, sub-task) cell.
-# It is the only clock in a harvest -- `[trial]` and cell rows carry no timestamp, a
-# harvested `wall_clock_s` is null, and the watchdog's per-poll `sort -u` destroys
-# arrival order -- so a per-arm min/sample (what re-sizes the next pod) is read from
-# here. The seconds ride the line, so the dedupe cannot hurt it; last line for a key wins.
+# THE rationale for the `[stage] cell` line, in one place (every emitter in
+# `kvdlra.eval.runner` points here). One line per completed cell, on all three axes:
+# retrieval (`_cell`, per arm x sub-task), perplexity (`_ppl_rows`, per arm x ctx sweep,
+# keyed by the ppl TASK name so the two axes share one namespace without pooling) and
+# latency (per arm x ctx). It is the ONLY clock a harvest carries -- `[trial]` and cell
+# rows have no timestamp, a harvested `wall_clock_s` is null, and the watchdog's per-poll
+# `sort -u` destroys arrival order -- so the per-arm min/sample that sizes the next pod
+# is read from here. The seconds ride the line, so the dedupe cannot hurt it; an arm that
+# failed still prints the seconds it burned; last line for a key wins.
 CELL_S_RE = re.compile(
     r"^\[stage\] cell arm=(\S+) task=(\S+) ctx=(\d+) elapsed_s=([0-9.]+) n=\d+\s*$", re.M
 )

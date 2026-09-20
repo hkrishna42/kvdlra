@@ -27,11 +27,15 @@ unless the generator separates them (``scripts/pod.py``'s ``_expected_cells``).
 from __future__ import annotations
 
 import json
+import math
 import re
-from collections.abc import Iterator
+from collections import defaultdict
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, TypedDict, TypeVar
+
+K = TypeVar("K")  # a `window_bits` bin key: the caller chooses what identifies a sweep
 
 # `generator=`, the four pairing fields `hay= depth= code= sha=` (L2.3b) and `error=`
 # are appended by `kvdlra.eval.runner`, in that order; no v1 log has any of them, so all
@@ -359,6 +363,48 @@ def parse_pplw_lines(text: str, model: str, source: str) -> list[PplwRecord]:
         }
         raise SystemExit(f"{source}: incomplete [pplw] part set, missing {missing}")
     return out
+
+
+def window_bits(
+    rows: Iterable[PplwRecord], key: Callable[[PplwRecord], K], where: str
+) -> dict[K, dict[int, float]]:
+    """Per-window bits/token (``nll_sum_nats / (ntok * ln 2)``), binned by ``key``.
+
+    The one implementation of the pairing every perplexity statistic starts from:
+    ``scripts/tables.ppl_stats`` bins by ``(arm, ctx, corpus)`` and ``kvdlra.eval.gate1``
+    by ``(family, ctx, corpus, tracker)``, and both must refuse the same records.
+
+    A window scored twice would overwrite its own entry and shrink the mean's
+    denominator without shrinking the window SET, so the set comparison in
+    :func:`paired_window_bits` cannot see it. The usual cause is a second harvest
+    appended to an existing ``pplw.jsonl``. ``where`` prefixes the message with the
+    caller's location (``"ppl"``, or the pod directory).
+    """
+    out: dict[K, dict[int, float]] = defaultdict(dict)
+    for r in rows:
+        k = key(r)
+        if r["window_idx"] in out[k]:
+            raise ValueError(
+                f"{where}: {r['arm']} ctx={r['ctx']} corpus={r.get('corpus')} carries"
+                f" window_idx={r['window_idx']} twice -- the records are duplicated"
+            )
+        out[k][r["window_idx"]] = r["nll_sum_nats"] / (r["ntok"] * math.log(2))
+    return dict(out)
+
+
+def paired_window_bits(
+    a: dict[int, float], b: dict[int, float], where: str, other: str
+) -> list[float]:
+    """``a - b`` per shared window, in ``window_idx`` order -- and a pairing that is not
+    exact is refused, never silently intersected: an unpaired comparison of pooled
+    numbers hides the effect it is measuring. ``where`` carries the caller's own
+    identification of the ``a`` side, ``other`` names the ``b`` arm."""
+    if set(a) != set(b):
+        raise ValueError(
+            f"{where} scored windows {sorted(set(a) ^ set(b))} that {other} did not"
+            " (or the reverse) -- the pairing is broken"
+        )
+    return [a[i] - b[i] for i in sorted(a)]
 
 
 def parse_latency_lines(text: str, model: str, source: str) -> list[LatencyRecord]:

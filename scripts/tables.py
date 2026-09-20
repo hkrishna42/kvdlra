@@ -15,11 +15,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import re
 import shutil
 import subprocess
-from collections import defaultdict
 from collections.abc import Callable, Sequence
 from functools import cache
 from pathlib import Path
@@ -33,10 +31,12 @@ from kvdlra.eval.records import (
     PplRecord,
     PplwRecord,
     TrialRecord,
+    paired_window_bits,
     parse_cell_lines,
     parse_ppl_lines,
     parse_trial_lines,
     read_jsonl,
+    window_bits,
     write_jsonl,
 )
 from kvdlra.eval.stats import Key, McNemar, mcnemar_exact, paired_bootstrap, tost, wilson
@@ -326,6 +326,18 @@ def _tex(s: str) -> str:
     return re.sub(r"\*\*(.+?)\*\*", r"\\textbf{\1}", s.replace("_", r"\_"))
 
 
+def _md_rows(header: Sequence[str], body: Sequence[Sequence[str]]) -> list[str]:
+    """A markdown table -- a blank line, the header, the rule, one line per row. The one
+    emitter: every table this file writes (the numbered ones, the perplexity table and
+    Gate 1's blocks) is this shape, and the paper-v1 golden pins it byte for byte."""
+    return [
+        "",
+        "| " + " | ".join(header) + " |",
+        "|" + " --- |" * len(header),
+        *["| " + " | ".join(r) + " |" for r in body],
+    ]
+
+
 def _table(
     n: int | str,
     title: str,
@@ -338,8 +350,7 @@ def _table(
     follows the last row directly, so `cat table*.md` is valid markdown."""
     md = [f"## Table {n} — {title}"]
     md += [f"<!-- {x} -->" for x in notes]
-    md += ["", "| " + " | ".join(header) + " |", "|" + " --- |" * len(header)]
-    md += ["| " + " | ".join(r) + " |" for r in rows]
+    md += _md_rows(header, rows)
     tex = [f"% Table {n} -- {title}"] + [f"% {x}" for x in notes]
     tex += [
         "\\begin{tabular}{" + "l" + "c" * (len(header) - 1) + "}",
@@ -709,19 +720,12 @@ def ppl_stats(
     task), and pairing across them would average two different texts' perplexity into
     one number instead of keeping each corpus's own comparison intact.
     """
-    bits: dict[tuple[str, int, str | None], dict[int, float]] = defaultdict(dict)
-    for r in rows:
-        key = (r["arm"], r["ctx"], r.get("corpus"))
-        # A window scored twice would overwrite its own entry and shrink the mean's
-        # denominator without shrinking the window SET -- so the pairing check below,
-        # which compares the two arms' sets, cannot see it. The usual cause is a second
-        # harvest appended to an existing `pplw.jsonl`.
-        if r["window_idx"] in bits[key]:
-            raise SystemExit(
-                f"ppl: {r['arm']} ctx={r['ctx']} corpus={r.get('corpus')} carries"
-                f" window_idx={r['window_idx']} twice -- the records are duplicated"
-            )
-        bits[key][r["window_idx"]] = r["nll_sum_nats"] / (r["ntok"] * math.log(2))
+    # `kvdlra.eval.gate1` starts from the same two functions, so both refuse the same
+    # records. This entrypoint reports a bad file as a SystemExit, not a traceback.
+    try:
+        bits = window_bits(rows, lambda r: (r["arm"], r["ctx"], r.get("corpus")), "ppl")
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
     out: list[PplStat] = []
     groups = sorted({(c, corpus) for _, c, corpus in bits}, key=lambda x: (x[0], x[1] or ""))
@@ -749,13 +753,12 @@ def ppl_stats(
                 "equivalent": None,
             }
             if arm != baseline:
-                if set(w) != set(base):
-                    raise SystemExit(
-                        f"ppl: {arm} ctx={ctx} corpus={corpus} scored windows"
-                        f" {sorted(set(w) ^ set(base))} that {baseline} did not (or the reverse)"
-                        " -- the pairing is broken"
+                try:
+                    d = paired_window_bits(
+                        w, base, f"ppl: {arm} ctx={ctx} corpus={corpus}", baseline
                     )
-                d = [w[i] - base[i] for i in sorted(w)]
+                except ValueError as exc:
+                    raise SystemExit(str(exc)) from exc
                 mean_d, lo, hi = paired_bootstrap(d)
                 p_lo, p_hi, equivalent = tost(d, delta)
                 stat |= {
@@ -823,8 +826,7 @@ def ppl_table(results: Path, out: Path, baseline: str = "full", delta: float = 0
         )
     md = [f"## Perplexity — {results.name}"]
     md += [f"<!-- {x} -->" for x in notes]
-    md += ["", "| " + " | ".join(header) + " |", "|" + " --- |" * len(header)]
-    md += ["| " + " | ".join(r) + " |" for r in body]
+    md += _md_rows(header, body)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(md) + "\n")
 
@@ -861,14 +863,8 @@ def _gate1_cell(data: gate1.Gate1Data, key: gate1.CellKey, mark: str) -> str:
 
 
 def _gate1_md(title: str, header: Sequence[str], body: Sequence[Sequence[str]]) -> list[str]:
-    return [
-        "",
-        title,
-        "",
-        "| " + " | ".join(header) + " |",
-        "|" + " --- |" * len(header),
-        *["| " + " | ".join(r) + " |" for r in body],
-    ]
+    """One Gate-1 block: its heading, then :func:`_md_rows`."""
+    return ["", title, *_md_rows(header, body)]
 
 
 def _gate1_ppl_cells(c: gate1.PplContrast) -> list[str]:

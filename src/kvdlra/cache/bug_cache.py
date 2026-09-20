@@ -757,11 +757,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         Under ``gist_dtype=bfloat16`` the whole method runs on fp32 working copies of the
         gist -- the step, the coordinate carry, the quantized-tier rotation, the guard's
         repair and the new coordinates -- and the store is rounded back once, at the end.
-        The basis reaching the step is therefore the bf16-rounded one (‖UᵀU - I‖_F ~ 5e-3
-        at n=1024, r=64), which is above ``orth_fix_tol`` and is why the guard repairs
-        every absorb there but the first (which builds its basis from nothing); the
-        coordinates, re-rounded at every carry, are the path where rounding compounds
-        with the absorb count.
+        What that costs, and why the guard then repairs every absorb but the first, is in
+        the ``orth_fix_tol`` comment in ``__init__`` and in the bf16 arm's ``doc:``.
 
         If :class:`OrthonormalityError` aborts out of :meth:`_guard_orthonormality`, the
         final downcast below never runs and the gist is left in fp32 even under

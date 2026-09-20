@@ -22,6 +22,8 @@ import pytest
 import torch
 from transformers import BatchEncoding, LlamaConfig, LlamaForCausalLM
 
+from kvdlra.cache import BugStreamingCache
+
 # Tiny Llama: 2 layers, 2 KV heads x head_dim 16 => n_features = 32.
 H, D = 2, 16
 N_FEATURES = H * D
@@ -49,6 +51,17 @@ def tiny_model(request: pytest.FixtureRequest) -> LlamaForCausalLM:
         model.config._attn_implementation = "sdpa"
     model.eval()  # type: ignore[no-untyped-call]
     return model
+
+
+def tiny_cache(model: LlamaForCausalLM, **kw: Any) -> BugStreamingCache:
+    """A cache on the tiny model at the shape the cache tests share -- rank 8, a
+    64-column coordinate tier, a 4-token ring, 4-column absorbs, one sink -- with every
+    knob overridable. Pass what the test is ABOUT; inherit the rest. Four modules had a
+    private copy of this call, differing only in what they went on to override."""
+    return BugStreamingCache(
+        model,
+        **{"rank": 8, "coord_budget": 64, "recent_window": 4, "absorb_block": 4, "n_sink": 1, **kw},
+    )
 
 
 # --------------------------------------------------------------- the `tok` fixture

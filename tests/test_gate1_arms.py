@@ -29,7 +29,7 @@ from kvdlra.eval.config import ROOT, arm_kwargs, load_arm
 from kvdlra.eval.frontier import build_arm
 from kvdlra.tracker import TRACKERS
 from kvdlra.tracker.isvd import frozen_step, isvd_step, random_step
-from tests.conftest import N_FEATURES
+from tests.conftest import N_FEATURES, tiny_cache
 
 T16K = 16384
 # Each nogist arm and the layer width ``n = num_kv_heads * head_dim`` it is sized for.
@@ -89,10 +89,7 @@ def _prefill(model: LlamaForCausalLM, cache: BugStreamingCache, t: int = 160) ->
 
 
 def _cache(model: LlamaForCausalLM, **kw: Any) -> BugStreamingCache:
-    return BugStreamingCache(
-        model, rank=4, coord_budget=32, recent_window=4, absorb_block=4, n_sink=1,
-        prefill_block_size=32, **kw,
-    )  # fmt: skip
+    return tiny_cache(model, rank=4, coord_budget=32, prefill_block_size=32, **kw)
 
 
 def test_the_frozen_arm_freezes_at_the_configured_frontier(

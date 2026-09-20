@@ -338,26 +338,21 @@ def bf16_gist_drift(n: int, rank: int, block: int, absorbs: int, seed: int) -> d
     magnitudes (a real key stream's spectrum and the exact tier's removal of outliers
     would move the constants):
 
-    * ``rel_error``: ``‖U_bf16 C_bf16 - U_fp32 C_fp32‖_F / ‖U_fp32 C_fp32‖_F`` -- the
-      stored-gist reconstruction gap. Grows roughly with ``sqrt(absorbs)``: the
-      coordinates are re-rounded to bf16 at every basis carry and nothing repairs them,
-      so their error compounds with the absorb count.
+    * ``rel_error``: ``‖U_bf16 C_bf16 - U_fp32 C_fp32‖_F / ‖U_fp32 C_fp32‖_F``, the
+      stored-gist reconstruction gap. Grows roughly with ``sqrt(absorbs)``.
     * ``orth_error_bf16`` / ``orth_error_fp32``: ``‖UᵀU - I‖_F`` of each layer's STORED
-      basis (in its own stored dtype). ``orth_error_bf16`` stays flat across absorbs --
-      the guard's thin QR repairs the bf16 rounding every absorb after the first (which
-      builds its basis from nothing), so it never compounds; ``orth_error_fp32`` stays
-      at roundoff throughout.
+      basis, in its own stored dtype. The bf16 one stays flat across absorbs, the fp32
+      one at roundoff.
+
+    Why the coordinates compound and the basis does not is in the bf16 arm's ``doc:``
+    (``configs/arms/isvd_r64_h256_seed_bf16.yaml``).
     """
     rope = _RopeAngles(torch.nn.Identity())  # never read: _absorb_columns doesn't touch rope
     m = _drift_stream(n, absorbs * block, seed)
-    l32 = BugStreamingLayer(
-        rope=rope, rank=rank, coord_budget=absorbs * block, absorb_block=block,
-        gist_dtype=torch.float32,
-    )  # fmt: skip
-    l16 = BugStreamingLayer(
-        rope=rope, rank=rank, coord_budget=absorbs * block, absorb_block=block,
-        gist_dtype=torch.bfloat16,
-    )  # fmt: skip
+    kw: dict[str, Any] = {
+        "rope": rope, "rank": rank, "coord_budget": absorbs * block, "absorb_block": block,
+    }  # fmt: skip
+    l32, l16 = (BugStreamingLayer(**kw, gist_dtype=dt) for dt in (torch.float32, torch.bfloat16))
     for i in range(absorbs):
         blk = m[:, i * block : (i + 1) * block]
         positions = torch.arange(i * block, (i + 1) * block, dtype=torch.int64)

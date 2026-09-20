@@ -25,8 +25,8 @@ directory never made it off the instance. A ``[trial]`` line carries the generat
 pairing fields (``hay= depth= code= sha=``, ``-`` where the generator set none), so a
 harvested pod can still show that two arms of one cell were fed byte-identical prompts.
 ``[stage] <what> (<s> s)`` lines time the loads (model, corpora, haystacks) and a
-``[stage] cell ... elapsed_s=`` line times each completed cell; the watchdog keeps them,
-so a slow pod's log says where the hours went and `harvest` can bill them per arm.
+``[stage] cell ... elapsed_s=`` line times each completed cell on all three axes -- the
+only clock a harvest carries, and why, at ``scripts/pod.py``'s ``CELL_S_RE``.
 """
 
 from __future__ import annotations
@@ -201,9 +201,7 @@ def _latency_rows(
                         "source": f"{pod.name}:run",
                     }
                 )
-            # `_cell`'s timing line for this axis too: one per (arm, ctx) sweep over the
-            # batch sizes, `n` the points it attempted (a point that raised leaves no
-            # row but did cost the seconds).
+            # The latency axis's cell clock (CELL_S_RE); `n` is the points attempted.
             print(
                 f"[stage] cell arm={arm['name']} task={task.name} ctx={ctx}"
                 f" elapsed_s={time.perf_counter() - t_cell:.1f} n={len(task.batch_sizes)}",
@@ -315,12 +313,7 @@ def _cell(
     if ratios:
         head += f" ratio={sum(ratios) / len(ratios):.3f} sbits={sum(sbits) / len(sbits):.3f}"
     print(head + f" n={total}" + ("" if ratios else f" errors={errors}"), flush=True)
-    # The cell's wall clock, which nothing else in a harvest carries: `[trial]` and cell
-    # rows have no timestamp, a harvested `wall_clock_s` is null, and the watchdog
-    # `sort -u`s `<label>.raw` in place every poll, so arrival order is destroyed. The
-    # seconds ride the line, which makes it order-independent; `pod.py harvest` folds
-    # them into `manifest.cell_elapsed_s`, and a per-arm min/sample is the sum over its
-    # cells over its samples -- how the next pod is sized.
+    # The retrieval axis's cell clock (see `pod.py`'s CELL_S_RE for why it exists).
     print(
         f"[stage] cell arm={arm['name']} task={sub} ctx={task.ctx}"
         f" elapsed_s={time.perf_counter() - t_cell:.1f} n={total}",
@@ -372,10 +365,7 @@ def _ppl_rows(
         device=device,
         corpus=task.corpus,
     )
-    # `_cell`'s timing line for this axis: one per (arm, ctx) sweep, keyed by the ppl
-    # TASK name (`ppl_*`, which no retrieval sub-task is called) so `harvest` can fold
-    # both axes into one `manifest.cell_elapsed_s` without pooling two cells. `n` is the
-    # windows the sweep attempted -- a failed arm prints its seconds too.
+    # The perplexity axis's cell clock (CELL_S_RE); `n` is the windows attempted.
     for r in rows:
         print(
             f"[stage] cell arm={r['method']} task={task.name} ctx={task.ctx}"

@@ -66,11 +66,6 @@ def paired_bootstrap(
     return float(x.mean()), float(lo), float(hi)
 
 
-def paired_t(d: npt.ArrayLike) -> float:
-    """Two-sided paired t-test on the differences -- the Holm member beside a `tost`."""
-    return float(ttest_1samp(np.asarray(d, dtype=float), 0.0).pvalue)
-
-
 def tost_decidable(d: npt.ArrayLike, delta: float, alpha: float = 0.05) -> bool:
     """Could :func:`tost` have fired at all on this spread? ``t(1-alpha, n-1)*s/sqrt(n) <
     delta``, which is the equivalence condition at its most favourable point estimate

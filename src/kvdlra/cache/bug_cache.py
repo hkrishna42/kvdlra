@@ -18,7 +18,9 @@ What is stored per layer (all bounded; see the design note §4)
   r``, tracked on *pre-RoPE* keys -- the Week-2 operating point), a square-root
   core ``B`` (``r x r``, steers the basis; attention never sees it), and up to
   ``coord_budget`` per-token **coordinate** columns ``C`` (``r`` floats per
-  token instead of ``n``). When the coordinate buffer is full, columns are
+  token instead of ``n``). The three are stored in ``gist_dtype`` -- fp32 by
+  default, bf16 under L5.1, which halves their bytes -- and are upcast to fp32
+  for every computation. When the coordinate buffer is full, columns are
   *evicted* (see "Week-7 retention" below) -- that is the memory bound:
   softmax attention needs per-token information for every attendable token, so
   "constant memory" can only mean bounding the attended set. At matched memory
@@ -140,6 +142,12 @@ from kvdlra.tracker.isvd import eff_rank, orth_error, reorthonormalize
 __all__ = ["BugStreamingCache", "BugStreamingLayer", "OrthonormalityError"]
 
 RETENTION_MODES = ("fifo", "lowrank_surprise")
+
+# What the gist (U, B, C) may be STORED as (L5.1). Two entries, because the accounting
+# bills exactly two widths: ``bug_footprint(gist_bits=32)`` and ``gist_bits=16``. fp16 is
+# absent on purpose -- it would store at 16 bits and bill at 32, a silent mis-bill. The
+# string form is what a YAML ``cache:`` block carries (omegaconf has no torch dtypes).
+GIST_DTYPES = {"float32": torch.float32, "bfloat16": torch.bfloat16}
 
 
 class OrthonormalityError(RuntimeError):
@@ -275,6 +283,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         n_sink: int = 4,
         theta: float | None = None,
         min_sv_frac: float = 0.0,
+        gist_dtype: torch.dtype | str = torch.float32,
         tracker: str = "isvd",
         oja_eta0: float = 20.0,
         oja_decay: float = 0.03,
@@ -375,6 +384,9 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
                 )
         if not 0.0 <= min_sv_frac < 1.0:
             raise ValueError(f"min_sv_frac must be in [0, 1), got {min_sv_frac}")
+        resolved = GIST_DTYPES.get(gist_dtype) if isinstance(gist_dtype, str) else gist_dtype
+        if resolved is None or resolved not in GIST_DTYPES.values():
+            raise ValueError(f"gist_dtype must be one of {sorted(GIST_DTYPES)}, got {gist_dtype!r}")
         if orth_fix_tol is not None and orth_fix_tol <= 0.0:
             raise ValueError(f"orth_fix_tol must be > 0 (None disables), got {orth_fix_tol}")
         if orth_abort_tol is not None and orth_abort_tol <= 0.0:
@@ -424,6 +436,11 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.n_sink = n_sink
         self.theta = theta
         self.min_sv_frac = min_sv_frac
+        # L5.1: the dtype the gist (U, B, C) is STORED as between absorbs. fp32 (default)
+        # is bit-identical to the pre-L5.1 cache; bfloat16 halves those bytes and is billed
+        # at 16 bits (``bug_footprint(gist_bits=16)``). Every computation still runs in
+        # fp32 -- see :meth:`_cast_gist` and :meth:`_absorb_columns`.
+        self.gist_dtype: torch.dtype = resolved
         self.prefill_block_size = prefill_block_size
         self.retention = retention
         self.quant_bits = quant_bits
@@ -449,9 +466,15 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         # ``orth_fix_tol=None`` with ``orth_abort_tol`` set (and ``qr_every`` unset): measure
         # and abort without ever repairing -- the repair branch cannot fire with no finite
         # fix threshold, so the abort check sees the raw, unrepaired error (fix1 A4).
-        # The measured ceiling on a benign stream is ~7e-4 over 1400 adversarial steps (and
-        # 6e-5 over the r64 golden), so at the defaults the fix never fires and behaviour
-        # is bit-identical.
+        # How often the fix fires is a property of the run, not of the defaults. On CPU in
+        # fp32 -- the tests, the r64 golden -- it does not: the measured ceiling is ~7e-4
+        # over 1400 adversarial steps and 6e-5 over the golden, both under the 1e-3
+        # threshold, and that path is the bit-identical one. On the pods it does: at bf16
+        # model dtype the L2 filler-realism diag rows report a repair in essentially every
+        # 64-absorb window (``fixed_k`` 100 %, ``fixed_v`` 99.2 %, pre-repair max
+        # ``orth_err_k`` at the 1e-3 threshold), and under ``gist_dtype=bfloat16`` the
+        # stored basis is re-rounded every absorb (‖UᵀU - I‖_F ~ 5e-3 at n=1024, r=64), so
+        # the repair fires on every one of them by design.
         self.orth_fix_tol = orth_fix_tol
         self.orth_abort_tol = orth_abort_tol
         self.qr_every = qr_every
@@ -495,9 +518,11 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.sink_v: Tensor | None = None
         self.recent_k: Tensor | None = None  # (n, <recent_window+absorb_block) verbatim
         self.recent_v: Tensor | None = None
-        self.u_k: Tensor | None = None  # (n, r) fp32, pre-RoPE key basis
-        self.b_k: Tensor | None = None  # (r, r) fp32 square-root core
-        self.c_k: Tensor | None = None  # (r, <=coord_budget) fp32 coords, current basis
+        # The gist, stored in ``gist_dtype`` (fp32 by default, bf16 under L5.1) and
+        # upcast to fp32 for every computation (:meth:`_cast_gist`).
+        self.u_k: Tensor | None = None  # (n, r) pre-RoPE key basis
+        self.b_k: Tensor | None = None  # (r, r) square-root core
+        self.c_k: Tensor | None = None  # (r, <=coord_budget) coords, current basis
         self.u_v: Tensor | None = None
         self.b_v: Tensor | None = None
         self.c_v: Tensor | None = None
@@ -713,13 +738,33 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             dem_v = cand_v[:, demote].to(torch.float32)
             self._absorb_columns(dem_k_pre, dem_v, dem_pos)
 
+    def _cast_gist(self, dtype: torch.dtype) -> None:
+        """Cast the stored gist -- ``U``, ``B`` and the coordinate tier of both streams --
+        to ``dtype``. Called twice per absorb under a non-fp32 ``gist_dtype``: up to fp32
+        before the step, back down once the new coordinates have landed. The quantized
+        tier is not touched: its codes carry their own width."""
+        for name in ("u_k", "b_k", "c_k", "u_v", "b_v", "c_v"):
+            stored: Tensor | None = getattr(self, name)
+            if stored is not None:
+                setattr(self, name, stored.to(dtype))
+
     def _absorb_columns(self, block_k: Tensor, block_v: Tensor, positions: Tensor) -> None:
         """One augmented BUG step + coordinate carry + budget enforcement for a
         block of ``m`` new columns at the given ``positions`` (``(m,)`` int64; may
-        be non-contiguous when heavy-hitters are demoted back into the tail)."""
+        be non-contiguous when heavy-hitters are demoted back into the tail).
+
+        Under ``gist_dtype=bfloat16`` the whole method runs on fp32 working copies of the
+        gist -- the step, the coordinate carry, the quantized-tier rotation, the guard's
+        repair and the new coordinates -- and the store is rounded back once, at the end.
+        The basis reaching the step is therefore the bf16-rounded one (‖UᵀU - I‖_F ~ 5e-3
+        at n=1024, r=64), which is above ``orth_fix_tol`` and is why the guard repairs on
+        every absorb there; the coordinates, re-rounded at every carry, are the path where
+        rounding compounds with the absorb count."""
         m = int(block_k.shape[1])
         if m == 0:
             return
+        if self.gist_dtype != torch.float32:
+            self._cast_gist(torch.float32)
         # Week-9 D3: low-rank surprise = out-of-subspace fraction of the incoming
         # K columns, measured against the basis built from *strictly older*
         # history (pre-step u_k -- the true novelty signal). By Pythagoras (u_k
@@ -843,6 +888,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
                 surprise if self.mid_surprise is None else torch.cat([self.mid_surprise, surprise])
             )
         self._enforce_budgets()
+        if self.gist_dtype != torch.float32:  # round the store back down, once per absorb
+            self._cast_gist(self.gist_dtype)
 
     def _tokens_seen(self, positions: Tensor) -> int:
         """Monotone tokens-seen frontier at the absorb of ``positions``: a per-layer running
@@ -868,7 +915,9 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
     ) -> None:
         """One absorb's orthonormality tripwire, guard and diagnostic row.
 
-        ``‖UᵀU - I‖`` is measured on the *stored* basis of each stream (in its own dtype).
+        ``‖UᵀU - I‖`` is measured on each stream's basis as the step just returned it --
+        the fp32 working copy of the stored basis, which under ``gist_dtype=bfloat16``
+        carries the previous absorb's rounding (~5e-3 at n=1024, r=64) through the step.
         Above ``orth_fix_tol`` -- or whenever ``qr_every`` says so for that stream -- the
         offending stream is re-orthonormalized, its coordinates and (once, for both streams
         together) its quantized tier carried into the repaired basis. The trial fails loudly
@@ -1005,7 +1054,10 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         if self.u_k is None:  # first absorb: nothing older to predict from
             return torch.ones(m, dtype=torch.float32, device=block_k.device)
         u = self.u_k if cap is None else self.u_k[:, : min(cap, int(self.u_k.shape[1]))]
-        c_old = u.mT @ block_k  # (r, m) coords in the OLD (possibly capped) basis
+        # fp32 for the product (a no-op at the fp32 default): under ``gist_dtype=bfloat16``
+        # the stored basis is bf16 while ``block_k`` is fp32. This is also the SLASH
+        # selection path, which reads the basis BEFORE the absorb's upcast.
+        c_old = u.to(torch.float32).mT @ block_k  # (r, m) coords in the OLD (capped) basis
         resid = (k_norm**2 - c_old.norm(dim=0) ** 2).clamp_min(0.0).sqrt()
         return cast(Tensor, (resid / k_norm.clamp_min(1e-12)).to(torch.float32))
 
@@ -1344,17 +1396,22 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         if self._mid_k_cache is not None:
             return
         assert self.u_k is not None and self.u_v is not None
+        # fp32 for the products (no-ops at the fp32 default): the STORED gist may be bf16,
+        # while the dequantized tier and the RoPE round trip below are fp32. What is
+        # reconstructed is the stored representation -- the bf16 rounding is inside it,
+        # which is the point of the arm.
+        u_k, u_v = self.u_k.to(torch.float32), self.u_v.to(torch.float32)
         parts_k: list[Tensor] = []
         parts_v: list[Tensor] = []
         if self._q_len() > 0:
             assert self.qk_codes is not None and self.qv_codes is not None
             assert self.qk_norm is not None and self.qv_norm is not None
-            parts_k.append(self.u_k @ self._dequantize(self.qk_codes, self.qk_norm))
-            parts_v.append(self.u_v @ self._dequantize(self.qv_codes, self.qv_norm))
+            parts_k.append(u_k @ self._dequantize(self.qk_codes, self.qk_norm))
+            parts_v.append(u_v @ self._dequantize(self.qv_codes, self.qv_norm))
         if self._f_len() > 0:
             assert self.c_k is not None and self.c_v is not None
-            parts_k.append(self.u_k @ self.c_k)
-            parts_v.append(self.u_v @ self.c_v)
+            parts_k.append(u_k @ self.c_k.to(torch.float32))
+            parts_v.append(u_v @ self.c_v.to(torch.float32))
         k_pre_hat = torch.cat(parts_k, dim=1) if len(parts_k) > 1 else parts_k[0]
         v_hat = torch.cat(parts_v, dim=1) if len(parts_v) > 1 else parts_v[0]
         if self.track_positions:
@@ -1490,6 +1547,13 @@ class BugStreamingCache(Cache):
         or neither). Codes count ``quant_bits/32`` float-equivalents each.
     quant_seed:
         Seed for the shared PolarQuant rotation/codebook.
+    gist_dtype:
+        L5.1 (default ``torch.float32`` = off, and bit-identical to the pre-L5.1 cache):
+        the dtype the gist -- the basis ``U``, the core ``B`` and the coordinate tier
+        ``C`` -- is STORED as between absorbs. ``torch.bfloat16`` (or the string
+        ``"bfloat16"``, which is what a YAML ``cache:`` block carries) halves those bytes
+        and is billed at 16 bits (``accounting.bug_footprint(gist_bits=16)``). Every
+        computation still runs in fp32: see :meth:`BugStreamingLayer._absorb_columns`.
     score_rank:
         Week-15 T2 (default ``None`` = off): cap SurpriseSLASH *selection*
         scoring to the leading ``score_rank`` basis columns (``1 <= score_rank
@@ -1497,9 +1561,10 @@ class BugStreamingCache(Cache):
         Storage rank, tail-retention snapshots and accounting are unchanged.
     orth_fix_tol, orth_abort_tol, qr_every, diag_every:
         Orthonormality guard (CODE_AUDIT Part A §Q4). Each absorb measures
-        ``‖UᵀU - I‖`` on both stored bases: above ``orth_fix_tol`` (default 1e-3, well
-        above the ~7e-4 a benign stream reaches over 1400 adversarial steps, so the
-        defaults are bit-identical) it re-orthonormalizes the basis in place, carrying
+        ``‖UᵀU - I‖`` on both bases: above ``orth_fix_tol`` (default 1e-3, above the ~7e-4
+        a benign fp32 stream reaches over 1400 adversarial steps -- but NOT above what a
+        bf16 model dtype or ``gist_dtype`` reaches, where it fires routinely) it
+        re-orthonormalizes the basis in place, carrying
         coordinates and the quantized tier; if the repaired basis is STILL above
         ``orth_abort_tol`` (default 1e-1, and never below ``orth_fix_tol``) it raises
         :class:`OrthonormalityError`. ``None`` disables either; ``orth_fix_tol=None`` with
@@ -1529,6 +1594,7 @@ class BugStreamingCache(Cache):
         n_sink: int = 4,
         theta: float | None = None,
         min_sv_frac: float = 0.0,
+        gist_dtype: torch.dtype | str = torch.float32,
         tracker: str = "isvd",
         oja_eta0: float = 20.0,
         oja_decay: float = 0.03,
@@ -1571,6 +1637,7 @@ class BugStreamingCache(Cache):
                 n_sink=n_sink,
                 theta=theta,
                 min_sv_frac=min_sv_frac,
+                gist_dtype=gist_dtype,
                 tracker=tracker,
                 oja_eta0=oja_eta0,
                 oja_decay=oja_decay,

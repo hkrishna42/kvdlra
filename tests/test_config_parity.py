@@ -88,6 +88,9 @@ POST_V1 = {
     "random_r64_h256_seed",
     "nogist_h2423",
     "nogist_h4460",
+    # L5.1: the r64 arm with the gist stored in bf16 (`tests/test_bf16_gist.py`), read by
+    # `prereg/bf16_gist.md`. New arm, no legacy counterpart.
+    "isvd_r64_h256_seed_bf16",
 }
 
 

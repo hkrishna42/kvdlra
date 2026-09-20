@@ -1,0 +1,37 @@
+name: isvd_r64_h256_seed_bf16
+kind: bug
+chunkable: true
+doc: >-
+  The r64 arm with the gist stored in bf16 (L5.1): U, C and the core B are held at 16 bits
+  and billed at 16 (`bug_footprint(gist_bits=16)`); every step, the coordinate carry, the
+  quantized-tier rotation and the orthonormality guard accumulate in fp32. Two consequences
+  the reading has to carry. (i) A bf16-rounded orthonormal basis has ||U^T U - I||_F ~ 4.9e-3
+  at n = 1024, r = 64 (7.0e-3 at n = 512, measured on random orthonormal draws) -- above
+  orth_fix_tol 1e-3 and two decades below the 1e-1 abort -- so the step receives a basis
+  that far off and the guard repairs it with a thin QR on every absorb; that repair is what
+  keeps U's rounding from compounding. (ii) Nothing repairs the coordinates: they are
+  re-rounded to bf16 at every basis carry, so their error compounds with the absorb count
+  (measured on a synthetic n = 1024, r = 64, block-16 stream with nothing evicted: relative
+  reconstruction error against the fp32 arm 1.0e-2 at 40 absorbs, 2.3e-2 at 200, 5.0e-2 at
+  1000 -- a square-root accumulation, while the repaired basis holds flat at 4.9e-3). This
+  arm measures exactly that.
+  Everything else is isvd_r64_h256_seed verbatim, so a cell against that arm measures the
+  storage dtype and nothing else.
+cache:
+  rank: 64
+  coord_budget: null
+  recent_window: 32
+  absorb_block: 16
+  n_sink: 4
+  retention: "lowrank_surprise"
+  hh_budget: 256
+  hh_select: "surprise"
+  hh_neighbor: 1
+  hh_retain: true
+  seed_hh_warmup: true
+  score_rank: null
+  min_sv_frac: 0.0
+  tracker: "isvd"
+  quant_bits: null
+  quant_budget: 0
+  gist_dtype: "bfloat16"

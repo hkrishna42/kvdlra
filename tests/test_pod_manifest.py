@@ -1020,8 +1020,16 @@ SMOKE_GATE_ARMS = [
 # L3.1's Gate-1 controls (tests/test_gate1_arms.py): the learn-then-freeze and fixed-random
 # tracker arms and the two byte-matched no-gist arms. Their pods are `gate1_preflight` (the
 # 1024-wide no-gist arm and the frozen arm) and Stage 1's `gate1_tracker_swap_v2`, not the
-# smoke pod -- see the exclusion note in the test below.
-GATE1 = {"frozen_r64_h256_seed", "random_r64_h256_seed", "nogist_h2423", "nogist_h4460"}
+# smoke pod -- see the exclusion note in the test below. L5.1's bf16-gist arm rides Stage 1
+# beside the r64 arm (`prereg/gate1_tracker_swap_v2.md` arm 6, read by `prereg/bf16_gist.md`),
+# so it is excluded for the same reason.
+GATE1 = {
+    "frozen_r64_h256_seed",
+    "random_r64_h256_seed",
+    "nogist_h2423",
+    "nogist_h4460",
+    "isvd_r64_h256_seed_bf16",
+}
 
 
 def test_the_smoke_pod_names_every_arm_but_the_table4_variants() -> None:

@@ -378,6 +378,9 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
             u_present=layer.u_k is not None,
             quant_count=q_len,
             quant_bits=layer.quant_bits if q_len else None,
+            # L5.1: a bf16-gist arm stores U and C at 16 bits, so they leave the
+            # fp32-at-rest subset of `stored_bits`. Read off the live layer, like the rank.
+            gist_bits=acc.FP16_BITS if layer.gist_dtype == torch.bfloat16 else acc.FP32_BITS,
         )
     if kind == "shadow":
         from kvdlra.cache import ShadowKVLayer

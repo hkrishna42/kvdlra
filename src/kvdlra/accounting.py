@@ -139,6 +139,7 @@ def bug_footprint(
     u_present: bool = True,
     quant_count: int = 0,
     quant_bits: int | None = None,
+    gist_bits: int = FP32_BITS,
 ) -> Footprint:
     """Per-layer footprint of one ``BugStreamingCache`` layer state, mirroring
     :meth:`BugStreamingLayer.stored_state_numel` to the float.
@@ -160,9 +161,18 @@ def bug_footprint(
     column. ``quant_count`` columns are stored as ``2*rank*quant_bits`` code bits
     + ``2`` fp32 norms each.
 
+    ``gist_bits`` is the width the gist is STORED at (``BugStreamingLayer.gist_dtype``,
+    L5.1): 32 by default; at 16 the basis and the coordinates leave the fp32-at-rest
+    subset, so ``stored_bits()`` bills them at 16 like every other verbatim element.
+    Element counts do not move with it -- ``float_equiv()`` and ``stored_state_numel()``
+    count elements, not bytes.
+
     Its ``float_equiv()`` equals the live cache's ``stored_state_numel()``; the
     anti-drift test (``tests/test_accounting.py``) pins this so the formula (used
     for SnapKV/ShadowKV) and the measured path cannot diverge."""
+    if gist_bits not in (FP16_BITS, FP32_BITS):
+        raise ValueError(f"gist_bits must be {FP16_BITS} or {FP32_BITS}, got {gist_bits}")
+    gist_fp32 = gist_bits == FP32_BITS
     track_pos = retention != "fifo"
     track_surprise = retention in _TRACK_SURPRISE
     n_cols = coord_count + quant_count  # all low-rank columns carry bookkeeping
@@ -170,13 +180,17 @@ def bug_footprint(
     verbatim = 2 * n * n_sink + 2 * n * recent_len + 2 * rank * coord_count + 2 * n * hh_count
     # fp32-at-rest subset of ``verbatim`` (bug_cache.py:575-577): the coordinate
     # columns C and the basis U. Sinks/recent/hh are verbatim KV in the model dtype
-    # (fp16/bf16), so they are NOT fp32-at-rest. Reported via ratio_stored_bits.
-    fp32_verbatim = 2.0 * rank * coord_count
+    # (fp16/bf16), so they are NOT fp32-at-rest. Reported via ratio_stored_bits. A
+    # ``gist_bits=16`` arm stores C and U in bf16 too, so the subset is empty there.
+    fp32_verbatim = 2.0 * rank * coord_count if gist_fp32 else 0.0
     aux = 0.0
     if u_present:
         verbatim += 2 * n * rank  # basis U (K + V)
-        fp32_verbatim += 2 * n * rank  # ...also fp32 at rest
-        aux += 2 * rank  # diagonal core (K + V)
+        if gist_fp32:
+            fp32_verbatim += 2 * n * rank  # ...also fp32 at rest
+        # The diagonal core (K + V). Left in ``aux_words`` at 32 bits even under a bf16
+        # gist -- conservative, and 2r words is noise beside the 2nr the basis costs.
+        aux += 2 * rank
     aux += n_cols * (int(track_pos) + int(track_surprise))
     # hh tier: the int64 positions. Week-11 SurpriseSLASH recomputes the selection
     # score from the basis each absorb, so the exact tier stores no score.

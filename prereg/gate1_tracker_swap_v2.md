@@ -1229,3 +1229,236 @@ gist do work a frozen basis, a random basis or no gist does not — and these tw
 one, on two families at one context.
 
 **STATUS: awaiting owner go (DECISIONS D-003 top-up; launch under D-011).**
+
+---
+
+## Amendment 1a (2026-09-20, before the pre-flight harvest; committed at this commit)
+
+§1–§11 above are the design as it was written before either pod was launched and before any
+generator-v2 row existed on hardware. They are left untouched. This section records only what
+**does not depend on pre-flight data**: the places where the shipped `kvdlra.eval.gate1` and
+`scripts/pod.py` are narrower, or differently worded, than the body describes, and the lane
+rulings that fixed them. It is committed before the pre-flight harvests, so that nothing in it
+can be a reaction to a number.
+
+**Amendment 1b, after that harvest, carries the rest** — the pre-flight's per-task rows into §2
+(the promise at the head of this file, item 1), the `vt` ceiling decision (item 2), and the §9
+re-size against the measured rates (item 3). Nothing below anticipates any of them.
+
+**No rule changes here.** §4's decision rule stands branch for branch and threshold for
+threshold; §6's three families keep their composition; §9's bars do not move. What changes is
+the *description* of machinery that §1–§11 were written before.
+
+Line numbers are as of this commit; the symbol names beside them are the durable anchor.
+
+### A1a.1 The `prompt_sha256` drop is scoped to the member — §4 governs, §7 (e) is withdrawn on this point
+
+§4 ("Primary contrasts, written exactly") drops a key whose two digests disagree "from that
+member and the drop is reported with the key". §7 (e) says instead that such a key "is dropped
+from **every paired statistic in that pod**". Those are two different rules, and the code
+implements §4's: `_mismatched` (`src/kvdlra/eval/gate1.py:540`) is computed per **cell pair**
+inside `_draft_retrieval` (`:489`), so only the keys *those two arms* disagree on leave
+*that one* McNemar; every other member of the pod keeps its 24 keys.
+
+**§7 (e)'s "from every paired statistic in that pod" is withdrawn.** A digest disagreement is a
+property of the pair of arms that wrote them: arms X and Y disagreeing on key *k* is no evidence
+about arms P and Q on key *k*, and dropping *k* pod-wide would shrink members that are still
+byte-identical. Nothing else in §7 (e) changes — the drop is still reported with the key **and**
+the arms, its check is still "96 keys; 0 disagree", and a pod with any mismatch at all is a
+defect to diagnose, not a pod to quietly re-pair. (Lane ledger, Task-3 fix round 1, 2026-09-20.)
+
+### A1a.2 `REFUSED` is a fourth verdict value, and the signature the module ships
+
+§4's code sketch reads `verdict, members = gate1.gate1_verdict(retr, ppl, diag=diag, sbits=sbits)`
+returning `"A/B" | "C" | "UNDECIDED"`. Two corrections.
+
+**(i) Ruling R-L3-12 — a refusal is its own branch value.** "The rule ran and neither branch
+held" (`UNDECIDED`) and "the rule never ran on that family" (`REFUSED`) are different findings,
+and a table that prints one for the other misreports the pod. `Verdict.branch`
+(`gate1.py:265-274`) therefore takes **four** values, and the precedence the module applies is
+**A/B, then C, then REFUSED, then UNDECIDED** (`gate1_verdict`, `:794-829`). Every sentence of
+§4's "Refusal, and the `--` rule" that says a refusal "returns `UNDECIDED`" reads **`REFUSED`**.
+Nothing else about those five refusals moves: they are still read before the rules, still
+*return* rather than raise (a raise would leave `make gate1` with no table in which to print the
+failure), and still name the arm and the exception text.
+
+**(ii) Ruling R-L3-13 — the shipped signature.** The §4 sketch is restated to it:
+
+```python
+from pathlib import Path
+from kvdlra.eval import gate1
+
+data      = gate1.load([Path("results/gate1_v2_stage1_llama"),
+                        Path("results/gate1_v2_stage1_qwen")])   # Gate1Data
+retrieval = gate1.retrieval_contrasts(data)                      # list[Contrast]
+ppl       = gate1.ppl_contrasts(data)                            # list[PplContrast]
+verdict   = gate1.gate1_verdict(retrieval, ppl, data)            # -> Verdict
+#   Verdict: branch ("A/B" | "C" | "REFUSED" | "UNDECIDED"), reason,
+#            families_separated, members
+```
+
+`diag` and `sbits` are not parameters. `Gate1Data` carries both — `frozen_defects` read from
+`diag.jsonl` and `sbits` from `ppl.jsonl` (`gate1.load`, `:354-421`) — so refusals 1, 3 and 4 are
+still decided "from the records, not by eye", through one object instead of three arguments. The
+readings are identical and no shim is added. Two smaller restatements of the same sketch: the
+contrasts come back as **lists** of `Contrast` / `PplContrast`, not as dicts keyed by tuple, and
+`Contrast` carries `dropped_keys` (A1a.1) beside the fields §4 names.
+
+### A1a.3 Refusals compose per family, and a refused family leaves every Holm family before the correction
+
+**Ruling R-L3-15 — per family, not per verdict.** §4 reads as though any refusal refuses the
+whole verdict. The shipped rule scopes each refusal to the family it fires on: the per-family
+loops in `gate1_verdict` skip a refused family (`:719-725` for rule 1's separations, `:730-732`
+for rule 3's blockers), so **A/B is read on the families that remain** and a refusal elsewhere is
+printed beside the branch, never instead of it (`:794-805`). **C is not** read that way: a
+refused family blocks C outright (`is_c = not blockers and not refusals`, `:782`), because C is a
+positive claim of non-separation over *every* family in the input and a family whose members were
+never read is not evidence for it. `REFUSED` is what is left once neither branch composes
+(`:812-822`).
+
+**Ruling R-L3-16 — before the correction, not only before the rules.** "A refused family
+contributes no evidence, in either direction" has to hold of Holm's realised *m* as well, so
+`_refusals` (`gate1.py:596`) runs first and a refused family's members leave **every** Holm family
+— primary retrieval, secondary, perplexity — before `_holm_by_group` (`:443`) corrects it
+(`:530`, `:588`, `:715`). The realised *m* is then the members the non-refused families
+contribute, which is the *m* those families would have had on their own. Without it, a third
+family refused on its byte match would widen Stage 1's 16-member family to 24 and withdraw an A/B
+the two clean families earned. The excluded members are still computed and still printed, with
+`refused (excluded from the Holm family)` where their adjusted p would be.
+
+**The Holm family is the pod set of ONE `make gate1` invocation** — one stage per call. §6's
+primary retrieval family is 16 *pooled* across Llama and Qwen, not 8 per model, so the grouping
+key is the invocation, not the model family; the context length splits the verdict's 16K family
+from a descriptive 32K one inside one invocation, which §6 also fixes (`_holm_by_group`'s note,
+`:457-467`). One stage per call is the caller's contract — `make gate1` names Stage 1's two pods —
+and not a check inside the function.
+
+**Neither ruling can change a Stage-1 verdict, and neither is a post-hoc widening.** Stage 1 has
+exactly two families and `MIN_FAMILIES_FOR_AB` is 2 (`gate1.py:163`). Refuse one and at most one
+remains, so "≥ 2 families separated" is unreachable; C is unreachable too, since any refusal
+blocks it. Every Stage-1 input carrying a refusal therefore lands on `REFUSED`, with or without
+R-L3-15 and R-L3-16. Both rulings bite only where a *third* family is in the same invocation —
+Stage 2's Mistral pod, which §4 rule 2 and §6 already admit as the third model family — and both
+move in the conservative direction there: a refused family is excluded from the count that can
+reach A/B, and it blocks C outright.
+
+### A1a.4 `sbits` lives in `ppl.jsonl`, as `ratio_stored_bits`
+
+§7 (f) opens "`ratio` and `sbits` are recorded on every row", and §10's `trials.jsonl` field list
+names "`ratio`, `sbits`". Neither is true of `trials.jsonl`: `TrialRecord`
+(`src/kvdlra/eval/records.py:98-114`) carries no such field, and none is written. The `sbits`
+that §4's byte-match refusal reads is `PplRecord["sbits"]` in **`ppl.jsonl`**
+(`records.py:151-160`), written from the frontier row's **`ratio_stored_bits`**
+(`runner._ppl_record`, `src/kvdlra/eval/runner.py:395`) — an arm's stored bits relative to
+`full`, which is why the common denominator cancels in the `nogist`/`isvd` ratio the refusal
+takes. `gate1.load` reads it there and nowhere else (`gate1.py:407-410`) and takes the **median**
+over that arm's perplexity rows (`:420`).
+
+So §7 (f) and §10 read: **`sbits` is a `ppl.jsonl` field, `ratio_stored_bits` at the source; a
+`trials.jsonl` row carries `prompt_sha256`, `haystack_id`, `depth` and `code_family`, and no
+footprint column.** The retrieval cell *line* does print `ratio=`/`sbits=` (`runner.py:316`) and
+`records.parse_cell_lines` (`:224`) reads them, but `pod.py harvest` writes no `cells.jsonl` for
+these pods (`scripts/pod.py:590-605`), so `ppl.jsonl` is the only committed carrier.
+
+One consequence, stated plainly: **the byte-match refusal needs the perplexity axis to have run.**
+A pod whose `ppl.jsonl` is absent, or whose rows carry no `sbits`, reads `byte match not measured
+(no sbits on the records)` and is **refused** (`gate1.py:638-639`) — an unmeasured reading is
+never a pass (§9's rule). §7 (f)'s descriptive comparison across arms is unaffected.
+
+### A1a.5 Two blockers `gate1_verdict` adds that §4 does not state
+
+Both are refusals to conclude, both withhold a C and neither can manufacture one or create an
+A/B, so both move only in the conservative direction.
+
+**(a) C requires the complete task set** (ruling R-L3-16 (b)). §4 rule 3 (i) claims
+non-separation "on **any task in any 16K family**", and those tasks are §3's four, not whichever
+ones the records happen to carry: quantified over the tasks merely *present*, a pod that ran two
+of them and separated on neither would print the strongest claim this gate can make off half the
+evidence. So C is blocked unless every task of `TASK_ORDER` — `niah_single`, `niah_multikey`,
+`niah_multivalue`, `vt` (`gate1.py:192`) — is present with an `isvd` row set in **every** 16K
+family: `incomplete task set: <family> lacks <tasks>` (`:740-742`). This guards **presence**
+only. Per-cell n-completeness (every retrieval cell at n = 24) is `scripts/pod.py check`'s job,
+exactly as §10's citability rule already has it, and the verdict does not duplicate it.
+
+**(b) An input with no 16K family is UNDECIDED, never C.** C is selected as "nothing blocks it",
+so an empty (dry-run) pod directory or a 32K-only record set would otherwise satisfy it
+vacuously — a Branch C read from no members at all. `NO_MEMBERS` (`gate1.py:202`) blocks C when
+no family carries the reference arm at 16K, and the branch reads `UNDECIDED` with that reason
+(`:777-778`, `:821-822`).
+
+### A1a.6 `manifest.cell_elapsed_s` carries 40 entries per Stage-1 pod, and the perplexity rate is measured
+
+§7 (d) states "**The perplexity axis emits no cell line** — `frontier.run_ppl` is not `_cell` —
+so the measured rate covers 96 of an arm's 128 samples", and §8's log-volume table and §10's
+manifest bullet both count **32** entries. Lane task L3.3a made the perplexity axis print the
+same line: one per (arm, ctx) sweep, keyed by the perplexity **task** name (`ppl_16k_pg19val`,
+which no retrieval sub-task is called) so that `harvest` folds both axes into one
+`cell_elapsed_s` without pooling two cells (`src/kvdlra/eval/runner.py:374-384`; `CELL_S_RE`,
+`scripts/pod.py:426`; the fold, `pod.py:616-618`).
+
+Per Stage-1 pod, therefore, **40 entries**: 8 arms × 4 retrieval sub-tasks = 32, plus 8 arms × 1
+perplexity sweep = 8. §8's row "`[stage] cell` (§7 d): 8 × 4 | 32 | 32" reads **8 × 4 + 8 = 40**,
+and §10's "`cell_elapsed_s` for the 32 retrieval cells" reads "for the 32 retrieval cells and the
+8 perplexity sweeps". §8's expected line counts move by 8 lines per pod, which changes no
+conclusion it draws.
+
+§7 (d)'s formula is unchanged and still reads the four **retrieval** cells only:
+
+> retrieval min/sample for an arm = (Σ of its four retrieval `cell_elapsed_s` values, seconds)
+> ÷ 60 s/min ÷ 96 samples = Σ ÷ 5,760.
+
+What changes is the sentence after it. The perplexity windows are still **billed** in §9 at the
+arm's retrieval rate — §9 is not re-derived here and no bar moves — but their rate is now
+**measured at harvest** from that arm's own perplexity entry (its seconds over the 32 windows of
+the sweep), instead of being covered only by §9's safety factor. §7 (d)'s "the measured rate
+covers 96 of an arm's 128 samples" is withdrawn: the harvest carries a clock for all 128, and the
+perplexity rate is reported beside the retrieval rate as a measurement, not an assumption.
+
+### A1a.7 Harvesting a relaunched instance of a Stage-1 pod
+
+§10 names one output directory per pod and does not say what happens when an instance dies and
+the pod is relaunched. Lane task L3.3b widened `pod.py harvest`'s non-shrink guard from
+`trials.jsonl` to **every** record file the harvest writes (`_shrink_refusal`,
+`scripts/pod.py:399-413`), and that guard is **all-or-nothing**: if any one file would shrink,
+the whole harvest is refused and nothing is written (`pod.py:597-601`). A truncated fallback
+fetch — `vastai logs --tail` capped at 5,000 lines when the full fetch comes back empty — is
+exactly the case it exists for, and it would otherwise refuse a harvest that is good on the other
+four files.
+
+The recipe, pre-committed here: **a relaunched instance harvests into its own directory**,
+`pod.py harvest --out results/<pod>_<instance>` (`pod.py:904`), never over the first one. The two
+directories are then compared and the complete one is what `make gate1` reads — never both at
+once, which `gate1.load` refuses anyway ("a second `<family>` pod — one pod per family",
+`gate1.py:380`), and never a merge of the two. `--force` (`pod.py:905-907`) overwrites in place
+and is used only with its reason written into the DECISIONS entry beside the instance id, because
+it discards rows already on disk. This is a harvest recipe and not a change to what is measured:
+no statistic in §4 or §6 crosses a pod boundary, and two instances of one pod are two attempts at
+one pod, never two families.
+
+### A1a.8 The task-exclusion knob exists; which task it names is Amendment 1b's business
+
+§6 states the arithmetic for a task the pre-flight's ceiling rule excludes (16 − 4 on the primary
+retrieval family, 24 − 6 on the secondary, the perplexity family untouched) but named no
+mechanism. The mechanism lands on this branch in the commit after this one: **`EXCLUDED_TASKS`**,
+a named module constant in `src/kvdlra/eval/gate1.py`, an empty `frozenset()` that an amendment
+sets. A task it names leaves the primary retrieval family, the secondary family, and both of
+C's per-task readings (the blocker loop and the `TASK_ORDER` completeness check of A1a.5 (a)).
+Its cells are still run, still scored and still **rendered** in the Gate-1 table as descriptive
+rows, exactly as §6 requires ("The excluded task is still run, still reported descriptively"),
+and a separation on an excluded task blocks nothing.
+
+**Which task, if any, it names is Amendment 1b's business.** The ceiling rule reads the
+pre-flight's harvested `full` accuracy, that harvest has not happened, and nothing here
+anticipates it. The knob is empty on this branch, and the Holm families are §6's 16 / 4 / 24
+unless Amendment 1b sets it.
+
+### A1a.9 One wording correction in §2 (b)
+
+§2 (b)'s arm-vs-arm table labels the Qwen `isvd_r256_tol` − `isvd_r256_f0.01_tol` row (paired SD
+**0.0490**) "the floor: a real change of subspace". "Floor" is the wrong word for that number:
+the paragraph below the table enumerates the population as **0.0010 to 0.0563** bits/token over
+15 contrasts, so 0.0490 sits in the middle-to-upper part of it and the minimum is **0.0010**
+(Llama `isvd_r256_tol` − `isvd_r256_qr64`). The row keeps its substantive point — it is the
+smallest paired SD among the contrasts where a knob that *changes the subspace* is the difference
+— and nothing downstream reads "floor" as a quantity: §6's bounds are computed from the stated
+range, not from that label. The body is not edited; this note is the correction.

@@ -403,6 +403,7 @@ def test_the_gate1_subcommand_writes_the_table(tmp_path: Path) -> None:
     assert "bits/token" in md and "TOST" in md
     verdict = next(x for x in md.splitlines() if x.startswith("VERDICT: "))
     assert verdict.startswith("VERDICT: A/B — ")
+    assert "\n\n\n" not in md, "a block with no error rows and no dropped keys adds no gap"
 
 
 # --- nothing to read is never a Branch C -------------------------------------------
@@ -554,6 +555,70 @@ def test_two_clean_families_plus_a_third_refused_blocks_branch_c(tmp_path: Path)
     assert "mistral" in v.reason and "byte match" in v.reason
 
 
+# --- ruling R-L3-16: a refused family leaves the Holm families too ------------------
+
+# The counter-example the ruling is written from: the r64 arm at 18 of 24 against
+# `frozen` 9 and `nogist` 8 wins 9 and 10 pairs with none lost (p = 2^-8 and 2^-9), which
+# clears the 16-member primary family -- every member adjusts to 0.03125 -- and clears
+# nothing wider: pool eight more members in and the `frozen` members land on 0.0625.
+NARROW = {"full": 24, "isvd": 18, "frozen": 9, "nogist": 8, "fd": 18}
+
+
+def test_a_refused_familys_members_leave_the_holm_family_before_the_correction(
+    tmp_path: Path,
+) -> None:
+    """Ruling R-L3-16: "a refused family contributes no evidence, in either direction"
+    (R-L3-15) has to hold at the CORRECTION too, not only at the branch dispatch. Two
+    clean families that separate at their own m = 16 keep that separation when a third
+    family is refused: its members leave every Holm family before Holm runs, so the
+    realised m stays 16 and the A/B the clean families earn is not withdrawn by the
+    refusal -- which is exactly what pooling all 24 would do (`frozen` at 0.0625)."""
+    v, data = verdict_for(
+        tmp_path,
+        llama={"hits": NARROW, "delta": TIGHT},
+        qwen={"hits": NARROW, "delta": TIGHT},
+        mistral={"hits": FLAT, "delta": TIGHT, "sbits": {"nogist": SBITS * 1.2}},
+    )
+    assert v.branch == "A/B", v.reason
+    assert v.families_separated == ["llama", "qwen"]
+    assert "byte match" in v.reason and "mistral" in v.reason
+    primary = [c for c in gate1.retrieval_contrasts(data) if c.primary]
+    assert len(primary) == 24, "the refused family's members are still computed and printed"
+    assert sum(1 for c in primary if c.p_holm is not None) == 16, "the realised m"
+    assert all(c.p_holm is None for c in primary if c.family == "mistral")
+    vt = next(c for c in primary if (c.family, c.task, c.b) == ("llama", "vt", "frozen"))
+    assert (vt.a_favored, vt.b_favored) == (9, 0)
+    assert vt.p_holm == pytest.approx(0.03125), "0.0625 if the refused family is pooled in"
+    # The excluded members are named as excluded, never printed with an adjusted p.
+    out = tmp_path / "gate1.md"
+    tables.gate1_table([tmp_path / f"gate1_v2_stage1_{f}" for f in MODELS], out)
+    assert "refused (excluded from the Holm family)" in out.read_text()
+
+
+# --- rule 3 (i) reads every task the prereg fixes, not only the ones that ran --------
+
+
+def test_a_truncated_task_set_is_never_a_branch_c(tmp_path: Path) -> None:
+    """C's retrieval condition is "no ... separation ... on **any task in any 16K
+    family**" (prereg section 4 rule 3 (i)), and the tasks are section 3's four. Read
+    over the tasks that happen to be PRESENT, a pod that ran two of them and separated
+    on neither would print C off half the evidence -- and C is the branch that can
+    retire the method's central claim."""
+    dirs = [write_pod(tmp_path, f, hits=FLAT, delta=TIGHT) for f in ("llama", "qwen")]
+    for d in dirs:
+        rows = (d / "trials.jsonl").read_text().splitlines(keepends=True)
+        (d / "trials.jsonl").write_text(
+            "".join(
+                x for x in rows if '"task": "niah_multivalue"' not in x and '"task": "vt"' not in x
+            )
+        )
+    data = gate1.load(dirs)
+    v = gate1.gate1_verdict(gate1.retrieval_contrasts(data), gate1.ppl_contrasts(data), data)
+    assert v.branch == "UNDECIDED", v.reason
+    assert "incomplete task set: llama lacks niah_multivalue, vt" in v.reason
+    assert "incomplete task set: qwen lacks niah_multivalue, vt" in v.reason
+
+
 # --- section 6's third TOST state ---------------------------------------------------
 
 # 32 windows at +/-0.02 are decidable only for a paired SD below 0.0667 (section 6's
@@ -607,6 +672,21 @@ def test_two_corpora_at_one_ctx_are_paired_inside_their_own_corpus(tmp_path: Pat
     ppl = [c for c in gate1.ppl_contrasts(gate1.load([d])) if c.b == "frozen"]
     assert {c.corpus for c in ppl} == {"pg19-val", "wt103-test"}
     assert [c.n_windows for c in ppl] == [WINDOWS, WINDOWS]
+
+
+def test_a_corpus_the_reference_arm_never_scored_is_labelled_not_dropped(tmp_path: Path) -> None:
+    """Every contrast in a perplexity block is taken against the reference arm, so a
+    corpus it scored no window of has none -- which is a labelled row, not a block that
+    silently disappears along with the sweeps that DID run on it."""
+    d = write_pod(tmp_path, "llama", hits=FLAT, delta=TIGHT)
+    rows = [json.loads(x) for x in (d / "pplw.jsonl").read_text().splitlines()]
+    other = [r | {"corpus": "wt103-test"} for r in rows if r["arm"] != ARM["isvd"]]
+    (d / "pplw.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows + other))
+    out = tmp_path / "gate1.md"
+    tables.gate1_table([d], out)
+    md = out.read_text()
+    assert "### llama — perplexity, ctx 16384, wt103-test" in md
+    assert "reference arm has no windows for corpus wt103-test" in md
 
 
 def test_a_control_that_wins_is_marked_and_a_cell_that_never_ran_says_why(

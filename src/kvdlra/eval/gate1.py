@@ -58,15 +58,19 @@ members ... **(ii) Perplexity:** **every** ``isvd``-vs-``fd`` and ``isvd``-vs-``
 TOST at +/-0.02 bits/token **passes** ... each TOST is read at alpha = 0.05
 **uncorrected**" (an intersection-union test, prereg section 6) -> the ``blockers`` list:
 C is selected iff nothing blocks it. A member that cannot be read at all -- never run, no
-adjusted p-value, no TOST -- blocks C too: C is a positive claim of non-separation, and
-an absent member is not evidence for it. **A refused family blocks C the same way and for
-the same reason** (ruling R-L3-15: C reads **every** family in the input, not only the
-ones that composed cleanly) -- its members were never read at all, so nothing they might
-have shown is evidence either; this is why ``is_c`` is gated on ``not refusals`` as well as
-``not blockers``. Nor is a record set with no 16K member at all -- an empty (dry-run) pod
-directory, or a 32K-only set: :data:`NO_MEMBERS` blocks C, and the branch reads
-``UNDECIDED``. A C printed off no members would be the strongest claim this gate can make,
-read from nothing.
+adjusted p-value, no TOST -- blocks C too: C is a positive claim of non-separation, and an
+absent member is not evidence for it. So does a 16K family missing one of
+:data:`TASK_ORDER`'s four tasks: rule 3 (i) claims non-separation "on **any task in any
+16K family**", and those tasks are section 3's four, not whichever ones the records happen
+to carry -- read over the tasks merely PRESENT, a pod that ran two of them and separated
+on neither would print C off half the evidence. **A refused family blocks C the same way
+and for the same reason** (ruling R-L3-15: C reads **every** family in the input, not only
+the ones that composed cleanly) -- its members were never read at all, so nothing they
+might have shown is evidence either; this is why ``is_c`` is gated on ``not refusals`` as
+well as ``not blockers``. Nor is a record set with no 16K member at all -- an empty
+(dry-run) pod directory, or a 32K-only set: :data:`NO_MEMBERS` blocks C, and the branch
+reads ``UNDECIDED``. A C printed off no members would be the strongest claim this gate can
+make, read from nothing.
 
 **Rule 4** -- "Otherwise **UNDECIDED**, with the members that blocked each branch listed."
 Every branch lists them: the reason carries every refusal and every blocker in full, and
@@ -110,6 +114,20 @@ chosen, never instead of it:
    carrying no ``sbits`` at all is ``not measured``, which is never read as a pass
    (prereg section 9's rule for an unmeasured reading).
 5. "No arm is ever printed as ``--``" -- the table's rule, in ``scripts/tables.py``.
+
+**The refusals are read before the CORRECTION, not only before the rules** (ruling
+R-L3-16). "A refused family contributes no evidence, in either direction" (R-L3-15) has
+to hold of Holm's realised m as well, so :func:`_refusals` runs first and a refused
+family's members leave **every** Holm family -- primary retrieval, secondary,
+perplexity -- before :func:`_holm_by_group` corrects it. The realised m is then the
+members the non-refused families contribute to the pods passed, which is the m those
+families would have had on their own. Without this, a third family refused on its byte
+match widens Stage 1's 16-member family to 24 and withdraws an A/B the two clean
+families earn: at ``isvd`` 18 / ``frozen`` 9 / ``nogist`` 8 of 24 in each, every member
+adjusts to 0.03125 at m = 16 and the ``frozen`` members to 0.0625 at m = 24. The
+excluded members are still computed and still printed -- with
+``refused (excluded from the Holm family)`` where their adjusted p would be, never with
+an adjusted p they never had.
 
 Window pairing repeats ``scripts/tables.py``'s ``ppl_stats`` two-line form (bits =
 ``nll_sum_nats / (ntok * ln 2)``, keyed by ``window_idx``, with its duplicate-window and
@@ -431,13 +449,22 @@ def _holm_by_group(
     Section 6: "A member whose cell holds an ``error`` row **leaves its family** (the
     remaining members are corrected together at the smaller m, so the others stay
     decidable) and is listed beside the family with its exception and no adjusted
-    p-value." ``group`` maps a member's index to its family key (absent = not in any
+    p-value." A refused family's members leave the same way and for the same reason
+    (ruling R-L3-16), which is why the callers read the refusals before they build
+    ``group``. ``group`` maps a member's index to its family key (absent = not in any
     family); the realised m is how many indices share a key, which the table prints.
     """
-    # ponytail: the callers group by context length, so the three Stage-2 32K pods would
-    # pool into ONE descriptive family instead of carrying "the same three sizes, 8 / 2 /
-    # 12 per family" (section 6). Group by (family, ctx) when Stage 2's amendment names
-    # its pods -- at Stage 1 (one pod per model family, one ctx) the two agree.
+    # The Holm family is the pod set of ONE `make gate1` invocation: Stage 1's two pods
+    # POOLED (section 6's primary retrieval family is 16 across Llama and Qwen, not 8
+    # per model), Stage 2's Mistral 16K pod and each 32K pod a separate invocation
+    # carrying its own 8 / 2 / 12 -- "No Stage-2 member is pooled with a Stage-1 member"
+    # (section 6). So the grouping key is the INVOCATION, not the model family: grouping
+    # by (family, ctx) would split Stage 1's 16 into two 8s and break section 6. The ctx
+    # in the callers' keys splits the verdict's 16K family from a descriptive 32K one
+    # inside one invocation, which section 6 also fixes ("Holm inside each family").
+    # ponytail: one stage per call is the caller's contract, not a check here -- a
+    # caller that passed Stage 1 and Stage 2 in one invocation would pool them. Take the
+    # stage as an explicit input if `make gate1` ever grows a multi-stage mode.
     out: list[float | None] = [None] * len(draft)
     members: dict[object, list[int]] = defaultdict(list)
     for i, key in group.items():
@@ -449,26 +476,10 @@ def _holm_by_group(
     return out
 
 
-def retrieval_contrasts(data: Gate1Data) -> list[Contrast]:
-    """Every retrieval member: ``isvd`` vs ``frozen``/``nogist`` (primary) and vs
-    ``oja``/``fd``/``random`` (secondary), per family x ctx x task -- the exact paired
-    McNemar over the ``(seed, trial)`` keys the two cells share, "the r64 arm as *a*".
-
-    The pairing invariant is enforced here, not assumed: section 4 takes the McNemar
-    "on **byte-identical prompts** (section 3's pairing invariant, verified from
-    ``prompt_sha256`` per section 7 (e); a key whose digests disagree is dropped from
-    that member and the drop is reported with the key)", and a key whose digest is
-    missing on either side "is a failure as well as a mismatch". Dropping shrinks the
-    member's paired n (section 6) and never removes the member -- except at the limit,
-    where every key goes and the member has no pairing at all, which section 4's
-    ``mcnemar_exact`` -> ``None`` boundary refuses.
-
-    Holm (section 6) runs over two families of members -- the primary ones and the
-    secondary ones -- and separately per context length, because a 32K pod "carries the
-    same three sizes ... Holm inside each family" and is descriptive. The family is the
-    set of members present in the pods passed, at their realised m; the prereg names
-    which pods form a stage, and no Stage-2 member is pooled with a Stage-1 member.
-    """
+def _draft_retrieval(data: Gate1Data) -> list[Contrast]:
+    """Every retrieval member before Holm runs: the correction cannot be applied until
+    the refusals are known (ruling R-L3-16), and refusal 2 is itself read off these
+    members (``p is None``, which no correction changes)."""
     draft: list[Contrast] = []
     for f, c, t in sorted({(f, c, t) for f, c, t, k in data.hits if k == REFERENCE}):
         for b in (*PRIMARY_CONTROLS, *SECONDARY_CONTROLS):
@@ -490,10 +501,37 @@ def retrieval_contrasts(data: Gate1Data) -> list[Contrast]:
                     dropped_keys=dropped,
                 )
             )  # fmt: skip
+    return draft
+
+
+def retrieval_contrasts(data: Gate1Data) -> list[Contrast]:
+    """Every retrieval member: ``isvd`` vs ``frozen``/``nogist`` (primary) and vs
+    ``oja``/``fd``/``random`` (secondary), per family x ctx x task -- the exact paired
+    McNemar over the ``(seed, trial)`` keys the two cells share, "the r64 arm as *a*".
+
+    The pairing invariant is enforced here, not assumed: section 4 takes the McNemar
+    "on **byte-identical prompts** (section 3's pairing invariant, verified from
+    ``prompt_sha256`` per section 7 (e); a key whose digests disagree is dropped from
+    that member and the drop is reported with the key)", and a key whose digest is
+    missing on either side "is a failure as well as a mismatch". Dropping shrinks the
+    member's paired n (section 6) and never removes the member -- except at the limit,
+    where every key goes and the member has no pairing at all, which section 4's
+    ``mcnemar_exact`` -> ``None`` boundary refuses.
+
+    Holm (section 6) runs over two families of members -- the primary ones and the
+    secondary ones -- and separately per context length, because a 32K pod "carries the
+    same three sizes ... Holm inside each family" and is descriptive. The family is the
+    set of members the NON-REFUSED families contribute to the pods passed, at their
+    realised m (ruling R-L3-16: a refused family's members leave the correction, so the
+    clean families are corrected at the m they would have had on their own); the prereg
+    names which pods form a stage, and no Stage-2 member is pooled with a Stage-1 member.
+    """
+    draft = _draft_retrieval(data)
+    refused = _refusals(data, draft)[0]
     eligible = {
         i: (x.ctx, x.primary)
         for i, x in enumerate(draft)
-        if x.p is not None and (x.errors_a, x.errors_b) == (0, 0)
+        if x.p is not None and (x.errors_a, x.errors_b) == (0, 0) and x.family not in refused
     }
     adjusted = _holm_by_group(draft, cast(dict[int, object], eligible))
     return [replace(x, p_holm=adjusted[i]) for i, x in enumerate(draft)]
@@ -513,9 +551,10 @@ def ppl_contrasts(data: Gate1Data) -> list[PplContrast]:
 
     Windows are paired by ``(ctx, corpus, window_idx)`` and a pairing that is not exact
     is refused, as ``ppl_stats`` refuses it: an unpaired comparison of pooled numbers
-    hides the effect it is measuring. Holm runs over the PRIMARY members only (section
-    6's 4-member family, per context length); the secondary contrasts are "uncorrected
-    and descriptive, except the ``fd`` TOSTs the C branch names".
+    hides the effect it is measuring. Holm runs over the PRIMARY members of the
+    non-refused families only (section 6's 4-member family, per context length; ruling
+    R-L3-16); the secondary contrasts are "uncorrected and descriptive, except the
+    ``fd`` TOSTs the C branch names".
     """
     draft: list[PplContrast] = []
     for f, c, corpus, _ in sorted((k for k in data.bits if k[3] == REFERENCE), key=_sweep_order):
@@ -542,9 +581,68 @@ def ppl_contrasts(data: Gate1Data) -> list[PplContrast]:
                     decidable=tost_decidable(d, PPL_DELTA_BITS, ALPHA),
                 )
             )  # fmt: skip
-    eligible = {i: (x.ctx, x.corpus) for i, x in enumerate(draft) if x.primary}
+    # The refusals are read FIRST here too (ruling R-L3-16): a refused family leaves
+    # EVERY Holm family, this one included. They are read off the retrieval draft --
+    # rebuilt rather than threaded through, because it is an exact binomial per member
+    # and nothing next to the bootstrap above.
+    refused = _refusals(data, _draft_retrieval(data))[0]
+    eligible = {
+        i: (x.ctx, x.corpus) for i, x in enumerate(draft) if x.primary and x.family not in refused
+    }
     adjusted = _holm_by_group(draft, cast(dict[int, object], eligible))
     return [replace(x, p_holm=adjusted[i]) for i, x in enumerate(draft)]
+
+
+def _refusals(data: Gate1Data, retrieval: list[Contrast]) -> tuple[dict[str, list[str]], list[str]]:
+    """The five refusals, each scoped to the family it fires on, and the secondary-arm
+    error lines that refuse nothing (section 4: "an error on arms 6-8 removes that arm's
+    secondary members and nothing else").
+
+    Read from the records and from ``retrieval``'s UNADJUSTED fields -- refusal 2 is
+    ``p is None``, which no correction changes -- so this is a fixed point that can be
+    computed BEFORE Holm: ruling R-L3-16 requires exactly that, because a refused
+    family's members leave every Holm family before the correction is applied.
+    """
+    refused: dict[str, list[str]] = defaultdict(list)
+    notes: list[str] = []
+    # Refusal 1: an error row on one of the four arms the rule reads.
+    for (family, ctx, task, tracker), errs in sorted(data.errors.items()):
+        if ctx != VERDICT_CTX or not errs:
+            continue
+        arm = data.arms[(family, tracker)]
+        line = f"{arm} has {len(errs)} error records ({family}/{task}: {errs[0]})"
+        (refused[family] if tracker in RULE_ARMS else notes).append(line)
+    # Refusal 2: a primary member with no shared pairing key at all.
+    for c in retrieval:
+        if c.ctx == VERDICT_CTX and c.primary and c.p is None:
+            why = (
+                f"all {len(c.dropped_keys)} keys dropped on prompt_sha256"
+                f" ({key_list(c.dropped_keys)})"
+                if c.dropped_keys
+                else "share no (seed, trial)"
+            )
+            refused[c.family].append(f"{c.family}/{c.task}: {c.a} vs {c.b} {why}")
+    for family in sorted({f for f, ctx, _, _ in data.hits if ctx == VERDICT_CTX}):
+        # Refusal 3: the frozen arm still repairing past its freeze.
+        defects = data.frozen_defects.get(family, [])
+        if defects:
+            refused[family].append(
+                f"{family}: frozen dispatch -- {len(defects)} diag rows repaired past"
+                f" freeze_after={_freeze_after()}, first {defects[0]}"
+            )
+        # Refusal 4: the no-gist twin off the byte match its arm file solves for.
+        if (family, "nogist") not in data.arms:
+            continue
+        gist = data.sbits.get((family, REFERENCE))
+        twin = data.sbits.get((family, "nogist"))
+        if gist is None or twin is None:
+            refused[family].append(f"{family}: byte match not measured (no sbits on the records)")
+        elif abs(twin / gist - 1.0) > BYTE_MATCH_TOL:
+            refused[family].append(
+                f"{family}: byte match -- nogist/isvd stored bits {twin / gist:.2f},"
+                f" outside 1 +/- {BYTE_MATCH_TOL}"
+            )
+    return dict(refused), notes
 
 
 def _beats(
@@ -599,10 +697,11 @@ def gate1_verdict(retrieval: list[Contrast], ppl: list[PplContrast], data: Gate1
     rule found on the families that remain printed beside it; ``UNDECIDED`` otherwise --
     including the case where nothing at :data:`VERDICT_CTX` can be read at all.
     Completeness is enforced member by member: every (family, task) the 16K records
-    show must carry an adjusted p for both C controls or C is blocked, and a record set
-    with no 16K reference cell at all blocks it with :data:`NO_MEMBERS`. The reason
-    lists every refusal and every blocker in full, and ``members`` carries them beside
-    the separations -- nothing elided, because the rendered table is read on its own.
+    show must carry an adjusted p for both C controls or C is blocked, every 16K family
+    must carry all four of :data:`TASK_ORDER`, and a record set with no 16K reference
+    cell at all blocks it with :data:`NO_MEMBERS`. The reason lists every refusal and
+    every blocker in full, and ``members`` carries them beside the separations --
+    nothing elided, because the rendered table is read on its own.
     """
     r_idx = {(c.family, c.task, c.b): c for c in retrieval if c.ctx == VERDICT_CTX}
     p_members = [c for c in ppl if c.ctx == VERDICT_CTX]
@@ -613,46 +712,7 @@ def gate1_verdict(retrieval: list[Contrast], ppl: list[PplContrast], data: Gate1
     # carries no member to read, and C is a positive claim that needs one.
     readable = sorted({f for f, ctx, _, k in data.hits if ctx == VERDICT_CTX and k == REFERENCE})
     tasks = sorted({t for _, ctx, t, _ in data.hits if ctx == VERDICT_CTX})
-    refused: dict[str, list[str]] = defaultdict(list)
-    notes: list[str] = []
-
-    # Refusal 1: an error row on one of the four arms the rule reads.
-    for (family, ctx, task, tracker), errs in sorted(data.errors.items()):
-        if ctx != VERDICT_CTX or not errs:
-            continue
-        arm = data.arms[(family, tracker)]
-        line = f"{arm} has {len(errs)} error records ({family}/{task}: {errs[0]})"
-        (refused[family] if tracker in RULE_ARMS else notes).append(line)
-    # Refusal 2: a primary member with no shared pairing key at all.
-    for c in retrieval:
-        if c.ctx == VERDICT_CTX and c.primary and c.p is None:
-            why = (
-                f"all {len(c.dropped_keys)} keys dropped on prompt_sha256"
-                f" ({key_list(c.dropped_keys)})"
-                if c.dropped_keys
-                else "share no (seed, trial)"
-            )
-            refused[c.family].append(f"{c.family}/{c.task}: {c.a} vs {c.b} {why}")
-    for family in families:
-        # Refusal 3: the frozen arm still repairing past its freeze.
-        defects = data.frozen_defects.get(family, [])
-        if defects:
-            refused[family].append(
-                f"{family}: frozen dispatch -- {len(defects)} diag rows repaired past"
-                f" freeze_after={_freeze_after()}, first {defects[0]}"
-            )
-        # Refusal 4: the no-gist twin off the byte match its arm file solves for.
-        if (family, "nogist") not in data.arms:
-            continue
-        gist = data.sbits.get((family, REFERENCE))
-        twin = data.sbits.get((family, "nogist"))
-        if gist is None or twin is None:
-            refused[family].append(f"{family}: byte match not measured (no sbits on the records)")
-        elif abs(twin / gist - 1.0) > BYTE_MATCH_TOL:
-            refused[family].append(
-                f"{family}: byte match -- nogist/isvd stored bits {twin / gist:.2f},"
-                f" outside 1 +/- {BYTE_MATCH_TOL}"
-            )
+    refused, notes = _refusals(data, retrieval)
 
     separated: list[str] = []
     separations: list[str] = []
@@ -670,6 +730,16 @@ def gate1_verdict(retrieval: list[Contrast], ppl: list[PplContrast], data: Gate1
     for family in families:
         if family in refused:
             continue
+        # C is read over the four tasks section 3 fixes, not over the ones that happen
+        # to be in the records: the loop below quantifies over `tasks`, so a pod that
+        # ran two of them and separated on neither would print the strongest claim this
+        # gate can make off half the evidence.
+        # A task the pre-flight's ceiling rule excludes (section 6, by Amendment) is NOT
+        # this case and is not handled here: that exclusion shrinks the Holm families
+        # too, and the knob for it lands with the amendment that names the task.
+        absent = [t for t in TASK_ORDER if (family, VERDICT_CTX, t, REFERENCE) not in data.hits]
+        if absent:
+            blockers.append(f"incomplete task set: {family} lacks {', '.join(absent)}")
         for b in C_CONTROLS:
             for task in tasks:
                 member = r_idx.get((family, task, b))

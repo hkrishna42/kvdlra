@@ -878,13 +878,17 @@ def _gate1_ppl_cells(c: gate1.PplContrast) -> list[str]:
     spread cannot fit inside the margin even at delta = 0 "is recorded as `not
     decidable` -- never as a pass, never as a quiet fail". The Holm p of an arm outside
     the 4-member primary family is not missing either: that family is the two contrasts
-    the rule reads, and the rest are "uncorrected and descriptive" (section 7 (a)).
+    the rule reads, and the rest are "uncorrected and descriptive" (section 7 (a)). A
+    PRIMARY member without one is the other case: its family was refused, so it left
+    the correction before Holm ran (ruling R-L3-16) and is printed as excluded rather
+    than with an adjusted p it never had.
     """
+    excluded = "refused (excluded from the Holm family)" if c.primary else "n/a (secondary)"
     return [
         f"{c.d_bits:+.4f}",
         f"[{c.lo:+.4f}, {c.hi:+.4f}]",
         "passes" if c.equivalent else ("fails" if c.decidable else "not decidable"),
-        f"{c.p_holm:.3g}" if c.p_holm is not None else "n/a (secondary)",
+        f"{c.p_holm:.3g}" if c.p_holm is not None else excluded,
         f"{c.p:.3g}",
     ]
 
@@ -962,26 +966,31 @@ def gate1_table(pod_dirs: Sequence[Path], out: Path) -> None:
         failures = sorted(
             (k[3], k[2], errs) for k, errs in data.errors.items() if k[:2] == (family, ctx) and errs
         )
-        md += [""] + [
-            f"- `{data.arms[(family, tracker)]}` / {task}: {len(errs)} error records,"
-            f" first `{errs[0]}`"
-            for tracker, task, errs in failures
-        ]
         # Section 7 (e): "A key that disagrees is dropped from every paired statistic in
         # that pod and the drop is reported with the key and the arms." One line per
         # member that lost keys, with all of them -- a count alone is not a report.
-        md += [
+        # One blank line ahead of the list, and nothing at all for a block that has
+        # neither kind of line.
+        bullets = [
+            f"- `{data.arms[(family, tracker)]}` / {task}: {len(errs)} error records,"
+            f" first `{errs[0]}`"
+            for tracker, task, errs in failures
+        ] + [
             f"- pairing: {len(c.dropped_keys)} key{'' if len(c.dropped_keys) == 1 else 's'}"
             f" dropped ({c.family}/{c.task}: {gate1.key_list(c.dropped_keys)})"
             f" -- {c.a} vs {c.b}, n_paired {c.n_paired}"
             for c in retr
             if c.dropped_keys and (c.family, c.ctx) == (family, ctx)
         ]
+        md += ["", *bullets] if bullets else []
         for corpus in sorted(
             {k[2] for k in data.bits if (k[0], k[1]) == (family, ctx)}, key=lambda x: x or ""
         ):
-            if (family, ctx, corpus, gate1.REFERENCE) not in data.bits:
-                continue
+            # Every contrast in the block is taken against the reference arm, so a
+            # corpus it scored no window of has none. That is a labelled row, not a
+            # dropped block: a block that silently vanishes hides a sweep that DID run
+            # more thoroughly than the `--` prereg section 4 forbids.
+            no_ref = f"reference arm has no windows for corpus {corpus}"
             sweeps = {c.b: c for c in ppl if (c.family, c.ctx, c.corpus) == (family, ctx, corpus)}
             rows = []
             for tracker in present:
@@ -990,11 +999,13 @@ def gate1_table(pod_dirs: Sequence[Path], out: Path) -> None:
                     continue
                 c = sweeps.get(tracker)
                 # `c is None` is the reference arm itself, which has no contrast with
-                # itself -- and "no arm is ever printed as `--`" (prereg section 4), so
-                # the cells say what they are instead of going blank.
+                # itself -- or, where the reference is the arm missing, every row in the
+                # block. "No arm is ever printed as `--`" (prereg section 4), so the
+                # cells say which it is instead of going blank.
+                label = "reference" if tracker == gate1.REFERENCE else no_ref
                 rows.append(
                     [tracker, f"{sum(w.values()) / len(w):.4f}"]
-                    + (["reference"] * 5 if c is None else _gate1_ppl_cells(c))
+                    + ([label] * 5 if c is None else _gate1_ppl_cells(c))
                 )
             md += _gate1_md(
                 f"### {family} — perplexity, ctx {ctx}" + (f", {corpus}" if corpus else ""),

@@ -43,7 +43,13 @@ an interval too wide to place against it", so a ``not decidable`` member CAN car
 
 **Rule 2, Branch A/B** -- "iff **>= 2 families are separated**, counting **model families
 separated at 16K**" -> ``len(separated) >= MIN_FAMILIES_FOR_AB``. "One family separated
-is recorded as ``UNDECIDED (one family separated)``, never rounded up."
+is recorded as ``UNDECIDED (one family separated)``, never rounded up." The families this
+counts are the **non-refused** ones -- the per-family loops below already skip a refused
+family before ``separated`` is built -- and rule 2 is read *before* a refusal composes the
+verdict, not after (ruling R-L3-15, lane ledger; the prereg's Amendment 1 restates section
+4 accordingly: "a refused family contributes no evidence, in either direction"). Two
+families separated is Branch A/B whether or not some OTHER family in the same input is
+refused; the refusal is still named beside it, never silently dropped.
 
 **Rule 3, Branch C** -- "iff **both** of its conditions hold. **(i) Retrieval:** no
 Holm-significant separation of the r64 arm from ``fd`` and none from ``frozen``, on **any
@@ -53,24 +59,36 @@ TOST at +/-0.02 bits/token **passes** ... each TOST is read at alpha = 0.05
 **uncorrected**" (an intersection-union test, prereg section 6) -> the ``blockers`` list:
 C is selected iff nothing blocks it. A member that cannot be read at all -- never run, no
 adjusted p-value, no TOST -- blocks C too: C is a positive claim of non-separation, and
-an absent member is not evidence for it. Nor is a record set with no 16K member at all
--- an empty (dry-run) pod directory, or a 32K-only set: :data:`NO_MEMBERS` blocks C, and
-the branch reads ``UNDECIDED``. A C printed off no members would be the strongest claim
-this gate can make, read from nothing.
+an absent member is not evidence for it. **A refused family blocks C the same way and for
+the same reason** (ruling R-L3-15: C reads **every** family in the input, not only the
+ones that composed cleanly) -- its members were never read at all, so nothing they might
+have shown is evidence either; this is why ``is_c`` is gated on ``not refusals`` as well as
+``not blockers``. Nor is a record set with no 16K member at all -- an empty (dry-run) pod
+directory, or a 32K-only set: :data:`NO_MEMBERS` blocks C, and the branch reads
+``UNDECIDED``. A C printed off no members would be the strongest claim this gate can make,
+read from nothing.
 
 **Rule 4** -- "Otherwise **UNDECIDED**, with the members that blocked each branch listed."
 Every branch lists them: the reason carries every refusal and every blocker in full, and
 ``Verdict.members`` carries them beside the separations, because the five-reviewer
-simulation reads the rendered table alone.
+simulation reads the rendered table alone. "Otherwise" is now two steps, not one (ruling
+R-L3-15): ``REFUSED`` if any family is refused, else ``UNDECIDED`` -- and this step is
+only reached once rules 2 and 3 have both failed to compose off the families that remain.
+The full precedence the code applies is **A/B, then C, then REFUSED, then UNDECIDED**.
 
 **The five refusals** (prereg section 4, "Refusal, and the ``--`` rule"), all read
 *before* the rules above and all returning rather than raising -- a raise would leave
 ``make gate1`` with no table in which to print the failure. The branch value they return
 is **``REFUSED``**, not ``UNDECIDED`` (ruling R-L3-12, over section 4's literal wording):
 ``UNDECIDED`` is "the rule ran and neither branch held", ``REFUSED`` is "the rule never
-ran on that family", and the two are different findings. A refusal is therefore never
-swallowed by an A/B the other families reach -- what the rule found on the records that
-remain is printed beside the refusal, never instead of it:
+ran on that family", and the two are different findings. Each refusal is scoped to the
+family it fires on, never to the verdict as a whole (ruling R-L3-15, lane ledger; the
+prereg's Amendment 1 restates section 4 accordingly, superseding R-L3-12 on this point):
+rules 2 and 3 above read the families that remain, so a refusal no longer forces
+``REFUSED`` where >= 2 of them still separate or all of them still read clean for C --
+``REFUSED`` is what is left once neither composes. A refusal is never silent either way:
+what the rule found on the records that remain is printed beside it, whichever branch is
+chosen, never instead of it:
 
 1. "An ``error`` row on ``isvd_r64_h256_seed``, ``frozen_r64_h256_seed``, the family's
    ``nogist_*`` arm or ``fd_r64_h256_seed`` refuses a verdict for that family:
@@ -574,15 +592,17 @@ def gate1_verdict(retrieval: list[Contrast], ppl: list[PplContrast], data: Gate1
     ``data`` is not decoration: refusals 1, 3 and 4 are decided from the records (the
     error rows, ``diag.jsonl`` and the ``sbits`` column), "not by eye".
 
-    Four values. ``REFUSED`` whenever any refusal fired (ruling R-L3-12), with what the
-    rule found on the families that remain printed beside it; ``A/B`` and ``C`` as
-    rules 2 and 3 select them; ``UNDECIDED`` otherwise -- including the case where
-    nothing at :data:`VERDICT_CTX` can be read at all. Completeness is enforced member
-    by member: every (family, task) the 16K records show must carry an adjusted p for
-    both C controls or C is blocked, and a record set with no 16K reference cell at all
-    blocks it with :data:`NO_MEMBERS`. The reason lists every refusal and every blocker
-    in full, and ``members`` carries them beside the separations -- nothing elided,
-    because the rendered table is read on its own.
+    Four values. ``A/B`` and ``C`` as rules 2 and 3 select them, read on the families
+    that remain once any refused ones are excluded (ruling R-L3-15); ``REFUSED`` when at
+    least one family is refused and neither branch composes off what is left --
+    superseding R-L3-12's "whenever any refusal fired" on that point -- with what the
+    rule found on the families that remain printed beside it; ``UNDECIDED`` otherwise --
+    including the case where nothing at :data:`VERDICT_CTX` can be read at all.
+    Completeness is enforced member by member: every (family, task) the 16K records
+    show must carry an adjusted p for both C controls or C is blocked, and a record set
+    with no 16K reference cell at all blocks it with :data:`NO_MEMBERS`. The reason
+    lists every refusal and every blocker in full, and ``members`` carries them beside
+    the separations -- nothing elided, because the rendered table is read on its own.
     """
     r_idx = {(c.family, c.task, c.b): c for c in retrieval if c.ctx == VERDICT_CTX}
     p_members = [c for c in ppl if c.ctx == VERDICT_CTX]
@@ -695,29 +715,39 @@ def gate1_verdict(retrieval: list[Contrast], ppl: list[PplContrast], data: Gate1
     # conditions, so both true at once is a bug in this function, not an outcome.
     assert not (is_ab and is_c), "A/B and C are mutually exclusive (prereg section 4)"
     blocked = ("C blocked by: " + "; ".join(blockers)) if blockers else ""
-    if refusals:
-        # A refusal is read BEFORE the rules ("never after", section 4) and is its own
-        # branch value (ruling R-L3-12) -- so it cannot be swallowed by an A/B the other
-        # families reach. What the rule found on the records that remain is printed
-        # beside it, never instead of it.
-        branch = "REFUSED"
-        parts = [f"verdict refused for {', '.join(sorted(refused))}: " + "; ".join(refusals)]
-        if separated:
-            parts.append(f"families separated on the records that remain: {', '.join(separated)}")
-        parts.append(blocked)
-    elif is_ab:
+    # Ruling R-L3-15 (lane ledger; prereg Amendment 1 restates section 4 accordingly):
+    # refusals compose PER FAMILY, not over the whole verdict. `separated` and `blockers`
+    # above already range over `families` minus `refused` (each per-family loop skips a
+    # refused family), so A/B and C are checked FIRST, on the families that remain -- a
+    # refusal elsewhere is named beside whichever of them holds, never swallowing it.
+    # REFUSED only decides the verdict once neither branch composes off what is left.
+    if is_ab:
         branch = "A/B"
         parts = [
             f"{len(separated)} families separated at 16K ({', '.join(separated)}): "
-            + "; ".join(separations),
-            blocked,
+            + "; ".join(separations)
         ]
+        if refusals:
+            parts.append(
+                f"refused, excluded from the count: {', '.join(sorted(refused))}: "
+                + "; ".join(refusals)
+            )
+        parts.append(blocked)
     elif is_c:
         branch = "C"
         parts = [
             f"no Holm-significant separation from {' or '.join(C_CONTROLS)} on any task in any"
             f" 16K family, and every TOST at +/-{PPL_DELTA_BITS} bits/token passes"
         ]
+    elif refusals:
+        # REFUSED is its own branch value (ruling R-L3-12), reached here because it is
+        # not outnumbered by a clean A/B or C on the families that remain. What the rule
+        # found on those families is printed beside it, never instead of it.
+        branch = "REFUSED"
+        parts = [f"verdict refused for {', '.join(sorted(refused))}: " + "; ".join(refusals)]
+        if separated:
+            parts.append(f"families separated on the records that remain: {', '.join(separated)}")
+        parts.append(blocked)
     elif not readable:
         branch, parts = "UNDECIDED", [NO_MEMBERS]
     else:

@@ -486,18 +486,72 @@ def test_an_arm_that_wrote_no_digest_refuses_the_member(tmp_path: Path) -> None:
 def test_a_refusal_is_named_beside_the_families_that_separated(tmp_path: Path) -> None:
     """A refusal is never silently dropped by a branch that reads the other families:
     two families separate, the third is refused, and the verdict names all three (the
-    five-reviewer simulation reads the table alone). Ruling R-L3-12 makes the refusal
-    the branch value; the separations it does not erase are in the same reason."""
+    five-reviewer simulation reads the table alone). Ruling R-L3-15 supersedes R-L3-12 on
+    this shape: refusals compose PER FAMILY, so the two clean, separated families reach
+    A/B on their own and the refused third is still named beside it -- never silently
+    dropped by the branch the other two earn, and never swallowing it either."""
     v, _ = verdict_for(
         tmp_path,
         llama={"hits": SPLIT, "delta": TIGHT},
         qwen={"hits": SPLIT, "delta": TIGHT},
         mistral={"hits": FLAT, "delta": TIGHT, "sbits": {"nogist": SBITS * 1.2}},
     )
-    assert v.branch == "REFUSED"
+    assert v.branch == "A/B", v.reason
+    assert v.families_separated == ["llama", "qwen"]
     assert "byte match" in v.reason and "mistral" in v.reason
     assert "llama" in v.reason and "qwen" in v.reason
     assert any("beats frozen" in m for m in v.members)
+
+
+# --- ruling R-L3-15: refusals compose per family, not over the whole verdict --------
+
+
+def test_two_clean_families_separated_survive_a_third_familys_refusal(
+    tmp_path: Path,
+) -> None:
+    """Ruling R-L3-15 (lane ledger; prereg Amendment 1 restates §4 accordingly): a
+    refused family contributes no evidence, in either direction. Two families separated
+    per rule 1 is already >= `MIN_FAMILIES_FOR_AB` on its own, and a third family's `fd`
+    error does not withdraw that -- it is excluded from the count and named beside it."""
+    v, _ = verdict_for(
+        tmp_path,
+        llama={"hits": SPLIT, "delta": TIGHT},
+        qwen={"hits": SPLIT, "delta": TIGHT},
+        mistral={"hits": SPLIT | {"fd": 21}, "delta": TIGHT, "errors": {"fd": 3}},
+    )
+    assert v.branch == "A/B", v.reason
+    assert v.families_separated == ["llama", "qwen"]
+    assert "mistral" in v.reason and "bugSseed-r64-h256-fd" in v.reason
+
+
+def test_one_separated_one_refused_is_still_refused(tmp_path: Path) -> None:
+    """Two families only: A/B needs >= 2 NON-refused separated families and one refused
+    family is never a separated one, so one separated + one refused reaches neither A/B
+    nor C (C needs every family clean too) -- REFUSED, same outcome as before this
+    ruling, with the refusal named in the reason."""
+    v, _ = verdict_for(
+        tmp_path,
+        llama={"hits": SPLIT, "delta": TIGHT},
+        qwen={"hits": SPLIT | {"fd": 21}, "delta": TIGHT, "errors": {"fd": 3}},
+    )
+    assert v.branch == "REFUSED", v.reason
+    assert "qwen" in v.reason and "bugSseed-r64-h256-fd" in v.reason
+    assert "llama" in v.reason
+
+
+def test_two_clean_families_plus_a_third_refused_blocks_branch_c(tmp_path: Path) -> None:
+    """Branch C reads EVERY family in the input (ruling R-L3-15): two families identical
+    with every TOST passing would be C alone (the existing C fixture), but a third
+    family's byte match failing means C cannot be read off all of the input -- and with
+    no separation anywhere either, REFUSED is what remains."""
+    v, _ = verdict_for(
+        tmp_path,
+        llama={"hits": FLAT, "delta": TIGHT},
+        qwen={"hits": FLAT, "delta": TIGHT},
+        mistral={"hits": FLAT, "delta": TIGHT, "sbits": {"nogist": SBITS * 1.2}},
+    )
+    assert v.branch == "REFUSED", v.reason
+    assert "mistral" in v.reason and "byte match" in v.reason
 
 
 # --- section 6's third TOST state ---------------------------------------------------

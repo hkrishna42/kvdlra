@@ -196,10 +196,12 @@ STAGE_KEYS = ("gpu", "cuda", "torch", "model_revision")
 
 def _stage_lines(m: dict[str, Any]) -> list[str]:
     """The pod's own environment as `[stage] <key> <value>` lines, in the digest lines'
-    pattern. A value the run has none of (a model with no resolved revision) prints NO
-    line: the string "None" in the manifest would read as a revision, and a missing line
-    correctly leaves the launch-time value standing."""
-    return [f"[stage] {k} {m[k]}" for k in STAGE_KEYS if m.get(k) is not None]
+    pattern. A value the run has none of -- a model with no resolved revision (`None`),
+    or a gpu/cuda/torch read that fell back to `versions()`'s "none" sentinel (never
+    `None` there, so it needs its own check) -- prints NO line: the string "None"/"none"
+    in the manifest would read as a real value, and a missing line correctly leaves the
+    launch-time value standing."""
+    return [f"[stage] {k} {m[k]}" for k in STAGE_KEYS if m.get(k) not in (None, "none")]
 
 
 def run(name: str, out: Path, dry_run: bool) -> int:

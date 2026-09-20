@@ -103,7 +103,7 @@ def _ok_rows(rows: list[dict[str, Any]], t: int) -> list[dict[str, Any]]:
 
 
 def test_window_nll_consistency() -> None:
-    # full exercises prefill_press(None); bug (rank 8) exercises score_streaming.
+    # full exercises _prefill_press(None); bug (rank 8) exercises score_streaming.
     rows = _ok_rows(_run(methods=["full", "bug-r8"], n_samples=3), 64)
     assert {r["method"] for r in rows} == {"full", "bug-r8"}
     for row in rows:

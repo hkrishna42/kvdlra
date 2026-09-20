@@ -767,6 +767,12 @@ def test_harvest_records_the_pod_environment_the_run_printed(dry_pod: Path, tmp_
         "[stage] cuda y",
         "[stage] torch z",
     ]
+    # `versions()` never returns Python `None` for gpu/cuda/torch -- a CPU host (or a
+    # torch-less one) reports the string "none" instead, and that sentinel gets the same
+    # no-line treatment: a harvest must never clobber a real launch-time value with it.
+    assert pod._stage_lines(
+        {"gpu": "none", "cuda": "none", "torch": "z", "model_revision": None}
+    ) == ["[stage] torch z"]
 
 
 def test_harvest_records_the_cell_timings_the_run_printed(dry_pod: Path, tmp_path: Path) -> None:

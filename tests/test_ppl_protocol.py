@@ -205,6 +205,14 @@ def test_every_shipped_pod_still_loads() -> None:
     assert pods  # the loop below would pass vacuously over an empty directory
     for p in pods:
         load_pod(p.stem)
+    # `cell_elapsed_s`'s key is `<arm>/<task>/<ctx>`: a ppl/latency task rides its own
+    # `.name` as `task`, a retrieval task rides each of its SUB-task names instead
+    # (`runner._cell`) -- one shared namespace. Disjoint today (task-5 report, concern
+    # 4); nothing else enforces it, so a future ppl/latency YAML named like a retrieval
+    # sub-task would silently pool two cells' seconds under one key.
+    tasks = [load_task(t.stem) for t in (config.ROOT / "tasks").glob("*.yaml")]
+    axis_names = {t.name for t in tasks if t.generator in ("ppl", "latency")}
+    assert axis_names.isdisjoint({sub for t in tasks for sub in t.tasks})
 
 
 def test_a_ppl_task_asking_for_more_windows_than_the_corpus_holds_is_refused(

@@ -10,7 +10,7 @@ against the live cache.
 This module also owns the two pieces every other eval axis shares: the prefill
 helpers (``_prefill_chunked`` for a streaming cache, ``_prefill_plain`` for a
 QuantizedCache, ``_prefill_faithful`` for the KIVI arm that quantizes post hoc,
-``prefill_press`` for a kvpress press) and ``_footprint``, which maps an arm plus its
+``_prefill_press`` for a kvpress press) and ``_footprint``, which maps an arm plus its
 post-prefill cache to a ``Footprint`` -- post-prefill on every axis: `run_ppl` bills
 these arms between the prefill and the scored window, as `ruler.retrieve` does between
 the prefill and the decode.
@@ -119,7 +119,7 @@ def score_streaming(
 
 
 @torch.no_grad()
-def prefill_press(model: Any, press: Any, ctx_ids: torch.Tensor, chunk: int = 0) -> DynamicCache:
+def _prefill_press(model: Any, press: Any, ctx_ids: torch.Tensor, chunk: int = 0) -> DynamicCache:
     """Single-shot (or ChunkPress-chunked) prefill through a kvpress prefill press
     (or None=full). Returns the (compressed) DynamicCache UNSCORED, so its kept memory
     can be measured before the window is pushed into it (`_prefill_scored`)."""
@@ -190,7 +190,7 @@ def _prefill_scored(model: Any, arm: dict[str, Any], ctx_ids: torch.Tensor, chun
         cache = arm["make"]()
         _prefill_faithful(model, cache, ctx)
         return cache
-    return prefill_press(model, arm["make"](), ctx_ids, chunk)  # press, or full (None)
+    return _prefill_press(model, arm["make"](), ctx_ids, chunk)  # press, or full (None)
 
 
 # ------------------------------------------------------------------- the arms

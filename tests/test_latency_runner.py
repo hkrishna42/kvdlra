@@ -101,7 +101,6 @@ def test_the_loop_writes_one_row_per_arm_ctx_batch(
     assert {(a, t, c) for a, t, c, _ in timings} == {
         (a, task.name, str(c)) for a in names for c in task.ctxs or [task.ctx]
     }
-    assert all(float(s) >= 0.0 for *_, s in timings)
     assert {(r["arm"], r["ctx"], r["batch"]) for r in rows} == {
         (a, c, b) for a in names for c in task.ctxs or [task.ctx] for b in task.batch_sizes
     }

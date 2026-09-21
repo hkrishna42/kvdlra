@@ -72,7 +72,7 @@ text.
 Each reader takes ONE lens. All five answer the same five questions (§4) through their lens.
 
 **R1 — Pre-registration compliance and statistics.** Does every printed statistic correspond to a statistic
-§4/§6 names — the exact paired McNemar over the shared `(seed, trial)` keys, Holm at α = 0.05 over
+that §4/§6 names — the exact paired McNemar over the shared `(seed, trial)` keys, Holm at α = 0.05 over
 the families §6 fixes **as amended**, the paired *t*-test, the paired bootstrap CI and the ±0.02
 TOST over the 32 windows? Are the **realised** family sizes the pre-registered ones? They are printed
 in the header comment as `primary retrieval m=…, secondary retrieval m=…, primary perplexity m=…`;
@@ -86,9 +86,13 @@ family out of **every** Holm family before the correction (A1a.3 — its primary
 print `refused (excluded from the Holm family)` where an adjusted p would be)? **Recompute one Holm
 adjustment and one TOST by hand.** The raw McNemar p-values are not printed, so take the adjustment
 from a `members:` line that carries its pair counts (`(a-b pairs, Holm p=…)`): recompute the exact
-two-sided p as §6 writes it, `2·P(Bin(a+b, ½) ≤ min(a, b))`, and check that `printed adjusted p /
-recomputed raw p` is an integer in `[1, m]` at the printed realised m, equal to `m` only for the
-family's smallest raw p. Take the TOST from a perplexity row's printed `95% CI` using §6's own read-back,
+two-sided p as §6 writes it, `2·P(Bin(a+b, ½) ≤ min(a, b))`, and check the two bounds that hold for
+every Holm-adjusted value whatever its rank — `raw p ≤ printed adjusted p ≤ min(1, m·raw p)` at the
+printed realised m — and that the printed adjusted values are monotone in your recomputed raw values
+across the members you check (a member with a larger raw p never carries a smaller adjusted p). The exact
+multiplier is checkable only for the family's smallest raw p (adjusted = min(1, m·raw p)), and the table
+does not say which member that is; a fractional ratio elsewhere in the family is not a disagreement to
+report. Take the TOST from a perplexity row's printed `95% CI` using §6's own read-back,
 `s ≈ (hi − lo)·√n / 3.92` at the pre-registered n = 32: at or above §6's decidability bound
 (`s < 0.0667` at ±0.02) the state is `not decidable`; below it, against the row's printed
 `delta`, `t(0.95,31)·s/√32 < 0.02 − |delta|` says `passes` versus `fails`. Say whether the

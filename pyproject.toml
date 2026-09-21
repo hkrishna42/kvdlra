@@ -72,8 +72,10 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra -q --strict-markers"
-# `--strict-markers` refuses any marker not declared here, and none is: the CPU suite is
-# a 90-second gate that runs whole. A marker earns its declaration when a test carries it.
+# `--strict-markers` refuses any marker not declared here. The CPU suite is a 90-second
+# gate that runs whole; `gpu` marks the tests that need a CUDA device (the kernel-smoke
+# pod image ships triton), which tests/conftest.py skips where there is none.
+markers = ["gpu: needs a CUDA device and triton; skipped without one (the CI gate is CPU-only)"]
 # src layout: import kvdlra from src/ even if the editable install's import hook
 # is dropped by an env re-sync. No-op when the package is properly installed.
 # scripts/ is on the path so the entrypoint tests can `import pod` / `import tables`

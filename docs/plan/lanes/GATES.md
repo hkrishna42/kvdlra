@@ -42,10 +42,10 @@ G3  gate 1 v2
     [ ] DECISIONS.md names the branch with the rule from ICML2027_PLAN.md
 
 G4  kernel
-    [ ] ADR 0001 with FLOP/HBM model; OPEN or ACCEPTED by me
-    [ ] single-layer max|Δ| < 1e-2 bf16; full-model greedy token-exact ≥ 14/16
+    [x] ADR 0001 with FLOP/HBM model; OPEN or ACCEPTED by me  — ACCEPTED 2026-09-20 (D-002)
+    [ ] single-layer max|Δ| < 1e-2 bf16; full-model greedy token-exact ≥ 14/16  — CPU halves met (tests/test_kernel_reference.py 4.7e-3/5.2e-3 random, 2.75e-3 1B layer; tests/test_kernel_path.py 16/16 fp32) and the pod's pre_run gate met (Triton vs reference ≤ 2e-3 / 1e-4 rms); the 8B bf16 halves NOT met on kernel_smoke (12/16; worst 1.464e-2) → REFUSED under prereg §4; a re-run under Amendment 2 is the owner's (D-002 addendum 2026-09-21)
     [ ] results/kernel_smoke/manifest.json: full / reconstruct / kernel at 16K/32K/64K, b=1,4;
-        kernel KV peak < full at 32K; ms/token < reconstruct by ≥ 3×
+        kernel KV peak < full at 32K; ms/token < reconstruct by ≥ 3×  — b=1 cells harvested (results/kernel_smoke, check OK; docs/paper/tables/kernel_smoke.md): KV peak 1.08 < 4.08 GB at 32K and 248.3/56.1 = 4.4× are MET ON MEASUREMENT but NOT cited (the verdict is REFUSED on the precondition); the b=4 half is cell list B (owner's amendment)
 
 G5  bf16 gist + prereg
     [ ] bf16 run harvested under prereg; non-inferiority result in DECISIONS.md

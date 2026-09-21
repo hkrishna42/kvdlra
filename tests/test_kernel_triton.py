@@ -4,8 +4,8 @@ run on the kernel-smoke pod before the pod's own tasks (`pytest -m gpu`).
 
 The reference comparison is a DIRECT one -- same inputs, same bf16 operand dtype -- because
 the pre-registered 1e-2 bar against reconstruct-then-attend cannot see a misplaced rounding
-point (the review's mutation study moved the output by ~5.6e-4). R-L4-21 sets what it is
-measured on and where the bars sit:
+point (the review's mutation study moved the output by ~5.6e-4). R-L4-21 (amended by
+R-L4-26 for the tight case) sets what it is measured on and where the bars sit:
 
 * fp32 INPUTS (`random_case(..., torch.float32)`), so both backends return fp32 and the
   comparison is not quantized to a bf16 output ulp (3.9e-3 at |out| ~ 0.8 -- 2e-4 would sit
@@ -13,17 +13,23 @@ measured on and where the bars sit:
   bf16 on both sides: the kernel refuses anything else, and the reference rounds the same
   tensors at the same points either way, so every rounding point of the contract is still
   exercised.
-* the tight bar, `TIGHT_TOL`, applies where the kernel runs ONE split (B = 16 rows puts
-  B*H_kv at TARGET_PROGRAMS) over the full 32-tile middle: no per-split renormalization of
-  P, so what is left is the fp32 reassociation of K̂/V̂ and of the PV accumulation (measured
-  6.1e-5 on a CPU emulation of the blocking).
+* the tight case (B = 16 rows puts B*H_kv at TARGET_PROGRAMS, one split over the whole
+  32-tile middle -- no per-split renormalization of P) asserts BOTH `TIGHT_MAX = 2e-3` on
+  max|Δ| and `TIGHT_RMS = 1e-4` on rms(Δ) (R-L4-26, amending R-L4-21's single 2e-4 max
+  bar). A one-row CPU emulation of the blocking measured the residual at 6.1e-5, but that
+  is a PER-ROW number: the max over the whole B = 16 output runs over 16x the elements and
+  reaches ~4e-4-9e-4 -- above the old single bar, though the kernel did nothing wrong. rms(Δ)
+  over the same output stays ~1e-5, 30-75x under its own max, because the residual is a
+  sparse handful of bf16 rounding flips per row; a MISPLACED rounding point instead shifts
+  EVERY element, which rms (with ~8-10x headroom over the emulated floor) still catches
+  even though max now has to tolerate the legitimate per-row scatter.
 * across splits the per-split running max re-draws the P->bf16 rounding on every attention
   weight (measured 1.8e-3 on fp32 outputs at 16 splits), so the multi-split configuration
   and the batch-independence test take `SPLIT_TOL` -- ~2x that, while a layout, GQA or RoPE
   defect measures ~1.
 
-Both bars print the measured value and carry it in the assert message, so a pod log holds
-the number whether the item passes (`-rA`) or fails.
+All three bars print the measured value and carry it in the assert message, so a pod log
+holds the number whether the item passes (`-rA`) or fails.
 """
 
 from __future__ import annotations
@@ -44,7 +50,8 @@ from tests.test_kernel_reference import H_KV, llama_rope, random_case
 pytestmark = pytest.mark.gpu
 D = 128
 TILE = 64  # the wrapper's default, the tile the split count is computed over
-TIGHT_TOL = 2e-4  # R-L4-21: one split, fp32 outputs -- the rounding points themselves
+TIGHT_MAX = 2e-3  # R-L4-26: one split, fp32 outputs -- max|d| over the whole B=16 output
+TIGHT_RMS = 1e-4  # R-L4-26: rms(d) over the same output -- catches a misplaced rounding point
 SPLIT_TOL = 4e-3  # R-L4-21: with the per-split P-rounding draw in the way
 
 
@@ -62,22 +69,25 @@ def _kw(emb: LlamaRotaryEmbedding) -> dict[str, Any]:
 
 def _triton_vs_reference(
     q: Tensor, dk: Tensor, dv: Tensor, mid: FactoredMiddle, emb: LlamaRotaryEmbedding
-) -> tuple[Tensor, float]:
+) -> tuple[Tensor, Tensor]:
     """Both backends on the same (fp32) inputs with bf16 operands: the kernel's rounding
-    points against the reference's, with no output quantization in the way."""
+    points against the reference's, with no output quantization in the way. Returns the
+    triton output and the raw (fp32, on CPU) elementwise difference -- callers reduce it
+    to max|Δ| and/or rms(Δ) themselves (R-L4-26)."""
     tri = factored_attention(q.cuda(), dk.cuda(), dv.cuda(), _cuda(mid),
                              backend="triton", **_kw(emb))  # fmt: skip
     ref = factored_attention(q, dk, dv, mid, backend="reference", inv_freq=emb.inv_freq,
                              attention_scaling=emb.attention_scaling, scaling=D**-0.5)  # fmt: skip
     assert tri.dtype == q.dtype and tri.shape == q.shape
-    return tri, float((tri.float().cpu() - ref.float()).abs().max())
+    return tri, tri.float().cpu() - ref.float()
 
 
 @pytest.mark.parametrize("contiguous", [True, False])
 def test_triton_matches_the_reference(contiguous: bool) -> None:
-    """Two configurations of the same comparison (R-L4-21): B = 16 rows, where the whole
-    32-tile middle runs in a single split and the bar is the tight one; and the single row,
-    where the same middle is cut across 16 splits and the bar carries the P-rounding draw."""
+    """Two configurations of the same comparison (R-L4-21/R-L4-26): B = 16 rows, where the
+    whole 32-tile middle runs in a single split and BOTH the max and rms bars apply; and
+    the single row, where the same middle is cut across 16 splits and the bar carries the
+    P-rounding draw."""
     emb = llama_rope(D, 4096, 8.0)
     rows = [random_case(seed, contiguous, torch.float32) for seed in range(100, 116)]
     mid = FactoredMiddle.cat([r[3] for r in rows])
@@ -85,13 +95,18 @@ def test_triton_matches_the_reference(contiguous: bool) -> None:
     dk, dv = torch.cat([r[1] for r in rows]), torch.cat([r[2] for r in rows])
     n_tiles = -(-mid.n_columns // TILE)
     assert n_splits_for(len(rows), H_KV, n_tiles) == 1, "the tight bar is the one-split bar"
-    _, delta = _triton_vs_reference(q, dk, dv, mid, emb)
-    print(f"triton vs reference, 1 split (contiguous={contiguous}): max|d| = {delta:.3e}")
-    assert delta <= TIGHT_TOL, f"1 split, B={len(rows)}: max|d| = {delta:.3e} > {TIGHT_TOL:.0e}"
+    _, d = _triton_vs_reference(q, dk, dv, mid, emb)
+    mx, rms = float(d.abs().max()), float((d.float() ** 2).mean().sqrt())
+    print(
+        f"triton vs reference, 1 split (contiguous={contiguous}): max|d| = {mx:.3e} rms = {rms:.3e}"
+    )
+    assert mx <= TIGHT_MAX, f"1 split, B={len(rows)}: max|d| = {mx:.3e} > {TIGHT_MAX:.0e}"
+    assert rms <= TIGHT_RMS, f"1 split, B={len(rows)}: rms(d) = {rms:.3e} > {TIGHT_RMS:.0e}"
 
     q1, dk1, dv1, mid1 = rows[0]
     assert n_splits_for(1, H_KV, n_tiles) == 16
-    tri1, split_delta = _triton_vs_reference(q1, dk1, dv1, mid1, emb)
+    tri1, d1 = _triton_vs_reference(q1, dk1, dv1, mid1, emb)
+    split_delta = float(d1.abs().max())
     print(f"triton vs reference, 16 splits (contiguous={contiguous}): max|d| = {split_delta:.3e}")
     assert split_delta <= SPLIT_TOL, f"16 splits, B=1: max|d| = {split_delta:.3e} > {SPLIT_TOL:.0e}"
     auto = factored_attention(q1.cuda(), dk1.cuda(), dv1.cuda(), _cuda(mid1), backend="auto",
@@ -150,6 +165,19 @@ def test_triton_no_middle_and_refusals() -> None:
         factored_attention(q.cuda(), dk.cuda(), dv.cuda(),
                            FactoredMiddle.cat([_cuda(mid), _cuda(mid)]),
                            backend="triton", **kw)  # fmt: skip
+    # P-1: r = 48 sits between the kernel's power-of-two floors (FactoredMiddle itself has
+    # no such constraint -- __post_init__ only ties shapes together). "auto" has to fall
+    # back to the reference instead of raising the kernel's own refusal mid-decode
+    # (R-L4-22); an explicit backend="triton" still raises it.
+    r48 = FactoredMiddle(
+        mid.u_k[:, :, :48], mid.u_v[:, :, :48], mid.c_k[:, :48], mid.c_v[:, :48], mid.positions
+    )
+    cuda_r48 = _cuda(r48)
+    auto48 = factored_attention(q.cuda(), dk.cuda(), dv.cuda(), cuda_r48, backend="auto", **kw)
+    ref48 = factored_attention(q.cuda(), dk.cuda(), dv.cuda(), cuda_r48, backend="reference", **kw)
+    assert torch.equal(auto48, ref48)  # the fallback took the reference
+    with pytest.raises(ValueError, match="power of two"):
+        factored_attention(q.cuda(), dk.cuda(), dv.cuda(), cuda_r48, backend="triton", **kw)
 
 
 def test_kernel_arm_decodes_on_a_cuda_model() -> None:

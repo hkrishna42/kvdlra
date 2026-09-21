@@ -85,14 +85,16 @@ PPLW_RE = re.compile(
     r"^\[pplw\] T=(\d+) (\S+) ntok=(\d+)(?: part=(\d+)/(\d+))? nlls=([0-9.,]+)"
     r"(?: corpus=(\S+))?$"
 )
-# `kvdlra.eval.latency.run_latency`'s own print. `weights_gb=` sits between `peak_gb=`
-# and `kv_peak_gb=` but is not part of `LatencyRecord` -- it is the subtrahend the
-# kv_*_gb figures already removed, not a KV-attributable number of its own -- so it is
-# matched, not captured.
+# `kvdlra.eval.latency.run_latency`'s own print. `weights_gb=` sits between `peak_gb=` and
+# `kv_peak_gb=` but is not part of `LatencyRecord` -- it is the subtrahend the kv_*_gb
+# figures already removed -- so it is matched, not captured. `batch=` is OPTIONAL: the nine
+# archived Week-20 lines (results/paper-v1/w19-sysfix-llama/raw/) predate it and were batch
+# 1, and `make kernel_smoke` prints them beside the re-measured rows (prereg §2 (a)).
+# `kv_resident_gb=` (L4.7) is appended LAST and is optional for the same reason.
 LATENCY_RE = re.compile(
     r"^\[latency ctx(\d+)\] (\S+)\s+ms/tok=([0-9.]+) mean=([0-9.]+) max=([0-9.]+) "
     r"spikes=(\d+) resident_gb=([0-9.]+) peak_gb=([0-9.]+) weights_gb=[0-9.]+"
-    r" kv_peak_gb=([0-9.]+) batch=(\d+)"
+    r" kv_peak_gb=([0-9.]+)(?: batch=(\d+))?(?: kv_resident_gb=([0-9.]+))?"
 )
 # `kvdlra.eval.kernel_check.format_line`'s own print. `-` stands for an absent number (an
 # errored prompt has no diff and no mismatch step); `error=` stays last and unanchored.
@@ -178,6 +180,10 @@ class LatencyRecord(TypedDict):
     ``spikes`` counts the steps above twice that median (the absorb-event rebuild and
     KIVI's per-step dequantize show up there). ``kv_peak_gb`` has the model weights
     subtracted, so it is the KV-attributable contrast, not process VRAM.
+
+    ``kv_resident_gb`` is the post-prefill resident allocation minus the weights -- the
+    Week-5 target's resident ratio (prereg §3, §4) -- ``None`` on a line printed before
+    L4.7.
     """
 
     model: str
@@ -191,6 +197,7 @@ class LatencyRecord(TypedDict):
     resident_gb: float
     peak_gb: float
     kv_peak_gb: float
+    kv_resident_gb: float | None
     source: str
 
 
@@ -442,13 +449,15 @@ def parse_latency_lines(text: str, model: str, source: str) -> list[LatencyRecor
         m = LATENCY_RE.match(line)
         if not m:
             continue
-        ctx, arm, p50, mean, mx, spikes, resident_gb, peak_gb, kv_peak_gb, batch = m.groups()
+        ctx, arm, p50, mean, mx, spikes, resident_gb, peak_gb, kv_peak_gb, batch, kv_resident = (
+            m.groups()
+        )
         out.append(
             {
                 "model": model,
                 "arm": arm,
                 "ctx": int(ctx),
-                "batch": int(batch),
+                "batch": int(batch) if batch is not None else 1,
                 "ms_per_token_p50": float(p50),
                 "ms_mean": float(mean),
                 "ms_max": float(mx),
@@ -456,6 +465,7 @@ def parse_latency_lines(text: str, model: str, source: str) -> list[LatencyRecor
                 "resident_gb": float(resident_gb),
                 "peak_gb": float(peak_gb),
                 "kv_peak_gb": float(kv_peak_gb),
+                "kv_resident_gb": float(kv_resident) if kv_resident is not None else None,
                 "source": f"{source}:{i}",
             }
         )

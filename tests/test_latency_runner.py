@@ -109,6 +109,7 @@ def test_the_loop_writes_one_row_per_arm_ctx_batch(
     assert r["model"] == cfg.model and r["source"] == f"{cfg.name}:run"
     assert (r["ms_per_token_p50"], r["ms_mean"], r["ms_max"]) == (100.0, 110.0, 300.0)
     assert (r["spikes"], r["resident_gb"], r["peak_gb"], r["kv_peak_gb"]) == (4, 15.0, 18.0, 4.0)
+    assert r["kv_resident_gb"] == 1.0
     m = json.loads((tmp_path / "manifest.json").read_text())
     assert m["records"] == {"trials.jsonl": 0, "latency.jsonl": len(rows)} and m["errors"] == 0
 

@@ -18,21 +18,27 @@ import json
 import re
 import shutil
 import subprocess
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from functools import cache
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
 import _paths  # noqa: F401
 
+from kvdlra.accounting import bug_footprint
 from kvdlra.eval import gate1
+from kvdlra.eval.config import ArmCfg, PodCfg, arm_kwargs, load_arm, load_pod, load_task
 from kvdlra.eval.records import (
     CellRecord,
+    KernelCheckRecord,
+    LatencyRecord,
     PplRecord,
     PplwRecord,
     TrialRecord,
     paired_window_bits,
     parse_cell_lines,
+    parse_error_lines,
+    parse_latency_lines,
     parse_ppl_lines,
     parse_trial_lines,
     read_jsonl,
@@ -1119,6 +1125,281 @@ def gate1_table(pod_dirs: Sequence[Path], out: Path) -> None:
     out.write_text("\n".join(md) + "\n")
 
 
+# ------------------------------------------------------------- latency (kernel_smoke)
+
+KERNEL_PREREG = "prereg/kernel_smoke.md"
+W20_ARCHIVE = ARCHIVE / "w19-sysfix-llama" / "raw" / "w19-sysfix-llama-lines.txt"
+N_LAYERS = {  # decoder layers -- an architecture constant, like N_FEATURES
+    "unsloth/Meta-Llama-3.1-8B-Instruct": 32,
+    "mistralai/Mistral-7B-Instruct-v0.3": 32,
+    "Qwen/Qwen2.5-7B-Instruct": 28,
+}
+GIB = 1024**3  # the GiB `kvdlra.eval.latency.GB` reports kv_peak_gb in
+GATE_CTX, SPEEDUP, MARGIN, SPIKES_MAX, AGREE = 32768, 3.0, 0.10, 8, 0.10  # prereg §4, §2 (a)
+DIFF_MAX, MATCH_MIN = 1e-2, 14  # prereg §4's precondition
+LATENCY_FIELDS = ("ms_per_token_p50", "ms_mean", "ms_max", "spikes", "resident_gb", "peak_gb",
+                  "kv_peak_gb", "kv_resident_gb")  # fmt: skip
+
+
+def latency_roles(pod: PodCfg) -> dict[str, str]:
+    """Record key -> role: `full`, `reconstruct` (a bug arm on the default decode path),
+    `kernel` (a bug arm with `decode_attention: kernel`), else the arm's kind."""
+    roles = {}
+    for stem in pod.arms:
+        cfg = load_arm(stem)
+        key = cfg.legacy_name or cfg.name
+        if cfg.kind == "bug":
+            roles[key] = (
+                "kernel" if cfg.cache.get("decode_attention") == "kernel" else "reconstruct"
+            )
+        else:
+            roles[key] = cfg.kind
+    return roles
+
+
+def analytic_stored_gib(cfg: ArmCfg, ctx: int, model: str) -> float | None:
+    """`bug_footprint(...).stored_bits()` of a bug arm after a `ctx`-token prefill, summed
+    over the model's layers, in the GiB `kv_peak_gb` uses -- the stored state ADR 0001 §3
+    bills, printed BESIDE the measured peak (prereg §7). The ring is billed at its high water
+    (`recent_window + absorb_block - 1`) and every non-sink, non-tier column as a coordinate
+    (a `null` budget means the whole prefill). None for a non-bug arm; the quantized tier is
+    not modelled (no kernel-smoke arm has one)."""
+    if cfg.kind != "bug":
+        return None
+    kw = arm_kwargs(cfg, ctx)
+    n_sink, hh = int(kw.get("n_sink", 4)), int(kw.get("hh_budget", 0))
+    recent = int(kw.get("recent_window", 64)) + int(kw.get("absorb_block", 32)) - 1
+    coord = min(int(kw.get("coord_budget", 1024)), ctx - n_sink - hh - recent)
+    fp = bug_footprint(
+        N_FEATURES[model], rank=float(kw["rank"]), coord_count=coord, recent_len=recent,
+        n_sink=n_sink, retention=str(kw.get("retention", "fifo")), hh_count=hh, u_present=True,
+        gist_bits=16 if kw.get("gist_dtype") == "bfloat16" else 32,
+    )  # fmt: skip
+    return fp.stored_bits() * N_LAYERS[model] / 8 / GIB
+
+
+def precondition_line(kc: Sequence[KernelCheckRecord]) -> str | None:
+    """prereg §4's precondition from `kernel_check.jsonl`: >= 14/16 token-exact AND the worst
+    per-layer max|Δ| < 1e-2. None when the pod carries no check (the launch entry then names
+    the evidence path)."""
+    if not kc:
+        return None
+    n_match = sum(r["match"] for r in kc)
+    diffs = [(d, r["worst_layer"], r["prompt"]) for r in kc if (d := r["max_abs_diff"]) is not None]
+    errors = sum(1 for r in kc if r.get("error"))
+    if not diffs:
+        return f"NOT met ({n_match}/{len(kc)} token-exact; no diff recorded; {errors} error rows)"
+    worst, layer, _ = max(diffs)
+    ok = n_match >= MATCH_MIN and worst < DIFF_MAX and errors == 0
+    detail = f"{n_match}/{len(kc)} token-exact; worst max|d| {worst:.3e} at layer {layer}"
+    if errors:
+        detail += f"; {errors} error rows"
+    return f"{'met' if ok else 'NOT met'} ({detail} {'<' if worst < DIFF_MAX else '>='} 1e-2)"
+
+
+def week3_gate(
+    rows: Sequence[LatencyRecord], roles: Mapping[str, str], n_errors: int, precondition: str | None
+) -> list[str]:
+    """prereg §4's reading at batch 1 (cell list A), as lines: refusals, the two conditions
+    with their numbers, the verdict. Other batches are reported the same way, descriptively."""
+    by = {(r["arm"], r["ctx"], r["batch"]): r for r in rows}
+    arm_of = {role: key for key, role in roles.items() if role in ("full", "reconstruct", "kernel")}
+    lines: list[str] = []
+    refusals: list[str] = []
+    if n_errors:
+        refusals.append(
+            f"{n_errors} error row(s) in the manifest -- any `[error]` refuses the verdict (§4)"
+        )
+    if precondition is None:
+        lines.append(
+            "PRECONDITION: not recorded on this pod -- the launch entry must name its"
+            " evidence path (§4)"
+        )
+    else:
+        lines.append(f"PRECONDITION: {precondition}")
+        if precondition.startswith("NOT"):
+            refusals.append(
+                "the correctness precondition is not met: a fast wrong kernel is not a result (§4)"
+            )
+    for role in ("full", "reconstruct", "kernel"):
+        if role not in arm_of:
+            refusals.append(f"no {role} arm in the pod")
+    batches = sorted({r["batch"] for r in rows}) or [1]
+    for batch in batches:
+        if any(role not in arm_of for role in ("full", "reconstruct", "kernel")):
+            continue  # the refusal above already names the missing role
+        tag = f"@32K b{batch}"
+        cells = {role: by.get((arm_of[role], GATE_CTX, batch)) for role in arm_of}
+        missing = [
+            role
+            for role in ("full", "reconstruct", "kernel")
+            if role in arm_of and cells.get(role) is None
+        ]
+        if missing:
+            (refusals if batch == 1 else lines).append(
+                f"batch {batch}: no 32K record for {missing}"
+            )
+            continue
+        full, rec, ker = cells["full"], cells["reconstruct"], cells["kernel"]
+        assert full is not None and rec is not None and ker is not None
+        spiky = []
+        for role, r in (("reconstruct", rec), ("kernel", ker)):
+            if r["spikes"] > SPIKES_MAX:
+                spiky.append(role)
+                lines.append(
+                    f"{tag}: {role} spikes={r['spikes']} > {SPIKES_MAX} of 56 -- p50 refused"
+                    f" as a steady state (ms_mean {r['ms_mean']:.2f}, ms_max {r['ms_max']:.2f})"
+                )
+        margin = (
+            (full["kv_peak_gb"] - ker["kv_peak_gb"]) / full["kv_peak_gb"]
+            if full["kv_peak_gb"]
+            else float("nan")
+        )
+        mem = ker["kv_peak_gb"] < full["kv_peak_gb"]
+        note = (
+            f" (MARGINAL: margin {margin:.1%} < 10%)"
+            if mem and margin < MARGIN
+            else f" (margin {margin:.1%})"
+        )
+        lines.append(
+            f"memory {tag}: kernel kv_peak_gb {ker['kv_peak_gb']:.2f} vs full"
+            f" {full['kv_peak_gb']:.2f} -> {'PASS' if mem else 'FAIL'}{note}"
+        )
+        ratio = rec["ms_per_token_p50"] / ker["ms_per_token_p50"]
+        speed = ratio >= SPEEDUP
+        lines.append(
+            f"speed {tag}: reconstruct p50 {rec['ms_per_token_p50']:.2f} ms / kernel p50"
+            f" {ker['ms_per_token_p50']:.2f} ms = {ratio:.2f}x vs {SPEEDUP:.1f}x ->"
+            f" {'PASS' if speed else 'FAIL'}"
+            + (" (REFUSED: a refused p50 enters the ratio)" if spiky else "")
+        )
+        if batch != 1:
+            lines.append(f"batch {batch}: descriptive -- the Week-3 verdict is batch 1 (§4 (3))")
+            continue
+        if spiky:
+            refusals.append(f"a refused p50 ({', '.join(spiky)}) enters the 32K speed ratio")
+        if refusals:
+            verdict = "REFUSED -- " + "; ".join(refusals)
+        else:
+            verdict = (
+                "PASS"
+                if mem and speed
+                else "FAIL -- "
+                + "; ".join(c for c, ok in (("memory", mem), ("speed", speed)) if not ok)
+            )
+        lines.append(f"WEEK-3 GATE (batch 1): {verdict}")
+    if not any(x.startswith("WEEK-3 GATE") for x in lines):
+        lines.append(
+            "WEEK-3 GATE (batch 1): REFUSED -- " + "; ".join(refusals or ["no batch-1 32K rows"])
+        )
+    return lines
+
+
+def latency_table(pod: PodCfg, results: Path, out: Path, archive: Path = W20_ARCHIVE) -> None:
+    """The kernel-smoke table (prereg §7) and the Week-3 reading (§4) for one pod directory,
+    written outside the `table*.md` set `build` pins. A number from it is citable only once
+    `scripts/pod.py check` passes on that directory (§10)."""
+    lat = results / "latency.jsonl"
+    rows = [cast(LatencyRecord, r) for r in read_jsonl(lat)] if lat.is_file() else []
+    kcp = results / "kernel_check.jsonl"
+    kc = [cast(KernelCheckRecord, r) for r in read_jsonl(kcp)] if kcp.is_file() else []
+    mpath = results / "manifest.json"
+    manifest = json.loads(mpath.read_text()) if mpath.is_file() else {}
+    n_errors = int(manifest.get("errors") or 0)
+    errors = {
+        (e["arm"], e["ctx"], e["batch"]): str(e["error"])
+        for log in sorted(results.glob("*.log"))
+        for e in parse_error_lines(log.read_text(), log.name)
+        if e["axis"] == "latency"
+    }
+    roles = latency_roles(pod)
+    # Keyed like `roles` (and like the records): one load per arm, not one per grid row.
+    cfgs = {(c.legacy_name or c.name): c for c in (load_arm(s) for s in pod.arms)}
+    w20 = (
+        {
+            (r["arm"], r["ctx"]): r
+            for r in parse_latency_lines(archive.read_text(), pod.model, archive.name)
+        }
+        if archive.is_file()
+        else {}
+    )
+    tasks = [t for t in (load_task(x) for x in pod.tasks) if t.generator == "latency"]
+    grid = [
+        (a, c, b) for t in tasks for c in (t.ctxs or [t.ctx]) for b in t.batch_sizes for a in roles
+    ]
+    by = {(r["arm"], r["ctx"], r["batch"]): r for r in rows}
+    body = []
+    for a, c, b in grid:
+        r = by.get((a, c, b))
+        if r is None:
+            cells = [f"not run ({errors.get((a, c, b), 'no record')})"] + ["not run"] * (
+                len(LATENCY_FIELDS) - 1
+            )
+        else:
+            fields: Mapping[str, object] = r
+            cells = []
+            for f in LATENCY_FIELDS:
+                v = fields.get(f)
+                cells.append(
+                    "not recorded"
+                    if v is None
+                    else (str(v) if f == "spikes" else f"{float(cast(float, v)):.2f}")
+                )
+        stored = analytic_stored_gib(cfgs[a], c, pod.model)
+        w = w20.get((a, c))
+        if w is None:
+            archived = ["none archived", "none archived", "n/a"]
+        else:
+            agree = (
+                "not measured"
+                if r is None
+                else (
+                    "agree (within 10%)"
+                    if abs(r["ms_per_token_p50"] - w["ms_per_token_p50"])
+                    <= AGREE * w["ms_per_token_p50"]
+                    else f"differs by {(r['ms_per_token_p50'] / w['ms_per_token_p50'] - 1):+.0%}"
+                )
+            )
+            archived = [
+                f"{w['ms_per_token_p50']:.2f}",
+                f"{w['kv_peak_gb']:.2f}",
+                f"archived {w['ms_per_token_p50']:.2f} ms: {agree}",
+            ]
+        body.append(
+            [
+                a,
+                roles[a],
+                str(c),
+                str(b),
+                *cells,
+                "n/a" if stored is None else f"{stored:.3f}",
+                *archived,
+            ]
+        )
+    header = ["arm", "role", "ctx", "batch", "ms/tok p50", "ms mean", "ms max", "spikes",
+              "resident_gb", "peak_gb", "kv_peak_gb", "kv_resident_gb", "stored GiB (analytic)",
+              "W20 p50", "W20 kv_peak", "W20 agreement"]  # fmt: skip
+    md = [
+        f"# Kernel smoke — {results.name}",
+        "",
+        f"<!-- pre-registration: {KERNEL_PREREG}; the reading is its §4, the table its §7 -->",
+        f"<!-- source: {results.name}/latency.jsonl ({len(rows)} rows), kernel_check.jsonl"
+        f" ({len(kc)} rows), manifest errors {n_errors}; archived rows: {archive.name} -->",
+        "<!-- cell: one measurement per (arm, ctx, batch): p50 of 56 timed decode steps, spikes"
+        " = steps > 2x p50, kv_* = VRAM minus the weights; stored GiB ="
+        " bug_footprint(...).stored_bits() summed over the layers -- beside the measured peak,"
+        " never instead of it (§7) -->",
+        "<!-- W20 = the archived Week-20 rows of §2 (a), re-measured by this pod's own full and"
+        " reconstruct arms; a p50 within 10% of its archived value agrees, else the gap is"
+        " reported -->",
+        *_md_rows(header, body),
+        "",
+        *week3_gate(rows, roles, n_errors, precondition_line(kc)),
+    ]
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(md) + "\n")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1150,6 +1431,14 @@ def main() -> None:
         "--pods", nargs="+", required=True, help="results/<pod> directories, one per model family"
     )
     g.add_argument("--out", default="docs/paper/tables/gate1.md")
+    la = sub.add_parser(
+        "latency",
+        help=f"the kernel-smoke table and the Week-3 reading ({KERNEL_PREREG} §7, §4) from one"
+        " pod's latency.jsonl + kernel_check.jsonl; written outside the `table*.md` set"
+        " `build` pins",
+    )
+    la.add_argument("--pods", nargs=1, required=True, help="one results/<pod> directory")
+    la.add_argument("--out", default=None, help="default: docs/paper/tables/<pod>.md")
     a = ap.parse_args()
     if a.cmd == "convert-v1":
         out = Path(a.out) if a.out else REPO_ROOT / "results" / "paper-v1"
@@ -1159,6 +1448,11 @@ def main() -> None:
         ppl_table(REPO_ROOT / "results" / a.pod, out, a.baseline, a.delta)
     elif a.cmd == "gate1":
         gate1_table([Path(p) for p in a.pods], Path(a.out))
+    elif a.cmd == "latency":
+        (pod_dir,) = (Path(p) for p in a.pods)
+        name = str(json.loads((pod_dir / "manifest.json").read_text())["pod"])
+        out = Path(a.out) if a.out else REPO_ROOT / "docs/paper/tables" / f"{name}.md"
+        latency_table(load_pod(name), pod_dir, out)
     else:
         build(Path(a.out))
 

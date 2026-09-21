@@ -241,9 +241,29 @@ def test_parse_latency_lines_schema() -> None:
             "resident_gb": 15.79,
             "peak_gb": 18.20,
             "kv_peak_gb": 3.25,
+            "kv_resident_gb": None,
             "source": "f.txt:1",
         }
     ]
+
+
+def test_parse_latency_lines_reads_the_two_optional_fields() -> None:
+    """`batch=` is absent from the nine archived Week-20 lines (they predate the field and
+    were batch 1: prereg/kernel_smoke.md §2 (a)) and `kv_resident_gb=` is appended last by
+    the L4.7 print; both are optional, so today's lines and the archive parse alike."""
+    archived = LATENCY.replace(" batch=1", "")
+    (row,) = parse_latency_lines(archived, model="M", source="f")
+    assert row["batch"] == 1 and row["kv_resident_gb"] is None
+    (row,) = parse_latency_lines(
+        LATENCY.rstrip("\n") + " kv_resident_gb=0.83\n", model="M", source="f"
+    )
+    assert row["batch"] == 1 and row["kv_resident_gb"] == 0.83 and row["kv_peak_gb"] == 3.25
+    archive = ARCHIVE / "w19-sysfix-llama" / "raw" / "w19-sysfix-llama-lines.txt"
+    rows = parse_latency_lines(archive.read_text(), model="M", source="a")
+    assert len(rows) == 9 and {r["batch"] for r in rows} == {1}
+    assert [(r["arm"], r["ctx"], r["ms_per_token_p50"]) for r in rows][:2] == [
+        ("bugSseed-r64-h256", 16384, 103.25), ("full", 16384, 25.89),
+    ]  # fmt: skip
 
 
 def test_parse_latency_lines_ignores_trial_and_ppl_lines() -> None:

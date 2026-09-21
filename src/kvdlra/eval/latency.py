@@ -122,8 +122,10 @@ def run_latency(
             f"mean={row['ms_per_tok_mean']:.2f} "
             f"max={row['ms_per_tok_max']:.2f} spikes={spikes} resident_gb={resident_gb:.2f} "
             f"peak_gb={peak_gb:.2f} weights_gb={weights_gb:.2f} kv_peak_gb={row['kv_peak_gb']:.2f}"
-            # Appended last so the archived-line format keeps matching unchanged.
-            f" batch={batch}",
+            # Appended last so the archived-line format keeps matching unchanged;
+            # `kv_resident_gb` is the resident reading §3 of the kernel prereg asked the
+            # record to carry.
+            f" batch={batch} kv_resident_gb={row['kv_resident_gb']:.2f}",
             flush=True,
         )
         del cache, out

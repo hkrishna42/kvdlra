@@ -1215,6 +1215,10 @@ GATE1 = {
     "isvd_r64_h256_seed_bf16",
 }
 
+# L4: the kernel-smoke pod's arm (prereg/kernel_smoke.md) and the post-RoPE accuracy row
+# (prereg/postrope_r128.md). Their pods are L4's, pinned below; not the smoke pod's.
+L4 = {"isvd_r64_h256_seed_kernel"}
+
 
 def test_the_smoke_pod_names_every_arm_but_the_table4_variants() -> None:
     """The arm set is a rule, not a list: every stem under configs/arms/ that is not a Table-4
@@ -1236,9 +1240,9 @@ def test_the_smoke_pod_names_every_arm_but_the_table4_variants() -> None:
     table4 = {a for n in TABLE4 for a in load_pod(n).arms if load_arm(a).kind == "bug"}
     assert len(table4) == 10, sorted(table4)
     stems = {q.stem for q in (REPO_ROOT / "configs" / "arms").glob("*.yaml")}
-    assert stems >= GATE1, sorted(GATE1 - stems)
+    assert stems >= GATE1 | L4, sorted((GATE1 | L4) - stems)
     assert len(p.arms) == len(set(p.arms)), "an arm listed twice would double its cells"
-    assert set(p.arms) == stems - table4 - GATE1
+    assert set(p.arms) == stems - table4 - GATE1 - L4
     assert p.arms[0] == "full"
     kinds = [load_arm(a).kind for a in p.arms]
     n_gist = kinds.count("bug")

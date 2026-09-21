@@ -139,6 +139,7 @@ from transformers import PreTrainedModel
 from transformers.cache_utils import Cache, CacheLayerMixin, LinearAttentionCacheLayerMixin
 from transformers.models.llama.modeling_llama import rotate_half
 
+from kvdlra.kernel.reference import FactoredMiddle
 from kvdlra.quant import PolarQuant
 from kvdlra.tracker import TRACKERS
 from kvdlra.tracker.isvd import eff_rank, orth_error, reorthonormalize
@@ -152,6 +153,13 @@ RETENTION_MODES = ("fifo", "lowrank_surprise")
 # absent on purpose -- it would store at 16 bits and bill at 32, a silent mis-bill. The
 # string form is what a YAML ``cache:`` block carries (omegaconf has no torch dtypes).
 GIST_DTYPES = {"float32": torch.float32, "bfloat16": torch.bfloat16}
+
+# How a decode step is attended (Task L4.4; ADR 0001 option (iii)). "reconstruct" (default)
+# is today's path: the middle is rebuilt as an n x T block (`_ensure_mid_cache`) and returned
+# with the dense tokens. "kernel": `update()` returns only [sinks | exact tier | recent] and
+# keeps the factored middle on the layer (`_factored_middle`) for the attention function
+# `BugStreamingCache.attach` registers, which attends both from (U, C) tile by tile.
+DECODE_ATTENTION = ("reconstruct", "kernel")
 
 
 class OrthonormalityError(RuntimeError):
@@ -308,6 +316,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         orth_abort_tol: float | None = 1e-1,
         qr_every: int | None = None,
         diag_every: int = 64,
+        decode_attention: str = "reconstruct",
+        kernel_operand_dtype: torch.dtype | str = torch.bfloat16,
         layer_idx: int = 0,
     ) -> None:
         super().__init__()  # type: ignore[no-untyped-call]
@@ -416,6 +426,20 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             raise ValueError(f"qr_every must be >= 1 (None disables), got {qr_every}")
         if diag_every < 1:
             raise ValueError(f"diag_every must be >= 1, got {diag_every}")
+        if decode_attention not in DECODE_ATTENTION:
+            raise ValueError(
+                f"decode_attention must be one of {DECODE_ATTENTION}, got {decode_attention!r}"
+            )
+        op = (
+            GIST_DTYPES.get(kernel_operand_dtype)
+            if isinstance(kernel_operand_dtype, str)
+            else kernel_operand_dtype
+        )
+        if op is None or op not in GIST_DTYPES.values():
+            raise ValueError(
+                f"kernel_operand_dtype must be one of {sorted(GIST_DTYPES)}, "
+                f"got {kernel_operand_dtype!r}"
+            )
         if tracker == "bug":
             warnings.warn(
                 "tracker='bug' is deprecated; the shipped step is block incremental SVD, "
@@ -491,6 +515,11 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.orth_abort_tol = orth_abort_tol
         self.qr_every = qr_every
         self.diag_every = diag_every
+        self.decode_attention = decode_attention
+        # The dtype the kernel rounds U, C, K-hat, V-hat and P to at the tensor-core inputs
+        # (fp32 accumulation throughout). bf16 is the pod; fp32 makes the tiny-model CPU
+        # check exact.
+        self.kernel_operand_dtype: torch.dtype = op
         self.layer_idx = layer_idx
         # Per-layer diagnostic rows, drained by ``BugStreamingCache.drain_diag()``. Not
         # cleared by ``reset()``: a drained-once contract must not lose a finished
@@ -528,6 +557,9 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.cumulative_length = 0
         # Batch > 1: one independent layer per row, built at the first batched update.
         self._rows: list[BugStreamingLayer] | None = None
+        # Kernel path: set by a kernel-mode decode step, cleared by every other update.
+        self._kernel_step = False
+        self._kernel_mid: FactoredMiddle | None = None
         self.sink_k: Tensor | None = None  # (n, <=n_sink) post-RoPE, verbatim
         self.sink_v: Tensor | None = None
         self.recent_k: Tensor | None = None  # (n, <recent_window+absorb_block) verbatim
@@ -1251,6 +1283,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
     ) -> tuple[Tensor, Tensor]:
         if not self.is_initialized:
             self.lazy_initialization(key_states, value_states)
+        self._kernel_step = False
         if self._rows is not None or int(key_states.shape[0]) != 1:
             return self._update_rows(key_states, value_states)
         q_len = int(key_states.shape[2])
@@ -1392,11 +1425,18 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self.cumulative_length += 1
         while self._recent_len() >= self.recent_window + self.absorb_block:
             self._absorb_block_into_stream(self.absorb_block)
+        if self.decode_attention == "kernel":
+            self._kernel_mid = self._factored_middle()
+            self._kernel_step = True
+            return self._decode_peek(dense_only=True)
         return self._decode_peek()
 
-    def _decode_peek(self) -> tuple[Tensor, Tensor]:
+    def _decode_peek(self, *, dense_only: bool = False) -> tuple[Tensor, Tensor]:
         """Assemble the currently retained ``[sinks | middle-hat | recent]`` K/V in
-        the HF ``(1, H, L, D)`` layout (also used by tests for introspection)."""
+        the HF ``(1, H, L, D)`` layout (also used by tests for introspection).
+
+        ``dense_only`` (the kernel path) leaves the low-rank tail out: ``[sinks | exact tier
+        | recent]`` -- the attention function attends the tail from (U, C)."""
         assert self.recent_k is not None and self.recent_v is not None
         parts_k: list[Tensor] = []
         parts_v: list[Tensor] = []
@@ -1408,7 +1448,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             assert self.hh_k is not None and self.hh_v is not None
             parts_k.append(self.hh_k)
             parts_v.append(self.hh_v)
-        if self._q_len() + self._f_len() > 0:  # the low-rank (reconstructed) tail
+        if not dense_only and self._q_len() + self._f_len() > 0:  # the low-rank (recon) tail
             self._ensure_mid_cache()
             assert self._mid_k_cache is not None and self._mid_v_cache is not None
             parts_k.append(self._mid_k_cache)
@@ -1470,6 +1510,51 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             k_hat = self._mat_rope(k_pre_hat, mid_start, inverse=False)
         self._mid_k_cache = k_hat.to(self.dtype)
         self._mid_v_cache = v_hat.to(self.dtype)
+
+    def _mid_coords(self) -> tuple[Tensor, Tensor]:
+        """The retained low-rank columns' coordinates in the current basis, fp32 ``(r, T)``
+        each, assembly order ``[quant | fp32]`` -- the same columns `_ensure_mid_cache`
+        multiplies out, left factored here. The quantized tier is dequantized into fp32
+        coordinates (`_dequantize`); the fp32 tier is upcast from ``gist_dtype``."""
+        parts_k: list[Tensor] = []
+        parts_v: list[Tensor] = []
+        if self._q_len() > 0:
+            assert self.qk_codes is not None and self.qv_codes is not None
+            assert self.qk_norm is not None and self.qv_norm is not None
+            parts_k.append(self._dequantize(self.qk_codes, self.qk_norm))
+            parts_v.append(self._dequantize(self.qv_codes, self.qv_norm))
+        if self._f_len() > 0:
+            assert self.c_k is not None and self.c_v is not None
+            parts_k.append(self.c_k.to(torch.float32))
+            parts_v.append(self.c_v.to(torch.float32))
+        c_k = torch.cat(parts_k, dim=1) if len(parts_k) > 1 else parts_k[0]
+        c_v = torch.cat(parts_v, dim=1) if len(parts_v) > 1 else parts_v[0]
+        return c_k, c_v
+
+    def _factored_middle(self) -> FactoredMiddle | None:
+        """The low-rank middle as the kernel attends it (batch dim 1), or ``None`` before the
+        first absorb (nothing factored yet: attention then sees the dense tokens only)."""
+        if self._q_len() + self._f_len() == 0:
+            return None
+        assert self.u_k is not None and self.u_v is not None
+        c_k, c_v = self._mid_coords()
+        return FactoredMiddle(
+            u_k=self.u_k.unsqueeze(0),
+            u_v=self.u_v.unsqueeze(0),
+            c_k=c_k.unsqueeze(0),
+            c_v=c_v.unsqueeze(0),
+            positions=self._mid_positions().unsqueeze(0),
+        )
+
+    def kernel_middles(self) -> list[FactoredMiddle | None] | None:
+        """What the registered attention function attends this step: one middle per batch
+        row (``None`` for a row with nothing factored yet), or ``None`` when the last update
+        was not a kernel-mode decode step (prefill, ingest, score, or the reconstruct path)
+        -- the function then delegates to sdpa on the returned K/V."""
+        layers = self._rows or [self]
+        if not all(la._kernel_step for la in layers):
+            return None
+        return [la._kernel_mid for la in layers]
 
     # ------------------------------------------------------------ cache API
 
@@ -1641,6 +1726,15 @@ class BugStreamingCache(Cache):
         ``qr_every`` (default ``None``) repairs unconditionally every k absorbs and after
         that stream's own rank change. ``diag_every`` (default 64) sets the diagnostic
         window; see :meth:`drain_diag`.
+    decode_attention, kernel_operand_dtype:
+        L4.4 (default ``"reconstruct"`` = today's path, bit-identical). ``"kernel"``: each
+        decode step returns only the dense tokens and :meth:`attach` registers the
+        factored-attention function (``kvdlra.kernel.attention``) that attends the low-rank
+        middle from (U, C) tile by tile, RoPE in-kernel at the true positions. Prefill,
+        chunked ingest, the absorb step and the stored state are unchanged, so the footprint
+        is the reconstruct arm's; only decode-time work and workspace differ.
+        ``kernel_operand_dtype`` (``"bfloat16"`` default, ``"float32"``) is the tensor-core
+        input width the kernel rounds to; accumulation is fp32 either way.
     recent_window, absorb_block, n_sink, theta, min_sv_frac, prefill_block_size:
         See :class:`BugStreamingLayer`.
     tracker, oja_eta0, oja_decay, freeze_after, basis_seed:
@@ -1684,6 +1778,8 @@ class BugStreamingCache(Cache):
         orth_abort_tol: float | None = 1e-1,
         qr_every: int | None = None,
         diag_every: int = 64,
+        decode_attention: str = "reconstruct",
+        kernel_operand_dtype: torch.dtype | str = torch.bfloat16,
     ) -> None:
         base = getattr(model, "model", model)
         rotary = getattr(base, "rotary_emb", None)
@@ -1727,22 +1823,38 @@ class BugStreamingCache(Cache):
                 orth_abort_tol=orth_abort_tol,
                 qr_every=qr_every,
                 diag_every=diag_every,
+                decode_attention=decode_attention,
+                kernel_operand_dtype=kernel_operand_dtype,
                 layer_idx=layer_idx,
             )
             for layer_idx in range(n_layers)
         ]
         super().__init__(layers=layers)
+        self.decode_attention = decode_attention
+        # Set to {} by a caller before ONE decode forward to have the kernel attention
+        # function also run reconstruct-then-attend and record `layer_idx -> max|d|` here
+        # (the on-pod single-layer check, `kvdlra.eval.kernel_check`); None = off.
+        self.kernel_compare: dict[int, float] | None = None
 
     @contextmanager
     def attach(self, model: PreTrainedModel) -> Iterator[None]:
-        """No-op, kept so the harness can wrap any streaming cache uniformly
-        (``with cache.attach(model): ...``, as :class:`ShadowKVCache` and the
-        kvpress presses need). The surviving retention rule
-        (``retention="lowrank_surprise"``) and the SurpriseSLASH exact tier both
-        read their signal off the stored keys, so this cache needs no attention
-        hook; the Week-7 ``retention="attn"`` mode that did is retired."""
-        del model
-        yield
+        """Kernel mode: register the factored-attention function for this cache and switch
+        the model's attention implementation to it for the scope (``kvdlra.kernel.attention``).
+
+        Reconstruct mode: a no-op, kept so the harness can wrap any streaming cache
+        uniformly (``with cache.attach(model): ...``, as :class:`ShadowKVCache` and the
+        kvpress presses need); the surviving retention rule
+        (``retention="lowrank_surprise"``) and the SurpriseSLASH exact tier both read their
+        signal off the stored keys, so no attention hook is needed there; the Week-7
+        ``retention="attn"`` mode that did is retired."""
+        if self.decode_attention != "kernel":
+            del model
+            yield
+            return
+        from kvdlra.kernel.attention import attach_kernel  # lazily: the glue imports a cache
+
+        with attach_kernel(self, model):
+            yield
 
     def _bug_layers(self) -> list[BugStreamingLayer]:
         return [layer for layer in self.layers if isinstance(layer, BugStreamingLayer)]

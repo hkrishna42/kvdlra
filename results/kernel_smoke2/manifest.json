@@ -1,0 +1,23 @@
+{
+  "command_line": "vastai create instance 47508314 --image pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel --disk 80 --env '-e POD=kernel_smoke2 -e SHA=0984a5d31e4150cfe3e28f665b1fa737c4961808 -e MODEL=unsloth/Meta-Llama-3.1-8B-Instruct -e DTYPE=bfloat16 -e MAX_HOURS=5 -e PRE_RUN_B64=cHl0aG9uIC1tIHB5dGVzdCAtLXZlcnNpb24gMj4mMSB8IHNlZCAncy9eL1twcmVfcnVuXSAvJzsgcHl0aG9uIC1tIHB5dGVzdCAtbSBncHUgLXJBIC1wIG5vOmNhY2hlcHJvdmlkZXIgdGVzdHMvdGVzdF9rZXJuZWxfdHJpdG9uLnB5IHRlc3RzL3Rlc3Rfa2VybmVsX3JlZmVyZW5jZS5weSAyPiYxIHwgc2VkICdzL14vW3ByZV9ydW5dIC8n' --onstart scripts/pod/boot.sh --label kvdlra-kernel_smoke2",
+  "config_hash": "3763c1090473b150cd5a6f469abe2ca6ba7360a6e19ce392e92e3db128a1c968",
+  "cuda": "none",
+  "dataset_sha256": {},
+  "dry_run": false,
+  "errors": 0,
+  "git_sha": "0984a5d31e4150cfe3e28f665b1fa737c4961808",
+  "gpu": "none",
+  "harvested_at": null,
+  "kvpress": "0.5.1",
+  "launched_at": "2026-09-21T21:48:33+00:00",
+  "model": "unsloth/Meta-Llama-3.1-8B-Instruct",
+  "model_revision": null,
+  "pod": "kernel_smoke2",
+  "records": {},
+  "status": null,
+  "timeout": false,
+  "torch": "2.11.0",
+  "transformers": "5.8.0",
+  "triton": "none",
+  "wall_clock_s": null
+}

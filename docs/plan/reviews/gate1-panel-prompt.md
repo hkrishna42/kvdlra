@@ -22,11 +22,13 @@ orchestrator pastes; it is **not** an input to the panel and no reader is given 
 
 The rule this document enforces, in the order it binds:
 
-1. `make gate1` renders the table with its stdout discarded, and the table is committed **unread**.
+1. The orchestrator runs `make gate1` and commits `docs/paper/tables/gate1.md` **unread**, its own
+   commit, at a known SHA, before any dispatch. (Redirecting stdout is a harmless extra precaution,
+   not the guard: `gate1_table` writes the file and prints nothing.)
 2. The orchestrator dispatches five readers **without having opened** `docs/paper/tables/gate1.md`.
    Nothing about what the table shows can therefore enter a dispatch prompt: the orchestrator does
    not know it. The prompts below are written from the renderer's code, never from its output.
-3. The five readings, and `meta.md`, are committed **beside the table**, under
+3. The five readings, and `meta.md`, are committed afterwards, in their own commit, under
    `docs/plan/reviews/<YYYY-MM-DD>-gate1/`.
 4. **Only then** is the `VERDICT:` line read, and the Gate-1 outcome appended to
    `docs/plan/DECISIONS.md`.
@@ -69,7 +71,7 @@ text.
 
 Each reader takes ONE lens. All five answer the same five questions (§4) through their lens.
 
-**R1 — Pre-registration compliance and statistics.** Does every printed statistic correspond to one
+**R1 — Pre-registration compliance and statistics.** Does every printed statistic correspond to a statistic
 §4/§6 names — the exact paired McNemar over the shared `(seed, trial)` keys, Holm at α = 0.05 over
 the families §6 fixes **as amended**, the paired *t*-test, the paired bootstrap CI and the ±0.02
 TOST over the 32 windows? Are the **realised** family sizes the pre-registered ones? They are printed
@@ -84,11 +86,13 @@ family out of **every** Holm family before the correction (A1a.3 — its primary
 print `refused (excluded from the Holm family)` where an adjusted p would be)? **Recompute one Holm
 adjustment and one TOST by hand.** The raw McNemar p-values are not printed, so take the adjustment
 from a `members:` line that carries its pair counts (`(a-b pairs, Holm p=…)`): recompute the exact
-two-sided p as §6 writes it, `2·P(Bin(a+b, ½) ≤ min(a, b))`, place it in the Holm slot for the
-printed realised m, and say whether the printed adjusted p agrees. Take the TOST from a perplexity
-row's printed `95% CI` using §6's own read-back, `s ≈ (hi − lo)·√n / 3.92` at the pre-registered
-n = 32, check it against §6's decidability bound (`s < 0.0667` at ±0.02) and say whether the printed
-`passes` / `fails` / `not decidable` agrees. Does the `VERDICT:` line follow from its `members:` by
+two-sided p as §6 writes it, `2·P(Bin(a+b, ½) ≤ min(a, b))`, and check that `printed adjusted p /
+recomputed raw p` is an integer in `[1, m]` at the printed realised m, equal to `m` only for the
+family's smallest raw p. Take the TOST from a perplexity row's printed `95% CI` using §6's own read-back,
+`s ≈ (hi − lo)·√n / 3.92` at the pre-registered n = 32: at or above §6's decidability bound
+(`s < 0.0667` at ±0.02) the state is `not decidable`; below it, against the row's printed
+`delta`, `t(0.95,31)·s/√32 < 0.02 − |delta|` says `passes` versus `fails`. Say whether the
+printed `passes` / `fails` / `not decidable` agrees. Does the `VERDICT:` line follow from its `members:` by
 the rule exactly as §4 writes it — A/B only if **both** families are separated from **both** `frozen`
 and `nogist`; C only if no Holm-significant `fd`/`frozen` separation exists on any task in any family
 **and** every `fd`/`frozen` TOST passes; otherwise `REFUSED` or `UNDECIDED`?
@@ -100,8 +104,8 @@ controls, so a separation prints as a `members:` line `<family>/<task>: isvd vs 
 p=…)`, while `oja` and `random` carry **no** adjusted retrieval p anywhere in the table and are read
 from their accuracy cells and their perplexity rows alone (say so where it limits you). Compare the
 pattern with the predictions §5 wrote before the run, arm by arm, and say where the table agrees and
-where it does not. What would you conclude about whether the online-tracked gist does work a frozen
-basis or no gist does not?
+where it does not. What would you conclude about whether the online-tracked gist does work that a
+frozen basis or no gist does not?
 
 **R3 — Experimental validity.** n = 24 per cell (the `(hits/n)` in each cell; a member's `n_paired`
 can be smaller, and the pairing bullets say by how much and on which keys): what can and cannot be
@@ -114,8 +118,8 @@ follows. The real-document haystacks. The pairing report. The no-gist arms' byte
 from `sbits` and prints a ratio only when it **refuses** a family, so say whether the table lets you
 check it at all. Any error row. The `full` row as the ceiling, and §6 (ii)'s flag where a `full` cell
 sags below 0.9 on a task the pre-flight passed. The two-family structure: one separated family reads
-`UNDECIDED` with `one family separated (<family>)` as its reason, never rounded up (§4 rule 2). What would a sceptical reviewer demand before
-accepting the branch?
+`UNDECIDED` with `one family separated (<family>)` as its reason, never rounded up (§4 rule 2).
+What would a sceptical reviewer demand before accepting the branch?
 
 **R4 — Claims and writing.** List the sentences a paper could write from this table alone, and the
 sentences it could not. Say whether "the tracker is load-bearing" is writable. Name every overclaim a
@@ -129,17 +133,19 @@ whether a reader would take them that way.
 `VERDICT:` line? What is the single strongest objection? What must Stage 2 (Mistral 16K; the 32K
 pods) show to change or confirm it — noting §4's scope, that the verdict reads the 16K contrasts only
 and any 32K block in the table is descriptive? Give a 1–10 confidence that the online-tracked gist
-does work a frozen basis or no gist does not, and a 1–10 confidence that the table follows its
+does work that a frozen basis or no gist does not, and a 1–10 confidence that the table follows its
 pre-registration.
 
 Two reading rules every lens shares, because the table's own structure sets them. The perplexity
-blocks (`### <family> — perplexity, ctx <ctx>[, <corpus>]`) print, per tracker row:
-`bits/token`, `delta (isvd - tracker)` — negative is the r64 arm ahead — `95% CI`, `TOST +/-0.02`
-(three states: `passes`, `fails`, `not decidable`), `Holm p` (`n/a (secondary)` outside the 4-member
-primary family, `refused (excluded from the Holm family)` for a primary member whose family was
-refused) and `paired t p`. And the `VERDICT:` line's `members:` list is where the per-member pair
-counts, adjusted p-values, refusal texts and C-blockers are printed in full — the retrieval blocks
-carry accuracies and marks, not member statistics.
+blocks (`### <family> — perplexity, ctx <ctx>[, <corpus>]`) print, per tracker row: `bits/token`,
+`delta (isvd - tracker)` — negative is the r64 arm ahead — `95% CI`, `TOST +/-0.02` (three states:
+`passes`, `fails`, `not decidable`), `Holm p` (`n/a (secondary)` outside the 4-member primary
+family, `refused (excluded from the Holm family)` for a primary member whose family was refused) and
+`paired t p` — except the reference tracker's own row, which prints `reference` in all five, and,
+where the reference arm has no windows for that corpus, every row in the block instead prints
+`reference arm has no windows for corpus <corpus>`. And the `VERDICT:` line's `members:` list is
+where the per-member pair counts, adjusted p-values, refusal texts and C-blockers are printed in
+full — the retrieval blocks carry accuracies and marks, not member statistics.
 
 ## 4. What every reader returns — one page, ≤ 60 lines, this shape
 
@@ -157,13 +163,14 @@ File: `docs/plan/reviews/<YYYY-MM-DD>-gate1/R<k>-<slug>.md`, where `<slug>` is
 ## 5. How the orchestrator dispatches it
 
 Five Agent calls in ONE message, `subagent_type` general-purpose, model opus, `run_in_background`
-true, each prompt = the preamble below + one lens from §3 + the return format of §4 + its output
-path. `<YYYY-MM-DD>` is the dispatch date, the same for all five. The orchestrator writes nothing
-about the table into any prompt, because it has not read the table. When all five have returned, the
-orchestrator writes `docs/plan/reviews/<YYYY-MM-DD>-gate1/meta.md` (≤ 15 lines: objections raised by
-≥ 2 readers; disagreements between readers; whether R1's compliance check failed and on what),
-commits the directory together with the table, and **only then** reads the `VERDICT:` line and
-appends the Gate-1 outcome to `docs/plan/DECISIONS.md`.
+true, each prompt = the preamble below + §2's "Quoting a cell" and bf16 paragraphs + §3's shared
+reading rules + one lens from §3 + the return shape of §4 + its output path. `<YYYY-MM-DD>` is the
+dispatch date, the same for all five. The table is already committed, unread, by §1 step 1, so the
+orchestrator writes nothing about it into any prompt — it has not read it. When all five have
+returned, the orchestrator writes `docs/plan/reviews/<YYYY-MM-DD>-gate1/meta.md` (≤ 15 lines:
+objections raised by ≥ 2 readers; disagreements between readers; whether R1's compliance check
+failed and on what) and commits the directory in its own commit, and **only then** reads the
+`VERDICT:` line and appends the Gate-1 outcome to `docs/plan/DECISIONS.md`.
 
 ### Preamble (verbatim in every dispatch; fill only the three bracketed paths)
 
@@ -172,9 +179,10 @@ You are one of five independent reviewers reading a pre-registered experiment's 
 You may open exactly two files: <path to gate1.md> and <path to prereg/gate1_tracker_swap_v2.md>.
 Open nothing else — no results directory, no plan or state or decisions files, no git history, no
 other prereg, and run no code. Treat the table as the only evidence and the prereg as the only rule.
-Do not summarise the prereg back; read it to check the table against it. Write your reading to
-<output path> in the five-part shape below, ≤ 60 lines, numbers quoted with their cell. Return only
-the output path.
+The table's bf16 block is read by a separate pre-registration (prereg/bf16_gist.md) you do not hold;
+report on it descriptively and do not score it against the file you hold. Do not summarise the
+prereg back; read it to check the table against it. Write your reading to <output path> in the
+five-part shape below, ≤ 60 lines, numbers quoted with their cell. Return only the output path.
 ```
 
 ## 6. After the panel

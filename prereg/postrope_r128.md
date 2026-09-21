@@ -93,8 +93,10 @@ interval says which one happened.
 
 **Non-inferior** = no task lost AND the TOST passes. **Refusals:** any error row on either arm
 in a paired cell; a broken pairing; a missing Stage-1 record; a TOST that is not decidable
-(`stats.tost_decidable`). Their consequence is §11's `REFUSED`, which is neither a pass nor a
-fail. No `--`: an arm that did not run reads `not run` with the reason.
+(`stats.tost_decidable`). **The error-row refusal is deliberately wider than "a paired cell."**
+§10's reading scans every row of an arm, `vt` and any key with no partner included, because
+over-refusal is the safe direction. Their consequence is §11's `REFUSED`, which is neither a
+pass nor a fail. No `--`: an arm that did not run reads `not run` with the reason.
 
 ## 5. Predictions
 
@@ -147,8 +149,8 @@ anchor came from a heavier per-sample workload at twice the rank — and the num
 any later r128 pod is this pod's own first `cell_elapsed_s`, not this bracket.
 
 The three-arm alternative (repeating `full` and `isvd_r64_h256_seed` in-pod) is rejected on
-cost: **at the Gate-1 §9 pre-registered sizing rates (`full` 0.6, r64 3.1, r128 5.0
-min/sample), 128 × 8.7 = 1,114 min = 18.6 h of compute, + 1 h boot, ×2 ≈ 39 h at the bar,
+cost: **at sizing rates (`full` 0.6 and r64 3.1 from Gate-1 §9; r128 5.0 is this file's
+bracket), 128 × 8.7 = 1,114 min = 18.6 h of compute, + 1 h boot, ×2 ≈ 39 h at the bar,
 ≈ $18–29** — for readings Stage 1 already buys. At the *measured* rates instead (`full`
 3.2–3.6 s/sample and r64 3.3 min, D-011 addendum 10; r128 still the unmeasured 5.0) the same
 alternative is 128 × 8.36 = 1,070 min = 17.8 h + 1 h boot, ×2 ≈ **38 h**: the conclusion is
@@ -178,10 +180,13 @@ changes no number below.
 ```python
 from pathlib import Path
 
+from kvdlra.eval.config import load_arm
 from kvdlra.eval.records import paired_window_bits, read_jsonl, window_bits
 from kvdlra.eval.stats import holm, mcnemar_exact, paired_bootstrap, tost, tost_decidable
 
-A, B = "isvd_r64_h256_seed", "isvd_postrope_r128"   # a = the shipped arm, b = this pod's
+# record keys are `legacy_name or name` (kvdlra.eval.frontier.build_arm), not the config name
+A = load_arm("isvd_r64_h256_seed").legacy_name or "isvd_r64_h256_seed"
+B = "isvd_postrope_r128"   # a = the shipped arm, b = this pod's (no legacy_name)
 CTX, CORPUS = 16384, "pg19-val"
 TASKS = ("niah_single", "niah_multikey", "niah_multivalue")  # the Holm family; vt is descriptive
 DIRS = (Path("results/gate1_v2_stage1_llama"), Path("results/postrope_r128"))
@@ -194,12 +199,24 @@ for d in DIRS:
             rows.setdefault((r["arm"], r["task"]), {})[r["seed"], r["trial"]] = r
 
 # Refusals are read BEFORE the rule (section 4): an error row on either arm in a paired cell.
+# Deliberately wider than "a paired cell": every row of an arm, `vt` and unpaired keys included
+# -- over-refusal is the safe direction.
 errors = {(arm, t): [k for k, r in rows.get((arm, t), {}).items() if r.get("error")]
           for arm in (A, B) for t in (*TASKS, "vt")}
 
-members, dropped = {}, {}
+refused: list[str] = []
+if any(errors.values()):
+    refused.append("error row")
+
+members, dropped, missing_stage1, missing_postrope = {}, {}, {}, {}
 for t in TASKS:
     a_rows, b_rows = rows.get((A, t), {}), rows.get((B, t), {})
+    only_b = sorted(set(b_rows) - set(a_rows))    # post keys with no Stage-1 partner
+    only_a = sorted(set(a_rows) - set(b_rows))    # Stage-1 keys with no post partner
+    if only_b:
+        missing_stage1[t] = only_b     # reported with the key; never silently (section 3)
+    if only_a:
+        missing_postrope[t] = only_a
     shared = set(a_rows) & set(b_rows)
     bad = sorted(k for k in shared                     # section 3's cross-pod pairing rule
                  if a_rows[k].get("prompt_sha256") is None
@@ -211,15 +228,24 @@ for t in TASKS:
     members[t] = mcnemar_exact({k: int(a_rows[k]["hit"]) for k in keep},
                                {k: int(b_rows[k]["hit"]) for k in keep})
 
-# REFUSED (section 11): an error row on either arm, a broken pairing (`mcnemar_exact` -> None,
-# no shared key), or a member with nothing left to pair after the drops.
-refused = any(v for v in errors.values()) or any(m is None for m in members.values())
+if any(m is None for m in members.values()):
+    refused.append("no shared key")
+if missing_stage1:
+    refused.append("missing Stage-1 record")
+if missing_postrope:
+    refused.append("missing postrope record")
+
+# REFUSED (section 11) is a state collected as reasons, not a bool: an error row, a broken
+# pairing (`mcnemar_exact` -> None, no shared key), a missing Stage-1/postrope record, or
+# (below, once the perplexity axis runs) a TOST that is not decidable.
 p_holm = {} if refused else dict(zip(TASKS, holm([members[t]["p_value"] for t in TASKS])))
 lost = {t for t in p_holm      # section 4's two conditions; at n = 24 the Holm term is binding
         if (members[t]["a_favored"] - members[t]["b_favored"]) / members[t]["n_paired"] > 0.03
         and p_holm[t] < 0.05}
 
 print("dropped (prompt_sha256 disagreed):", dropped or "none")
+print("missing Stage-1 record:", missing_stage1 or "none")
+print("missing postrope record:", missing_postrope or "none")
 print("error rows:", {k: v for k, v in errors.items() if v} or "none")
 for t in TASKS:
     m = members[t]
@@ -236,11 +262,15 @@ bits = window_bits([r for d in DIRS for r in read_jsonl(d / "pplw.jsonl")],
                    where="postrope_r128 x gate1_v2_stage1_llama")
 d_bits = paired_window_bits(bits[A, CTX, CORPUS], bits[B, CTX, CORPUS], f"{A} @ {CTX}", B)
 p_lo, p_hi, equivalent = tost(d_bits, 0.02)      # d = r64 - post; d < 0 means post is worse
+decidable = tost_decidable(d_bits, 0.02)  # not decidable is REFUSED (section 11), never fail
+if not decidable:
+    refused.append("TOST not decidable")
 mean_d, ci_lo, ci_hi = paired_bootstrap(d_bits)  # the effect size, printed beside the TOST
 print(f"ppl: n={len(d_bits)} mean_d={mean_d:+.4f} bits/token, 95% CI"
       f" [{ci_lo:+.4f}, {ci_hi:+.4f}], TOST p_lo={p_lo:.3g} p_hi={p_hi:.3g}"
-      f" equivalent={equivalent} decidable={tost_decidable(d_bits, 0.02)}")
-print("VERDICT:", "REFUSED" if refused else ("non-inferior" if not lost and equivalent else "fail"))
+      f" equivalent={equivalent} decidable={decidable}")
+print("VERDICT:", f"REFUSED — {', '.join(refused)}" if refused
+      else ("non-inferior" if not lost and equivalent else "fail"))
 ```
 
 Sign conventions, fixed now: `mcnemar_exact(a=r64, b=post)` → `a_favored` is the number of
@@ -275,7 +305,10 @@ post-RoPE row stores **0.282× of the fp16 cache at 16K and 0.267× at 32K** (AD
 r64's 0.151× / 0.139×, so **a pass still fails Gate 3's 0.25× resident-KV criterion at 32K,
 where r = 64 passes** — ADR §3's "even a pass costs 2× the coordinate bytes … failing Gate 3's
 0.25× criterion where r=64 passes", against `docs/plan/ICML2027_PLAN.md` §2 Gate 3's "resident
-KV ≤ 0.25× full at 32K". In ADR §4's wording, winning "buys a simpler kernel, not a better
+KV ≤ 0.25× full at 32K". That criterion is read on the **stored** ratio, exactly as ADR §3's own
+convention does — `resident KV = stored gist + tiers`, billed via
+`accounting.bug_footprint(...).stored_bits()` — because no kernel exists yet to measure a
+runtime residency. In ADR §4's wording, winning "buys a simpler kernel, not a better
 operating point": (i) is insurance if (iii) misses its FLOP target on some GPU, and nothing this
 row can show makes it the shipped configuration.
 

@@ -1228,7 +1228,7 @@ GATE1 = {
 
 # L4: the kernel-smoke pod's arm (prereg/kernel_smoke.md) and the post-RoPE accuracy row
 # (prereg/postrope_r128.md). Their pods are L4's, pinned below; not the smoke pod's.
-L4 = {"isvd_r64_h256_seed_kernel"}
+L4 = {"isvd_r64_h256_seed_kernel", "isvd_postrope_r128"}
 
 
 def test_the_smoke_pod_names_every_arm_but_the_table4_variants() -> None:
@@ -1373,4 +1373,9 @@ def test_the_kernel_smoke_pod_is_its_prereg_design() -> None:
     assert isinstance(kc, TaskKernelCheckCfg)
     assert (kc.ctx, kc.chunk, kc.n_new, kc.n_prompts) == (4096, 1024, 32, 16)
     every = [*L2_PODS, *GATE1_PODS, "kernel_smoke"]
+    assert len({config_hash(load_pod(n)) for n in every}) == len(every)
+
+
+def test_the_postrope_pod_hash_is_distinct() -> None:
+    every = [*L2_PODS, *GATE1_PODS, "kernel_smoke", "postrope_r128"]
     assert len({config_hash(load_pod(n)) for n in every}) == len(every)

@@ -161,6 +161,11 @@ GIST_DTYPES = {"float32": torch.float32, "bfloat16": torch.bfloat16}
 # `BugStreamingCache.attach` registers, which attends both from (U, C) tile by tile.
 DECODE_ATTENTION = ("reconstruct", "kernel")
 
+# Which basis the gist tracks (Task L4.9; ADR 0001 option (i)). "pre" (default) un-rotates
+# keys at ingest and re-rotates the reconstruction at their true positions; "post" tracks the
+# rotated keys directly, making both sites identities. V is never rotated either way.
+ROPE_BASES = ("pre", "post")
+
 
 class OrthonormalityError(RuntimeError):
     """The tracked basis lost orthonormality beyond ``orth_abort_tol``.
@@ -318,6 +323,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         diag_every: int = 64,
         decode_attention: str = "reconstruct",
         kernel_operand_dtype: torch.dtype | str = torch.bfloat16,
+        rope_basis: str = "pre",
         layer_idx: int = 0,
     ) -> None:
         super().__init__()  # type: ignore[no-untyped-call]
@@ -440,6 +446,13 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
                 f"kernel_operand_dtype must be one of {sorted(GIST_DTYPES)}, "
                 f"got {kernel_operand_dtype!r}"
             )
+        if rope_basis not in ROPE_BASES:
+            raise ValueError(f"rope_basis must be one of {ROPE_BASES}, got {rope_basis!r}")
+        if rope_basis == "post" and decode_attention == "kernel":
+            raise ValueError(
+                "rope_basis='post' is the reconstruct-path accuracy row (ADR 0001 option (i)); "
+                "decode_attention='kernel' re-rotates in-tile and needs the pre-RoPE basis"
+            )
         if tracker == "bug":
             warnings.warn(
                 "tracker='bug' is deprecated; the shipped step is block incremental SVD, "
@@ -520,6 +533,9 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         # (fp32 accumulation throughout). bf16 is the pod; fp32 makes the tiny-model CPU
         # check exact.
         self.kernel_operand_dtype: torch.dtype = op
+        # ADR 0001 §3 (i): "post" tracks post-RoPE keys -- the ingest un-rotation and the
+        # reconstruct re-rotation are identities; V is never rotated either way.
+        self.rope_basis = rope_basis
         self.layer_idx = layer_idx
         # Per-layer diagnostic rows, drained by ``BugStreamingCache.drain_diag()``. Not
         # cleared by ``reset()``: a drained-once contract must not lose a finished
@@ -729,7 +745,11 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         if self.hh_enabled:
             self._absorb_block_slash(grad_k, grad_v, grad_pos)
             return
-        block_k = self._mat_rope(grad_k, grad_start, inverse=True)  # pre-RoPE, fp32
+        block_k = (
+            grad_k.to(torch.float32)
+            if self.rope_basis == "post"
+            else self._mat_rope(grad_k, grad_start, inverse=True)  # pre-RoPE, fp32
+        )
         block_v = grad_v.to(torch.float32)
         self._absorb_columns(block_k, block_v, grad_pos)
 
@@ -760,7 +780,11 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         keep_n = min(self.hh_budget, n_cand)
         # Score the whole pool by its CURRENT out-of-subspace residual; the raw
         # cand_k_pre is kept for the demote path.
-        cand_k_pre = self._mat_rope_at(cand_k, cand_pos, inverse=True)
+        cand_k_pre = (
+            cand_k.to(torch.float32)
+            if self.rope_basis == "post"
+            else self._mat_rope_at(cand_k, cand_pos, inverse=True)
+        )
         # Week-15 T2: selection may score against the leading score_rank basis
         # columns only (None = full basis). The tail-retention surprise snapshot
         # in _absorb_columns stays UNCAPPED.
@@ -1405,7 +1429,11 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             # surprising (CPU-verified failure at realistic rank/diversity). Off (the
             # default) absorbs the middle directly, bit-for-bit the prior path.
             seed = self.seed_hh_warmup and self.hh_enabled and self._mode == "ingest"
-            k_pre = self._mat_rope(k_mat[:, n_sink : n_sink + mid], n_sink, inverse=True)
+            k_pre = (
+                k_mat[:, n_sink : n_sink + mid].to(torch.float32)
+                if self.rope_basis == "post"
+                else self._mat_rope(k_mat[:, n_sink : n_sink + mid], n_sink, inverse=True)
+            )
             v_mid = v_mat[:, n_sink : n_sink + mid].to(torch.float32)
             for start in range(0, mid, self.prefill_block_size):
                 stop = min(mid, start + self.prefill_block_size)
@@ -1512,7 +1540,9 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             parts_v.append(u_v @ self.c_v.to(torch.float32))
         k_pre_hat = torch.cat(parts_k, dim=1) if len(parts_k) > 1 else parts_k[0]
         v_hat = torch.cat(parts_v, dim=1) if len(parts_v) > 1 else parts_v[0]
-        if self.track_positions:
+        if self.rope_basis == "post":
+            k_hat = k_pre_hat  # stored post-RoPE: nothing to re-rotate
+        elif self.track_positions:
             k_hat = self._mat_rope_at(k_pre_hat, self._mid_positions(), inverse=False)
         else:
             # Contiguous middle: the memoized range path (bit-identical to Week 6). The
@@ -1749,6 +1779,9 @@ class BugStreamingCache(Cache):
         is the reconstruct arm's; only decode-time work and workspace differ.
         ``kernel_operand_dtype`` (``"bfloat16"`` default, ``"float32"``) is the tensor-core
         input width the kernel rounds to; accumulation is fp32 either way.
+    rope_basis:
+        ``"pre"`` (default, the shipped operating point) or ``"post"`` -- track post-RoPE keys
+        (ADR 0001 §3 option (i)); the accuracy row ``isvd_postrope_r128``.
     recent_window, absorb_block, n_sink, theta, min_sv_frac, prefill_block_size:
         See :class:`BugStreamingLayer`.
     tracker, oja_eta0, oja_decay, freeze_after, basis_seed:
@@ -1794,6 +1827,7 @@ class BugStreamingCache(Cache):
         diag_every: int = 64,
         decode_attention: str = "reconstruct",
         kernel_operand_dtype: torch.dtype | str = torch.bfloat16,
+        rope_basis: str = "pre",
     ) -> None:
         base = getattr(model, "model", model)
         rotary = getattr(base, "rotary_emb", None)
@@ -1839,6 +1873,7 @@ class BugStreamingCache(Cache):
                 diag_every=diag_every,
                 decode_attention=decode_attention,
                 kernel_operand_dtype=kernel_operand_dtype,
+                rope_basis=rope_basis,
                 layer_idx=layer_idx,
             )
             for layer_idx in range(n_layers)

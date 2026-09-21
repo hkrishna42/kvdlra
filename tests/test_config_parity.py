@@ -94,6 +94,8 @@ POST_V1 = {
     # L4.4: the r64 arm on the factored-attention kernel (`decode_attention: kernel`),
     # arm 3 of prereg/kernel_smoke.md. New arm, no legacy counterpart.
     "isvd_r64_h256_seed_kernel",
+    # L4.9: the post-RoPE r128 accuracy row (ADR 0001 §3 (i); prereg/postrope_r128.md).
+    "isvd_postrope_r128",
 }
 
 

@@ -1548,8 +1548,9 @@ From `results/gate1_preflight_rerun/manifest.json` `cell_elapsed_s` by `prereg/g
 
 No trigger fires, so **§9's per-pod bar stays 82 h and Stage 1 is not re-sized.** Two caveats.
 The `isvd` anchor, 3.94, is above §9's stated 3.7 sensitivity top (the D-005 bracket was 2.9–3.7):
-the point estimate per pod rises to ≈ 50 h (the `isvd`-proportional arms scale by 3.94 / 3.1), still
-≈ 1.6× inside the 82 h bar and well under the 4.7 trigger (1.5 × 3.1) that would re-size it. And
+the compute per pod rises to ≈ 50 h and the point estimate (compute + the 60 min overhead) to ≈ 51 h
+(the `isvd`-proportional arms scale by 3.94 / 3.1), still ≈ 1.6× inside the 82 h bar and well under
+the 4.7 trigger (1.5 × 3.1) that would re-size it. And
 `nogist` at 2.81 — the rate §7 named reading (iv)'s "first suspect" because its 2 423-token tier is
 re-scored every absorb — sits comfortably under its 3.1 trigger; it is *not* the anomaly the caveat
 anticipated. `frozen` at 1.59 is faster than its derived 2.1.
@@ -1559,8 +1560,7 @@ anticipated. `frozen` at 1.59 is faster than its derived 2.1.
 The pre-flight's `full` ceiling on generator v2's `vt` was **9/12 = 0.75 < 0.9**
 (`prereg/gate1_preflight.md` §4 (ii); reading (ii) is **decided** and not re-read on the re-run), and
 §4 (ii) pre-committed that a task below the ceiling is a generator finding, not a compression one.
-`docs/plan/reports/vt-template-comparison.md` (Verdict B) attributes the shortfall to
-`kvdlra.eval.gen`, not the checkpoint. Quoting its §7:
+`docs/plan/reports/vt-template-comparison.md` returns Verdict B. Quoting its §7 verbatim:
 
 > `vt` leaves the Gate-1 primary retrieval family (16 → 12) and the secondary family (24 → 18) under
 > `prereg/gate1_preflight.md` §4 (ii), because the pre-flight `full` ceiling was 9/12 = 0.75
@@ -1568,15 +1568,16 @@ The pre-flight's `full` ceiling on generator v2's `vt` was **9/12 = 0.75 < 0.9**
 > official-RULER runs that put full-attention Llama-3.1-8B at vt ≈ 99.6 at 16K (arXiv:2602.05191
 > Table 4; arXiv:2510.05688 Table 4 gives 97.4 at 32K).
 >
-> v2's mod-1 depth wrap presents the assignment chain out of order at depths 0.40 and 0.95 — where
-> official RULER is always definition-first — and v2 additionally omits RULER's mandatory one-shot
-> example, may draw the value from the `words` family, and ends each chain statement without a
-> period; the repair required by §4 (ii) is scoped to those items and validated by one `full`-arm
-> `vt` cell at ≈ 1 GPU-h.
+> `docs/plan/reports/vt-template-comparison.md` attributes the shortfall to `kvdlra.eval.gen` and
+> not to the checkpoint: v2's mod-1 depth wrap presents the assignment chain out of order at depths
+> 0.40 and 0.95 — where official RULER is always definition-first — and v2 additionally omits
+> RULER's mandatory one-shot example, may draw the value from the `words` family, and ends each
+> chain statement without a period; the repair required by §4 (ii) is scoped to those items and
+> validated by one `full`-arm `vt` cell at ≈ 1 GPU-h.
 >
 > Until that repair lands and is measured, Stage 1 runs `vt` on the unrepaired generator and reports
-> it descriptively (D-018); its rows are read only against the pre-flight ceiling, and no `vt` row
-> from before the repair is pooled with one from after it.
+> it descriptively (D-018), its rows are read only against the pre-flight ceiling this amendment
+> records, and no `vt` row from before the repair is pooled with one from after it.
 
 **The mechanism, in code.** `EXCLUDED_TASKS` — the `frozenset()` A1a.8 shipped empty — is set to
 `frozenset({"vt"})` in `src/kvdlra/eval/gate1.py`, in the commit that lands this amendment. `vt`

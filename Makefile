@@ -7,7 +7,7 @@ PY ?= .venv/bin/python
 # last word names the interpreter, and `uv run` puts its own venv bin/ on PATH anyway.
 export PATH := $(dir $(abspath $(lastword $(PY)))):$(PATH)
 
-.PHONY: test tables gate1 kernel_smoke env figures check clean
+.PHONY: test tables gate1 kernel_smoke kernel_smoke2 env figures check clean
 # No -q here: pyproject's addopts already carries one, and a second one suppresses the
 # `N passed in Ns` line -- a green run that reports no count is not a verification.
 test:
@@ -27,6 +27,11 @@ gate1:
 # glob like `gate1`, so `tables` stays diff-clean beside it.
 kernel_smoke:
 	$(PY) scripts/tables.py latency --pods results/kernel_smoke --out docs/paper/tables/kernel_smoke.md
+
+# The re-run's table (prereg/kernel_smoke.md Amendment 2, pod `kernel_smoke2`): same renderer,
+# its own pod dir and out file, outside the `table*.md` glob so `tables` stays diff-clean.
+kernel_smoke2:
+	$(PY) scripts/tables.py latency --pods results/kernel_smoke2 --out docs/paper/tables/kernel_smoke2.md
 
 # --allow-existing: `make env` is re-run to pick up a pin change, and uv refuses an
 # existing .venv without it.

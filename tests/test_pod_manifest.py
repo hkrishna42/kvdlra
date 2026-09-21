@@ -1387,9 +1387,11 @@ def test_the_kernel_smoke_pod_is_its_prereg_design() -> None:
 
 
 def test_the_postrope_pod_hash_is_distinct() -> None:
-    """One sweep for both L4 pods: every pinned pod, plus `kernel_smoke` and
+    """One sweep for the L4 pods: every pinned pod, plus `kernel_smoke`, `kernel_smoke2`
+    (the re-run label -- the smoke YAML byte-for-byte but its `name:`, so a distinct hash
+    that writes its own results dir and cannot re-read instance 51903816) and
     `postrope_r128`, hashes to a value of its own."""
-    every = [*L2_PODS, *GATE1_PODS, "kernel_smoke", "postrope_r128"]
+    every = [*L2_PODS, *GATE1_PODS, "kernel_smoke", "kernel_smoke2", "postrope_r128"]
     assert len({config_hash(load_pod(n)) for n in every}) == len(every)
 
 

@@ -743,3 +743,235 @@ Week-3 gate reads **REFUSED** under §4, and the number is reported as measured 
 re-run or re-scaled on this pod. Only a **relative** bar (max|Δ| / max|out| per layer, or
 ulp-normalised), pre-registered by a further amendment committed **before** any re-run and still
 reporting the absolute number beside it, could read such a case differently.
+
+### Amendment 2 (2026-09-21, lane L4, before any re-run's launch commit)
+
+§1–§11 and Amendment 1 are left exactly as written; this file is append-only. This amendment
+**does not re-read instance 51903816**, whose precondition is REFUSED under the bar in force at
+its launch and whose latency rows stay measured-not-cited. It governs **only pods launched after
+its own commit**. It re-states §4's precondition in the units the quantity is actually measured
+in, names the record fields that make the re-statement computable, and says how the kernel arm's
+spike count is read. It moves no other threshold.
+
+#### A2.1 Why a re-statement is owed at all
+
+§4's precondition has two clauses, both written before any bf16 measurement of either existed.
+`kernel_compare` (`src/kvdlra/kernel/attention.py:90-99`) forms `Δ = kernel_output_bf16 −
+sdpa_fp32(bf16 store)`, so `Δ` is the sum of the kernel's operand roundings **and** the bf16
+rounding of its own output; both scale with `|out|`, which the record does not store. ADR 0001
+§5 states the numerics contract relatively ("~2⁻⁸ relative, roughly √2 worse"); the CPU
+calibration that fixed `1e-2` was taken at `|out| ≲ 0.9` (`tests/test_kernel_reference.py:95-98`
+says so in the fixture). An absolute bar read at an unmeasured scale is a bar on `|out|`. The
+`≥ 14/16` clause has the matching defect: two bf16 implementations that are each within a
+rounding of the same fp32 answer will disagree at a greedy near-tie with probability ≈ ½,
+independently of correctness, and no bf16 measurement of that rate existed before this pod.
+
+#### A2.2 (a) The per-layer criterion, re-stated as relative
+
+For each layer `l` of the first kernel decode step, `kernel_compare` records `d_l = max|Δ_l|`
+**and** `m_l = max|ref_l|` (the new field of A2.5). The criterion is
+
+```
+    rel = max_l ( d_l / m_l )   ≤   2⁻⁶  =  1.5625e-2  =  4 u ,      u = 2⁻⁸ = 3.90625e-3
+```
+
+where `u` is the bf16 unit roundoff (8 significand bits). A layer with `m_l = 0` is excluded and
+reported. **The absolute `max_l d_l` is still recorded, printed and reported** beside `rel`, with
+the layer index of each; it is a number, no longer a bar.
+
+**Where 4 u comes from — from the calibration, not from taste.** Every term below is a measured
+number already in this repository, expressed relative to the `|out|` it was measured at:
+
+| term | measured | relative | in `u` |
+|---|---|---|---|
+| reference kernel vs reconstruct, random 8B shapes, bf16 operands + bf16 output (`tests/test_kernel_reference.py:110-123`) | 4.66e-3, 5.15e-3 at `\|out\| ≤ 0.9` | 5.18e-3, 5.72e-3 | 1.33, **1.47** |
+| the same, on the 1B dump layer (`tests/test_kernel_reference.py:214+`) | 2.75e-3 at `\|out\| ≤ 0.84` | 3.27e-3 | 0.84 |
+| Triton split-merge reassociation on top of the reference (`pre_run` cross-split bar, A1.2) | ≤ 4e-3 at the same shapes | ≤ 4.44e-3 | ≤ 1.14 |
+
+The worst plausible sum for a **correct** kernel is `1.47 + 1.14 ≈ 2.6 u`; ADR §5's "roughly √2
+worse" is already inside the 1.47 u, which is a measurement of exactly that comparison. **4 u is
+2.7× the measured worst single term and ~1.5× the worst plausible sum** — the same 2–10×
+discipline A1.2 states for the `pre_run` bars ("each bar sits ≈ 2–10× over the reassociation
+residual"), and it is chosen as a power of two so it reads as "four bf16 ulp" rather than as a
+fitted constant. It separates one extra rounding from an arithmetic error by two orders of
+magnitude: a wrong RoPE angle, a wrong GQA head map or a dropped tile perturbs the output by
+`O(1)` relative, i.e. `≳ 250 u`.
+
+**The prediction this bar makes, written before the re-run.** Applied to instance 51903816's
+absolute numbers, `rel ≤ 4 u` requires `m_l ≥ 0.94` at prompt 7 layer 26 (1.464e-2), `≥ 0.90` at
+prompt 12, `≥ 0.79` at prompt 2, `≥ 0.64` at prompt 10 and `≥ 0.36` at the smallest row
+(prompt 4, 5.564e-3). **It is predicted that every one of these passes** — that `max|ref|` at
+layers 26–31 of Llama-3.1-8B exceeds 1 — and a re-run in which it does not is the falsifier of
+§1 (3), reported as such and not re-argued.
+
+#### A2.3 (b) The token criterion, re-stated for bf16
+
+A greedy mismatch at step `s` **counts against the kernel** only if the reconstruct path's
+**top-2 logit gap at `s`** exceeds the pre-registered margin
+
+```
+    M  =  2⁻⁵ · max_j L_recon[s, j]   ( = 8 u × the step's own top logit ; ≈ 0.6 for a
+                                        Llama-3.1-8B top logit of ≈ 20 )
+```
+
+Otherwise the mismatch is a **near-tie divergence**, reported descriptively with its gap, its
+step and both logits, and not counted. The count is then read over attributable mismatches:
+
+```
+    met  ⟺  ( n_prompts − #{prompts whose first mismatch is attributable} ) ≥ 14
+             AND  rel ≤ 2⁻⁶  AND  no error rows
+```
+
+**Where M comes from.** The model runs bf16 end to end, so one bf16 rounding of a logit is
+`u·|L| = 2⁻⁸·|L|`. The kernel re-rounds the attention output of each of the 32 layers by ≲ 1 u
+of that layer's own output; through the residual stream those 32 perturbations are independent
+in sign and add in quadrature, `√32 = 5.66`, rounded **up** to the next power of two = 8. Hence
+`M = 8 u · max_j L[s, j] = 2⁻⁵ · max_j L[s, j]`. `M` is stated **relative to the step's own
+logit scale**, not as an absolute number of logit units, so it transfers across models and
+across the tiny model of the calibration below, whose vocabulary is 256
+(`src/kvdlra/kernel/prompts.py:30`) and whose logit scale is nothing like Llama's.
+
+**The computable top-logit scale, named precisely (a controller ruling).** A2.3 above writes
+`M = 2⁻⁵ · max_j L_recon[s, j]`, but the five fixed fields of A2.5 store no bare `max_j L_recon`.
+The shipped reader (`scripts/tables.py` `precondition_line` / `_attributable`) uses the stored
+**`kernel_logit_for_ref_argmax`** — the kernel's logit at the token the reconstruct path chose —
+as that top-logit scale. It equals `max_j L_recon[s, j]` to within the kernel's own rounding
+(≈ 2⁻⁸ relative) at exactly the near-tie steps this threshold separates: at a near-tie the
+reconstruct path's chosen token is its own top token, and the kernel reproduces that logit to a
+bf16 rounding. And it fails **safe**: a large reversal — an attributable mismatch — depresses the
+kernel's logit at the reconstruct's token *below* `max_j L_recon`, so `M` shrinks and attribution
+becomes *more* likely, never less — the one direction that cannot manufacture a pass. No threshold
+and no rule moves; only the description is made precise about the quantity the record actually
+carries, and no sixth field is added.
+
+**Only the first mismatch is read, and that is a property of the comparison, not a concession**:
+after step `s` the two paths have different contexts, so steps `> s` are not comparable
+measurements of the same quantity. The record therefore stores the first mismatch's gap, and the
+rule reads it.
+
+**The $0 calibration that fixes `M` before the re-run, and can only tighten it.** Before the
+launch commit, `tests/test_kernel_path.py` gains the bf16 twin of its fp32 check (Task 11): the
+tiny model cast to bf16, the same 16 committed prompts × 16 greedy steps, kernel arm vs
+reconstruct twin, recording per step `ρ_s = max_j |L_kernel[s,j] − L_recon[s,j]| / (u · max_j
+|L_recon[s,j]|)` over the top-8 tokens. Let `ρ̂` be the worst `ρ_s` observed. Because the tiny
+model has `L_tiny` layers and Llama has 32, the pre-registered extrapolation is `κ = ρ̂ ·
+√(32 / L_tiny)`, rounded **up** to the next power of two.
+- If `κ ≤ 8`, `M` stands at `2⁻⁵ · max_j L[s,j]` as written above.
+- If `κ > 8`, this amendment is revised to `M = κ · u · max_j L[s,j]` **before** the launch
+  commit, with the measured `ρ̂`, `L_tiny` and `κ` printed in the revision.
+Both branches are fixed here, in advance, and the evidence is a committed CPU test — the
+calibration never sees an 8B number.
+
+**Measured (Task 11, `tests/test_kernel_path.py::test_bf16_calibration_of_the_near_tie_margin`).**
+ρ̂ = 1.9845 and L_tiny = 2, so κ_raw = ρ̂ · √(32 / L_tiny) = 1.9845 · √(32 / 2) = 1.9845 · 4 =
+7.938, rounded **up** to the next power of two = **κ = 8**. Since **κ ≤ 8**, the first branch
+holds: `M = 2⁻⁵ · max_j L[s, j]` stands exactly as written, and the `κ > 8` revision branch is
+*not* triggered. κ = 8 is boundary-passing — κ_raw 7.938 sits just under 8, and the calibration is
+deterministic under the uv.lock pins — so κ must be re-read from `tests/test_kernel_path.py`'s
+calibration before the launch commit if the CPU numeric stack (torch / BLAS) changes.
+
+#### A2.4 (c) The kernel arm's spikes
+
+**No threshold moves.** The kernel arm's `spikes` and `ms_max` are read exactly as §4 reads them
+(`prereg/kernel_smoke.md:237-240`): `> 8` of 56 refuses that arm's p50 as a steady-state number,
+and the 5 spikes / 1,992 ms max of instance 51903816 are **below that refusal**, so its p50
+stands as a steady-state number under the original rule — while its *cause* is unresolved and
+§5's prediction of "0 on the kernel" is, as measured, wrong. That is reported as a missed
+prediction, not repaired.
+
+**The recompile hypothesis is already refuted by reading, and is recorded so it is not re-opened.**
+`_tiles_kernel` (`src/kvdlra/kernel/triton_kernel.py:39-41`) declares **nothing length-dependent
+as `tl.constexpr`**: `n_dense`, `n_mid`, `tiles_per_split` and `n_splits` are runtime scalars;
+the `tl.constexpr` set is `H_KV, G, D, HALF, R, M, GP`, all fixed for a model, a rank and the
+64-token tile. **There is therefore no per-absorb-event recompile**, and "every 16 tokens the
+tile count moves, so Triton rebuilds the kernel" is not the explanation. What remains is
+bounded: Triton specializes integer runtime arguments on divisibility-by-16 and equality-to-1,
+so a handful of distinct variants (the parity of `n_dense` as the recent ring fills, one
+`tiles_per_split` step, `n_splits` fixed at 16 for `b=1, H_kv=8` by `n_splits_for`) compile on
+**first touch** and never again.
+
+**The check on the re-run is the cheapest one that separates the two remaining candidates, and
+it perturbs nothing measured**: `kvdlra.eval.latency.run_latency` already keeps every step's time
+(`src/kvdlra/eval/latency.py:106-108`), so it prints one **log-only companion line** per cell,
+`[latency spikes ctx=<T> arm=<key> steps=<i,j,k,…>]`, giving the indices of the spiking steps
+within the 56-step steady window. No record field, no regex, no renderer change, no change to
+the arm under measurement. The two candidates have disjoint signatures and the line decides
+between them with no further work:
+- **first-touch JIT compilation** → indices cluster in the first few steps of the window and
+  never recur;
+- **the block-16 absorb** → indices recur on a 16-step lattice across the whole window, which
+  would refute ADR 0001 §5's "block-16 absorbs invalidate nothing in the kernel path"
+  (`docs/adr/0001-factored-attention-kernel.md:213-215`) and is a finding about the design, not
+  about Triton.
+
+Either way it is a **performance** observation. `TRITON_PRINT_AUTOTUNING` is not used: there is
+no `@triton.autotune` on this kernel. Pinning the four scalars via `do_not_specialize`, or
+lengthening the warm-up, is a **fix**, pre-registered nowhere here, and belongs to a later commit
+and a later pod — after the line above says which cause it would fix. `num_warps=4` stays as
+A1.4 leaves it (`prereg/kernel_smoke.md:595-598`): untuned, visible only in the kernel arm's
+ms/token, and no threshold adjusted for it.
+
+#### A2.5 The record fields this amendment needs
+
+The criteria of A2.2 and A2.3 are not computable from `KernelCheckRecord` as it stands
+(`src/kvdlra/eval/records.py:213-234`). Five fields are added, appended **before** the `error=`
+tail of the `[kernel_check prompt=…]` line exactly as `backend=` was (L4.fw1,
+`src/kvdlra/eval/kernel_check.py:111-114`), so every archived row still parses and every field
+that came first keeps its place:
+
+| field | meaning |
+|---|---|
+| `rel_max_diff` | `max_l ( max\|Δ_l\| / max\|ref_l\| )` — the quantity A2.2 reads |
+| `rel_worst_layer` | the layer achieving it |
+| `ref_max` | `max\|ref\|` at `rel_worst_layer` — the denominator, so the ratio is auditable |
+| `gap_at_mismatch` | the reconstruct path's top-1 minus top-2 logit at the first mismatching step; `-` when the prompt matched |
+| `kernel_logit_for_ref_argmax` | the kernel's logit for the token the reconstruct path chose at that step, beside the kernel's own top logit — the reversal's magnitude, and the evidence that a small gap really was a near-tie |
+
+The per-layer `max|ref|` values join the existing log-only `[kernel_check layers prompt=0 …]`
+breakdown (`src/kvdlra/eval/kernel_check.py:80-82`) as a `refs=` list beside `diffs=`; they are
+not records. `scripts/tables.py` `precondition_line` (`99ea29f:scripts/tables.py:1181-1197`)
+reads **both** bars and prints both numbers with the attributable and non-attributable mismatch
+counts named separately; `DIFF_MAX` stays in the file as the reported absolute number.
+Task 11 (§3 below) is the code, and it is CPU-tested before the launch commit.
+
+#### A2.6 (d) What this amendment does not change
+
+The Week-3 gate's two conditions and their thresholds — `kv_peak_gb(kernel, 32K, b) <
+kv_peak_gb(full, 32K, b)` and `ms_per_token_p50(reconstruct, 32K, b) / ms_per_token_p50(kernel,
+32K, b) ≥ 3.0`, pass = both at batch 1 (§4 (1)-(3)); the 10 % marginal-memory rule and the 10 %
+archived-agreement rule (§2 (a), §4 (1)); the error refusal, the `spikes > 8` refusal and the
+"never `--`" rule (§4); §6 (no statistic, no correction); the arm list (`full`,
+`isvd_r64_h256_seed`, `isvd_r64_h256_seed_kernel`) and their configs; cell list A (batch 1,
+16K / 32K / 64K, 64 decode steps of which 56 are timed) and cell list B's conditions; the
+`pre_run` gate and **every bar it applies** — `max|Δ| ≤ 2e-3 ∧ rms(Δ) ≤ 1e-4` at `n_splits == 1`,
+`≤ 4e-3` across splits and for batch independence, `< 1e-2` against reconstruct-then-attend on
+the random 8B shapes and the 1B dump layer (A1.2, A1's correction) — which are comparisons of the
+Triton kernel against the torch **reference**, at a fixed calibrated `|out|`, and are unaffected
+by anything above; §7's KIVI-2 deviation; §11. The 16 prompts, their source and their pins are
+unchanged. Amendment 1 A1.3's record and renderer stand as written, extended only by A2.5.
+
+#### A2.7 (e) Budget and sequencing
+
+- **Budget unchanged**: the point estimate stays `1.8 h + 0.45 h = 2.25 h` and the bar stays
+  `gpu_budget_h: 5.0` (A1.4, `prereg/kernel_smoke.md:577-584`); the five new fields add no GPU
+  work — `max|ref|` is one `.abs().max()` on a tensor `kernel_compare` already materializes, and
+  the logits are already computed by the greedy loop. At A1.4's $0.45–0.74/h that is
+  **≈ $1.0–1.7 expected, ≈ $2.3–3.7 at the bar**. The check axis's own wall clock, still the
+  first number to read against A1.4's 0.45 h allowance, now has instance 51903816's actual to
+  read against as well.
+- **Order**: this amendment's commit, then Task 11's commit, then the pod YAML's commit, then the
+  launch commit. `scripts/pod.py launch` machine-enforces only that the prereg's **first** commit
+  is a strict ancestor of the launch SHA (`prereg_error`, `99ea29f:scripts/pod.py:373-388`), so
+  an appended amendment's ordering is **not** machine-checked: the launch entry in
+  `docs/plan/DECISIONS.md` names this amendment's SHA explicitly and
+  `git merge-base --is-ancestor <amendment SHA> <launch SHA>` is the evidence, pasted.
+- **The re-run is a new pod label**, `kernel_smoke2` (`configs/pods/kernel_smoke2.yaml`, the
+  `kernel_smoke` YAML byte-for-byte with `name:` changed and `prereg: prereg/kernel_smoke.md`
+  kept), so it writes `results/kernel_smoke2/` and cannot overwrite instance 51903816's harvest
+  (`scripts/pod.py` §4: one directory per pod, `results/<pod>/`). Instance 51903816's records are
+  committed, harvested and cited as **REFUSED under the original bar**; nothing about them is
+  revised, deleted or re-read.
+- **Citability** is unchanged (CLAUDE.md): a number of the re-run is citable only once
+  `scripts/pod.py check results/kernel_smoke2` passes — including `_kernel_check_fails`'s 16 rows
+  per kernel arm (`scripts/pod.py:877-891`) and the three `pre_run` refusals — and
+  `make kernel_smoke` regenerates its table from the committed records.

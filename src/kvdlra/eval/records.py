@@ -90,17 +90,23 @@ PPLW_RE = re.compile(
 # figures already removed -- so it is matched, not captured. `batch=` is OPTIONAL: the nine
 # archived Week-20 lines (results/paper-v1/w19-sysfix-llama/raw/) predate it and were batch
 # 1, and `make kernel_smoke` prints them beside the re-measured rows (prereg §2 (a)).
-# `kv_resident_gb=` (L4.7) is appended LAST and is optional for the same reason.
+# `kv_resident_gb=` (L4.7) and `backend=` (L4.fw1) are appended LAST, in that order, and
+# are optional for the same reason -- `backend=` is printed only by a bug arm that ran the
+# factored kernel, so every other row (and every row logged before it existed) has none.
 LATENCY_RE = re.compile(
     r"^\[latency ctx(\d+)\] (\S+)\s+ms/tok=([0-9.]+) mean=([0-9.]+) max=([0-9.]+) "
     r"spikes=(\d+) resident_gb=([0-9.]+) peak_gb=([0-9.]+) weights_gb=[0-9.]+"
     r" kv_peak_gb=([0-9.]+)(?: batch=(\d+))?(?: kv_resident_gb=([0-9.]+))?"
+    r"(?: backend=(\S+))?"
 )
 # `kvdlra.eval.kernel_check.format_line`'s own print. `-` stands for an absent number (an
 # errored prompt has no diff and no mismatch step); `error=` stays last and unanchored.
+# `backend=` (L4.fw1) sits between `sha=` and the tail and is OPTIONAL: the kernel_smoke
+# pod's own records were logged before the field existed and must keep parsing (as None).
 KERNEL_CHECK_RE = re.compile(
     r"^\[kernel_check prompt=(\d+) arm=(\S+) ctx=(\d+) n_new=(\d+) match=([01])"
-    r" first_mismatch=(\S+) max_abs_diff=(\S+) worst_layer=(\S+) sha=(\S+)(?: error=(.*))?"
+    r" first_mismatch=(\S+) max_abs_diff=(\S+) worst_layer=(\S+) sha=(\S+)"
+    r"(?: backend=(\S+))?(?: error=(.*))?"
 )
 # The payload is matched loosely and `json.loads` is the arbiter: a `\{.*\}` regex
 # could not see a row `vastai logs` cut in half at all, so a truncated diagnostic
@@ -183,7 +189,9 @@ class LatencyRecord(TypedDict):
 
     ``kv_resident_gb`` is the post-prefill resident allocation minus the weights -- the
     Week-5 target's resident ratio (prereg §3, §4) -- ``None`` on a line printed before
-    L4.7.
+    L4.7. ``backend`` is which factored-attention backend attended
+    (`kvdlra.kernel.select_backend`): ``None`` for every arm that did not run the kernel,
+    and for a kernel row logged before L4.fw1.
     """
 
     model: str
@@ -198,13 +206,18 @@ class LatencyRecord(TypedDict):
     peak_gb: float
     kv_peak_gb: float
     kv_resident_gb: float | None
+    backend: str | None
     source: str
 
 
 class KernelCheckRecord(TypedDict):
     """One prompt of the kernel correctness check (prereg/kernel_smoke.md §4): whether the
     kernel's greedy decode matched the reconstruct path's token for token, the first step
-    that did not, and the worst per-layer max|Δ| of the first kernel decode step."""
+    that did not, and the worst per-layer max|Δ| of the first kernel decode step.
+
+    ``backend`` is which factored-attention backend attended
+    (`kvdlra.kernel.select_backend`); ``None`` on an errored prompt and on a record logged
+    before L4.fw1 -- the kernel_smoke pod's own rows among them."""
 
     model: str
     arm: str
@@ -216,6 +229,7 @@ class KernelCheckRecord(TypedDict):
     max_abs_diff: float | None
     worst_layer: int | None
     prompt_sha256: str
+    backend: str | None
     error: str | None
     source: str
 
@@ -449,9 +463,8 @@ def parse_latency_lines(text: str, model: str, source: str) -> list[LatencyRecor
         m = LATENCY_RE.match(line)
         if not m:
             continue
-        ctx, arm, p50, mean, mx, spikes, resident_gb, peak_gb, kv_peak_gb, batch, kv_resident = (
-            m.groups()
-        )
+        (ctx, arm, p50, mean, mx, spikes, resident_gb, peak_gb, kv_peak_gb, batch,
+         kv_resident, backend) = m.groups()  # fmt: skip
         out.append(
             {
                 "model": model,
@@ -466,6 +479,7 @@ def parse_latency_lines(text: str, model: str, source: str) -> list[LatencyRecor
                 "peak_gb": float(peak_gb),
                 "kv_peak_gb": float(kv_peak_gb),
                 "kv_resident_gb": float(kv_resident) if kv_resident is not None else None,
+                "backend": _field(backend),
                 "source": f"{source}:{i}",
             }
         )
@@ -481,7 +495,7 @@ def parse_kernel_check_lines(text: str, model: str, source: str) -> list[KernelC
         m = KERNEL_CHECK_RE.match(line)
         if not m:
             continue
-        prompt, arm, ctx, n_new, match, first, diff, worst, sha, error = m.groups()
+        prompt, arm, ctx, n_new, match, first, diff, worst, sha, backend, error = m.groups()
         out.append(
             {
                 "model": model,
@@ -494,6 +508,7 @@ def parse_kernel_check_lines(text: str, model: str, source: str) -> list[KernelC
                 "max_abs_diff": None if diff == "-" else float(diff),
                 "worst_layer": None if worst == "-" else int(worst),
                 "prompt_sha256": sha,
+                "backend": _field(backend),
                 "error": error,
                 "source": f"{source}:{i}",
             }

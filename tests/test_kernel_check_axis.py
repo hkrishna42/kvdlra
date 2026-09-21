@@ -54,12 +54,14 @@ def test_check_prompt_on_the_tiny_model_is_token_exact_and_round_trips(
         assert (row["arm"], row["ctx"], row["prompt"], row["n_new"]) == want
         assert row["match"] == 1 and row["first_mismatch"] is None and row["error"] is None
         assert row["worst_layer"] in (0, 1) and row["max_abs_diff"] is not None
+        assert row["backend"] == "reference"  # a CPU query: `auto` cannot pick triton
         assert row["max_abs_diff"] < 1e-4  # fp32 operands: summation order only
         assert len(row["prompt_sha256"]) == 64
         lines.append(kernel_check.format_line(row))
     assert all(KERNEL_CHECK_RE.match(x) and replayable(x) for x in lines)
     back = parse_kernel_check_lines("\n".join(lines), model="M", source="log")
     assert [b["prompt"] for b in back] == [0, 1, 2]
+    assert [b["backend"] for b in back] == ["reference"] * 3
     assert back[0]["max_abs_diff"] == float(f"{lines[0].split('max_abs_diff=')[1].split()[0]}")
     assert back[0]["source"] == "log:1" and back[0]["model"] == "M" and back[0]["error"] is None
 
@@ -71,10 +73,12 @@ def test_failed_row_and_its_line() -> None:
     line = kernel_check.format_line(row)
     assert line.startswith("[kernel_check prompt=4 arm=k ctx=10 n_new=32 match=0 first_mismatch=- ")
     assert "max_abs_diff=- worst_layer=- sha=" in line
+    assert " backend=- error=RuntimeError: boom" in line  # the tail stays last
     assert line.endswith(" error=RuntimeError: boom")
     (back,) = parse_kernel_check_lines(line, model="M", source="s")
     assert back["match"] == 0 and back["max_abs_diff"] is None and back["worst_layer"] is None
     assert back["first_mismatch"] is None and back["error"] == "RuntimeError: boom"
+    assert back["backend"] is None  # no kernel attended: nothing to attest
 
 
 def test_the_log_only_companion_lines_are_not_records() -> None:
@@ -131,7 +135,7 @@ def test_the_runner_writes_one_record_per_kernel_arm_and_prompt(
         return {
             "arm": arm["name"], "ctx": int(ids.shape[0]), "prompt": index, "n_new": n_new,
             "match": 1, "first_mismatch": None, "max_abs_diff": 0.001, "worst_layer": 3,
-            "prompt_sha256": "a" * 64, "error": None,
+            "prompt_sha256": "a" * 64, "backend": "triton", "error": None,
         }  # fmt: skip
 
     monkeypatch.setattr(kernel_check, "check_prompt", fake_check)
@@ -145,6 +149,7 @@ def test_the_runner_writes_one_record_per_kernel_arm_and_prompt(
     rows = [json.loads(x) for x in (tmp_path / "kernel_check.jsonl").read_text().splitlines()]
     assert len(rows) == 16 and {r["arm"] for r in rows} == {"isvd_r64_h256_seed_kernel"}
     assert rows[5]["error"] == "RuntimeError: boom" and rows[5]["match"] == 0
+    assert rows[5]["backend"] is None and rows[0]["backend"] == "triton"
     assert rows[0]["model"] == MODEL and rows[0]["source"] == "kc_fixture:run"
     assert out.count("[kernel_check prompt=") == 16
     assert ("[error] axis=kernel_check arm=isvd_r64_h256_seed_kernel ctx=4096"
@@ -166,10 +171,14 @@ def test_harvest_reads_kernel_check_lines(tmp_path: Path) -> None:
     line = ("[kernel_check prompt=0 arm=isvd_r64_h256_seed_kernel ctx=4096 n_new=32 match=1 "
             "first_mismatch=- max_abs_diff=3.100e-03 worst_layer=17 sha=" + "b" * 64)  # fmt: skip
     log = tmp_path / "pod.log"
-    log.write_text(line + "\n")
+    # No `backend=`: the kernel_smoke pod's own lines were logged before the field existed,
+    # and they must keep harvesting (as `None`) rather than fall out of the parse.
+    log.write_text(line + "\n" + line.replace("prompt=0", "prompt=1") + " backend=triton\n")
     assert pod.harvest("w18_g1", log, tmp_path, force=False) == 0
-    (row,) = [json.loads(x) for x in (tmp_path / "kernel_check.jsonl").read_text().splitlines()]
+    rows = [json.loads(x) for x in (tmp_path / "kernel_check.jsonl").read_text().splitlines()]
+    row = rows[0]
     got = (row["prompt"], row["match"], row["max_abs_diff"], row["worst_layer"])
     assert got == (0, 1, 3.1e-3, 17)
+    assert row["backend"] is None and rows[1]["backend"] == "triton"
     m = json.loads((tmp_path / "manifest.json").read_text())
-    assert m["records"]["kernel_check.jsonl"] == 1
+    assert m["records"]["kernel_check.jsonl"] == 2

@@ -1884,6 +1884,11 @@ class BugStreamingCache(Cache):
         # function also run reconstruct-then-attend and record `layer_idx -> max|d|` here
         # (the on-pod single-layer check, `kvdlra.eval.kernel_check`); None = off.
         self.kernel_compare: dict[int, float] | None = None
+        # Which backend actually attended (`kvdlra.kernel.select_backend`), set by the
+        # attention function on the first kernel decode step and never changed after:
+        # `backend="auto"` degrades to the torch reference on a live rank the Triton kernel
+        # refuses (R-L4-22), and a ms/token that is the reference's must say so.
+        self.kernel_backend: str | None = None
 
     @contextmanager
     def attach(self, model: PreTrainedModel) -> Iterator[None]:

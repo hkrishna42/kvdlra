@@ -27,6 +27,7 @@ from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding, rotat
 from kvdlra.cache import BugStreamingCache
 from kvdlra.eval.config import arm_kwargs, load_arm
 from kvdlra.eval.frontier import _prefill_chunked, build_arm
+from kvdlra.kernel import factored_attention
 from kvdlra.kernel.attention import KERNEL_ATTN
 from kvdlra.kernel.prompts import TINY_N_NEW, TINY_PROMPT_TOKENS, tiny_prompts
 from kvdlra.kernel.reference import rope_cos_sin
@@ -120,6 +121,32 @@ def test_kernel_step_returns_dense_only_and_the_scope_registers(
     fn = ALL_ATTENTION_FUNCTIONS[KERNEL_ATTN]
     with pytest.raises(RuntimeError, match="no cache attached"):
         fn(None, None, None, None, None)
+
+
+def test_batch_1_hands_the_layers_own_middle_to_the_kernel(
+    tiny_model: LlamaForCausalLM, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At batch 1 there is one row, and `FactoredMiddle.cat` of one row copies every tensor
+    in it -- C_k, C_v, U_k, U_v and the positions, every layer every step (~17 MB per layer
+    per step at 32K, r64), for a middle that is already exactly what the kernel attends.
+    What reaches `factored_attention` is therefore the layer's own `_factored_middle()`
+    object, and its tensors are the layer's own; the selected backend is attested once on
+    the cache (R-L4-22: `auto` degrades to the reference silently otherwise)."""
+    seen: list[Any] = []
+
+    def spy(*a: Any, **kw: Any) -> torch.Tensor:
+        seen.append(a[3])  # the `mid` positional
+        return factored_attention(*a, **kw)
+
+    monkeypatch.setattr("kvdlra.kernel.attention.factored_attention", spy)
+    cache = tiny_cache(tiny_model, decode_attention="kernel", kernel_operand_dtype="float32")
+    _greedy(tiny_model, cache, tiny_prompts()[1][None], 1)  # one step: one call per layer
+    layer = cache._bug_layers()[0]
+    assert len(seen) == len(cache._bug_layers())
+    assert layer._kernel_mid is not None and layer.u_k is not None
+    assert seen[0] is layer._kernel_mid  # the object itself, not a copy of it
+    assert seen[0].u_k.data_ptr() == layer.u_k.data_ptr()  # ... and its tensors are the layer's
+    assert cache.kernel_backend == "reference"  # on a CPU query `auto` cannot pick triton
 
 
 def test_kernel_middle_positions_match_reconstruct_under_fifo_with_an_exact_tier(

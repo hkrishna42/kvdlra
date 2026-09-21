@@ -6,7 +6,10 @@ Here the runner drives it from `configs/tasks/latency_16k_32k_64k.yaml` -- one r
 (arm, ctx, batch) in `results/<pod>/latency.jsonl` -- and `scripts/pod.py check`
 requires that grid, so a point that OOMed cannot leave a short file behind and pass.
 
-Hermetic: `run_latency` is substituted, so no model is loaded and nothing is timed.
+Hermetic: `run_latency` is substituted, so no model is loaded and nothing is timed -- with
+one exception, the last test, which measures two decode steps on the tiny model so the REAL
+print meets the real harvest regex (everything else here would pass on a print that no
+parser can read).
 """
 
 from __future__ import annotations
@@ -17,11 +20,15 @@ from typing import Any
 
 import pod
 import pytest
+from transformers import LlamaForCausalLM
 
 from kvdlra.eval.config import load_arm, load_pod, load_task
-from kvdlra.eval.records import parse_error_lines
+from kvdlra.eval.latency import run_latency
+from kvdlra.eval.records import parse_error_lines, parse_latency_lines
 from kvdlra.eval.runner import run_pod
+from tests.conftest import tiny_cache
 
+TINY_SDPA = True
 POD = "w19_sysfix_latency"
 
 
@@ -53,6 +60,7 @@ def _fake_run_latency(
             "weights_gb": 14.0,
             "kv_resident_gb": 1.0,
             "kv_peak_gb": 4.0,
+            "backend": None,
             "per_step_ms": [],
         }
     ]
@@ -180,3 +188,30 @@ def test_harvest_rebuilds_latency_jsonl_from_the_log(
     capsys.readouterr()
     assert pod.check(tmp_path) == 0
     _check_fails_when_a_point_is_dropped(tmp_path, capsys)
+
+
+def test_the_printed_latency_line_is_what_the_harvest_regex_reads(
+    tiny_model: LlamaForCausalLM, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`run_latency`'s print and `records.LATENCY_RE` are one contract in two places, and
+    every other test in this module substitutes the print away. Two measured decode steps on
+    the tiny model -- a full arm and a kernel arm -- through the real print and back through
+    the real parser: one record per arm, the batch and the resident reading recovered, and
+    the kernel arm's attested backend with them."""
+    arms: list[dict[str, Any]] = [
+        {"name": "full", "kind": "full", "make": lambda: None},
+        {
+            "name": "tiny_kernel",
+            "kind": "bug",
+            "make": lambda: tiny_cache(
+                tiny_model, decode_attention="kernel", kernel_operand_dtype="float32"
+            ),
+        },
+    ]
+    rows = run_latency(tiny_model, arms, 64, "cpu", chunk=32, n_steps=2, warmup=0, batch=1)
+    printed = [x for x in capsys.readouterr().out.splitlines() if x.startswith("[latency ")]
+    got = parse_latency_lines("\n".join(printed), model="tiny", source="log")
+    assert len(printed) == len(got) == len(arms)
+    assert [g["arm"] for g in got] == [r["method"] for r in rows] == ["full", "tiny_kernel"]
+    assert all(g["batch"] == 1 and isinstance(g["kv_resident_gb"], float) for g in got)
+    assert [g["backend"] for g in got] == [None, "reference"]  # a CPU query: never triton

@@ -17,7 +17,11 @@ arm's decode peak was never measured. This measures both, per arm x context x ba
 Rows (harvested by ``records.parse_latency_lines``)::
 
     [latency ctx16384] full  ms/tok=.. mean=.. max=.. spikes=.. resident_gb=.. peak_gb=..
-        weights_gb=.. kv_peak_gb=.. batch=.. kv_resident_gb=..
+        weights_gb=.. kv_peak_gb=.. batch=.. kv_resident_gb=.. [backend=..]
+
+``backend=`` closes the row only on an arm that ran the factored kernel: which backend
+attended is not decidable from the config (``"auto"`` degrades to the torch reference on a
+live rank the Triton kernel refuses, R-L4-22), so a ms/token that is the reference's says so.
 """
 
 from __future__ import annotations
@@ -96,6 +100,9 @@ def run_latency(
                 tok_id = out.logits[:, -1].argmax(-1).view(batch, 1)
                 start += 1
         _, peak_gb = _mem(device)
+        # `None` unless a factored-kernel decode ran on this cache (`attention.py` records
+        # the one backend it selected); a full/quant arm and the reconstruct path have none.
+        backend = getattr(cache, "kernel_backend", None) if kind == "bug" else None
         steady = times_ms[warmup:] if len(times_ms) > warmup else times_ms
         p50 = statistics.median(steady)
         spikes = sum(1 for t in steady if t > 2.0 * p50)
@@ -114,6 +121,7 @@ def run_latency(
             "weights_gb": weights_gb,
             "kv_resident_gb": max(resident_gb - weights_gb, 0.0),
             "kv_peak_gb": max(peak_gb - weights_gb, 0.0),
+            "backend": backend,
             "per_step_ms": times_ms,
         }
         rows.append(row)
@@ -125,7 +133,8 @@ def run_latency(
             # Appended last so the archived-line format keeps matching unchanged;
             # `kv_resident_gb` is the resident reading §3 of the kernel prereg asked the
             # record to carry.
-            f" batch={batch} kv_resident_gb={row['kv_resident_gb']:.2f}",
+            f" batch={batch} kv_resident_gb={row['kv_resident_gb']:.2f}"
+            + (f" backend={backend}" if backend else ""),
             flush=True,
         )
         del cache, out

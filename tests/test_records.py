@@ -242,22 +242,29 @@ def test_parse_latency_lines_schema() -> None:
             "peak_gb": 18.20,
             "kv_peak_gb": 3.25,
             "kv_resident_gb": None,
+            "backend": None,
             "source": "f.txt:1",
         }
     ]
 
 
-def test_parse_latency_lines_reads_the_two_optional_fields() -> None:
+def test_parse_latency_lines_reads_the_three_optional_fields() -> None:
     """`batch=` is absent from the nine archived Week-20 lines (they predate the field and
-    were batch 1: prereg/kernel_smoke.md §2 (a)) and `kv_resident_gb=` is appended last by
-    the L4.7 print; both are optional, so today's lines and the archive parse alike."""
+    were batch 1: prereg/kernel_smoke.md §2 (a)); `kv_resident_gb=` is appended last by the
+    L4.7 print and `backend=` after it by L4.fw1 (only a kernel arm has one). All three are
+    optional, so today's lines, the kernel_smoke pod's and the archive parse alike."""
     archived = LATENCY.replace(" batch=1", "")
     (row,) = parse_latency_lines(archived, model="M", source="f")
-    assert row["batch"] == 1 and row["kv_resident_gb"] is None
+    assert row["batch"] == 1 and row["kv_resident_gb"] is None and row["backend"] is None
     (row,) = parse_latency_lines(
         LATENCY.rstrip("\n") + " kv_resident_gb=0.83\n", model="M", source="f"
     )
     assert row["batch"] == 1 and row["kv_resident_gb"] == 0.83 and row["kv_peak_gb"] == 3.25
+    assert row["backend"] is None
+    (row,) = parse_latency_lines(
+        LATENCY.rstrip("\n") + " kv_resident_gb=0.83 backend=triton\n", model="M", source="f"
+    )
+    assert row["backend"] == "triton" and row["kv_resident_gb"] == 0.83
     archive = ARCHIVE / "w19-sysfix-llama" / "raw" / "w19-sysfix-llama-lines.txt"
     rows = parse_latency_lines(archive.read_text(), model="M", source="a")
     assert len(rows) == 9 and {r["batch"] for r in rows} == {1}

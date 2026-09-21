@@ -29,6 +29,7 @@ __all__ = [
     "factored_attention",
     "n_splits_for",
     "rope_cos_sin",
+    "select_backend",
 ]
 
 G_PAD = 16  # tl.dot needs M >= 16: the G query heads of one KV head are padded to 16 rows
@@ -85,6 +86,27 @@ def _triton_available() -> bool:
     )
 
 
+def select_backend(
+    query: Tensor,
+    dense_k: Tensor,
+    mid: FactoredMiddle | None,
+    operand_dtype: torch.dtype,
+    backend: str = "auto",
+) -> str:
+    """Which backend `factored_attention` would run this call on: ``"triton"`` or
+    ``"reference"``, never ``"auto"``.
+
+    Pure, and the ONE place the choice is made, so a caller can attest what attended
+    (`kvdlra.kernel.attention` records it on the cache, `kvdlra.eval.kernel_check` and
+    `kvdlra.eval.latency` print it). R-L4-22 lets ``"auto"`` degrade to the reference on a
+    rank the kernel refuses; without this the degradation leaves no trace in the record."""
+    if backend == "auto":
+        return "triton" if _triton_eligible(query, dense_k, mid, operand_dtype) else "reference"
+    if backend not in ("reference", "triton"):
+        raise ValueError(f"backend must be auto/reference/triton, got {backend!r}")
+    return backend
+
+
 def factored_attention(
     query: Tensor,
     dense_k: Tensor,
@@ -100,8 +122,7 @@ def factored_attention(
 ) -> Tensor:
     """`reference.factored_attention`, or the Triton kernel on a CUDA query when
     ``backend="auto"`` and `_triton_eligible` (``"reference"`` / ``"triton"`` force one)."""
-    if backend == "auto":
-        backend = "triton" if _triton_eligible(query, dense_k, mid, operand_dtype) else "reference"
+    backend = select_backend(query, dense_k, mid, operand_dtype, backend)
     if backend == "triton":
         # GPU-only: the import needs triton, and the module is absent from a CPU tree --
         # `import_module` keeps this file type-checkable there.
@@ -111,8 +132,6 @@ def factored_attention(
             scaling=scaling, operand_dtype=operand_dtype, tile=tile,
         )  # fmt: skip
         return out
-    if backend != "reference":
-        raise ValueError(f"backend must be auto/reference/triton, got {backend!r}")
     return reference.factored_attention(
         query, dense_k, dense_v, mid, inv_freq=inv_freq, attention_scaling=attention_scaling,
         scaling=scaling, operand_dtype=operand_dtype, tile=tile,

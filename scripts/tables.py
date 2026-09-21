@@ -1362,6 +1362,10 @@ def latency_table(pod: PodCfg, results: Path, out: Path, archive: Path = W20_ARC
                     else (str(v) if f == "spikes" else f"{float(cast(float, v)):.2f}")
                 )
         stored = analytic_stored_gib(cfgs[a], c, pod.model)
+        # Which backend attended (`kvdlra.kernel.select_backend`, recorded per cache):
+        # `n/a` wherever none was recorded -- a full/quant/reconstruct arm never runs one,
+        # and the kernel rows of a pod logged before the field existed carry no value.
+        backend = (r.get("backend") if r is not None else None) or "n/a"
         w = w20.get((a, c))
         if w is None:
             archived = ["none archived", "none archived", "n/a"]
@@ -1390,11 +1394,12 @@ def latency_table(pod: PodCfg, results: Path, out: Path, archive: Path = W20_ARC
                 *cells,
                 "n/a" if stored is None else f"{stored:.3f}",
                 *archived,
+                backend,
             ]
         )
     header = ["arm", "role", "ctx", "batch", "ms/tok p50", "ms mean", "ms max", "spikes",
               "resident_gb", "peak_gb", "kv_peak_gb", "kv_resident_gb", "stored GiB (analytic)",
-              "W20 p50", "W20 kv_peak", "W20 agreement"]  # fmt: skip
+              "W20 p50", "W20 kv_peak", "W20 agreement", "backend"]  # fmt: skip
     md = [
         f"# Kernel smoke — {results.name}",
         "",

@@ -211,6 +211,7 @@ def _latency_rows(
                         "peak_gb": float(row["peak_gb"]),
                         "kv_peak_gb": float(row["kv_peak_gb"]),
                         "kv_resident_gb": float(row["kv_resident_gb"]),
+                        "backend": row["backend"],
                         "source": f"{pod.name}:run",
                     }
                 )

@@ -66,7 +66,8 @@ def check_prompt(
 ) -> dict[str, Any]:
     """One prompt (a 1-D token tensor) through the kernel arm and its reconstruct twin."""
     x = ids.view(1, -1).to(next(model.parameters()).device)
-    kern, diffs = _greedy(model, arm["make"](), x, n_new, chunk, compare=True)
+    cache = arm["make"]()
+    kern, diffs = _greedy(model, cache, x, n_new, chunk, compare=True)
     twin = BugStreamingCache(model, **{**arm["kwargs"], "decode_attention": "reconstruct"})
     recon, _ = _greedy(model, twin, x, n_new, chunk, compare=False)
     first = next((s for s, (a, b) in enumerate(zip(kern, recon, strict=True)) if a != b), None)
@@ -82,7 +83,8 @@ def check_prompt(
     return {
         "arm": arm["name"], "ctx": int(x.shape[1]), "prompt": index, "n_new": n_new,
         "match": int(first is None), "first_mismatch": first, "max_abs_diff": diffs[worst],
-        "worst_layer": worst, "prompt_sha256": _sha(x), "error": None,
+        "worst_layer": worst, "prompt_sha256": _sha(x),
+        "backend": cache.kernel_backend, "error": None,
     }  # fmt: skip
 
 
@@ -93,7 +95,7 @@ def failed_row(
     return {
         "arm": arm["name"], "ctx": int(ids.numel()), "prompt": index, "n_new": n_new,
         "match": 0, "first_mismatch": None, "max_abs_diff": None, "worst_layer": None,
-        "prompt_sha256": _sha(ids.view(-1)), "error": error,
+        "prompt_sha256": _sha(ids.view(-1)), "backend": None, "error": error,
     }  # fmt: skip
 
 
@@ -106,5 +108,9 @@ def format_line(row: dict[str, Any]) -> str:
         f"[kernel_check prompt={row['prompt']} arm={row['arm']} ctx={row['ctx']}"
         f" n_new={row['n_new']} match={row['match']} first_mismatch={first}"
         f" max_abs_diff={diff} worst_layer={worst} sha={row['prompt_sha256']}"
+        # L4.fw1: which backend attended (`-` where none was recorded -- an errored prompt,
+        # or a log written before this field existed). Appended before the `error=` tail so
+        # every field that came first keeps its place.
+        f" backend={row.get('backend') or '-'}"
     )
     return line + (f" error={row['error']}" if row["error"] else "")

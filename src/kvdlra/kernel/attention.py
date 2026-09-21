@@ -33,7 +33,7 @@ from transformers.integrations.sdpa_attention import sdpa_attention_forward
 from transformers.masking_utils import AttentionMaskInterface, sdpa_mask
 from transformers.modeling_utils import AttentionInterface
 
-from kvdlra.kernel import FactoredMiddle, factored_attention
+from kvdlra.kernel import FactoredMiddle, factored_attention, select_backend
 
 __all__ = ["KERNEL_ATTN", "attach_kernel", "factored_attention_forward"]
 
@@ -70,10 +70,22 @@ def factored_attention_forward(
     scale = float(module.scaling) if scaling is None else float(scaling)
     if any(m is None for m in mids) != all(m is None for m in mids):
         raise NotImplementedError("rows disagree on whether a middle exists (ragged rows)")
-    mid = None if mids[0] is None else FactoredMiddle.cat([m for m in mids if m is not None])
+    kept = [m for m in mids if m is not None]
+    # One row: hand the kernel the row's own middle. `FactoredMiddle.cat` of a single row
+    # is still a copy of every tensor in it (~17 MB per layer per step at 32K, r64).
+    mid = None if not kept else kept[0] if len(kept) == 1 else FactoredMiddle.cat(kept)
+    backend = select_backend(query, key, mid, layer.kernel_operand_dtype)
+    if cache.kernel_backend is None:
+        cache.kernel_backend = backend
+    elif cache.kernel_backend != backend:
+        raise NotImplementedError(
+            f"one cache, one backend: this step selected {backend!r} after "
+            f"{cache.kernel_backend!r} (a live rank the Triton kernel refuses degrades to the "
+            "reference mid-run, which would make the recorded backend a fiction)"
+        )
     out = factored_attention(
         query, key, value, mid, inv_freq=inv_freq, attention_scaling=attention_scaling,
-        scaling=scale, operand_dtype=layer.kernel_operand_dtype,
+        scaling=scale, operand_dtype=layer.kernel_operand_dtype, backend=backend,
     )  # fmt: skip
     if cache.kernel_compare is not None:
         if layer._rows:

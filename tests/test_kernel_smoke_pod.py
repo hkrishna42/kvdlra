@@ -46,6 +46,7 @@ def _lines(n_prompts: int = 16) -> list[str]:
     out += [
         f"[kernel_check prompt={i} arm=isvd_r64_h256_seed_kernel ctx=4096 n_new=32 match=1"
         f" first_mismatch=- max_abs_diff=3.100e-03 worst_layer=17 sha={'a' * 64}"
+        f" backend=triton"
         for i in range(n_prompts)
     ]
     for i, ctx in enumerate(lat.ctxs or []):
@@ -56,6 +57,7 @@ def _lines(n_prompts: int = 16) -> list[str]:
                 f" spikes={4 if arm == 'bugSseed-r64-h256' else 0}"
                 f" resident_gb=16.00 peak_gb={14.96 + PEAK[arm][i]:.2f} weights_gb=14.96"
                 f" kv_peak_gb={PEAK[arm][i]:.2f} batch=1 kv_resident_gb=0.60"
+                + (" backend=triton" if "kernel" in arm else "")
             )
     return out
 
@@ -93,6 +95,11 @@ def test_a_complete_kernel_smoke_harvest_passes_check_and_renders(
     assert "PRECONDITION: met (16/16 token-exact" in md
     assert "WEEK-3 GATE (batch 1): PASS" in md
     assert "archived 188.27 ms: agree (within 10%)" in md and "| 0.556 |" in md
+    # The attested backend reaches the table, and only on the rows that ran one: every other
+    # arm (and a kernel row logged before the field existed) renders `n/a` there.
+    assert [ln.split(" | ")[0] for ln in md.splitlines() if ln.endswith("| triton |")] == [
+        "| isvd_r64_h256_seed_kernel"
+    ] * 3
 
 
 def test_a_short_check_or_grid_fails_check_by_name(

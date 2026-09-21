@@ -105,7 +105,8 @@ def run_latency(
         backend = getattr(cache, "kernel_backend", None) if kind == "bug" else None
         steady = times_ms[warmup:] if len(times_ms) > warmup else times_ms
         p50 = statistics.median(steady)
-        spikes = sum(1 for t in steady if t > 2.0 * p50)
+        spike_steps = [i for i, t in enumerate(steady) if t > 2.0 * p50]
+        spikes = len(spike_steps)
         row: dict[str, Any] = {
             "method": arm["name"],
             "kind": kind,
@@ -135,6 +136,14 @@ def run_latency(
             # record to carry.
             f" batch={batch} kv_resident_gb={row['kv_resident_gb']:.2f}"
             + (f" backend={backend}" if backend else ""),
+            flush=True,
+        )
+        # Amendment 2 (A2.4): a log-only companion line naming WHICH steady-window steps spiked,
+        # from the `times_ms` already held -- no record field, no regex, no change to the arm
+        # under measurement. First-touch JIT clusters in the first few steps and never recurs;
+        # the block-16 absorb recurs on a 16-step lattice: the indices separate the two causes.
+        print(
+            f"[latency spikes ctx={ctx} arm={arm['name']} steps={','.join(map(str, spike_steps))}]",
             flush=True,
         )
         del cache, out

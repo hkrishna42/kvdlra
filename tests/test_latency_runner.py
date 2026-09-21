@@ -209,9 +209,17 @@ def test_the_printed_latency_line_is_what_the_harvest_regex_reads(
         },
     ]
     rows = run_latency(tiny_model, arms, 64, "cpu", chunk=32, n_steps=2, warmup=0, batch=1)
-    printed = [x for x in capsys.readouterr().out.splitlines() if x.startswith("[latency ")]
+    out = capsys.readouterr().out.splitlines()
+    printed = [x for x in out if x.startswith("[latency ctx")]  # the record lines only
     got = parse_latency_lines("\n".join(printed), model="tiny", source="log")
     assert len(printed) == len(got) == len(arms)
     assert [g["arm"] for g in got] == [r["method"] for r in rows] == ["full", "tiny_kernel"]
     assert all(g["batch"] == 1 and isinstance(g["kv_resident_gb"], float) for g in got)
     assert [g["backend"] for g in got] == [None, "reference"]  # a CPU query: never triton
+    # A2.4: the spike companion line is log-only -- one per cell, and it is NOT a record
+    # (`LATENCY_RE` does not match it, so a harvest never mistakes it for a decode row).
+    spikes = [x for x in out if x.startswith("[latency spikes ctx=")]
+    assert (
+        len(spikes) == len(arms)
+        and parse_latency_lines("\n".join(spikes), model="t", source="l") == []
+    )

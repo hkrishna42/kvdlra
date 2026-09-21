@@ -103,10 +103,15 @@ LATENCY_RE = re.compile(
 # errored prompt has no diff and no mismatch step); `error=` stays last and unanchored.
 # `backend=` (L4.fw1) sits between `sha=` and the tail and is OPTIONAL: the kernel_smoke
 # pod's own records were logged before the field existed and must keep parsing (as None).
+# The five Amendment-2 fields (A2.5) follow `backend=`, each OPTIONAL for the same reason --
+# instance 51903816's rows predate them and must keep parsing (as None). A field may hold a
+# negative logit (`kernel_logit_for_ref_argmax`), so `(\S+)` matches it and `-` alone is None.
 KERNEL_CHECK_RE = re.compile(
     r"^\[kernel_check prompt=(\d+) arm=(\S+) ctx=(\d+) n_new=(\d+) match=([01])"
     r" first_mismatch=(\S+) max_abs_diff=(\S+) worst_layer=(\S+) sha=(\S+)"
-    r"(?: backend=(\S+))?(?: error=(.*))?"
+    r"(?: backend=(\S+))?(?: rel_max_diff=(\S+))?(?: rel_worst_layer=(\S+))?"
+    r"(?: ref_max=(\S+))?(?: gap_at_mismatch=(\S+))?(?: kernel_logit_for_ref_argmax=(\S+))?"
+    r"(?: error=(.*))?"
 )
 # The payload is matched loosely and `json.loads` is the arbiter: a `\{.*\}` regex
 # could not see a row `vastai logs` cut in half at all, so a truncated diagnostic
@@ -217,7 +222,17 @@ class KernelCheckRecord(TypedDict):
 
     ``backend`` is which factored-attention backend attended
     (`kvdlra.kernel.select_backend`); ``None`` on an errored prompt and on a record logged
-    before L4.fw1 -- the kernel_smoke pod's own rows among them."""
+    before L4.fw1 -- the kernel_smoke pod's own rows among them.
+
+    The five Amendment-2 fields (A2.5) make §4's precondition computable in the units the
+    quantity is measured in: ``rel_max_diff`` = ``max_l(max|Δ_l| / max|ref_l|)`` (the relative
+    per-layer bar), ``rel_worst_layer`` the layer achieving it, ``ref_max`` = ``max|ref|`` there
+    (the denominator, so the ratio is auditable), ``gap_at_mismatch`` the reconstruct path's
+    top-1 minus top-2 logit at the first mismatching step, and ``kernel_logit_for_ref_argmax``
+    the kernel's logit for the token the reconstruct path chose there. All ``None`` on an
+    errored prompt, on a prompt that matched (``gap``/``kernel_logit``), and on every record
+    logged before Amendment 2 -- instance 51903816's rows among them, which is why the renderer
+    reports a row missing them as not computable rather than passing it silently."""
 
     model: str
     arm: str
@@ -228,6 +243,11 @@ class KernelCheckRecord(TypedDict):
     first_mismatch: int | None
     max_abs_diff: float | None
     worst_layer: int | None
+    rel_max_diff: float | None
+    rel_worst_layer: int | None
+    ref_max: float | None
+    gap_at_mismatch: float | None
+    kernel_logit_for_ref_argmax: float | None
     prompt_sha256: str
     backend: str | None
     error: str | None
@@ -495,7 +515,8 @@ def parse_kernel_check_lines(text: str, model: str, source: str) -> list[KernelC
         m = KERNEL_CHECK_RE.match(line)
         if not m:
             continue
-        prompt, arm, ctx, n_new, match, first, diff, worst, sha, backend, error = m.groups()
+        (prompt, arm, ctx, n_new, match, first, diff, worst, sha, backend,
+         rel_max, rel_layer, ref_max, gap, klogit, error) = m.groups()  # fmt: skip
         out.append(
             {
                 "model": model,
@@ -507,6 +528,13 @@ def parse_kernel_check_lines(text: str, model: str, source: str) -> list[KernelC
                 "first_mismatch": None if first == "-" else int(first),
                 "max_abs_diff": None if diff == "-" else float(diff),
                 "worst_layer": None if worst == "-" else int(worst),
+                # Amendment 2 (A2.5): absent (an archived row) or `-` (a matched prompt, or an
+                # error row) is None; a present value parses, negatives included.
+                "rel_max_diff": None if rel_max in (None, "-") else float(rel_max),
+                "rel_worst_layer": None if rel_layer in (None, "-") else int(rel_layer),
+                "ref_max": None if ref_max in (None, "-") else float(ref_max),
+                "gap_at_mismatch": None if gap in (None, "-") else float(gap),
+                "kernel_logit_for_ref_argmax": None if klogit in (None, "-") else float(klogit),
                 "prompt_sha256": sha,
                 "backend": _field(backend),
                 "error": error,

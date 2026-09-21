@@ -44,7 +44,8 @@ def _lines(n_prompts: int = 16) -> list[str]:
     out += [
         f"[kernel_check prompt={i} arm=isvd_r64_h256_seed_kernel ctx=4096 n_new=32 match=1"
         f" first_mismatch=- max_abs_diff=3.100e-03 worst_layer=17 sha={'a' * 64}"
-        f" backend=triton"
+        f" backend=triton rel_max_diff=3.100e-03 rel_worst_layer=17 ref_max=1.000e+00"
+        f" gap_at_mismatch=- kernel_logit_for_ref_argmax=-"
         for i in range(n_prompts)
     ]
     for i, ctx in enumerate(lat.ctxs or []):
@@ -90,7 +91,7 @@ def test_a_complete_kernel_smoke_harvest_passes_check_and_renders(
     out = tmp_path / "kernel_smoke.md"
     tables.latency_table(load_pod(POD), d, out)
     md = out.read_text()
-    assert "PRECONDITION: met (16/16 token-exact" in md
+    assert "PRECONDITION: met (16/16 effective (0 attributable, 0 near-tie mismatches)" in md
     assert "WEEK-3 GATE (batch 1): PASS" in md
     assert "archived 188.27 ms: agree (within 10%)" in md and "| 0.556 |" in md
     # The attested backend reaches the table, and only on the rows that ran one: every other

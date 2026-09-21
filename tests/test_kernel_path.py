@@ -15,6 +15,8 @@ module's CPU budget); the 16-prompt precondition itself is pinned by the `plain`
 
 from __future__ import annotations
 
+import copy
+import math
 from typing import Any, cast
 
 import pytest
@@ -219,6 +221,51 @@ def test_the_16_prompts_are_token_exact_in_fp32(
     # all-agree: 16/16 on "plain" (the pre-registered >= 14/16 precondition itself); 4/4 on
     # "exact_tier" (a narrower plumbing check kept small for the CPU budget)
     assert mismatches == [], mismatches
+
+
+def test_bf16_calibration_of_the_near_tie_margin(tiny_model: LlamaForCausalLM) -> None:
+    """Amendment 2 A2.3's $0 calibration of the near-tie margin M = 2**-5 * top1.
+
+    The pod runs bf16 end to end, where two equally valid roundings can diverge at a greedy
+    near-tie -- something the fp32 twin above (16/16 by summation order) never exercised. Here
+    the tiny model is cast to bf16 and, per step, we measure how far the kernel's logits sit
+    from the reconstruct path's, in units of one bf16 ulp of the step's own top logit:
+
+        rho_s = max_j |L_kernel[s,j] - L_recon[s,j]| / (u * max_j |L_recon[s,j]|),  u = 2**-8
+
+    over the reconstruct path's top-8 tokens. The kernel arm is teacher-forced on the
+    reconstruct twin's greedy tokens, so every step is a same-context comparison -- the kernel's
+    perturbation, not context drift. M assumes the 32 layers' independent roundings add in
+    quadrature to <= sqrt(32) = 5.66 -> 8; the extrapolation from the tiny model's L_tiny layers
+    is kappa = ceil_pow2(rho_hat * sqrt(32 / L_tiny)). kappa <= 8 leaves M as written; kappa > 8
+    is A2.3's revision branch, and the failure prints rho_hat / L_tiny / kappa for it. The
+    16 x 16 grid is the pre-registered sample and is never shrunk."""
+    u = 2.0**-8
+    bf16 = copy.deepcopy(tiny_model)
+    bf16.bfloat16()  # cast in place to bf16, the dtype the pod runs
+    bf16.eval()  # type: ignore[no-untyped-call]
+    rho_hat = 0.0
+    for prompt in tiny_prompts():  # all 16 prompts, TINY_N_NEW steps each -- never shrink this
+        ids = prompt[None]
+        recon = tiny_cache(bf16, decode_attention="reconstruct")
+        toks_r, logits_r = _greedy(bf16, recon, ids, TINY_N_NEW)
+        kern = tiny_cache(bf16, decode_attention="kernel")  # bf16 operands, exactly as the pod
+        stream = torch.tensor(toks_r, dtype=torch.long).view(1, -1)
+        logits_k = _teacher_forced(bf16, kern, ids, stream, CHUNK)  # same tokens: same context
+        for lr, lk in zip(logits_r, logits_k, strict=True):
+            lr, lk = lr.view(-1), lk.view(-1)
+            top8 = torch.topk(lr, 8).indices
+            den = u * lr[top8].abs().max().item()
+            num = (lk[top8] - lr[top8]).abs().max().item()
+            rho_hat = max(rho_hat, num / den if den > 0 else 0.0)
+    l_tiny = int(bf16.config.num_hidden_layers)
+    kappa_raw = rho_hat * math.sqrt(32 / l_tiny)
+    kappa = 2.0 ** math.ceil(math.log2(kappa_raw)) if kappa_raw > 0 else 1.0
+    print(f"[bf16_calibration] rho_hat={rho_hat:.4f} L_tiny={l_tiny} kappa={kappa:g}", flush=True)
+    assert kappa <= 8, (
+        f"kappa={kappa:g} > 8 (rho_hat={rho_hat:.4f}, L_tiny={l_tiny}): A2.3's revision branch --"
+        " M becomes kappa * u * top1, recorded with these numbers, before any launch commit"
+    )
 
 
 def test_batched_kernel_decode_equals_two_batch1_kernel_decodes(

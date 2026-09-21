@@ -73,12 +73,17 @@ def test_failed_row_and_its_line() -> None:
     line = kernel_check.format_line(row)
     assert line.startswith("[kernel_check prompt=4 arm=k ctx=10 n_new=32 match=0 first_mismatch=- ")
     assert "max_abs_diff=- worst_layer=- sha=" in line
-    assert " backend=- error=RuntimeError: boom" in line  # the tail stays last
+    # the five Amendment-2 fields (all `-` on an errored row) sit before the `error=` tail,
+    # which stays last (A2.5)
+    assert (" backend=- rel_max_diff=- rel_worst_layer=- ref_max=- gap_at_mismatch=-"
+            " kernel_logit_for_ref_argmax=- error=RuntimeError: boom") in line  # fmt: skip
     assert line.endswith(" error=RuntimeError: boom")
     (back,) = parse_kernel_check_lines(line, model="M", source="s")
     assert back["match"] == 0 and back["max_abs_diff"] is None and back["worst_layer"] is None
     assert back["first_mismatch"] is None and back["error"] == "RuntimeError: boom"
     assert back["backend"] is None  # no kernel attended: nothing to attest
+    assert back["rel_max_diff"] is None and back["gap_at_mismatch"] is None
+    assert back["kernel_logit_for_ref_argmax"] is None  # errored row: no relative bar, no logit
 
 
 def test_the_log_only_companion_lines_are_not_records() -> None:

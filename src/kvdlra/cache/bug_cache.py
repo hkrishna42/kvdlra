@@ -1872,9 +1872,10 @@ class BugStreamingCache(Cache):
         super().__init__(layers=layers)
         self.decode_attention = decode_attention
         # Set to {} by a caller before ONE decode forward to have the kernel attention
-        # function also run reconstruct-then-attend and record `layer_idx -> max|d|` here
-        # (the on-pod single-layer check, `kvdlra.eval.kernel_check`); None = off.
-        self.kernel_compare: dict[int, float] | None = None
+        # function also run reconstruct-then-attend and record `layer_idx -> (max|d|, max|ref|)`
+        # here (the on-pod single-layer check, `kvdlra.eval.kernel_check`); None = off. The
+        # `max|ref|` is the scale Amendment 2's relative bar divides by (A2.2).
+        self.kernel_compare: dict[int, tuple[float, float]] | None = None
         # Which backend actually attended (`kvdlra.kernel.select_backend`), set by the
         # attention function on the first kernel decode step and never changed after:
         # `backend="auto"` degrades to the torch reference on a live rank the Triton kernel

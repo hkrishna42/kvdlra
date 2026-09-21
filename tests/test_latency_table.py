@@ -8,14 +8,14 @@ import dataclasses
 import json
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import tables
 
 from kvdlra.accounting import bug_footprint
 from kvdlra.eval.config import PodCfg, load_arm, role_of
-from kvdlra.eval.records import write_jsonl
+from kvdlra.eval.records import KernelCheckRecord, write_jsonl
 
 MODEL = "unsloth/Meta-Llama-3.1-8B-Instruct"
 ARMS = ["full", "isvd_r64_h256_seed", "isvd_r64_h256_seed_kernel"]
@@ -41,14 +41,26 @@ def _row(role: str, i: int, **over: Any) -> dict[str, Any]:
     return {**r, **over}
 
 
-def _kc(n_match: int = 16, worst: float = 3.1e-3) -> list[dict[str, Any]]:
-    return [
-        {"model": MODEL, "arm": KEYS["kernel"], "ctx": 4096, "prompt": i, "n_new": 32,
-         "match": int(i < n_match), "first_mismatch": None if i < n_match else 7,
-         "max_abs_diff": worst if i == 0 else 1e-3, "worst_layer": 17, "prompt_sha256": "a" * 64,
-         "error": None, "source": "fixture:run"}
-        for i in range(16)
-    ]  # fmt: skip
+def _kc(n_match: int = 16, worst: float = 3.1e-3, ref_max: float = 1.0,
+        gap: float = 0.1, klogit: float = 20.0) -> list[dict[str, Any]]:  # fmt: skip
+    """16 Amendment-2-complete kernel-check records. `n_match` prompts match; the rest mismatch
+    with reconstruct top-2 gap `gap` and kernel-logit-at-ref `klogit` -- a mismatch is
+    attributable when `gap > 2**-5 * klogit`, a near-tie otherwise. `worst`/`ref_max` set the
+    relative bar `max|Δ|/max|ref|` on prompt 0 (worst) and `1e-3/ref_max` elsewhere."""
+    out = []
+    for i in range(16):
+        matched = i < n_match
+        d = worst if i == 0 else 1e-3
+        out.append(
+            {"model": MODEL, "arm": KEYS["kernel"], "ctx": 4096, "prompt": i, "n_new": 32,
+             "match": int(matched), "first_mismatch": None if matched else 7,
+             "max_abs_diff": d, "worst_layer": 17,
+             "rel_max_diff": d / ref_max, "rel_worst_layer": 17, "ref_max": ref_max,
+             "gap_at_mismatch": None if matched else gap,
+             "kernel_logit_for_ref_argmax": None if matched else klogit,
+             "prompt_sha256": "a" * 64, "error": None, "source": "fixture:run"}
+        )  # fmt: skip
+    return out
 
 
 def _results(tmp_path: Path, rows: list[dict[str, Any]], errors: int = 0,
@@ -105,7 +117,10 @@ def test_a_passing_pod_renders_the_table_and_the_verdict(tmp_path: Path) -> None
         in md
     )
     assert "archived 188.27 ms: agree (within 10%)" in md
-    assert "PRECONDITION: met (16/16 token-exact; worst max|d| 3.100e-03 at layer 17 < 1e-2)" in md
+    assert (
+        "PRECONDITION: met (16/16 effective (0 attributable, 0 near-tie mismatches);"
+        " rel 3.100e-03 at layer 17 <= 2^-6; max|d| 3.100e-03 at layer 17 (reported))"
+    ) in md
     assert "WEEK-3 GATE (batch 1): PASS" in md
 
 
@@ -128,10 +143,13 @@ def test_fail_marginal_and_refusals(tmp_path: Path) -> None:
     md = _render(tmp_path, rows=_full_grid(), errors=1, kc=_kc())
     assert "1 error row(s) in the manifest" in md and "WEEK-3 GATE (batch 1): REFUSED" in md
 
-    md = _render(tmp_path, rows=_full_grid(), kc=_kc(n_match=13))
-    assert "PRECONDITION: NOT met (13/16 token-exact" in md and "REFUSED" in md
+    # Amendment 2: three attributable mismatches (large gap) drop the effective count below 14.
+    md = _render(tmp_path, rows=_full_grid(), kc=_kc(n_match=13, gap=5.0))
+    assert "PRECONDITION: NOT met (13/16 effective (3 attributable" in md and "REFUSED" in md
+    # the relative per-layer bar: max|Δ|/max|ref| = 2e-2 / 1.0 > 2^-6 (the absolute number is
+    # reported, no longer a bar).
     md = _render(tmp_path, rows=_full_grid(), kc=_kc(worst=2e-2))
-    assert "PRECONDITION: NOT met" in md and "2.000e-02" in md
+    assert "PRECONDITION: NOT met" in md and "rel 2.000e-02 at layer 17 > 2^-6" in md
     md = _render(tmp_path, rows=_full_grid())
     assert "PRECONDITION: not recorded on this pod" in md
     # M-2 / R-L4-25: a kernel-role arm with no kernel_check.jsonl refuses the verdict.
@@ -139,6 +157,38 @@ def test_fail_marginal_and_refusals(tmp_path: Path) -> None:
         "WEEK-3 GATE (batch 1): REFUSED -- the correctness precondition was not recorded on"
         " this pod (no kernel_check.jsonl)" in md
     )
+
+
+def _precond(kc: list[dict[str, Any]]) -> str:
+    return cast(str, tables.precondition_line(cast(list[KernelCheckRecord], kc)))
+
+
+def test_precondition_line_cases() -> None:
+    """Amendment 2's `precondition_line`, unit: the relative per-layer bar (2^-6), the
+    near-tie split (a mismatch counts only when its gap exceeds 2^-5 * the top-logit scale),
+    and the refusal of a record that predates the amendment (no `rel_max_diff`)."""
+    # met: 16/16, rel 3.1e-3 <= 2^-6, no mismatches
+    assert _precond(_kc()).startswith("met (16/16 effective (0 attributable, 0 near-tie")
+    # relative-bar miss: max|Δ|/max|ref| = 3e-2 / 1.0 > 2^-6 (NOT met, the absolute is reported)
+    line = _precond(_kc(worst=3e-2, ref_max=1.0))
+    assert line.startswith("NOT met") and "rel 3.000e-02 at layer 17 > 2^-6" in line
+    assert "max|d| 3.000e-02 at layer 17 (reported)" in line
+    # attributable-mismatch miss: 3 mismatches with a large gap -> effective 13 < 14 -> NOT met
+    line = _precond(_kc(n_match=13, gap=5.0, klogit=20.0))
+    assert line.startswith("NOT met (13/16 effective (3 attributable, 0 near-tie mismatches)")
+    # near-tie-only: 3 mismatches with a tiny gap -> forgiven -> still met
+    line = _precond(_kc(n_match=13, gap=0.1, klogit=20.0))
+    assert line.startswith("met (16/16 effective (0 attributable, 3 near-tie mismatches)")
+    # None-fields refusal: a record predating Amendment 2 (no rel_max_diff) is not computable
+    old = _kc()
+    for r in old:
+        del r["rel_max_diff"]
+    line = _precond(old)
+    assert (
+        line.startswith("NOT met") and "not computable" in line and "predates Amendment 2" in line
+    )
+    # an empty check is None (the launch entry names the evidence path); no rows is not a pass
+    assert tables.precondition_line([]) is None
 
 
 def test_missing_and_errored_cells_say_so(tmp_path: Path) -> None:

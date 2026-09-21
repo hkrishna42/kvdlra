@@ -94,8 +94,13 @@ def factored_attention_forward(
         ref, _ = sdpa_attention_forward(
             module, query.float(), k_full.float(), v_full.float(), None, dropout=0.0, scaling=scale
         )  # fp32 over the bf16 stored representation -- the reference of test_kernel_reference.py
-        cache.kernel_compare[int(module.layer_idx)] = float(
-            (out.transpose(1, 2).float() - ref.float()).abs().max()
+        ref = ref.float()
+        # Amendment 2 (A2.2): store `(max|Δ|, max|ref|)` -- the relative bar `max|Δ|/max|ref|`
+        # needs the scale the absolute Δ was measured at. `max|ref|` is one extra `.abs().max()`
+        # on the reference this branch already materialized.
+        cache.kernel_compare[int(module.layer_idx)] = (
+            float((out.transpose(1, 2).float() - ref).abs().max()),
+            float(ref.abs().max()),
         )
     return out.transpose(1, 2).contiguous(), None
 

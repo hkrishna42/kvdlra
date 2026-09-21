@@ -1144,7 +1144,11 @@ N_LAYERS = {  # decoder layers -- an architecture constant, like N_FEATURES
 }
 GIB = 1024**3  # the GiB `kvdlra.eval.latency.GB` reports kv_peak_gb in
 GATE_CTX, SPEEDUP, MARGIN, SPIKES_MAX, AGREE = 32768, 3.0, 0.10, 8, 0.10  # prereg §4, §2 (a)
-DIFF_MAX, MATCH_MIN = 1e-2, 14  # prereg §4's precondition
+DIFF_MAX, MATCH_MIN = 1e-2, 14  # prereg §4: MATCH_MIN is the bar; DIFF_MAX is now the
+#                                 REPORTED absolute number, no longer a bar (Amendment 2 A2.2)
+REL_MAX, M_COEF = 2**-6, 2**-5  # Amendment 2: the relative per-layer bar (4 u, A2.2) and the
+#                                 near-tie margin coefficient (8 u, A2.3); u = 2**-8, both
+#                                 powers of two so they read as "4 / 8 bf16 ulp", not as fits
 LATENCY_FIELDS = ("ms_per_token_p50", "ms_mean", "ms_max", "spikes", "resident_gb", "peak_gb",
                   "kv_peak_gb", "kv_resident_gb")  # fmt: skip
 
@@ -1170,23 +1174,59 @@ def analytic_stored_gib(cfg: ArmCfg, ctx: int, model: str) -> float | None:
     return fp.stored_bits() * N_LAYERS[model] / 8 / GIB
 
 
+def _attributable(r: KernelCheckRecord) -> bool:
+    """A greedy mismatch counts against the kernel only if the reconstruct path's top-2 gap
+    exceeds the near-tie margin M = M_COEF * (the step's top-logit scale) (Amendment 2 A2.3).
+    The per-record scale is `kernel_logit_for_ref_argmax` -- the kernel's logit at the token
+    the reconstruct path chose (its top token), which equals the reconstruct top-1 logit to
+    within the kernel's own rounding at exactly the near-tie steps this threshold separates;
+    a large reversal (attributable) drives that logit down, only strengthening the call.
+    Otherwise (small gap) the mismatch is a near-tie divergence, not counted."""
+    gap, scale = r.get("gap_at_mismatch"), r.get("kernel_logit_for_ref_argmax")
+    return gap is not None and scale is not None and gap > M_COEF * scale
+
+
 def precondition_line(kc: Sequence[KernelCheckRecord]) -> str | None:
-    """prereg §4's precondition from `kernel_check.jsonl`: >= 14/16 token-exact AND the worst
-    per-layer max|Δ| < 1e-2. None when the pod carries no check (the launch entry then names
-    the evidence path)."""
+    """prereg §4's precondition from `kernel_check.jsonl`, as restated by Amendment 2: the
+    relative per-layer bar `max_l(max|Δ_l|/max|ref_l|) <= 2^-6`, at least 14/16 prompts whose
+    first mismatch is NOT attributable (near-tie divergences forgiven, A2.3), and no error
+    rows. The absolute worst max|Δ| is printed beside `rel` as a number, no longer a bar
+    (A2.2). None when the pod carries no check (the launch entry then names the evidence path);
+    a row that predates Amendment 2 (no `rel_max_diff`) is not computable and REFUSES, never a
+    silent pass."""
     if not kc:
         return None
-    n_match = sum(r["match"] for r in kc)
-    diffs = [(d, r["worst_layer"], r["prompt"]) for r in kc if (d := r["max_abs_diff"]) is not None]
+    n = len(kc)
     errors = sum(1 for r in kc if r.get("error"))
-    if not diffs:
-        return f"NOT met ({n_match}/{len(kc)} token-exact; no diff recorded; {errors} error rows)"
-    worst, layer, _ = max(diffs)
-    ok = n_match >= MATCH_MIN and worst < DIFF_MAX and errors == 0
-    detail = f"{n_match}/{len(kc)} token-exact; worst max|d| {worst:.3e} at layer {layer}"
+    checks = [r for r in kc if r["max_abs_diff"] is not None]
+    if not checks:
+        n_match = sum(r["match"] for r in kc)
+        return f"NOT met ({n_match}/{n} token-exact; no diff recorded; {errors} error rows)"
+    if any(r.get("rel_max_diff") is None for r in checks):
+        return (
+            f"NOT met (not computable: record predates Amendment 2 -- no rel_max_diff/max|ref| "
+            f"or logit fields; {n} rows, {errors} error rows)"
+        )
+    rel, rel_layer, _ = max(
+        (r["rel_max_diff"], r["rel_worst_layer"], r["prompt"]) for r in checks
+    )  # every checks row has rel_max_diff (guarded above); mypy sees `float | None`
+    abs_worst, abs_layer, _ = max(
+        (r["max_abs_diff"], r["worst_layer"], r["prompt"]) for r in checks
+    )
+    mism = [r for r in kc if r["match"] == 0 and not r.get("error")]
+    n_attr = sum(1 for r in mism if _attributable(r))
+    n_near = len(mism) - n_attr
+    effective = n - n_attr
+    assert rel is not None
+    ok = rel <= REL_MAX and effective >= MATCH_MIN and errors == 0
+    detail = (
+        f"{effective}/{n} effective ({n_attr} attributable, {n_near} near-tie mismatches);"
+        f" rel {rel:.3e} at layer {rel_layer} {'<=' if rel <= REL_MAX else '>'} 2^-6;"
+        f" max|d| {abs_worst:.3e} at layer {abs_layer} (reported)"
+    )
     if errors:
         detail += f"; {errors} error rows"
-    return f"{'met' if ok else 'NOT met'} ({detail} {'<' if worst < DIFF_MAX else '>='} 1e-2)"
+    return f"{'met' if ok else 'NOT met'} ({detail})"
 
 
 def week3_gate(

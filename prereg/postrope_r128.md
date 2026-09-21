@@ -267,7 +267,7 @@ try:
                        key=lambda r: (r["arm"], r["ctx"], r["corpus"]),
                        where="postrope_r128 x gate1_v2_stage1_llama")
     d_bits = paired_window_bits(bits[A, CTX, CORPUS], bits[B, CTX, CORPUS], f"{A} @ {CTX}", B)
-except (ValueError, KeyError) as exc:  # scored twice / not Stage 1's window set / no ppl rows
+except (ValueError, KeyError, OSError) as exc:  # scored twice / not Stage 1's window set / no ppl rows
     d_bits = []
     refused.append("broken window pairing")
     print("ppl: REFUSED — broken window pairing:", exc)

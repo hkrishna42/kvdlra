@@ -10,7 +10,7 @@ doc: >-
   `isvd_r64_h256_seed` rows by prompt_sha256 and window_idx (the pre-flight re-run's pairing,
   D-011 addendum 10). Sizing: 128 samples at <= 5.0 min/sample (the r128 rate bounded by the
   measured r256 5.2 and r64 3.3 min) = 10.7 h + 60 min boot = 11.7 h point; gpu_budget_h is the
-  2x bar. Launch only after Stage 1's Llama harvest is committed (nothing to pair against
+  2.05x bar. Launch only after Stage 1's Llama harvest is committed (nothing to pair against
   before it) and only by DECISIONS under D-011; not launched by lane L4.
 prereg: prereg/postrope_r128.md
 arms: ["isvd_postrope_r128"]

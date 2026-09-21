@@ -5,12 +5,14 @@ through its refusals and `--dry-run`, which print the command instead of running
 
 from __future__ import annotations
 
+import base64
 import json
 import shlex
 import shutil
 import signal
 import subprocess
 import sys
+import tomllib
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -1399,11 +1401,19 @@ def test_the_postrope_pod_hash_is_distinct() -> None:
 # recorded; `check` is what refuses the numbers.
 
 KERNEL_SMOKE_HASH = config_hash(load_pod("kernel_smoke"))
-PRE_RUN_LOG = [
-    "===PRE_RUN_BEGIN_kernel_smoke===",
+# The shape boot.sh produces: the decoded command echoed first, then pytest's own output
+# through the `| sed`. The `$ ...` row and the `-rA` per-item row both carry words the
+# failure gate looks for and must not trip it (R-L4-30).
+PRE_RUN_ROWS = [
+    f"[pre_run] $ {load_pod('kernel_smoke').pre_run}",  # boot.sh echoes what it decoded
+    "[pre_run] pytest 9.0.3",
     "[pre_run] PASSED tests/test_kernel_triton.py::test_triton_matches_the_reference[tight]",
     "[pre_run] max|d|=1.7e-03 rms=1.1e-05 (bars 2e-03 / 1e-04)",
-    "[pre_run] 8 passed in 41.2s",
+    "[pre_run] 7 passed, 1 skipped in 41.2s",
+]
+PRE_RUN_LOG = [
+    "===PRE_RUN_BEGIN_kernel_smoke===",
+    *PRE_RUN_ROWS,
     "===PRE_RUN_END_kernel_smoke_rc=0===",
 ]
 
@@ -1434,17 +1444,38 @@ def _kernel_smoke_harvest(d: Path, lines: list[str]) -> Path:
 
 
 def test_the_launch_hands_a_declared_pre_run_command_to_the_pod() -> None:
-    """boot.sh reads the command from `$PRE_RUN`, so it rides in the one `--env` string
-    beside POD/SHA/MODEL/DTYPE/MAX_HOURS -- shell-quoted whole, since the command carries
-    spaces and a pipe. A pod that declares none sends none: the hook is skipped there."""
+    """The command rides in the one `--env` string beside POD/SHA/MODEL/DTYPE/MAX_HOURS --
+    base64-encoded, not shell-quoted (R-L4-29): vast.ai's parser splits that string on
+    spaces outside quotes and toggles quoting on every `'`, so the command's inner
+    `'s/^/[pre_run] /'` would reach the pod truncated however it was quoted. Base64 is one
+    space-free, quote-free token, which is also why `shlex.quote` leaves it alone. A pod
+    that declares none sends neither variable: the hook is skipped there."""
     cmd = pod.launch_command("kernel_smoke", "12345678", "deadbeef")
     env = cmd[cmd.index("--env") + 1]
     want = load_pod("kernel_smoke").pre_run
-    assert want and env.count("-e PRE_RUN=") == 1
-    assert env.endswith(f" -e PRE_RUN={shlex.quote(want)}")
+    assert want and env.count("-e PRE_RUN_B64=") == 1
+    assert "-e PRE_RUN=" not in env  # the quoted hand-off is gone, not merely duplicated
+    b64 = env.split("-e PRE_RUN_B64=", 1)[1].split(" ")[0]
+    assert base64.b64decode(b64.encode(), validate=True).decode() == want
+    assert shlex.quote(b64) == b64  # a bare token: nothing for a shell to eat
     assert shlex.split(shlex.join(cmd)) == cmd  # what `--dry-run` prints, parsed back
     assert load_pod("gate1_v2_stage1_llama").pre_run is None
     assert "PRE_RUN" not in " ".join(pod.launch_command("gate1_v2_stage1_llama", "1", "deadbeef"))
+
+
+def test_the_pre_run_gate_leaves_pytest_one_quiet_flag() -> None:
+    """`check` reads the `N passed` count off pytest's counts row (R-L4-30) -- and pytest
+    prints that row only above verbosity -2 (`_pytest/terminal.py::summary_stats` returns
+    first below it). pyproject's `addopts` already carries one `-q`, so a second on the
+    command line silences the row and the gate would then refuse every run, passing or
+    failing, two hours into a paid boot. Measured, not assumed: with both, the whole gate
+    command prints no counts row; with one, `8 passed, 3 skipped, ... in 1.04s`."""
+    cmd = load_pod("kernel_smoke").pre_run
+    assert cmd and "-q" not in cmd.split()
+    addopts = tomllib.loads((REPO_ROOT / "pyproject.toml").read_bytes().decode())["tool"]["pytest"][
+        "ini_options"
+    ]["addopts"]
+    assert "-q" in addopts.split()  # the one that stays; the command adds no second
 
 
 def test_only_a_declared_pre_run_enters_the_config_hash() -> None:
@@ -1475,7 +1506,7 @@ def test_harvest_records_the_pre_run_rows_and_its_exit_code(tmp_path: Path) -> N
     d = _kernel_smoke_harvest(tmp_path / "ok", PRE_RUN_LOG)
     assert json.loads((d / "manifest.json").read_text())["pre_run_rc"] == 0
     assert (d / "pre_run.txt").read_text().splitlines() == [
-        x[len("[pre_run] ") :] for x in PRE_RUN_LOG[1:4]
+        x[len("[pre_run] ") :] for x in PRE_RUN_ROWS
     ]
     bare = _kernel_smoke_harvest(tmp_path / "bare", ["[stage] wall_clock_s 1.0"])
     assert json.loads((bare / "manifest.json").read_text())["pre_run_rc"] is None
@@ -1499,3 +1530,14 @@ def test_check_refuses_a_pod_whose_pre_run_did_not_pass(
     rc1 = [x.replace("_rc=0===", "_rc=1===") for x in PRE_RUN_LOG]
     assert "CHECK FAIL pre_run: rc=1" in checked("rc1", rc1)
     assert "CHECK FAIL pre_run: not recorded" in checked("absent", ["[stage] wall_clock_s 1.0"])
+    # R-L4-30. A card without a working CUDA skips every `gpu` item and pytest still exits
+    # 0, so the code alone would have passed the correctness precondition on a run of
+    # nothing; and a failing item is a failing gate whatever the counts row's first word.
+    skipped = [x.replace("7 passed, 1 skipped", "8 skipped") for x in PRE_RUN_LOG]
+    skipped.insert(-1, "[pre_run] ssssssss")
+    assert "CHECK FAIL pre_run: no passed row" in checked("skipped", skipped)
+    failed = [x.replace("7 passed, 1 skipped", "1 failed, 7 passed") for x in PRE_RUN_LOG]
+    failed.insert(-1, "[pre_run] FAILED tests/test_kernel_triton.py::test_batch_independence")
+    out = checked("failed", failed)
+    assert "CHECK FAIL pre_run: failures in the summary" in out
+    assert "CHECK FAIL pre_run: no passed row" not in out  # 7 of them did pass

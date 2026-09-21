@@ -657,3 +657,39 @@ mechanism now in the repository. It changes no reading, no threshold and no bar.
   hash, gained a sentence naming the hook). No manifest for this pod exists, so nothing that has
   already been recorded is invalidated; `make check` over the committed manifests is unaffected,
   because a pod that declares no `pre_run` does not carry the key into its hash.
+
+**2026-09-21 06:40 EDT, before the launch commit — the hand-off, the recorded version, and a
+third refusal.** The command above is superseded, verbatim, by:
+
+```
+python -m pytest --version 2>&1 | sed 's/^/[pre_run] /'; python -m pytest -m gpu -rA -p no:cacheprovider tests/test_kernel_triton.py tests/test_kernel_reference.py 2>&1 | sed 's/^/[pre_run] /'
+```
+
+— the same gate over the same items, with the tool's own version recorded ahead of it (under
+`bash -o pipefail -c` the exit status is the LAST pipeline's, so the recorded code is still the
+gate's pytest and not the `--version` call's), and with the `-q` of the previous wording
+**dropped**: `pyproject.toml`'s `addopts` already carries one, and a second puts pytest's
+terminal reporter at verbosity -2, where it prints no counts row at all
+(`_pytest/terminal.py::summary_stats` returns first) — measured on this clone, where the gate
+command with both flags produced rc 0 and zero counts rows, and with one produced
+`8 skipped, 8 deselected, 14 warnings in 0.07s` on a CUDA-less box and
+`8 passed, 3 skipped, 14 warnings in 1.04s` on the items that can run here. `-ra` in `addopts`
+is still overridden to `-rA` on the command line, so the per-item rows A1.2 asks for are
+unaffected. It reaches the instance **base64-encoded**, as `-e PRE_RUN_B64=`, and
+`scripts/pod/boot.sh` decodes it into `$PRE_RUN` before the hook: vast.ai's own `--env` parser
+(`vastai/utils.py`, read on the installed CLI) splits that string on spaces outside quotes and
+toggles the quote state on every `'`, so the command's inner `'s/^/[pre_run] /'` closes the outer
+quote and the value arrives truncated and unterminated, however it was quoted — verified on the
+installed parser, which returns the whole base64 token byte-intact and the quoted form cut at
+`python -m pytest --version 2>&1 | sed 's/^/[pre_run]`. The decoded command is echoed as the
+first `[pre_run] ` row (`$ <command>`), so `results/kernel_smoke/pre_run.txt` records what
+actually ran rather than what was meant to. **A third refusal** joins the two above:
+`scripts/pod.py check` also fails the pod with `CHECK FAIL pre_run: no passed row` unless
+`pre_run.txt` carries a pytest counts row with an `N passed` count, and with `CHECK FAIL
+pre_run: failures in the summary` when that row names a failure or an error — because
+`conftest` skips every `gpu` item on a card without CUDA and pytest exits 0 on an all-skipped
+run, so the exit code alone would have passed this precondition on a run of nothing. The check
+reads only a row of pytest's counts shape; `-rA`'s per-item `FAILED`/`ERROR` rows and the echoed
+command row are evidence, not verdicts. No reading, no threshold and no bar moves. `config_hash`
+moves again, because the pod YAML's `pre_run` value and `doc:` changed; no manifest for this pod
+exists, so nothing recorded is invalidated.

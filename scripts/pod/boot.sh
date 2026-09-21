@@ -20,9 +20,13 @@
 # unattended pod never bills past its budget plus the grace (D-011 addendum 8).
 #
 # A pod whose YAML declares `pre_run:` runs that command here, from the same clone, BEFORE
-# the entrypoint (`scripts/pod.py launch` passes it as `-e PRE_RUN=`); `===PRE_RUN_BEGIN_
-# ${POD}===` / `===PRE_RUN_END_${POD}_rc=<rc>===` bound it and carry its exit code, which
-# `pod.py harvest` puts in the manifest and `pod.py check` refuses the pod on.
+# the entrypoint. It arrives base64-encoded, as `-e PRE_RUN_B64=` (vast.ai's `--env` parser
+# splits the string on spaces outside quotes and toggles quoting on every `'`, so a quoted
+# shell command reaches the pod truncated -- base64 has neither character); the decode is
+# the first thing the hook does, and the decoded command is echoed as the hook's first
+# `[pre_run] ` row so the harvest records what actually ran. `===PRE_RUN_BEGIN_${POD}===` /
+# `===PRE_RUN_END_${POD}_rc=<rc>===` bound it and carry its exit code, which `pod.py
+# harvest` puts in the manifest and `pod.py check` refuses the pod on.
 #
 # EVERY marker this script prints carries the pod name: `===<MARKER>_${POD}...`. The
 # watchdog matches `===(ALL_DONE|RUN_FAILED|<boot failure>)_<pod>` and destroys the
@@ -125,9 +129,15 @@ echo "===ENV_END==="
 # the measurement's -- and a non-zero rc does NOT abort the pod: the tasks still run and
 # are still recorded, and `scripts/pod.py check` is what refuses the numbers. `-o pipefail`
 # so the rc is the command's own and not that of the `sed` that prefixes its rows.
+# `launch` sends the command base64-encoded because vast.ai's env parser mangles a quoted
+# one (see the header); a hand launch can still set a plain `PRE_RUN=` instead.
+if [ -n "${PRE_RUN_B64:-}" ]; then
+  PRE_RUN=$(printf '%s' "$PRE_RUN_B64" | base64 -d)
+fi
 if [ -n "${PRE_RUN:-}" ]; then
   pip install -q pytest 2>&1 | tail -1
   echo "===PRE_RUN_BEGIN_${POD}==="
+  echo "[pre_run] \$ $PRE_RUN"
   bash -o pipefail -c "$PRE_RUN"
   rc=$?
   echo "===PRE_RUN_END_${POD}_rc=${rc}==="

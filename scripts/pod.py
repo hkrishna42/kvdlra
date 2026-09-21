@@ -13,7 +13,9 @@ SHA, enforces the pre-registration commit order, and requires EVERY cell the con
 for -- arm x generator x sub-task x ctx -- to hold exactly `n_trials x len(seeds)` records,
 plus one perplexity record AND `n_samples` per-window records per (arm, ctx) for every
 `ppl` task, and one decode record per (arm, ctx, batch) for every `latency` task. A pod
-that declares `pre_run` must also hold a zero exit code from it. A trial that raised
+that declares `pre_run` must also hold a zero exit code from it AND a pytest counts row in
+`pre_run.txt` that passed something and failed nothing (rc 0 on an all-skipped run is a
+gate that did not run). A trial that raised
 is recorded with `error` and still counted, so a cell can never silently shrink; a cell
 with no records at all is the loudest failure there is, which is what makes a pod that
 produced nothing impossible to pass off as a clean run. And because recording rather than
@@ -32,6 +34,7 @@ entrypoint existed.
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import json
 import math
@@ -285,8 +288,9 @@ def launch_command(name: str, offer: str, sha: str, max_hours: float | None = No
     `boot.sh` needs five things from the environment: which pod config to run, which
     commit to check out, which weights to pull and in what dtype, and the bar in hours
     it enforces on the run with `timeout` (default: the pod's pre-registered
-    `gpu_budget_h`) -- plus `PRE_RUN`, the command the pod runs before the entrypoint,
-    for the pods that declare one. Everything else it reads from the SHA-pinned clone.
+    `gpu_budget_h`) -- plus `PRE_RUN_B64`, the base64 of the command the pod runs before
+    the entrypoint, for the pods that declare one. Everything else it reads from the
+    SHA-pinned clone.
     A bar of zero is refused, not passed on: `timeout 0h` disables the limit, and every
     v1 pod config carries `gpu_budget_h: 0.0`.
     """
@@ -303,10 +307,17 @@ def launch_command(name: str, offer: str, sha: str, max_hours: float | None = No
         f" -e MAX_HOURS={hours:g}"
     )
     if pod.pre_run:
-        # The sixth thing, and the only one that is not a bare token: boot.sh runs it as
-        # `bash -o pipefail -c "$PRE_RUN"`, so the whole command is quoted once here and
-        # its spaces, pipe and quotes reach the pod as written.
-        env += f" -e PRE_RUN={shlex.quote(pod.pre_run)}"
+        # The sixth thing, and the only one that is not a bare token -- so it does not
+        # travel as one. vast.ai's own `--env` parser (`vastai/utils.py`: `smart_split`
+        # splits on spaces outside quotes, toggling the quote state on EVERY `'`, and
+        # `parse_env` then `.strip("'\"")`s the value) tears a quoted shell command apart:
+        # the inner `'s/^/[pre_run] /'` closes the outer quote, the space inside the
+        # bracket ends the token, and the pod gets a truncated, unterminated command --
+        # a `bash -c` syntax error two hours into a paid boot, whatever the quoting here.
+        # Base64 (standard alphabet, padding kept) has no space and no quote, survives
+        # that parser byte-intact, and `shlex.quote` leaves it unquoted; boot.sh decodes
+        # it back into `$PRE_RUN` before the hook.
+        env += " -e PRE_RUN_B64=" + base64.b64encode(pod.pre_run.encode()).decode()
     return [
         "vastai",
         "create",
@@ -481,7 +492,15 @@ WALL_S_RE = re.compile(r"^\[stage\] wall_clock_s ([0-9.]+)\s*$", re.M)
 # `manifest["pre_run_rc"]` (what `check` refuses on), the rows into `pre_run.txt` (the
 # evidence the launch entry cites). The marker carries the pod name, as every marker of
 # boot.sh's does, so another pod's log cannot be read as this one's.
-PRE_RUN_ROW_RE = re.compile(r"^\[pre_run\] ?(.*)$", re.M)
+PRE_RUN_ROW_RE = re.compile(r"^\[pre_run\] ?(.*?)\s*$", re.M)
+# pytest's counts row -- the ONLY row of `pre_run.txt` that is a verdict. `-q` prints it
+# bare (`1 failed, 7 passed in 4.2s`); a non-quiet run wraps it in a `=` banner. The gate
+# below reads failed/error out of a row of this shape and nothing else, because `-rA`'s
+# per-item rows (`FAILED tests/x.py::test_y`, `ERROR ...`) and boot.sh's echo of the
+# command itself (`$ python -m pytest -m gpu ...`) carry the same words without being
+# verdicts -- and because pytest orders the counts failed, passed, skipped, ..., errors,
+# so neither word is reliably at the start of the row.
+PRE_RUN_COUNTS_RE = re.compile(r"^(?:=+ )?\d+ [a-z]+\b[^\n]*", re.M)
 
 
 def _env_from_log(text: str) -> list[str] | None:
@@ -877,8 +896,9 @@ def _kernel_check_fails(pod: PodCfg, d: Path) -> list[str]:
     return fails
 
 
-def _pre_run_fails(pod: PodCfg, m: dict[str, Any]) -> list[str]:
-    """A pod that declares `pre_run` holds its exit code, and that code is zero.
+def _pre_run_fails(pod: PodCfg, m: dict[str, Any], d: Path) -> list[str]:
+    """A pod that declares `pre_run` holds its exit code, that code is zero, AND the rows
+    it recorded are a pytest run that passed something.
 
     boot.sh does NOT abort on a failing hook -- the tasks still run and are still recorded,
     which is the point (a kernel that fails its correctness gate still produces the latency
@@ -886,13 +906,27 @@ def _pre_run_fails(pod: PodCfg, m: dict[str, Any]) -> list[str]:
     the numbers being cited. A missing code is the same refusal: a log with no
     `===PRE_RUN_END_<pod>_rc=` marker is a pod that never ran the command, or one whose
     marker the fetch lost, and neither is a gate that passed.
+
+    Ruling R-L4-30: `rc == 0` alone is not that gate. `conftest` skips every `gpu` item on a
+    pod without CUDA and pytest exits 0 on an all-skipped run (`ssssssss`, rc 0), so a card
+    that came up without a working CUDA would have passed the correctness precondition by
+    running none of it. The rows therefore have to show a `N passed` count and no failure
+    in the counts row -- read only out of a row of pytest's counts shape, never out of
+    `-rA`'s per-item lines or the echoed command.
     """
     if not pod.pre_run:
         return []
     rc = m.get("pre_run_rc")
     if rc is None:
         return ["pre_run: not recorded"]
-    return [] if int(rc) == 0 else [f"pre_run: rc={rc}"]
+    fails = [] if int(rc) == 0 else [f"pre_run: rc={rc}"]
+    p = d / "pre_run.txt"
+    counts = PRE_RUN_COUNTS_RE.findall(p.read_text() if p.is_file() else "")
+    if not any(re.search(r"\b\d+ passed\b", c) for c in counts):
+        fails.append("pre_run: no passed row")
+    if any(re.search(r"\b\d+ (?:failed|error)", c) for c in counts):
+        fails.append("pre_run: failures in the summary")
+    return fails
 
 
 def _env_fails(d: Path) -> list[str]:
@@ -985,7 +1019,7 @@ def check(d: Path, log: Path | None = None) -> int:
         fails += _pplw_fails(pod, d)
         fails += _latency_fails(pod, d)
         fails += _kernel_check_fails(pod, d)
-        fails += _pre_run_fails(pod, m)
+        fails += _pre_run_fails(pod, m, d)
     fails += _env_fails(d)
 
     for f in fails:

@@ -12,19 +12,38 @@ and its correction); prereg/bf16_gist.md; prereg/kernel_smoke.md; docs/adr/0001-
 docs/plan/lanes/L4_kernel.md and GATES.md §G3/§G4/§G5; docs/plan/reports/vt-template-comparison.md. Then state in one line
 each: what Stage 1 decides and by which function; what the kernel's Week-3 gate is; why the ss2/smoke pods still wait.
 
-## State at handover (the orchestrator fills this in at the end of the L3 session)
-- Lane L3+L5: merged into main at <SHA> / NOT yet merged (then: merge `lane/L3-gate1-tracker-swap-v2` `--no-ff` after
-  `make check` passes on results/gate1_preflight_rerun; the owner said "merge L3 when green after the harvest").
-- Pre-flight re-run `gate1_preflight_rerun` (instance 51815080 @ d4ed366): harvested at <SHA> with readings (i)/(iv) <pass/fail>
-  / still running (watchdog pid 9161; log in the previous session's scratchpad — if lost, `pod.py harvest --pod
-  gate1_preflight_rerun` fetches `vastai logs`; the pod self-destructs 2 h after ALL_DONE).
-- Amendment 1b to prereg/gate1_tracker_swap_v2.md: committed at <SHA> / NOT yet (then write it FIRST: the pre-flight rows as
-  §2's baseline; the vt exclusion 16 → 12 per D-018 with the template comparison's three sentences; the §9 re-size from
-  `cell_elapsed_s` — isvd 3.3, frozen 1.6, nogist <measured> min/sample, `full` 3.2 s; the A1a.9 attribution fix (0.0010 is
-  Qwen f0.01_qr64 − f0.01_tol); `EXCLUDED_TASKS = {"vt"}` lands with it, the pin test's family sizes 12/18/4).
-- Stage 1 (`gate1_v2_stage1_llama`, `_qwen`; bar 82 h each): LAUNCHED at <SHA>, instances <ids>, offers <ids> / NOT yet (then
-  launch under D-003 + D-011 with the Mac ON AC POWER, two instances at once, watchdogs under `caffeinate -s -i`, a
-  DECISIONS line per pod; expected ≈ 41 h wall each, $37–61 total; ask the owner for a top-up when credit < $35).
+## State at handover (written 2026-09-20 21:20 EDT while the pre-flight re-run was still running; every line has an "already done" branch — check `git log main` and `docs/plan/STATE.md` first)
+- Lane L3+L5 sits on `lane/L3-gate1-tracker-swap-v2` @ f3006fc (pushed; 47 commits over main @ 278bd01; L6 gate PASS at 6065e4e,
+  Task 8 — the bf16 retrieval reading in the gate1 table — landed after it). NOT merged. The owner said "merge L3 when green after
+  the harvest": once results/gate1_preflight_rerun/ is harvested and `scripts/pod.py check results/gate1_preflight_rerun` is OK,
+  and Amendment 1b is committed, re-run the L6 gate on the final lane SHA (scratchpad script pattern: fresh clone of the pushed
+  branch, make env/test/tables/figures/check, tree clean, forbidden-word grep), then `git merge --no-ff` into main from the main
+  checkout, verify (make test / tables / check / ruff), push main, delete the lane branch and worktree. If `git log main` already
+  shows the merge commit, skip all of this.
+- Pre-flight re-run `gate1_preflight_rerun` (instance 51815080 @ d4ed366, offer 50895886, bar 14 h, ≈ $4): launched 17:53 EDT
+  2026-09-20 with a watchdog (pid 9161, `caffeinate -s -i`, Mac on AC) whose log lives in the L3 session's scratchpad. Expected
+  ALL_DONE ≈ 02:00 EDT 2026-09-21; the watchdog harvests and destroys the instance. If results/gate1_preflight_rerun/trials.jsonl
+  is missing: `.venv/bin/python scripts/pod.py harvest --pod gate1_preflight_rerun` (the pod replays its records before ALL_DONE, so
+  the log tail is complete); if the instance still exists (`vastai show instances`), destroy it after the harvest. Commit the
+  records (manifest, trials, diag, env) by explicit path. Signals seen live: isvd 0.83 / 0.25 / 0.25 / 0.25 / vt 0.42; nogist_h2423
+  1.00 / 1.00 on single/multikey at matched stored bytes (the exact tier carries retrieval on real documents — the Week-12 mechanism).
+- Amendment 1b to prereg/gate1_tracker_swap_v2.md: NOT written. Write it FIRST (append-only, dated): §2's measured baseline from
+  results/gate1_preflight/ (the complete `full` arm) + results/gate1_preflight_rerun/ (isvd, nogist, frozen; pair by `prompt_sha256`
+  across the two pods — reading (iii)); reading (iv) from `manifest.cell_elapsed_s` (isvd ≈ 3.3, frozen ≈ 1.6, nogist = measured,
+  `full` 3.2 s per sample) against the triggers → §9 re-sized if a trigger fires, else confirmed; the vt exclusion 16 → 12 (primary)
+  and 24 → 18 (secondary) per D-018 with the three quotable sentences of docs/plan/reports/vt-template-comparison.md (Verdict B);
+  `EXCLUDED_TASKS = {"vt"}` in src/kvdlra/eval/gate1.py landing in the same commit with the pin test's family sizes 12/18/4; the
+  A1a.9 attribution fix (the 0.0010 minimum is Qwen `isvd_r256_f0.01_qr64 − isvd_r256_f0.01_tol`); the digest-drop scope and the
+  verdict signature are already in Amendment 1a. Task-review it as a scientist (the L3 pattern) before the launch commit.
+- Stage 1 (`gate1_v2_stage1_llama`, `gate1_v2_stage1_qwen`; bar 82 h each): NOT launched. Launch from MAIN after the merge
+  (`pod.py launch --pod <pod> --offer <id>` per pod, two A100 SXM4 40 GB instances at once, reliability ≥ 0.99, ≈ $0.60–0.70/h,
+  avoid the California PCIe host family 5116338x that stalled in L2), watchdogs under `caffeinate -s -i` with the Mac ON AC, a
+  DECISIONS D-011 addendum per pod (SHAs, offer, rate, bar, credit), STATE line. Expected ≈ 41 h wall each, $37–61 total; the owner
+  said "start it; let me know if you are running low, I'll top up" — ask when credit < $35 (credit ≈ $84 on 2026-09-20 20:30).
+  The launch commit must descend from Amendment 1b's commit.
+- Deferred to L6 / Phase 2 (do not do before Stage 1 launches): the vt generator repair as NEW task files + a 1 GPU-h `full` vt
+  validation cell (D-018 addendum); the deferred minors in docs/plan/cleanup/l3-ledger.md and the whole-branch review's triage
+  table (recon's private-name reach-in, the L2_PODS table name, the docstring items, the oja tuning-number mismatch with D-014).
 
 ## Mode
 superpowers subagent-driven-development exactly as L1–L3 ran it: fresh implementer per task, task review (spec + quality)

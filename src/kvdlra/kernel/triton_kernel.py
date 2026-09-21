@@ -18,12 +18,14 @@ import triton
 import triton.language as tl
 from torch import Tensor
 
+from kvdlra.kernel import G_PAD, TARGET_PROGRAMS, _pow2, n_splits_for
 from kvdlra.kernel.reference import FactoredMiddle
 
+# `G_PAD` (tl.dot needs M >= 16, so one KV head's G query rows are padded to 16),
+# `TARGET_PROGRAMS` (~ the SM count: B*H_kv*n_splits reaches it), the split count and the
+# power-of-two test are defined in `kvdlra.kernel` and re-exported here: `backend="auto"`
+# tests the same shape refusals WITHOUT importing this module, which needs triton (R-L4-22).
 __all__ = ["G_PAD", "TARGET_PROGRAMS", "factored_attention"]
-
-G_PAD = 16  # tl.dot needs M >= 16: the G query heads of one KV head are padded to 16 rows
-TARGET_PROGRAMS = 128  # ~ the SM count (A100 108, H100 132): B*H_kv*n_splits reaches it
 
 
 @triton.jit  # type: ignore[untyped-decorator]
@@ -141,10 +143,6 @@ def _tiles_kernel(  # type: ignore[no-untyped-def]
     tl.store(ACC_OUT + (base + g)[:, None] * D + dd[None, :], acc)
 
 
-def _pow2(x: int, at_least: int) -> bool:
-    return x >= at_least and (x & (x - 1)) == 0
-
-
 def factored_attention(
     query: Tensor,
     dense_k: Tensor,
@@ -159,13 +157,20 @@ def factored_attention(
 ) -> Tensor:
     """`kvdlra.kernel.reference.factored_attention`, on CUDA. Constraints: bf16 operands,
     ``D`` a power of two >= 32, ``r`` a power of two >= 16, ``tile`` a power of two >= 16,
-    ``H_q / H_kv <= 16`` (Llama-3.1-8B: D 128, r 64, G 4)."""
+    ``H_q / H_kv <= 16`` (Llama-3.1-8B: D 128, r 64, G 4); every tensor on the device,
+    ``inv_freq`` of length ``D // 2``, and the middle's batch the query's."""
     if operand_dtype is not torch.bfloat16:
         raise ValueError(
             "the Triton backend computes with bf16 tile operands; use the reference for fp32"
         )
-    if not query.is_cuda:
-        raise ValueError("the Triton backend needs CUDA tensors")
+    # Every pointer the launch passes. A tensor left on the host is a host pointer inside
+    # the kernel -- an illegal memory access with no useful message (M-6).
+    tensors = {"query": query, "dense_k": dense_k, "dense_v": dense_v, "inv_freq": inv_freq}
+    if mid is not None and mid.n_columns:
+        tensors |= {"u_k": mid.u_k, "u_v": mid.u_v, "c_k": mid.c_k, "c_v": mid.c_v,
+                    "positions": mid.positions}  # fmt: skip
+    if host := [n for n, t in tensors.items() if not t.is_cuda]:
+        raise ValueError(f"the Triton backend needs CUDA tensors; on the host: {host}")
     b, h_q, q_len, d = query.shape
     if q_len != 1:
         raise ValueError(f"decode-only: q_len must be 1, got {q_len}")
@@ -177,6 +182,8 @@ def factored_attention(
         raise ValueError(f"D ({d}) and tile ({tile}) must be powers of two >= 32 and 16")
     if dense_v.shape != dense_k.shape:  # one set of strides addresses both
         raise ValueError(f"dense_v {tuple(dense_v.shape)} != dense_k {tuple(dense_k.shape)}")
+    if inv_freq.shape != (d // 2,):  # `tl.load(INV_FREQ + dh)` is unmasked (M-5)
+        raise ValueError(f"inv_freq {tuple(inv_freq.shape)} must be (D // 2,) = {(d // 2,)}")
     dev = query.device
     if mid is None or mid.n_columns == 0:
         n_mid, r = 0, 16
@@ -189,11 +196,13 @@ def factored_attention(
             raise ValueError(f"r ({r}) must be a power of two >= 16")
         if int(mid.u_k.shape[1]) != h_kv * d:
             raise ValueError(f"U has {int(mid.u_k.shape[1])} rows, expected {h_kv * d}")
+        if int(mid.u_k.shape[0]) != b:  # the launch indexes the middle by the query's b (M-7)
+            raise ValueError(f"the middle has {int(mid.u_k.shape[0])} batch rows, query has {b}")
         u_k, u_v = mid.u_k.contiguous(), mid.u_v.contiguous()
         c_k, c_v = mid.c_k.contiguous(), mid.c_v.contiguous()
         pos = mid.positions.to(torch.int32).contiguous()
     n_tiles = -(-n_mid // tile)
-    n_splits = max(1, min(n_tiles, -(-TARGET_PROGRAMS // (b * h_kv))))
+    n_splits = n_splits_for(b, h_kv, n_tiles)
     tiles_per_split = -(-n_tiles // n_splits) if n_tiles else 0
     n_dense = int(dense_k.shape[2])
     q = query.contiguous()

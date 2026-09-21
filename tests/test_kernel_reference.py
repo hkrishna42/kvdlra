@@ -10,7 +10,10 @@ K̂/V̂/P at the tensor-core inputs). Expected ~1e-3; the bar is 1e-2. In fp32 o
 two paths differ only by summation order and agree to 1e-4 -- the plumbing pin.
 
 BACKENDS grows a gpu-marked "triton" entry in Task 5; the same assertions then run on CUDA.
-The 1B-dump test is skipped where the gitignored 4.7 GB tree is absent (CI).
+The 1B-dump test is skipped where the gitignored 4.7 GB tree is absent (CI). The Triton
+backend's split count and the shape refusals `backend="auto"` degrades on are integer
+arithmetic over shapes, so they live in `kvdlra.kernel` and are tested here, on the CPU
+(R-L4-21, R-L4-22) -- the kernel module itself cannot be imported without triton.
 """
 
 from __future__ import annotations
@@ -25,7 +28,13 @@ from transformers import LlamaConfig
 from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding, rotate_half
 
 from kvdlra.cache.bug_cache import BugStreamingLayer, _RopeAngles
-from kvdlra.kernel import FactoredMiddle, factored_attention
+from kvdlra.kernel import (
+    FactoredMiddle,
+    _shapes_eligible,
+    _triton_eligible,
+    factored_attention,
+    n_splits_for,
+)
 from kvdlra.kernel.reference import rope_cos_sin
 
 BACKENDS: list[object] = ["reference"]
@@ -154,6 +163,36 @@ def test_rope_cos_sin_is_the_models_own() -> None:
     cos, sin = rope_cos_sin(pos, emb.inv_freq, emb.attention_scaling)
     want_cos, want_sin = emb(torch.empty(1), pos)
     assert torch.equal(cos, want_cos) and torch.equal(sin, want_sin)  # bit for bit
+
+
+def test_n_splits_for_is_the_kernels_own_split_count() -> None:
+    """The Triton backend's launch geometry, on the CPU (the kernel itself cannot be
+    imported without triton): B = 16 rows at H_kv = 8 reaches TARGET_PROGRAMS in ONE split
+    -- the premise of the tight bar in tests/test_kernel_triton.py -- while a single row
+    cuts the same 32 tiles 16 ways, and no call ever asks for more splits than tiles."""
+    assert n_splits_for(16, H_KV, 32) == 1 and n_splits_for(1, H_KV, 32) == 16
+    assert n_splits_for(2, H_KV, 32) == 8 and n_splits_for(64, H_KV, 32) == 1
+    assert n_splits_for(1, H_KV, 4) == 4 and n_splits_for(1, H_KV, 0) == 1  # empty middle
+
+
+def test_auto_falls_back_to_the_reference_where_the_kernel_would_refuse() -> None:
+    """R-L4-22: `min_sv_frac > 0` shrinks the live rank to an arbitrary integer and r192
+    arms exist, so `backend="auto"` degrades to the reference on a shape the Triton kernel
+    refuses instead of raising its ValueError mid-decode (an explicit `backend="triton"`
+    still raises). The shape half of that decision is the kernel's own refusals, which is
+    what `_shapes_eligible` pins here; `_triton_eligible` is False on this tree whatever
+    the shapes, there being neither CUDA nor triton."""
+    q, dk, _, mid = random_case(7, True, torch.bfloat16)
+    r48 = FactoredMiddle(
+        mid.u_k[:, :, :48], mid.u_v[:, :, :48], mid.c_k[:, :48], mid.c_v[:, :48], mid.positions
+    )
+    assert _shapes_eligible(q, mid, H_KV)  # the 8B shapes: r 64, D 128, G 4
+    assert _shapes_eligible(q, None, H_KV)  # no middle: no rank to refuse
+    assert not _shapes_eligible(q, r48, H_KV)  # a live rank between the powers of two
+    assert not _shapes_eligible(q[:, :, :, :96], mid, H_KV)  # D 96
+    assert not _shapes_eligible(q, mid, 1)  # G = 32 query heads per KV head
+    assert not _triton_eligible(q, dk, r48, torch.bfloat16)
+    assert not _triton_eligible(q, dk, mid, torch.bfloat16)
 
 
 def middle_and_dense(layer: BugStreamingLayer) -> tuple[FactoredMiddle, Tensor, Tensor]:

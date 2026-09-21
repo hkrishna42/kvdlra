@@ -17,9 +17,10 @@ from transformers import LlamaForCausalLM
 
 from kvdlra.cache import BugStreamingCache
 from kvdlra.cache.bug_cache import BugStreamingLayer
-from kvdlra.eval.frontier import _prefill_chunked
+from kvdlra.eval.frontier import _footprint, _prefill_chunked
 from kvdlra.eval.latency import run_latency
-from tests.conftest import tiny_cache
+from kvdlra.eval.persist import state_tensors
+from tests.conftest import N_FEATURES, H, tiny_cache
 
 TINY_SDPA = True
 T, CHUNK, N_NEW = 48, 16, 12
@@ -156,3 +157,37 @@ def test_run_latency_runs_at_batch_2(tiny_model: LlamaForCausalLM) -> None:
     rows = run_latency(tiny_model, arms, 96, "cpu", chunk=32, n_steps=4, warmup=1, batch=2)
     assert [r["method"] for r in rows] == ["full", "tiny_bug"]
     assert all(r["batch"] == 2 and r["n_steps"] == 3 and r["ms_per_tok_p50"] > 0 for r in rows)
+
+
+# --- R-L4-8: batch > 1 refuses where batch-1 state would be read silently ---------------
+
+BUG_ARM = {"name": "tiny_bug", "kind": "bug", "rank": 8, "retention": "fifo"}
+
+
+def test_eval_side_readers_of_per_layer_state_refuse_at_batch_2(
+    tiny_model: LlamaForCausalLM,
+) -> None:
+    """A batch > 1 cache holds its tensors on the row layers; the parent's are empty. The
+    two eval-side readers that take a cache and read layer tensors would have billed a
+    rank-0 gist (`_footprint`) and persisted an empty state (`persist.state_tensors`), so
+    both refuse. The third guarded site (`run_ppl`'s tracked-rank read) cannot be reached
+    from here: `run_ppl` builds its own batch-1 caches and records any exception as an
+    error row, and `_footprint` runs one line above it."""
+    cache = tiny_cache(tiny_model)
+    with torch.no_grad():
+        tiny_model(torch.cat([_prompt(1), _prompt(2)]), past_key_values=cache, use_cache=True)
+    assert _rows(cache._bug_layers()[0]) is not None
+    with pytest.raises(NotImplementedError, match="batch-1 only"):
+        _footprint(BUG_ARM, cache, t=T, n=N_FEATURES, h_kv=H)
+    with pytest.raises(NotImplementedError, match="batch-1 only"):
+        state_tensors("bug", cache)
+
+
+def test_a_batch2_update_after_batch1_updates_refuses(tiny_model: LlamaForCausalLM) -> None:
+    """Rows are built empty, so a 1 -> B transition on a populated layer would attend the
+    batched run to nothing. Rows may only be built on a fresh layer."""
+    cache = tiny_cache(tiny_model)
+    with torch.no_grad():
+        tiny_model(_prompt(3), past_key_values=cache, use_cache=True)
+        with pytest.raises(NotImplementedError, match="cannot follow"):
+            tiny_model(torch.cat([_prompt(3), _prompt(4)]), past_key_values=cache, use_cache=True)

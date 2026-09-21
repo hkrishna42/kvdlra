@@ -50,6 +50,13 @@ def state_tensors(kind: str, cache: Any) -> dict[str, torch.Tensor]:
         return out
     if kind == "bug":
         for i, layer in enumerate(cache._bug_layers()):
+            # L4.1 (R-L4-8): at batch > 1 the state lives on the layer's row layers and the
+            # parent holds none -- persisting it here would write an EMPTY state as if real.
+            if layer._rows is not None:
+                raise NotImplementedError(
+                    "state_tensors: the persisted per-layer state is batch-1 only; this "
+                    "cache holds B row layers"
+                )
             for name in _BUG_ATTRS:
                 t = getattr(layer, name, None)
                 if isinstance(t, torch.Tensor):

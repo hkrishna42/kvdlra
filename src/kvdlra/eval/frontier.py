@@ -353,6 +353,13 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
     if kind == "bug":
         assert isinstance(cache, BugStreamingCache)
         layers = cache._bug_layers()
+        for la in layers:
+            # L4.1 (R-L4-8): at batch > 1 a layer's tensors live on its row layers and the
+            # parent holds none -- reading them here would bill a rank-0 gist as a number.
+            if la._rows is not None:
+                raise NotImplementedError(
+                    "_footprint: per-layer footprint is batch-1 only; this cache holds B row layers"
+                )
         layer = layers[0]
         # The LIVE tracked rank, never arm["rank"]. Every rank term in `bug_footprint`
         # is `2*rank*x` -- symmetric in the two streams -- so where the floor collapsed
@@ -556,6 +563,14 @@ def run_ppl(
                             # The narrowest K basis in the cache: the ppl axis's
                             # one-number view of how far the floor collapsed the gist
                             # (`diag.jsonl` carries the per-layer K and V ranks).
+                            for la in cache._bug_layers():
+                                # L4.1 (R-L4-8), as in `_footprint`: the parent layers of a
+                                # batch > 1 cache hold no basis, so this read would report 0.
+                                if la._rows is not None:
+                                    raise NotImplementedError(
+                                        "run_ppl: the per-layer tracked rank is batch-1 "
+                                        "only; this cache holds B row layers"
+                                    )
                             eff_rank = min(_tracked_rank(la.u_k) for la in cache._bug_layers())
                     del cache
                     gc.collect()

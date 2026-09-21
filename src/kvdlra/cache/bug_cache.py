@@ -1310,6 +1310,13 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         lengths agree by construction; a disagreement is a bug and raises rather than pads."""
         b = int(key_states.shape[0])
         if self._rows is None:
+            if self.cumulative_length != 0:
+                # R-L4-8: the rows would start empty while this layer already carries a
+                # batch-1 stream, so the batched run would silently attend to nothing.
+                raise NotImplementedError(
+                    f"BugStreamingLayer: a batch-{b} update cannot follow batch-1 updates on "
+                    f"the same layer (cumulative_length={self.cumulative_length}); reset() first"
+                )
             self._rows = [BugStreamingLayer(**self._ctor_kwargs) for _ in range(b)]
             for row in self._rows:
                 row._mode = self._mode

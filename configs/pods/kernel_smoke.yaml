@@ -1,0 +1,22 @@
+name: kernel_smoke
+model: "unsloth/Meta-Llama-3.1-8B-Instruct"
+dtype: bfloat16
+doc: >-
+  The Week-3 kernel measurement (lane L4; prereg/kernel_smoke.md, cell list A as amended by its
+  Amendment 1): does the fused factored-attention kernel of ADR 0001 option (iii) beat full KV on
+  peak decode VRAM at 32K and the reconstruct path by >= 3x on ms/token? Three arms in section 3's
+  order -- the uncompressed reference, the r64 configuration on today's reconstruct path, the same
+  configuration with `decode_attention: kernel` -- on one A100-40GB, batch 1, 16K / 32K / 64K, 64
+  decode steps of which 56 are timed. The correctness precondition of section 4 runs FIRST on this
+  pod as the `kernel_check_16` task (the 16 committed pg19-val prompts, greedy token-exact under both
+  paths, and the per-layer max|delta| of the first kernel decode step on live 8B K/V); the Week-3
+  reading (`make kernel_smoke`) is refused unless it passes. Every reading is within-pod; the
+  archived Week-20 rows are printed beside the re-measured ones. Sizing (Amendment 1): 1.8 h point
+  for the nine latency cells + ~0.45 h for the check = 2.25 h; gpu_budget_h is the 2.2x bar
+  `pod.py launch --max-hours` enforces. Launch = DECISIONS under D-011, after the precondition is
+  recorded; never by an implementer.
+prereg: prereg/kernel_smoke.md
+arms: ["full", "isvd_r64_h256_seed", "isvd_r64_h256_seed_kernel"]
+tasks: ["kernel_check_16", "latency_16k_32k_64k"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+gpu_budget_h: 5.0

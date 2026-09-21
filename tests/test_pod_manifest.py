@@ -16,7 +16,14 @@ from types import SimpleNamespace
 import pod
 import pytest
 
-from kvdlra.eval.config import TaskV2Cfg, config_hash, load_arm, load_pod, load_task
+from kvdlra.eval.config import (
+    TaskKernelCheckCfg,
+    TaskV2Cfg,
+    config_hash,
+    load_arm,
+    load_pod,
+    load_task,
+)
 from kvdlra.eval.frontier import build_arm
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -1333,3 +1340,37 @@ def test_harvest_reads_a_log_with_the_replay_as_one_without_it(
     assert {f: (tmp_path / f).read_text() for f in files} == plain
     assert json.loads((tmp_path / "manifest.json").read_text())["records"] == records
     capsys.readouterr()
+
+
+# --- L4.8: the kernel-smoke pod (prereg/kernel_smoke.md, Amendment 1) -----------------------
+
+KERNEL_SMOKE_ARMS = ["full", "isvd_r64_h256_seed", "isvd_r64_h256_seed_kernel"]
+KERNEL_SMOKE_TASKS = ["kernel_check_16", "latency_16k_32k_64k"]
+
+
+def test_the_kernel_smoke_pod_is_its_prereg_design() -> None:
+    """Section 3's three arms in its order (the two reference arms first, untouched files), the
+    correctness check BEFORE the measurement (section 4: no speed reading without it), cell
+    list A (batch 1, three contexts, 64 steps / 8 warm-up, chunk 4096) on the shipped task
+    file, the Amendment-1 bar, and a hash distinct from every other pinned pod's."""
+    p = load_pod("kernel_smoke")
+    assert p.prereg == "prereg/kernel_smoke.md" and (REPO_ROOT / p.prereg).is_file()
+    assert p.model == "unsloth/Meta-Llama-3.1-8B-Instruct"
+    assert p.dtype == "bfloat16" and "-devel" in p.image
+    assert p.arms == KERNEL_SMOKE_ARMS and p.tasks == KERNEL_SMOKE_TASKS
+    assert p.gpu_budget_h == 5.0
+    for a in p.arms:
+        cfg = load_arm(a)
+        assert cfg.name == a
+        assert build_arm(cfg, model=None, t=65536)["name"] == (cfg.legacy_name or a)
+    base, kern = load_arm(KERNEL_SMOKE_ARMS[1]), load_arm(KERNEL_SMOKE_ARMS[2])
+    assert kern.cache == {**base.cache, "decode_attention": "kernel"}
+    lat = load_task("latency_16k_32k_64k")
+    assert (lat.ctxs, lat.batch_sizes, lat.n_steps, lat.warmup, lat.chunk) == (
+        [16384, 32768, 65536], [1], 64, 8, 4096
+    )  # fmt: skip
+    kc = load_task("kernel_check_16")
+    assert isinstance(kc, TaskKernelCheckCfg)
+    assert (kc.ctx, kc.chunk, kc.n_new, kc.n_prompts) == (4096, 1024, 32, 16)
+    every = [*L2_PODS, *GATE1_PODS, "kernel_smoke"]
+    assert len({config_hash(load_pod(n)) for n in every}) == len(every)

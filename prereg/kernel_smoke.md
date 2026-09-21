@@ -456,3 +456,151 @@ path. This pod asks one question — does the kernel beat full KV on peak VRAM a
 reconstruct path by ≥ 3× on ms/token — and nine cells answer that one.
 
 **STATUS: awaiting L4's kernel (DECISIONS D-002).**
+
+## Amendment 1 (2026-09-21, lane L4, before the launch commit)
+
+§1–§11 are left exactly as written. This amendment names what §10 said L4 would name, takes §4's
+own escape hatch for the full-model check, and re-states the budget and the log volume it
+changes. Read it before reading §3, §4, §7, §8 and §9 below it.
+
+### A1.1 The kernel arm, its knob, and the pod YAML (§3, §10)
+
+- The knob is `decode_attention` on the `cache:` block of a `bug`-kind arm: `"reconstruct"`
+  (the default, today's path, bit-identical — `tests/test_golden_cache.py`) or `"kernel"` (ADR
+  0001 option (iii): a decode step returns only `[sinks | exact tier | recent | new token]` and
+  the attention function registered for the attach scope attends the low-rank middle from
+  `(U, C)` tile by tile, RoPE in-kernel in fp32 at the true positions, the dense tokens as
+  further tiles of the same online softmax). A second knob, `kernel_operand_dtype`
+  (`"bfloat16"` default), is the tensor-core input width; the pod runs the default.
+  `run_latency` needed no dispatch change: the arm is `bug`-kind.
+- Arm 3 is `configs/arms/isvd_r64_h256_seed_kernel.yaml` (commit `99842f2`): arm 2's
+  `cache:` block verbatim plus `decode_attention: "kernel"`, record key
+  `isvd_r64_h256_seed_kernel`. Prefill, chunked ingest, the absorb step, the exact tier and
+  the stored state are arm 2's, so §9's prefill billing for arm 3 stands.
+- The pod is `configs/pods/kernel_smoke.yaml`: `prereg: prereg/kernel_smoke.md`; arms
+  `full`, `isvd_r64_h256_seed`, `isvd_r64_h256_seed_kernel` in §3's order; tasks
+  `kernel_check_16` (A1.2) then `latency_16k_32k_64k` (cell list A, the shipped task file
+  unchanged: batch 1, 16K / 32K / 64K); bfloat16 on the -devel image; `gpu_budget_h: 5.0`
+  (A1.4). `tests/test_pod_manifest.py::test_the_kernel_smoke_pod_is_its_prereg_design` pins
+  the prereg path, the arm order, the task list, the bar and a distinct `config_hash`.
+
+### A1.2 The correctness precondition runs on this pod, first (§4's amendment clause)
+
+§4 says: "If L4 instead runs the full-model check on this pod, that needs a runner axis the
+repository does not have and is an amendment to this file, committed before the launch
+commit, which also states how its output is recorded." This is that amendment.
+
+- **Why on the pod.** No GPU exists on the lane machine and no 8B dumps exist (`GATES.md`
+  §G1 line 6, still open); the check needs Llama-3.1-8B in bf16.
+- **The axis.** `generator: kernel_check` (`kvdlra.eval.kernel_check`, commit `27d3593`),
+  driven by `configs/tasks/kernel_check_16.yaml` (`ctx: 4096`, `chunk: 1024`, `n_new: 32`,
+  `n_prompts: 16`), the first task of the pod. For every `bug`-kind arm with
+  `decode_attention: kernel` — arm 3 only — and every prompt: a 1024-token chunked prefill and
+  32 greedy decode steps under the kernel, the same under a reconstruct twin built from the
+  same kwargs with `decode_attention: "reconstruct"`; a prompt **matches** when the 32 tokens
+  agree, and the first mismatching step is recorded. On the first kernel decode step the
+  attention function also computes reconstruct-then-attend **in fp32 over the bf16 stored
+  representation** (`_decode_peek` + sdpa in fp32 — the reference of
+  `tests/test_kernel_reference.py`) on the same live K/V and query for **every layer** and
+  records `max|Δ|` per layer; the row keeps
+  the worst layer's value and index. This is §4's single-layer check on real 8B K/V, with
+  the model's own queries, on all 32 layers, in place of one dumped layer — the 1B-dump half
+  runs offline in `tests/test_kernel_reference.py` (layer 8 of `doc411`, skipped in CI).
+- **The 16 prompts, source and selection** (§4: "committed in L4's test module"):
+  `kvdlra.kernel.prompts` and its pin `tests/test_kernel_prompts.py` — the 16 non-overlapping
+  4096-token windows of the PG-19 validation token stream `load_corpus_ids(tok, device,
+  corpus="pg19-val")` returns (the stream `ppl_16k_pg19val` cuts its windows from; its sha256
+  lands in the manifest's `dataset_sha256["pg19-val"]` from the `[stage] dataset_sha256`
+  line), at offsets `i × 131072` for `i = 0..15`; committed at `e22b661`, before any
+  kernel code.
+- **How the output is recorded.** One `[kernel_check prompt=<i> arm=<key> ctx=4096 n_new=32
+  match=<0|1> first_mismatch=<step|-> max_abs_diff=<x|-> worst_layer=<l|-> sha=<sha256>[
+  error=<text>]` line per prompt, kept by the watchdog and replayed at the end of the run,
+  harvested by `records.parse_kernel_check_lines` into `results/kernel_smoke/kernel_check.jsonl`
+  (`KernelCheckRecord`); the mismatch log is the `[kernel_check mismatch prompt= step= kernel=
+  reconstruct=` line per non-matching prompt and the `[kernel_check layers prompt=0 ...]`
+  per-layer breakdown, both in the harvested `.log`. A prompt that raises is an error row, an
+  `[error] axis=kernel_check` line and a counted error (R29 fails the pod). `scripts/pod.py
+  check` requires 16 rows for arm 3 (`_kernel_check_fails`); the launch entry's evidence path
+  for §4 is `results/kernel_smoke/kernel_check.jsonl` plus `tests/test_kernel_reference.py`
+  and `tests/test_kernel_path.py` (the CPU checks: random 8B shapes, the 1B layer, the tiny
+  model token-exact in fp32).
+- **Reading order.** The check precedes the measurement in the task list, and `make
+  kernel_smoke` prints its verdict first: **met** when ≥ 14 of 16 prompts match AND the worst
+  `max_abs_diff` < 1e-2; otherwise the Week-3 gate reads **REFUSED** ("a kernel whose
+  correctness precondition has not passed is not measured for speed") and the latency rows
+  are reported as measured without a passed precondition, not cited. The Triton kernel's own
+  tests (`pytest -m gpu`, `tests/test_kernel_triton.py` and the gpu params of
+  `tests/test_kernel_reference.py`) are run on the pod before `pod.py run`, from the same
+  clone; their output is pasted into the launch entry. **The bars those tests apply**, as
+  they stand at this amendment: the pre-registered `max|Δ| < 1e-2` against
+  reconstruct-then-attend is unchanged and runs on CUDA through the `BACKENDS` parametrization
+  of `tests/test_kernel_reference.py`; `tests/test_kernel_triton.py` adds DIRECT
+  Triton-vs-reference comparisons on fp32 outputs — at `n_splits == 1` (B = 16 rows, the whole
+  tile loop in one split) `max|Δ| ≤ 2e-3` **and** `rms(Δ) ≤ 1e-4`, and across 16 splits and
+  for batch independence `max|Δ| ≤ 4e-3` (rulings R-L4-21 / R-L4-26, commits `6330274` and
+  `c3071ce`; each bar sits ≈ 2–10× over the reassociation residual a CPU emulation of the
+  blocking measures, and a kernel that passes every other check but the rms bar goes back to
+  review, not to a loosened bar). Those comparisons are a **correctness gate on the kernel's
+  implementation of the numerics contract, not a reading of this pod**: no number from them
+  enters §4 or §7.
+
+### A1.3 The record, the archived rows, and the renderer (§2 (a), §3, §7, §10)
+
+- `LatencyRecord` now carries `kv_resident_gb` (the field §3 said it lacked): `run_latency`
+  prints it last, `records.LATENCY_RE` takes it as optional, so the archived lines still
+  parse — and `batch=` is optional too (absent → 1), so §2 (a)'s "returns 0 rows of 9" is
+  superseded: the nine Week-20 lines parse and `make kernel_smoke` prints them beside the
+  re-measured rows with the 10 % agreement note. The Week-5 resident ratio is therefore
+  readable from the record when cell list B runs; nothing in §4 reads it now.
+- The renderer §10 owed is `scripts/tables.py latency --pods results/kernel_smoke --out
+  docs/paper/tables/kernel_smoke.md` (`make kernel_smoke`), commit `b44ad40` — before this
+  pod YAML's commit, which satisfies §10's "the renderer with the pod" at least as strictly
+  as one commit would. It prints §7's table (every record field per (arm, ctx, batch), the
+  analytic `bug_footprint(...).stored_bits()` in GiB beside `kv_peak_gb` — 0.302 / 0.556 /
+  1.064 GiB for the r64 configuration at 16K / 32K / 64K, ADR 0001's 0.151× / 0.139× /
+  0.133× — the archived row and its agreement), then §4's reading: refusals (manifest
+  errors, a missing 32K record, a `spikes` count above 8 of 56 on the reconstruct or kernel
+  arm at 32K, the precondition), the memory condition with both peaks and the 10 % marginal
+  rule, the speed condition with both p50s against 3.0×, and the verdict; `not run
+  (<reason>)` and the `[error]` text for a missing cell, never `--`.
+- **Three sentences above are superseded by this section, and named here rather than edited**
+  (§1–§11 stay as written, this file being append-only): §3's "`kv_resident_gb` is computed
+  by `run_latency` but is **not** in `LatencyRecord`" and its "must be recovered as
+  `resident_gb − weights_gb` from the log line", §4's "Its resident ratio is not in
+  `LatencyRecord` (§3)" and §11's "the resident field the record lacks" describe the record
+  as it stood when they were written; the record carries `kv_resident_gb` and the renderer
+  prints it. Only that clause of each sentence is superseded — the Week-5 target's batch ≥ 4
+  half is cell list B's and is untouched, so §4's and §11's conclusions stand on their other
+  leg.
+
+### A1.4 Budget and log volume (§8, §9)
+
+- The check adds 16 prompts × 2 caches × (a 4096-token chunked prefill of the r64
+  configuration ≈ 0.78 min -- ¼ of the r64 gist's 3.1 min/sample at §9's rate (3.3 measured,
+  D-011 addendum 10), plus 32 decode steps ≤ 0.1 s each) ≈ **27 min ≈ 0.45 h** of compute.
+  Point estimate **1.8 + 0.45 = 2.25 h**; the bar is **`gpu_budget_h: 5.0`** — 2.2× the point,
+  the sibling pods' 2× discipline kept (§9's 4.0 would be 1.8×). Cell list A's dollar figure
+  moves to $1.0–1.7 expected and $2.3–3.7 at the bar at §9's $0.45–0.74/h.
+- Log volume: +16 `[kernel_check prompt=…]` lines, ≤ 16 `[kernel_check mismatch …]` lines,
+  1 `[kernel_check layers …]` line, and 3 `[stage]` lines (corpus load, digest, cell clock):
+  the expected deduped `<label>.log` is ≈ 90 lines. The completeness test gains
+  `grep -c '^\[kernel_check prompt='` = **16** beside `grep -c '^\[latency'` = 9.
+- **Two things this pod is the first to put a clock on, and neither is a threshold.** The
+  check axis's own wall clock — two full prefill-and-decode runs, the kernel and its
+  reconstruct twin, × 16 prompts on arm 3 — is **unmeasured until this pod**: there is no GPU
+  on the lane machine, and the ≈ 0.45 h above is an allowance built from §9's prefill rate,
+  not a measurement. It is the first number to read against this amendment, the way §9 reads
+  the wall clock of the first `[latency ctx16384]` line against its own assumptions. And the
+  Triton launch runs at a fixed `num_warps=4` (`src/kvdlra/kernel/triton_kernel.py`), untuned
+  for the 8B shape: register spilling there would show in the kernel arm's ms/token and
+  nowhere else — a codegen detail the latency reading may expose, which A1.2's correctness
+  gate does not depend on and for which no threshold in §4 is adjusted.
+
+### A1.5 What this amendment does not change
+
+The grid (cell list A), the two conditions and their thresholds, the refusals, §6 (no
+statistic), the KIVI-2 deviation of §7, cell list B's conditions (§3; the batched cache has
+landed — L4.1 — so its condition (i) is met; condition (ii), the card, is still the owner's
+D-002/H100 decision), and §11. The 8B rank-sweep dumps (`GATES.md` §G1 line 6) stay open:
+this pod does not produce them.

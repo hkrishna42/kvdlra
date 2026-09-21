@@ -45,7 +45,7 @@ from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding
 from kvdlra.cache import BugStreamingCache
 from kvdlra.eval.frontier import _prefill_chunked
 from kvdlra.kernel import FactoredMiddle, factored_attention, n_splits_for
-from tests.test_kernel_reference import H_KV, llama_rope, random_case
+from tests.test_kernel_reference import H_KV, _mid_to, llama_rope, random_case
 
 pytestmark = pytest.mark.gpu
 D = 128
@@ -53,10 +53,6 @@ TILE = 64  # the wrapper's default, the tile the split count is computed over
 TIGHT_MAX = 2e-3  # R-L4-26: one split, fp32 outputs -- max|d| over the whole B=16 output
 TIGHT_RMS = 1e-4  # R-L4-26: rms(d) over the same output -- catches a misplaced rounding point
 SPLIT_TOL = 4e-3  # R-L4-21: with the per-split P-rounding draw in the way
-
-
-def _cuda(mid: FactoredMiddle) -> FactoredMiddle:
-    return FactoredMiddle(*(t.cuda() for t in (mid.u_k, mid.u_v, mid.c_k, mid.c_v, mid.positions)))
 
 
 def _kw(emb: LlamaRotaryEmbedding) -> dict[str, Any]:
@@ -74,7 +70,7 @@ def _triton_vs_reference(
     points against the reference's, with no output quantization in the way. Returns the
     triton output and the raw (fp32, on CPU) elementwise difference -- callers reduce it
     to max|Δ| and/or rms(Δ) themselves (R-L4-26)."""
-    tri = factored_attention(q.cuda(), dk.cuda(), dv.cuda(), _cuda(mid),
+    tri = factored_attention(q.cuda(), dk.cuda(), dv.cuda(), _mid_to(mid, "cuda"),
                              backend="triton", **_kw(emb))  # fmt: skip
     ref = factored_attention(q, dk, dv, mid, backend="reference", inv_freq=emb.inv_freq,
                              attention_scaling=emb.attention_scaling, scaling=D**-0.5)  # fmt: skip
@@ -109,8 +105,8 @@ def test_triton_matches_the_reference(contiguous: bool) -> None:
     split_delta = float(d1.abs().max())
     print(f"triton vs reference, 16 splits (contiguous={contiguous}): max|d| = {split_delta:.3e}")
     assert split_delta <= SPLIT_TOL, f"16 splits, B=1: max|d| = {split_delta:.3e} > {SPLIT_TOL:.0e}"
-    auto = factored_attention(q1.cuda(), dk1.cuda(), dv1.cuda(), _cuda(mid1), backend="auto",
-                              **_kw(emb))  # fmt: skip
+    auto = factored_attention(q1.cuda(), dk1.cuda(), dv1.cuda(), _mid_to(mid1, "cuda"),
+                              backend="auto", **_kw(emb))  # fmt: skip
     assert torch.equal(auto, tri1)  # auto picks triton on a CUDA query at these shapes
 
 
@@ -122,13 +118,13 @@ def test_triton_batch_rows_and_splits_are_independent() -> None:
     emb = llama_rope(D, 4096, 8.0)
     a, b = random_case(4, True, torch.float32), random_case(5, False, torch.float32)
     kw = _kw(emb)
-    both = FactoredMiddle.cat([_cuda(a[3]), _cuda(b[3])])
+    both = FactoredMiddle.cat([_mid_to(a[3], "cuda"), _mid_to(b[3], "cuda")])
     q = torch.cat([a[0], b[0]]).cuda()
     dk, dv = torch.cat([a[1], b[1]]).cuda(), torch.cat([a[2], b[2]]).cuda()
     out = factored_attention(q, dk, dv, both, backend="triton", **kw)
     for i, case in enumerate((a, b)):
-        one = factored_attention(case[0].cuda(), case[1].cuda(), case[2].cuda(), _cuda(case[3]),
-                                 backend="triton", **kw)  # fmt: skip
+        one = factored_attention(case[0].cuda(), case[1].cuda(), case[2].cuda(),
+                                 _mid_to(case[3], "cuda"), backend="triton", **kw)  # fmt: skip
         delta = float((out[i : i + 1].float() - one.float()).abs().max())
         print(f"triton B=2 row {i} vs its own B=1 call: max|d| = {delta:.3e}")
         assert delta <= SPLIT_TOL, f"row {i}: B=2 vs B=1 max|d| = {delta:.3e} > {SPLIT_TOL:.0e}"
@@ -151,19 +147,19 @@ def test_triton_no_middle_and_refusals() -> None:
     )
     assert float((out.float().cpu() - ref).abs().max()) < 1e-2
     with pytest.raises(ValueError, match="bf16"):
-        factored_attention(q.cuda(), dk.cuda(), dv.cuda(), _cuda(mid), backend="triton",
+        factored_attention(q.cuda(), dk.cuda(), dv.cuda(), _mid_to(mid, "cuda"), backend="triton",
                            operand_dtype=torch.float32, **kw)  # fmt: skip
     # M-5/M-6/M-7: the Python-side checks that stand between a bad call and an unmasked
     # `tl.load` of the wrong memory. `inv_freq` is read as (D // 2,) with no mask; a host
     # tensor reaches the kernel as a host pointer; the middle is indexed by the query's b.
     with pytest.raises(ValueError, match="inv_freq"):
-        factored_attention(q.cuda(), dk.cuda(), dv.cuda(), _cuda(mid), backend="triton",
+        factored_attention(q.cuda(), dk.cuda(), dv.cuda(), _mid_to(mid, "cuda"), backend="triton",
                            **{**kw, "inv_freq": emb.inv_freq[: D // 4].cuda()})  # fmt: skip
     with pytest.raises(ValueError, match="on the host"):
         factored_attention(q.cuda(), dk.cuda(), dv.cuda(), mid, backend="triton", **kw)
     with pytest.raises(ValueError, match="batch rows"):
         factored_attention(q.cuda(), dk.cuda(), dv.cuda(),
-                           FactoredMiddle.cat([_cuda(mid), _cuda(mid)]),
+                           FactoredMiddle.cat([_mid_to(mid, "cuda"), _mid_to(mid, "cuda")]),
                            backend="triton", **kw)  # fmt: skip
     # P-1: r = 48 sits between the kernel's power-of-two floors (FactoredMiddle itself has
     # no such constraint -- __post_init__ only ties shapes together). "auto" has to fall
@@ -172,7 +168,7 @@ def test_triton_no_middle_and_refusals() -> None:
     r48 = FactoredMiddle(
         mid.u_k[:, :, :48], mid.u_v[:, :, :48], mid.c_k[:, :48], mid.c_v[:, :48], mid.positions
     )
-    cuda_r48 = _cuda(r48)
+    cuda_r48 = _mid_to(r48, "cuda")
     auto48 = factored_attention(q.cuda(), dk.cuda(), dv.cuda(), cuda_r48, backend="auto", **kw)
     ref48 = factored_attention(q.cuda(), dk.cuda(), dv.cuda(), cuda_r48, backend="reference", **kw)
     assert torch.equal(auto48, ref48)  # the fallback took the reference

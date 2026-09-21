@@ -80,10 +80,7 @@ def _triton_eligible(
 
 
 def _triton_available() -> bool:
-    return (
-        importlib.util.find_spec("triton") is not None
-        and importlib.util.find_spec("kvdlra.kernel.triton_kernel") is not None
-    )
+    return importlib.util.find_spec("triton") is not None
 
 
 def select_backend(
@@ -124,8 +121,8 @@ def factored_attention(
     ``backend="auto"`` and `_triton_eligible` (``"reference"`` / ``"triton"`` force one)."""
     backend = select_backend(query, dense_k, mid, operand_dtype, backend)
     if backend == "triton":
-        # GPU-only: the import needs triton, and the module is absent from a CPU tree --
-        # `import_module` keeps this file type-checkable there.
+        # GPU-only: the import needs triton. `import_module` keeps this file importable
+        # (and type-checkable) on a tree that has none.
         triton_kernel = importlib.import_module("kvdlra.kernel.triton_kernel")
         out: Tensor = triton_kernel.factored_attention(
             query, dense_k, dense_v, mid, inv_freq=inv_freq, attention_scaling=attention_scaling,

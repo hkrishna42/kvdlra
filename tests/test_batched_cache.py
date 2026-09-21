@@ -38,16 +38,19 @@ def _stream(seed: int, b: int) -> torch.Tensor:
 
 @torch.no_grad()
 def _teacher_forced(
-    model: LlamaForCausalLM, cache: BugStreamingCache, ids: torch.Tensor, stream: torch.Tensor
-) -> list[torch.Tensor]:
-    """Chunked prefill of ``ids`` (B, T), then N_NEW teacher-forced decode steps on
-    ``stream`` (B, N_NEW) at explicit true positions -- how `latency.run_latency` drives a
-    cache. Returns the per-step last-token logits, fp32 (B, vocab)."""
+    model: LlamaForCausalLM, cache: BugStreamingCache, ids: torch.Tensor,
+    stream: torch.Tensor, chunk: int = CHUNK,
+) -> list[torch.Tensor]:  # fmt: skip
+    """Chunked prefill of ``ids`` (B, T), then one teacher-forced decode step per column of
+    ``stream`` (B, N) at explicit true positions -- how `latency.run_latency` drives a
+    cache. Returns the per-step last-token logits, fp32 (B, vocab). ``tests/test_kernel_
+    path.py`` drives its kernel/batch comparison through this too, at its own chunk."""
+    t = int(ids.shape[1])
     logits = []
     with cache.attach(model):
-        _prefill_chunked(model, cache, ids, CHUNK)
+        _prefill_chunked(model, cache, ids, chunk)
         for s in range(stream.shape[1]):
-            pos = torch.full((ids.shape[0], 1), T + s, dtype=torch.long)
+            pos = torch.full((ids.shape[0], 1), t + s, dtype=torch.long)
             out = model(
                 stream[:, s : s + 1], past_key_values=cache, use_cache=True, position_ids=pos
             )
@@ -170,9 +173,8 @@ def test_eval_side_readers_of_per_layer_state_refuse_at_batch_2(
     """A batch > 1 cache holds its tensors on the row layers; the parent's are empty. The
     two eval-side readers that take a cache and read layer tensors would have billed a
     rank-0 gist (`_footprint`) and persisted an empty state (`persist.state_tensors`), so
-    both refuse. The third guarded site (`run_ppl`'s tracked-rank read) cannot be reached
-    from here: `run_ppl` builds its own batch-1 caches and records any exception as an
-    error row, and `_footprint` runs one line above it."""
+    both refuse. `run_ppl`'s tracked-rank read needs no guard of its own: it builds its own
+    batch-1 caches, and `_footprint` -- which refuses -- runs one line above it."""
     cache = tiny_cache(tiny_model)
     with torch.no_grad():
         tiny_model(torch.cat([_prompt(1), _prompt(2)]), past_key_values=cache, use_cache=True)

@@ -1363,7 +1363,8 @@ def test_the_kernel_smoke_pod_is_its_prereg_design() -> None:
     """Section 3's three arms in its order (the two reference arms first, untouched files), the
     correctness check BEFORE the measurement (section 4: no speed reading without it), cell
     list A (batch 1, three contexts, 64 steps / 8 warm-up, chunk 4096) on the shipped task
-    file, the Amendment-1 bar, and a hash distinct from every other pinned pod's."""
+    file, and the Amendment-1 bar. Its hash's distinctness is the sweep in
+    `test_the_postrope_pod_hash_is_distinct` below, which covers this pod too."""
     p = load_pod("kernel_smoke")
     assert p.prereg == "prereg/kernel_smoke.md" and (REPO_ROOT / p.prereg).is_file()
     assert p.model == "unsloth/Meta-Llama-3.1-8B-Instruct"
@@ -1383,11 +1384,11 @@ def test_the_kernel_smoke_pod_is_its_prereg_design() -> None:
     kc = load_task("kernel_check_16")
     assert isinstance(kc, TaskKernelCheckCfg)
     assert (kc.ctx, kc.chunk, kc.n_new, kc.n_prompts) == (4096, 1024, 32, 16)
-    every = [*L2_PODS, *GATE1_PODS, "kernel_smoke"]
-    assert len({config_hash(load_pod(n)) for n in every}) == len(every)
 
 
 def test_the_postrope_pod_hash_is_distinct() -> None:
+    """One sweep for both L4 pods: every pinned pod, plus `kernel_smoke` and
+    `postrope_r128`, hashes to a value of its own."""
     every = [*L2_PODS, *GATE1_PODS, "kernel_smoke", "postrope_r128"]
     assert len({config_hash(load_pod(n)) for n in every}) == len(every)
 

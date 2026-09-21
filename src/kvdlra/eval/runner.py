@@ -224,6 +224,19 @@ def _latency_rows(
     return errors
 
 
+def _corpus_ids(tok: Any, device: str, corpus: str, sha: dict[str, str]) -> torch.Tensor:
+    """Load one corpus's token ids, and record BOTH `[stage]` lines a harvest reads off the
+    log: how long the load took, and sha256 over the exact ids the windows are cut from
+    (which text was scored is half of what any number over it means). ``sha`` collects
+    ``corpus -> digest`` for `_finish` to write into `manifest.json`."""
+    t0 = time.perf_counter()
+    ids = load_corpus_ids(tok, device, corpus=corpus)
+    print(f"[stage] load_corpus_ids {corpus} ({time.perf_counter() - t0:.1f} s)", flush=True)
+    sha[corpus] = hashlib.sha256(ids.cpu().numpy().tobytes()).hexdigest()
+    print(f"[stage] dataset_sha256 {corpus} {sha[corpus]}", flush=True)
+    return ids
+
+
 def _kernel_check_rows(
     pod: PodCfg,
     task: TaskKernelCheckCfg,
@@ -239,12 +252,7 @@ def _kernel_check_rows(
     1). Arms on the reconstruct path are not checked -- the check IS the contrast against
     them. A prompt that raises is an error row, an `[error] axis=kernel_check` line and a
     counted error, never a dropped prompt."""
-    t0 = time.perf_counter()
-    ids = load_corpus_ids(tok, device, corpus=PROMPT_CORPUS)
-    print(f"[stage] load_corpus_ids {PROMPT_CORPUS} ({time.perf_counter() - t0:.1f} s)", flush=True)
-    sha[PROMPT_CORPUS] = hashlib.sha256(ids.cpu().numpy().tobytes()).hexdigest()
-    print(f"[stage] dataset_sha256 {PROMPT_CORPUS} {sha[PROMPT_CORPUS]}", flush=True)
-    prompts = prompt_windows(ids)[: task.n_prompts]
+    prompts = prompt_windows(_corpus_ids(tok, device, PROMPT_CORPUS, sha))[: task.n_prompts]
     errors = 0
     for name in pod.arms:
         arm = _build(name, model, task.ctx)
@@ -401,17 +409,10 @@ def _ppl_rows(
 ) -> list[dict[str, Any]]:
     """One perplexity sweep, on the corpus the TASK names (`config.TaskCfg.corpus`).
 
-    ``sha`` collects ``corpus -> sha256(token ids)``: which text was scored is half of
-    what a perplexity number means, and the digest is over the exact ids the windows
-    were cut from, so a corpus that silently changed upstream cannot pass for the one
-    the manifest cites. `_finish` writes it to `manifest.json` on the pod; the
-    ``[stage] dataset_sha256`` line is how `pod.py harvest` gets it off the log.
+    ``sha`` collects ``corpus -> sha256(token ids)`` (`_corpus_ids`): a corpus that
+    silently changed upstream cannot pass for the one the manifest cites.
     """
-    t0 = time.perf_counter()
-    ids = load_corpus_ids(tok, device, corpus=task.corpus)
-    print(f"[stage] load_corpus_ids {task.corpus} ({time.perf_counter() - t0:.1f} s)", flush=True)
-    sha[task.corpus] = hashlib.sha256(ids.cpu().numpy().tobytes()).hexdigest()
-    print(f"[stage] dataset_sha256 {task.corpus} {sha[task.corpus]}", flush=True)
+    ids = _corpus_ids(tok, device, task.corpus, sha)
     samples = frontier.windows(ids, task.ctx, task.window, task.n_samples)
     if not samples:
         print(f"[T={task.ctx}] corpus too short for {task.n_samples} windows", flush=True)

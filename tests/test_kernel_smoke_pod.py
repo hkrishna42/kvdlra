@@ -23,13 +23,11 @@ import pytest
 import tables
 
 from kvdlra.eval.config import load_arm, load_pod, load_task
+from tests.test_latency_table import KEYS, P50, PEAK
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 POD = "kernel_smoke"
-P50 = {"full": (25.9, 27.5, 37.0), "bugSseed-r64-h256": (103.3, 188.3, 507.9),
-       "isvd_r64_h256_seed_kernel": (20.0, 30.0, 60.0)}  # fmt: skip
-PEAK = {"full": (2.05, 4.08, 8.14), "bugSseed-r64-h256": (3.25, 6.45, 12.83),
-        "isvd_r64_h256_seed_kernel": (0.35, 0.65, 1.20)}  # fmt: skip
+ROLE = {key: role for role, key in KEYS.items()}  # the same numbers, keyed by record key
 
 
 def _lines(n_prompts: int = 16) -> list[str]:
@@ -52,12 +50,12 @@ def _lines(n_prompts: int = 16) -> list[str]:
     for i, ctx in enumerate(lat.ctxs or []):
         for arm in names:
             out.append(
-                f"[latency ctx{ctx}] {arm:22s} ms/tok={P50[arm][i]:.2f}"
-                f" mean={P50[arm][i] * 1.05:.2f} max={P50[arm][i] * 2.5:.2f}"
-                f" spikes={4 if arm == 'bugSseed-r64-h256' else 0}"
-                f" resident_gb=16.00 peak_gb={14.96 + PEAK[arm][i]:.2f} weights_gb=14.96"
-                f" kv_peak_gb={PEAK[arm][i]:.2f} batch=1 kv_resident_gb=0.60"
-                + (" backend=triton" if "kernel" in arm else "")
+                f"[latency ctx{ctx}] {arm:22s} ms/tok={P50[ROLE[arm]][i]:.2f}"
+                f" mean={P50[ROLE[arm]][i] * 1.05:.2f} max={P50[ROLE[arm]][i] * 2.5:.2f}"
+                f" spikes={4 if ROLE[arm] == 'recon' else 0}"
+                f" resident_gb=16.00 peak_gb={14.96 + PEAK[ROLE[arm]][i]:.2f} weights_gb=14.96"
+                f" kv_peak_gb={PEAK[ROLE[arm]][i]:.2f} batch=1 kv_resident_gb=0.60"
+                + (" backend=triton" if ROLE[arm] == "kernel" else "")
             )
     return out
 

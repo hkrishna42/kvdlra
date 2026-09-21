@@ -26,12 +26,13 @@ from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding, rotat
 
 from kvdlra.cache import BugStreamingCache
 from kvdlra.eval.config import arm_kwargs, load_arm
-from kvdlra.eval.frontier import _prefill_chunked, build_arm
+from kvdlra.eval.frontier import build_arm
 from kvdlra.kernel import factored_attention
 from kvdlra.kernel.attention import KERNEL_ATTN
 from kvdlra.kernel.prompts import TINY_N_NEW, TINY_PROMPT_TOKENS, tiny_prompts
 from kvdlra.kernel.reference import rope_cos_sin
 from tests.conftest import tiny_cache
+from tests.test_batched_cache import _teacher_forced
 
 TINY_SDPA = True
 CHUNK = 32
@@ -228,18 +229,8 @@ def test_batched_kernel_decode_equals_two_batch1_kernel_decodes(
     stream = torch.randint(0, 256, (2, 8), generator=torch.Generator().manual_seed(4))
     kw = {"decode_attention": "kernel", "kernel_operand_dtype": "float32"}
 
-    @torch.no_grad()
     def run(cache: BugStreamingCache, x: torch.Tensor, st: torch.Tensor) -> list[torch.Tensor]:
-        out = []
-        with cache.attach(tiny_model):
-            _prefill_chunked(tiny_model, cache, x, CHUNK)
-            for s in range(st.shape[1]):
-                pos = torch.full((x.shape[0], 1), TINY_PROMPT_TOKENS + s, dtype=torch.long)
-                o = tiny_model(
-                    st[:, s : s + 1], past_key_values=cache, use_cache=True, position_ids=pos
-                )
-                out.append(o.logits[:, -1].float())
-        return out
+        return _teacher_forced(tiny_model, cache, x, st, CHUNK)
 
     both = run(tiny_cache(tiny_model, **kw), ids, stream)
     singles = [

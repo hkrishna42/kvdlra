@@ -276,6 +276,18 @@ def arm_kwargs(arm: ArmCfg, t: int) -> dict[str, Any]:
     return kw
 
 
+def role_of(arm: ArmCfg) -> str:
+    """The arm's role in a kernel-smoke reading: ``kernel`` (a bug arm carrying
+    ``decode_attention: kernel``), ``reconstruct`` (a bug arm on the default decode path),
+    else the arm's own kind. The one definition -- `scripts/tables.py` keys the section-7
+    table and the section-4 gate by it, `scripts/pod.py` picks the arms whose
+    `kernel_check` records it requires (`kvdlra.eval.kernel_check.is_kernel_arm` is the
+    same test on a BUILT arm dict, which is a different shape)."""
+    if arm.kind != "bug":
+        return arm.kind
+    return "kernel" if arm.cache.get("decode_attention") == "kernel" else "reconstruct"
+
+
 def config_hash(pod: PodCfg) -> str:
     """sha256 of the pod together with every arm and task it names."""
     flat = cast(dict[str, Any], OmegaConf.to_container(OmegaConf.structured(pod)))

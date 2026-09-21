@@ -436,12 +436,10 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             raise ValueError(
                 f"decode_attention must be one of {DECODE_ATTENTION}, got {decode_attention!r}"
             )
-        op = (
-            GIST_DTYPES.get(kernel_operand_dtype)
-            if isinstance(kernel_operand_dtype, str)
-            else kernel_operand_dtype
-        )
-        if op is None or op not in GIST_DTYPES.values():
+        # A `torch.dtype` passed directly is normalised by name through the same map
+        # (`str(torch.bfloat16) == "torch.bfloat16"`), so there is one accepted set.
+        op = GIST_DTYPES.get(str(kernel_operand_dtype).removeprefix("torch."))
+        if op is None:
             raise ValueError(
                 f"kernel_operand_dtype must be one of {sorted(GIST_DTYPES)}, "
                 f"got {kernel_operand_dtype!r}"
@@ -661,6 +659,13 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         return self._mat_rope_with(mat, cos, sin, inverse=inverse)
 
     def _mat_rope_with(self, mat: Tensor, cos: Tensor, sin: Tensor, *, inverse: bool) -> Tensor:
+        if self.rope_basis == "post":
+            # The gist tracks post-RoPE keys (ADR 0001 §3 option (i)): the un-rotation on
+            # ingest and the re-rotation on reconstruct are both the identity, in the fp32
+            # every caller of `_mat_rope`/`_mat_rope_at` takes back. One return, because
+            # this is the single helper all five call sites funnel through; the "pre" path
+            # below is untouched (tests/test_golden_cache.py).
+            return mat.to(torch.float32)
         t = mat.shape[1]
         htd = mat.to(torch.float32).reshape(self.num_heads, self.head_dim, t).permute(0, 2, 1)
         if inverse:
@@ -745,11 +750,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         if self.hh_enabled:
             self._absorb_block_slash(grad_k, grad_v, grad_pos)
             return
-        block_k = (
-            grad_k.to(torch.float32)
-            if self.rope_basis == "post"
-            else self._mat_rope(grad_k, grad_start, inverse=True)  # pre-RoPE, fp32
-        )
+        block_k = self._mat_rope(grad_k, grad_start, inverse=True)  # pre-RoPE, fp32
         block_v = grad_v.to(torch.float32)
         self._absorb_columns(block_k, block_v, grad_pos)
 
@@ -780,11 +781,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         keep_n = min(self.hh_budget, n_cand)
         # Score the whole pool by its CURRENT out-of-subspace residual; the raw
         # cand_k_pre is kept for the demote path.
-        cand_k_pre = (
-            cand_k.to(torch.float32)
-            if self.rope_basis == "post"
-            else self._mat_rope_at(cand_k, cand_pos, inverse=True)
-        )
+        cand_k_pre = self._mat_rope_at(cand_k, cand_pos, inverse=True)
         # Week-15 T2: selection may score against the leading score_rank basis
         # columns only (None = full basis). The tail-retention surprise snapshot
         # in _absorb_columns stays UNCAPPED.
@@ -1429,11 +1426,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             # surprising (CPU-verified failure at realistic rank/diversity). Off (the
             # default) absorbs the middle directly, bit-for-bit the prior path.
             seed = self.seed_hh_warmup and self.hh_enabled and self._mode == "ingest"
-            k_pre = (
-                k_mat[:, n_sink : n_sink + mid].to(torch.float32)
-                if self.rope_basis == "post"
-                else self._mat_rope(k_mat[:, n_sink : n_sink + mid], n_sink, inverse=True)
-            )
+            k_pre = self._mat_rope(k_mat[:, n_sink : n_sink + mid], n_sink, inverse=True)
             v_mid = v_mat[:, n_sink : n_sink + mid].to(torch.float32)
             for start in range(0, mid, self.prefill_block_size):
                 stop = min(mid, start + self.prefill_block_size)
@@ -1540,9 +1533,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
             parts_v.append(u_v @ self.c_v.to(torch.float32))
         k_pre_hat = torch.cat(parts_k, dim=1) if len(parts_k) > 1 else parts_k[0]
         v_hat = torch.cat(parts_v, dim=1) if len(parts_v) > 1 else parts_v[0]
-        if self.rope_basis == "post":
-            k_hat = k_pre_hat  # stored post-RoPE: nothing to re-rotate
-        elif self.track_positions:
+        if self.track_positions:
             k_hat = self._mat_rope_at(k_pre_hat, self._mid_positions(), inverse=False)
         else:
             # Contiguous middle: the memoized range path (bit-identical to Week 6). The

@@ -195,20 +195,6 @@ def test_auto_falls_back_to_the_reference_where_the_kernel_would_refuse() -> Non
     assert not _triton_eligible(q, dk, mid, torch.bfloat16)
 
 
-def middle_and_dense(layer: BugStreamingLayer) -> tuple[FactoredMiddle, Tensor, Tensor]:
-    """What a kernel decode step hands attention, assembled by hand from a layer that just
-    ran a reconstruct decode step (Task 4 makes the layer do this itself)."""
-    assert layer.u_k is not None and layer.u_v is not None
-    assert layer.c_k is not None and layer.c_v is not None
-    mid = FactoredMiddle(
-        layer.u_k[None], layer.u_v[None], layer.c_k[None].float(), layer.c_v[None].float(),
-        layer._mid_positions()[None],
-    )  # fmt: skip
-    parts_k = [t for t in (layer.sink_k, layer.hh_k, layer.recent_k) if t is not None]
-    parts_v = [t for t in (layer.sink_v, layer.hh_v, layer.recent_v) if t is not None]
-    return mid, layer._to_hf(torch.cat(parts_k, 1)), layer._to_hf(torch.cat(parts_v, 1))
-
-
 @pytest.mark.skipif(not (DUMP / "layer_08.pt").is_file(), reason="1B dumps absent (gitignored)")
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_one_layer_of_the_1b_dump(backend: str) -> None:
@@ -234,8 +220,10 @@ def test_one_layer_of_the_1b_dump(backend: str) -> None:
     layer._mode = "normal"
     with torch.no_grad():
         layer.update(k_post[:, :, 4095:], v[:, :, 4095:])  # the decode step that pushes token 4095
-    mid, dense_k, dense_v = middle_and_dense(layer)
-    assert layer._hh_len() == 256 and mid.n_columns > 3000
+    # What a kernel decode step hands attention, assembled by the layer itself.
+    mid = layer._factored_middle()
+    dense_k, dense_v = layer._decode_peek(dense_only=True)
+    assert mid is not None and layer._hh_len() == 256 and mid.n_columns > 3000
     assert dense_k.shape[2] == 4 + 256 + layer._recent_len()
     q_pre = blob["Q_pre"][:, 4095]  # (32, 64), pre-RoPE, all query heads
     rot = rotate_half(q_pre)  # type: ignore[no-untyped-call]

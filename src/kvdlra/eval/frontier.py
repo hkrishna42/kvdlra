@@ -562,15 +562,9 @@ def run_ppl(
                         if isinstance(cache, BugStreamingCache):
                             # The narrowest K basis in the cache: the ppl axis's
                             # one-number view of how far the floor collapsed the gist
-                            # (`diag.jsonl` carries the per-layer K and V ranks).
-                            for la in cache._bug_layers():
-                                # L4.1 (R-L4-8), as in `_footprint`: the parent layers of a
-                                # batch > 1 cache hold no basis, so this read would report 0.
-                                if la._rows is not None:
-                                    raise NotImplementedError(
-                                        "run_ppl: the per-layer tracked rank is batch-1 "
-                                        "only; this cache holds B row layers"
-                                    )
+                            # (`diag.jsonl` carries the per-layer K and V ranks). Batch 1
+                            # by construction here -- `_footprint`, one line above, is the
+                            # guard that refuses a batched cache (L4.1, R-L4-8).
                             eff_rank = min(_tracked_rank(la.u_k) for la in cache._bug_layers())
                     del cache
                     gc.collect()

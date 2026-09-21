@@ -61,6 +61,7 @@ from kvdlra.eval.config import (
     load_arm,
     load_pod,
     load_task,
+    role_of,
 )
 from kvdlra.eval.records import (
     TrialRecord,
@@ -885,7 +886,7 @@ def _kernel_check_fails(pod: PodCfg, d: Path) -> list[str]:
             continue
         for stem in pod.arms:
             cfg = load_arm(stem)
-            if cfg.kind != "bug" or cfg.cache.get("decode_attention") != "kernel":
+            if role_of(cfg) != "kernel":
                 continue
             key = cfg.legacy_name or cfg.name
             if got[(key, t.ctx)] != t.n_prompts:

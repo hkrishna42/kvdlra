@@ -14,7 +14,7 @@ import pytest
 import tables
 
 from kvdlra.accounting import bug_footprint
-from kvdlra.eval.config import PodCfg, load_arm
+from kvdlra.eval.config import PodCfg, load_arm, role_of
 from kvdlra.eval.records import write_jsonl
 
 MODEL = "unsloth/Meta-Llama-3.1-8B-Instruct"
@@ -77,8 +77,9 @@ def _render(tmp_path: Path, **kw: Any) -> str:
 
 
 def test_roles_and_the_analytic_footprint() -> None:
-    assert tables.latency_roles(_pod()) == {KEYS["full"]: "full", KEYS["recon"]: "reconstruct",
-                                            KEYS["kernel"]: "kernel"}  # fmt: skip
+    got_roles = {(c.legacy_name or c.name): role_of(c) for c in map(load_arm, ARMS)}
+    assert got_roles == {KEYS["full"]: "full", KEYS["recon"]: "reconstruct",
+                         KEYS["kernel"]: "kernel"}  # fmt: skip
     assert tables.analytic_stored_gib(load_arm("full"), 32768, MODEL) is None
     got = tables.analytic_stored_gib(load_arm("isvd_r64_h256_seed"), 32768, MODEL)
     want = bug_footprint(1024, rank=64, coord_count=32768 - 4 - 256 - 47, recent_len=47, n_sink=4,

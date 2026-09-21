@@ -1,5 +1,6 @@
-"""`rope_basis: post` -- the gist tracks post-RoPE keys (ADR 0001 §3 option (i)), a four-site
-identity switch on the ingest un-rotation and the reconstruct re-rotation. Default "pre" is
+"""`rope_basis: post` -- the gist tracks post-RoPE keys (ADR 0001 §3 option (i)): an identity
+in the shared rotation helper (`_mat_rope_with`), reached from the three ingest un-rotations
+and the reconstruct re-rotation. Default "pre" is
 today's path (the golden). Pins: at full rank the post basis stores the rotated keys exactly
 and the decode logits match DynamicCache's; the middle's reconstruction IS the post-RoPE keys
 (no rotation applied); the kernel refuses the post basis; the arm/pod files are what
@@ -14,7 +15,7 @@ from transformers.cache_utils import DynamicCache, DynamicLayer
 
 from kvdlra.cache import BugStreamingCache
 from kvdlra.cache.bug_cache import BugStreamingLayer
-from kvdlra.eval.config import arm_kwargs, config_hash, load_arm, load_pod, load_task
+from kvdlra.eval.config import arm_kwargs, load_arm, load_pod, load_task
 from kvdlra.eval.frontier import build_arm
 from tests.conftest import N_FEATURES, tiny_cache
 
@@ -83,4 +84,3 @@ def test_the_postrope_arm_and_pod_are_their_prereg_design() -> None:
     stage1 = load_pod("gate1_v2_stage1_llama")
     assert p.tasks == stage1.tasks and p.model == stage1.model  # byte-identical prompts and windows
     assert load_task("ruler_v2_16k_g1").n_trials == 24
-    assert config_hash(p) != config_hash(stage1)

@@ -27,7 +27,15 @@ import _paths  # noqa: F401
 
 from kvdlra.accounting import bug_footprint
 from kvdlra.eval import gate1
-from kvdlra.eval.config import ArmCfg, PodCfg, arm_kwargs, load_arm, load_pod, load_task
+from kvdlra.eval.config import (
+    ArmCfg,
+    PodCfg,
+    arm_kwargs,
+    load_arm,
+    load_pod,
+    load_task,
+    role_of,
+)
 from kvdlra.eval.records import (
     CellRecord,
     KernelCheckRecord,
@@ -1141,22 +1149,6 @@ LATENCY_FIELDS = ("ms_per_token_p50", "ms_mean", "ms_max", "spikes", "resident_g
                   "kv_peak_gb", "kv_resident_gb")  # fmt: skip
 
 
-def latency_roles(pod: PodCfg) -> dict[str, str]:
-    """Record key -> role: `full`, `reconstruct` (a bug arm on the default decode path),
-    `kernel` (a bug arm with `decode_attention: kernel`), else the arm's kind."""
-    roles = {}
-    for stem in pod.arms:
-        cfg = load_arm(stem)
-        key = cfg.legacy_name or cfg.name
-        if cfg.kind == "bug":
-            roles[key] = (
-                "kernel" if cfg.cache.get("decode_attention") == "kernel" else "reconstruct"
-            )
-        else:
-            roles[key] = cfg.kind
-    return roles
-
-
 def analytic_stored_gib(cfg: ArmCfg, ctx: int, model: str) -> float | None:
     """`bug_footprint(...).stored_bits()` of a bug arm after a `ctx`-token prefill, summed
     over the model's layers, in the GiB `kv_peak_gb` uses -- the stored state ADR 0001 §3
@@ -1311,10 +1303,11 @@ def week3_gate(
     return lines
 
 
-def latency_table(pod: PodCfg, results: Path, out: Path, archive: Path = W20_ARCHIVE) -> None:
+def latency_table(pod: PodCfg, results: Path, out: Path) -> None:
     """The kernel-smoke table (prereg §7) and the Week-3 reading (§4) for one pod directory,
     written outside the `table*.md` set `build` pins. A number from it is citable only once
     `scripts/pod.py check` passes on that directory (§10)."""
+    archive = W20_ARCHIVE
     lat = results / "latency.jsonl"
     rows = [cast(LatencyRecord, r) for r in read_jsonl(lat)] if lat.is_file() else []
     kcp = results / "kernel_check.jsonl"
@@ -1328,9 +1321,10 @@ def latency_table(pod: PodCfg, results: Path, out: Path, archive: Path = W20_ARC
         for e in parse_error_lines(log.read_text(), log.name)
         if e["axis"] == "latency"
     }
-    roles = latency_roles(pod)
-    # Keyed like `roles` (and like the records): one load per arm, not one per grid row.
+    # Keyed like the records: one load per arm, not one per grid row -- and the roles come
+    # off the same loaded configs rather than a second sweep of the arm files.
     cfgs = {(c.legacy_name or c.name): c for c in (load_arm(s) for s in pod.arms)}
+    roles = {key: role_of(c) for key, c in cfgs.items()}
     w20 = (
         {
             (r["arm"], r["ctx"]): r

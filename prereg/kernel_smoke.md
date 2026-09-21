@@ -744,7 +744,7 @@ re-run or re-scaled on this pod. Only a **relative** bar (max|Δ| / max|out| per
 ulp-normalised), pre-registered by a further amendment committed **before** any re-run and still
 reporting the absolute number beside it, could read such a case differently.
 
-### Amendment 2 (2026-09-21, lane L4, before any re-run's launch commit)
+## Amendment 2 (2026-09-21, lane L4, before any re-run's launch commit)
 
 §1–§11 and Amendment 1 are left exactly as written; this file is append-only. This amendment
 **does not re-read instance 51903816**, whose precondition is REFUSED under the bar in force at
@@ -753,7 +753,7 @@ its own commit**. It re-states §4's precondition in the units the quantity is a
 in, names the record fields that make the re-statement computable, and says how the kernel arm's
 spike count is read. It moves no other threshold.
 
-#### A2.1 Why a re-statement is owed at all
+### A2.1 Why a re-statement is owed at all
 
 §4's precondition has two clauses, both written before any bf16 measurement of either existed.
 `kernel_compare` (`src/kvdlra/kernel/attention.py:90-99`) forms `Δ = kernel_output_bf16 −
@@ -766,7 +766,7 @@ says so in the fixture). An absolute bar read at an unmeasured scale is a bar on
 rounding of the same fp32 answer will disagree at a greedy near-tie with probability ≈ ½,
 independently of correctness, and no bf16 measurement of that rate existed before this pod.
 
-#### A2.2 (a) The per-layer criterion, re-stated as relative
+### A2.2 (a) The per-layer criterion, re-stated as relative
 
 For each layer `l` of the first kernel decode step, `kernel_compare` records `d_l = max|Δ_l|`
 **and** `m_l = max|ref_l|` (the new field of A2.5). The criterion is
@@ -804,7 +804,7 @@ prompt 12, `≥ 0.79` at prompt 2, `≥ 0.64` at prompt 10 and `≥ 0.36` at the
 layers 26–31 of Llama-3.1-8B exceeds 1 — and a re-run in which it does not is the falsifier of
 §1 (3), reported as such and not re-argued.
 
-#### A2.3 (b) The token criterion, re-stated for bf16
+### A2.3 (b) The token criterion, re-stated for bf16
 
 A greedy mismatch at step `s` **counts against the kernel** only if the reconstruct path's
 **top-2 logit gap at `s`** exceeds the pre-registered margin
@@ -870,7 +870,7 @@ holds: `M = 2⁻⁵ · max_j L[s, j]` stands exactly as written, and the `κ > 8
 deterministic under the uv.lock pins — so κ must be re-read from `tests/test_kernel_path.py`'s
 calibration before the launch commit if the CPU numeric stack (torch / BLAS) changes.
 
-#### A2.4 (c) The kernel arm's spikes
+### A2.4 (c) The kernel arm's spikes
 
 **No threshold moves.** The kernel arm's `spikes` and `ms_max` are read exactly as §4 reads them
 (`prereg/kernel_smoke.md:237-240`): `> 8` of 56 refuses that arm's p50 as a steady-state number,
@@ -911,7 +911,7 @@ and a later pod — after the line above says which cause it would fix. `num_war
 A1.4 leaves it (`prereg/kernel_smoke.md:595-598`): untuned, visible only in the kernel arm's
 ms/token, and no threshold adjusted for it.
 
-#### A2.5 The record fields this amendment needs
+### A2.5 The record fields this amendment needs
 
 The criteria of A2.2 and A2.3 are not computable from `KernelCheckRecord` as it stands
 (`src/kvdlra/eval/records.py:213-234`). Five fields are added, appended **before** the `error=`
@@ -934,7 +934,7 @@ reads **both** bars and prints both numbers with the attributable and non-attrib
 counts named separately; `DIFF_MAX` stays in the file as the reported absolute number.
 Task 11 (§3 below) is the code, and it is CPU-tested before the launch commit.
 
-#### A2.6 (d) What this amendment does not change
+### A2.6 (d) What this amendment does not change
 
 The Week-3 gate's two conditions and their thresholds — `kv_peak_gb(kernel, 32K, b) <
 kv_peak_gb(full, 32K, b)` and `ms_per_token_p50(reconstruct, 32K, b) / ms_per_token_p50(kernel,
@@ -950,7 +950,7 @@ Triton kernel against the torch **reference**, at a fixed calibrated `|out|`, an
 by anything above; §7's KIVI-2 deviation; §11. The 16 prompts, their source and their pins are
 unchanged. Amendment 1 A1.3's record and renderer stand as written, extended only by A2.5.
 
-#### A2.7 (e) Budget and sequencing
+### A2.7 (e) Budget and sequencing
 
 - **Budget unchanged**: the point estimate stays `1.8 h + 0.45 h = 2.25 h` and the bar stays
   `gpu_budget_h: 5.0` (A1.4, `prereg/kernel_smoke.md:577-584`); the five new fields add no GPU

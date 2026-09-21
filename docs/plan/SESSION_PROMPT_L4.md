@@ -12,6 +12,21 @@ and its correction); prereg/bf16_gist.md; prereg/kernel_smoke.md; docs/adr/0001-
 docs/plan/lanes/L4_kernel.md and GATES.md §G3/§G4/§G5; docs/plan/reports/vt-template-comparison.md. Then state in one line
 each: what Stage 1 decides and by which function; what the kernel's Week-3 gate is; why the ss2/smoke pods still wait.
 
+## Concurrency with the L3 session (READ FIRST — the owner starts this session while the L3 session is still running)
+The L3 session (Claude session name `kv-dlra-5e`) is ALIVE and OWNS, until it reports them done in docs/plan/STATE.md and
+`git log main`: the pre-flight re-run's harvest and records commit, Amendment 1b, the L6 gate on the lane, the `--no-ff` merge of
+`lane/L3-gate1-tracker-swap-v2` into main, and the Stage-1 launch (two pods, with their DECISIONS lines on main). DO NOT do any
+of those in this session — a second launch would bill a second pair of pods. Your work in parallel: lane L4-kernel from the
+start, and G1-verdict's PREPARATION only (the five-reviewer panel prompt). Branch `lane/L4-kernel` off the pushed lane head
+`origin/lane/L3-gate1-tracker-swap-v2` (NOT off main — main is behind the lane until the merge, and L4's first task edits
+`bug_cache.py`, which the lane changed); after the merge lands on main, `git rebase main` in the L4 worktree (identical
+commits, a clean rebase). Never run git commands in the main checkout `~/src/kv-dlra` itself while the L3 session may be
+merging there; work only in your worktrees. The shared `.venv`'s editable install points at whichever tree ran
+`uv pip install -e ".[dev]"` last — run it from your L4 worktree before its first `make test`, and expect the L3 session to
+re-point it when it merges (re-run yours if `import kvdlra` resolves to the wrong tree: `python -c "import kvdlra; print(kvdlra.__file__)"`).
+Resume the G1-verdict items (Amendment 1b, merge, Stage 1) ONLY if STATE says the L3 session ended without them or the owner
+says so in chat — then read D-011 addenda 9–11 and results/gate1_preflight_rerun/ first.
+
 ## State at handover (written 2026-09-20 21:20 EDT while the pre-flight re-run was still running; every line has an "already done" branch — check `git log main` and `docs/plan/STATE.md` first)
 - Lane L3+L5 sits on `lane/L3-gate1-tracker-swap-v2` @ f3006fc (pushed; 47 commits over main @ 278bd01; L6 gate PASS at 6065e4e,
   Task 8 — the bf16 retrieval reading in the gate1 table — landed after it). NOT merged. The owner said "merge L3 when green after
@@ -104,5 +119,6 @@ concern 2); the arXiv posting timing (D-001: after Gate 1, Phase 3).
 DECISIONS names the branch from `gate1_verdict()`; kernel single-layer correctness on the 1B dumps; the kernel-smoke pod
 (cell list A) launched under prereg/kernel_smoke.md. Report at each in ≤ 10 lines: merged / measured / blocked / decide.
 
-Begin: read the State-at-handover block, create the two worktrees, dispatch G1-verdict's first task (Amendment 1b if it is
-not committed; else the panel prompt) and L4's first task (the batched cache) in parallel.
+Begin: read the Concurrency block and the State-at-handover block; create the L4 worktree off the pushed lane head and the
+G1-verdict worktree for the panel prompt only; dispatch L4's first task (the batched cache, TDD on the tiny model) and the panel-prompt
+task in parallel (one implementer per worktree). Check `git log main` and STATE at each report for the L3 session's merge and launch.

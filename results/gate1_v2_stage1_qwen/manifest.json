@@ -1,0 +1,23 @@
+{
+  "command_line": "vastai create instance 41257399 --image pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel --disk 80 --env '-e POD=gate1_v2_stage1_qwen -e SHA=a659f381cc5e8efee5ca98910eee5a64d065c5ef -e MODEL=Qwen/Qwen2.5-7B-Instruct -e DTYPE=bfloat16 -e MAX_HOURS=82' --onstart scripts/pod/boot.sh --label kvdlra-gate1_v2_stage1_qwen",
+  "config_hash": "4fc9c2365f85ad4d7512bad517988df06563a08edf1b0c5cd7cff7d22f763ae5",
+  "cuda": "none",
+  "dataset_sha256": {},
+  "dry_run": false,
+  "errors": 0,
+  "git_sha": "a659f381cc5e8efee5ca98910eee5a64d065c5ef",
+  "gpu": "none",
+  "harvested_at": null,
+  "kvpress": "0.5.1",
+  "launched_at": "2026-09-21T19:56:00+00:00",
+  "model": "Qwen/Qwen2.5-7B-Instruct",
+  "model_revision": null,
+  "pod": "gate1_v2_stage1_qwen",
+  "records": {},
+  "status": null,
+  "timeout": false,
+  "torch": "2.11.0",
+  "transformers": "5.8.0",
+  "triton": "none",
+  "wall_clock_s": null
+}

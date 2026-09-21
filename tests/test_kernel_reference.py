@@ -29,6 +29,7 @@ from kvdlra.kernel import FactoredMiddle, factored_attention
 from kvdlra.kernel.reference import rope_cos_sin
 
 BACKENDS: list[object] = ["reference"]
+BACKENDS.append(pytest.param("triton", marks=pytest.mark.gpu))
 TOL = 1e-2  # the pre-registered tripwire (prereg/kernel_smoke.md §4)
 DUMP = Path(__file__).resolve().parents[1] / "dumps/llama3.2-1b/doc411_047d060d_len4096_rope-both"
 N, R, D, H_KV, H_Q, T_MID, N_DENSE = 1024, 64, 128, 8, 32, 2048, 307  # the 8B shapes (ADR §3)

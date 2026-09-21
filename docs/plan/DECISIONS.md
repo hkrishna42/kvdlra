@@ -222,3 +222,17 @@
 ### D-018 addendum (2026-09-20 19:50 EDT, orchestrator) — the vt template comparison returns Verdict B: a generator deviation, not the model's ceiling; the repair is scoped and deferred past Stage 1
 - Report: docs/plan/reports/vt-template-comparison.md (read-only investigation; every claim sourced to `kvdlra.eval.gen`, NVIDIA/RULER's `variable_tracking.py`/`constants.py`, and the pre-flight records). Findings: generator v2's `vt` differs from official RULER in five ways — the mod-1 depth wrap places the chain's definition AFTER its references at depths 0.40 and 0.95 (RULER sorts positions so the value always precedes every reference); v2 omits RULER's mandatory one-shot example; the value may come from the `words` family (RULER: numbers only); chain statements lack the closing period; the filler is real documents. Third-party official-RULER runs put full-attention Llama-3.1-8B at vt ≈ 99.6 at 16K (arXiv:2602.05191 Table 4), so the pre-flight's 0.75 (string-match-all partial credit 0.867) is attributable to the generator. NVIDIA publishes no per-task vt cell for this checkpoint; no completion text is stored, so which variable each miss dropped is unrecoverable.
 - Decision (within D-018): Stage 1 runs `vt` on the unrepaired generator and reports it DESCRIPTIVELY, its rows read only against the pre-flight ceiling; no `vt` row from before the repair is ever pooled with one from after it. The repair — definition-first ordering, the one-shot example, numbers-only values for vt, the period — is a scoped Phase-2 item validated by one `full`-arm vt cell (≈ 1 GPU-h) before any pod reads vt as a decision; it changes `ruler_v2_*`'s config hash, so it lands as new task files, never by editing a task a manifest pins. The three quotable sentences for Amendment 1b are in the report's last section.
+
+## 2026-09-21 (owner, next-session §0 decisions)
+
+### §0(a) The orchestrator TAKES OVER the L3 items
+- The stalled L3 session (idle since 02:24 EDT on its Monitor ALL_DONE; not wakeable) was released by the owner ("I take over") and confirmed closed. This session committed the `gate1_preflight_rerun` harvest, wrote and task-reviewed Amendment 1b, ran the L6 gate and merged L3 into main (STATE 2026-09-21; merge 62140f9).
+
+### §0(b) Kernel re-run: option (A) — extends the D-002 addendum of 2026-09-21 (kernel_smoke REFUSED)
+- Commit Amendment 2 + Task 11 + `configs/pods/kernel_smoke2.yaml` and re-run cell list A (≈ $2). Approved: the relative per-layer bar `2⁻⁶` (4 bf16 ulp of `max|ref|`), the near-tie margin `M = 2⁻⁵ × top reconstruct logit` with its κ > 8 revision branch, the five `KernelCheckRecord` fields, the label `kernel_smoke2`. Executed in lane L4b. (C) rejected on the record (instance 51903816 stored neither `max|ref|` nor any logit → not re-readable); (B) declined (leaves every later kernel pod an unreadable absolute bar; the paper's systems paragraph unwritten).
+
+### §0(c) Credit: top up ≈ $100 at Stage 1's launch — extends D-003
+- D-003 ("let me know if you are running low, I'll top up"). Credit $79.48 at handover; Stage 1 $37–61 expected ($74–121 at the bar), `kernel_smoke2` ≈ $2, the `isvd_postrope_r128` row ≈ $10–20. The top-up is requested at the Stage-1 launch step, not at the $35 floor.
+
+### §0(d) Cell list B (batch ≥ 4 at 64K): max-batch on the A100 class first — extends D-002 concern 2 (ADR 0001)
+- By a dated amendment to `prereg/kernel_smoke.md`, after the re-run's precondition reads. H100 (a second GPU type) deferred to Phase 2 with a "kernel tested on two GPU types" limitation line.

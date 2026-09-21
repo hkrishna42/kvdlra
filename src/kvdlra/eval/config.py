@@ -43,6 +43,17 @@ ROOT = Path(__file__).resolve().parents[3] / "configs"
 
 CORPUS_TOKENS = {"wikitext-103-test": 288_937, "pg19-val": 2_968_224}
 
+# The 16-prompt full-model correctness precondition (prereg/kernel_smoke.md §4): a fixed
+# window over the same pg19-val stream CORPUS_TOKENS already bounds, at strides wide enough
+# to land in different books. kvdlra.kernel.prompts re-exports these -- they live here,
+# torch-free, because scripts/pod.py check imports this module in a torch-free subprocess,
+# while kvdlra.kernel (after Task 3) imports torch and transformers.
+PROMPT_CORPUS = "pg19-val"
+PROMPT_TOKENS = 4096
+N_NEW = 32
+PROMPT_STRIDE = 131_072
+PROMPT_STARTS: tuple[int, ...] = tuple(i * PROMPT_STRIDE for i in range(16))
+
 
 @dataclass
 class ArmCfg:

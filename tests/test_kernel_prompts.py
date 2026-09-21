@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import itertools
 
+import pytest
 import torch
 
 from kvdlra.eval.config import CORPUS_TOKENS
@@ -46,12 +47,8 @@ def test_the_pod_prompts_are_the_committed_windows() -> None:
 
 
 def test_prompt_windows_refuse_a_short_stream() -> None:
-    try:
+    with pytest.raises(ValueError, match="1970176"):
         prompts.prompt_windows(torch.arange(1000))
-    except ValueError as exc:
-        assert "1970176" in str(exc)
-    else:
-        raise AssertionError("a stream shorter than the last window must be refused")
 
 
 def test_the_tiny_prompts_are_the_committed_seeds() -> None:

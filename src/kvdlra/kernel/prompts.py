@@ -2,26 +2,26 @@
 
 Fixed here before the kernel exists; ``tests/test_kernel_prompts.py`` is the committed
 literal record (source, selection rule and fingerprints) and fails if this module drifts.
-No module-level torch import: ``kvdlra.eval.config`` reads the constants, and the
-`scripts/pod.py check` subprocesses that import it must stay torch-free.
+The constants below are defined in ``kvdlra.eval.config`` (torch-free, imported by the
+`scripts/pod.py check` subprocesses) and re-exported here; this module still imports no
+torch at module level.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from kvdlra.eval.config import N_NEW, PROMPT_CORPUS, PROMPT_STARTS, PROMPT_STRIDE, PROMPT_TOKENS
+
 if TYPE_CHECKING:
     from torch import Tensor
+
+__all__ = ["N_NEW", "PROMPT_CORPUS", "PROMPT_STARTS", "PROMPT_STRIDE", "PROMPT_TOKENS"]
 
 # The pod (Llama-3.1-8B): 16 non-overlapping windows of the PG-19 validation token stream
 # `kvdlra.eval.data.load_corpus_ids(tok, device, corpus="pg19-val")` returns -- the stream
 # `ppl_16k_pg19val` cuts its windows from -- at offsets i * PROMPT_STRIDE, each prefilled
 # whole and decoded greedily for N_NEW tokens under both decode paths.
-PROMPT_CORPUS = "pg19-val"
-PROMPT_TOKENS = 4096
-N_NEW = 32
-PROMPT_STRIDE = 131_072
-PROMPT_STARTS: tuple[int, ...] = tuple(i * PROMPT_STRIDE for i in range(16))
 
 # CPU (the tiny random-weight Llama of tests/conftest.py): seeded random token prompts.
 TINY_PROMPT_SEEDS: tuple[int, ...] = tuple(range(16))

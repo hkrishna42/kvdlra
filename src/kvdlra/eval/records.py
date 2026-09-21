@@ -94,6 +94,12 @@ LATENCY_RE = re.compile(
     r"spikes=(\d+) resident_gb=([0-9.]+) peak_gb=([0-9.]+) weights_gb=[0-9.]+"
     r" kv_peak_gb=([0-9.]+) batch=(\d+)"
 )
+# `kvdlra.eval.kernel_check.format_line`'s own print. `-` stands for an absent number (an
+# errored prompt has no diff and no mismatch step); `error=` stays last and unanchored.
+KERNEL_CHECK_RE = re.compile(
+    r"^\[kernel_check prompt=(\d+) arm=(\S+) ctx=(\d+) n_new=(\d+) match=([01])"
+    r" first_mismatch=(\S+) max_abs_diff=(\S+) worst_layer=(\S+) sha=(\S+)(?: error=(.*))?"
+)
 # The payload is matched loosely and `json.loads` is the arbiter: a `\{.*\}` regex
 # could not see a row `vastai logs` cut in half at all, so a truncated diagnostic
 # was not even counted as skipped.
@@ -185,6 +191,25 @@ class LatencyRecord(TypedDict):
     resident_gb: float
     peak_gb: float
     kv_peak_gb: float
+    source: str
+
+
+class KernelCheckRecord(TypedDict):
+    """One prompt of the kernel correctness check (prereg/kernel_smoke.md §4): whether the
+    kernel's greedy decode matched the reconstruct path's token for token, the first step
+    that did not, and the worst per-layer max|Δ| of the first kernel decode step."""
+
+    model: str
+    arm: str
+    ctx: int
+    prompt: int
+    n_new: int
+    match: int
+    first_mismatch: int | None
+    max_abs_diff: float | None
+    worst_layer: int | None
+    prompt_sha256: str
+    error: str | None
     source: str
 
 
@@ -437,6 +462,35 @@ def parse_latency_lines(text: str, model: str, source: str) -> list[LatencyRecor
     return out
 
 
+def parse_kernel_check_lines(text: str, model: str, source: str) -> list[KernelCheckRecord]:
+    """Every ``[kernel_check prompt=...]`` line as a record (the harvest-side counterpart to
+    `kernel_check.format_line`). The log-only `[kernel_check layers ...]` and
+    `[kernel_check mismatch ...]` lines do not match and are not records."""
+    out: list[KernelCheckRecord] = []
+    for i, line in enumerate(text.splitlines(), 1):
+        m = KERNEL_CHECK_RE.match(line)
+        if not m:
+            continue
+        prompt, arm, ctx, n_new, match, first, diff, worst, sha, error = m.groups()
+        out.append(
+            {
+                "model": model,
+                "arm": arm,
+                "ctx": int(ctx),
+                "prompt": int(prompt),
+                "n_new": int(n_new),
+                "match": int(match),
+                "first_mismatch": None if first == "-" else int(first),
+                "max_abs_diff": None if diff == "-" else float(diff),
+                "worst_layer": None if worst == "-" else int(worst),
+                "prompt_sha256": sha,
+                "error": error,
+                "source": f"{source}:{i}",
+            }
+        )
+    return out
+
+
 def parse_diag_lines(text: str, model: str, source: str) -> tuple[list[dict[str, object]], int]:
     """``[diag] {json}`` payloads (verbatim plus their ``model`` and ``source``), and how
     many ``[diag]`` lines were skipped because the payload is not a JSON object.
@@ -479,7 +533,7 @@ REPLAY_BEGIN, REPLAY_END = "===RECORDS_REPLAY_BEGIN===", "===RECORDS_REPLAY_END=
 # purpose -- it is the volume, not the reading: the pre-flight's 4 MB tail came back as
 # 15,381 diag rows and 138 of everything else, which is why 143 of its 240 `[trial]` rows
 # were lost with the instance (D-011 addendum 10). ~1,000 lines for a Stage-1 pod.
-_REPLAY_RES = (TRIAL_RE, CELL_RE, ERROR_RE, PPL_RE, PPLW_RE, LATENCY_RE)
+_REPLAY_RES = (TRIAL_RE, CELL_RE, ERROR_RE, PPL_RE, PPLW_RE, LATENCY_RE, KERNEL_CHECK_RE)
 
 
 def replayable(line: str) -> bool:
@@ -633,6 +687,7 @@ def write_jsonl(
     | list[PplRecord]
     | list[PplwRecord]
     | list[LatencyRecord]
+    | list[KernelCheckRecord]
     | list[dict[str, object]],  # the diagnostics, carried through unparsed
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -123,6 +123,18 @@ class TaskV2Cfg(TaskCfg):
 
 
 @dataclass
+class TaskKernelCheckCfg(TaskCfg):
+    """A ``generator: kernel_check`` task (`kvdlra.eval.kernel_check`): the full-model
+    correctness check of prereg/kernel_smoke.md §4 on the pod's own model. A subclass for
+    the reason `TaskV2Cfg` is one: a field on ``TaskCfg`` would move every live manifest's
+    hash. ``ctx`` must be the committed prompt length (`kvdlra.kernel.prompts.PROMPT_TOKENS`)
+    and ``n_prompts`` at most the committed list's length."""
+
+    n_new: int = 32
+    n_prompts: int = 16
+
+
+@dataclass
 class PodCfg:
     """One GPU run: a model, a set of arms, a set of tasks."""
 
@@ -171,7 +183,9 @@ def load_task(name: str) -> TaskCfg:
     """
     p = ROOT / "tasks" / f"{name}.yaml"
     raw = cast(DictConfig, OmegaConf.load(p))  # a task file is a mapping, never a list
-    t: TaskCfg = _load("tasks", name, TaskV2Cfg if raw.get("generator") == "v2" else TaskCfg)
+    gen = raw.get("generator")
+    schema = TaskV2Cfg if gen == "v2" else TaskKernelCheckCfg if gen == "kernel_check" else TaskCfg
+    t: TaskCfg = _load("tasks", name, schema)
     bad = []
     if isinstance(t, TaskV2Cfg):
         for k in sorted(set(t.design) - {"haystacks", "depths", "codes"}):
@@ -197,6 +211,13 @@ def load_task(name: str) -> TaskCfg:
                 f"n_samples={t.n_samples} exceeds the {ceiling} non-overlapping "
                 f"{t.ctx}+{t.window} windows {t.corpus} supplies"
             )
+    if isinstance(t, TaskKernelCheckCfg):
+        if t.ctx != PROMPT_TOKENS:
+            bad.append(f"ctx={t.ctx} must equal the committed prompt length {PROMPT_TOKENS}")
+        if not 1 <= t.n_prompts <= len(PROMPT_STARTS):
+            bad.append(f"n_prompts={t.n_prompts} must be within 1..{len(PROMPT_STARTS)}")
+        if t.n_new < 1:
+            bad.append(f"n_new={t.n_new} must be >= 1")
     if bad:
         raise ValueError(f"{ROOT / 'tasks' / f'{name}.yaml'}: " + "; ".join(bad))
     return t

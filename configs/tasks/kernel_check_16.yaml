@@ -1,0 +1,15 @@
+name: kernel_check_16
+generator: kernel_check
+ctx: 4096
+doc: >-
+  The correctness precondition of prereg/kernel_smoke.md section 4 on the pod's own model (its
+  Amendment 1): for every bug-kind arm carrying `decode_attention: kernel`, the 16 committed
+  prompts (kvdlra.kernel.prompts: the pg19-val windows at offsets i x 131072, 4096 tokens each)
+  are prefilled in 1024-token chunks and decoded greedily for 32 tokens under the kernel and
+  under the reconstruct path; a prompt matches when every token agrees, and the first kernel
+  decode step also records max|delta| against reconstruct-then-attend per layer on the live
+  K/V and query. One record per (arm, prompt); the pod gate requires all 16; the Week-3 gate
+  is refused unless >= 14 match and the worst layer's max|delta| < 1e-2.
+chunk: 1024
+n_new: 32
+n_prompts: 16

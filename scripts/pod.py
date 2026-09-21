@@ -48,11 +48,20 @@ from typing import Any, cast
 
 import _paths  # noqa: F401
 
-from kvdlra.eval.config import PodCfg, TaskV2Cfg, config_hash, load_arm, load_pod, load_task
+from kvdlra.eval.config import (
+    PodCfg,
+    TaskKernelCheckCfg,
+    TaskV2Cfg,
+    config_hash,
+    load_arm,
+    load_pod,
+    load_task,
+)
 from kvdlra.eval.records import (
     TrialRecord,
     parse_diag_lines,
     parse_error_lines,
+    parse_kernel_check_lines,
     parse_latency_lines,
     parse_ppl_lines,
     parse_pplw_lines,
@@ -610,6 +619,7 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     pplw = parse_pplw_lines(text, model, source)
     ppl = parse_ppl_lines(text, model, source)
     lat = parse_latency_lines(text, model, source)
+    kc = parse_kernel_check_lines(text, model, source)
     diag, diag_skipped = parse_diag_lines(text, model, source)
 
     # Every file this harvest is about to write, checked against what is on disk BEFORE
@@ -619,6 +629,7 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
         "pplw.jsonl": pplw,
         "ppl.jsonl": ppl,
         "latency.jsonl": lat,
+        "kernel_check.jsonl": kc,
         "diag.jsonl": diag,
     }
     refusals = [r for r in (_shrink_refusal(out, f, len(x)) for f, x in parsed.items()) if r]
@@ -809,6 +820,29 @@ def _latency_fails(pod: PodCfg, d: Path) -> list[str]:
     ]
 
 
+def _kernel_check_fails(pod: PodCfg, d: Path) -> list[str]:
+    """Every `kernel_check` task holds `n_prompts` records per kernel arm (a `bug` arm with
+    `decode_attention: kernel`) in `kernel_check.jsonl` -- the precondition's evidence
+    (prereg/kernel_smoke.md §4), which a pod that skipped it must not pass without."""
+    p = d / "kernel_check.jsonl"
+    got = Counter((r["arm"], r["ctx"]) for r in read_jsonl(p)) if p.is_file() else Counter()
+    fails = []
+    for t in (load_task(x) for x in pod.tasks):
+        if not isinstance(t, TaskKernelCheckCfg):
+            continue
+        for stem in pod.arms:
+            cfg = load_arm(stem)
+            if cfg.kind != "bug" or cfg.cache.get("decode_attention") != "kernel":
+                continue
+            key = cfg.legacy_name or cfg.name
+            if got[(key, t.ctx)] != t.n_prompts:
+                fails.append(
+                    f"kernel_check: {key} ctx={t.ctx} has {got[(key, t.ctx)]}"
+                    f" of {t.n_prompts} prompt records"
+                )
+    return fails
+
+
 def _env_fails(d: Path) -> list[str]:
     p = d / "env.txt"
     if not p.is_file():
@@ -875,7 +909,8 @@ def check(d: Path, log: Path | None = None) -> int:
     # cross-check is skipped.
     if m_err > n_err:
         fails.append(
-            f"errors: {n_err} trial error(s) + {m_err - n_err} perplexity/latency error(s)"
+            f"errors: {n_err} trial error(s) + {m_err - n_err}"
+            " perplexity/latency/kernel_check error(s)"
         )
         if log and log.is_file():
             lines = log.read_text().splitlines()
@@ -897,6 +932,7 @@ def check(d: Path, log: Path | None = None) -> int:
         fails += _ppl_fails(pod, d)
         fails += _pplw_fails(pod, d)
         fails += _latency_fails(pod, d)
+        fails += _kernel_check_fails(pod, d)
     fails += _env_fails(d)
 
     for f in fails:

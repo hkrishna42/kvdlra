@@ -4,6 +4,7 @@ pod is an in-memory `PodCfg` over the committed arm and task files."""
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import shutil
 from pathlib import Path
@@ -85,6 +86,11 @@ def test_roles_and_the_analytic_footprint() -> None:
     assert got is not None and abs(got - want.stored_bits() * 32 / 8 / 1024**3) < 1e-9
     assert 0.55 < got < 0.57  # ADR 0001 §1: "the stored state is 0.56 GB" at 32K
     assert got == tables.analytic_stored_gib(load_arm("isvd_r64_h256_seed_kernel"), 32768, MODEL)
+    # M-6: pin all three R-L4-15 footprints, not just 32K -- the ring/coordinate arithmetic at
+    # 16K and 64K is otherwise unpinned.
+    for ctx, want_gib in ((16384, 0.302), (32768, 0.556), (65536, 1.064)):
+        g = tables.analytic_stored_gib(load_arm("isvd_r64_h256_seed"), ctx, MODEL)
+        assert g is not None and abs(g - want_gib) < 5e-4
 
 
 def test_a_passing_pod_renders_the_table_and_the_verdict(tmp_path: Path) -> None:
@@ -127,6 +133,11 @@ def test_fail_marginal_and_refusals(tmp_path: Path) -> None:
     assert "PRECONDITION: NOT met" in md and "2.000e-02" in md
     md = _render(tmp_path, rows=_full_grid())
     assert "PRECONDITION: not recorded on this pod" in md
+    # M-2 / R-L4-25: a kernel-role arm with no kernel_check.jsonl refuses the verdict.
+    assert (
+        "WEEK-3 GATE (batch 1): REFUSED -- the correctness precondition was not recorded on"
+        " this pod (no kernel_check.jsonl)" in md
+    )
 
 
 def test_missing_and_errored_cells_say_so(tmp_path: Path) -> None:
@@ -165,3 +176,46 @@ def test_the_cli_renders_an_existing_pod(tmp_path: Path, monkeypatch: pytest.Mon
     md = out.read_text()
     assert "no kernel arm in the pod" in md and "WEEK-3 GATE (batch 1): REFUSED" in md
     assert "| quant-2bit-kivi | quant | 16384 | 1 | not run (no record) |" in md
+
+
+def test_spikes_are_reported_on_every_row(tmp_path: Path) -> None:
+    """R-L4-24: a `spikes > SPIKES_MAX` row is reported wherever it occurs, not only on the
+    reconstruct/kernel arms at 32K -- that GATE_CTX-scoped refusal is unchanged (still exercised
+    by test_fail_marginal_and_refusals' `spiky` case). 12 spikes on the kernel arm at 16K is
+    outside the gate's scope, so the reading appears but the verdict still PASSes."""
+    rows = [
+        r if not (r["arm"] == KEYS["kernel"] and r["ctx"] == 16384) else {**r, "spikes": 12}
+        for r in _full_grid()
+    ]
+    md = _render(tmp_path, rows=rows, kc=_kc())
+    assert (
+        "NOT STEADY STATE: isvd_r64_h256_seed_kernel ctx=16384 batch=1 spikes=12/56"
+        " (ms_mean=21.00, ms_max=50.00) — p50 not read as a steady-state number" in md
+    )
+    assert "WEEK-3 GATE (batch 1): PASS" in md
+
+
+def test_two_arms_playing_the_same_role_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M-3: `arm_of` inverts `roles`, so two arms mapped to the same gate role would otherwise
+    silently collapse to whichever the dict comprehension visited last. No second real `kernel`
+    arm config is committed, so fabricate one by wrapping `load_arm` -- same cache, new key."""
+    second = "isvd_r64_h256_seed_kernel_2"
+
+    def fake_load_arm(name: str) -> Any:
+        if name != second:
+            return load_arm(name)
+        return dataclasses.replace(load_arm(KEYS["kernel"]), name=second, legacy_name=None)
+
+    monkeypatch.setattr(tables, "load_arm", fake_load_arm)
+    pod = PodCfg(name="fixture", model=MODEL, arms=[*ARMS, second],
+                 tasks=["latency_16k_32k_64k"], prereg="prereg/kernel_smoke.md",
+                 gpu_budget_h=5.0)  # fmt: skip
+    out = tmp_path / "dup.md"
+    tables.latency_table(pod, _results(tmp_path, rows=_full_grid(), kc=_kc()), out)
+    md = out.read_text()
+    assert (
+        "WEEK-3 GATE (batch 1): REFUSED -- two arms play the kernel role:"
+        f" ['{KEYS['kernel']}', '{second}']" in md
+    )

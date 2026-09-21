@@ -17,7 +17,7 @@ arm's decode peak was never measured. This measures both, per arm x context x ba
 Rows (harvested by ``records.parse_latency_lines``)::
 
     [latency ctx16384] full  ms/tok=.. mean=.. max=.. spikes=.. resident_gb=.. peak_gb=..
-        weights_gb=.. kv_peak_gb=.. batch=..
+        weights_gb=.. kv_peak_gb=.. batch=.. kv_resident_gb=..
 """
 
 from __future__ import annotations

@@ -1201,11 +1201,20 @@ def week3_gate(
     rows: Sequence[LatencyRecord], roles: Mapping[str, str], n_errors: int, precondition: str | None
 ) -> list[str]:
     """prereg §4's reading at batch 1 (cell list A), as lines: refusals, the two conditions
-    with their numbers, the verdict. Other batches are reported the same way, descriptively."""
+    with their numbers, the verdict. Other batches are reported the same way, descriptively.
+    Two arms sharing a gate role make that role unusable (R-L4-25 -- `arm_of` would otherwise
+    silently pick one), and every row with `spikes > SPIKES_MAX` gets its own steady-state
+    reading regardless of arm/ctx/batch (R-L4-24); the GATE_CTX-scoped refusal further down
+    (reconstruct/kernel at 32K only) is unchanged."""
     by = {(r["arm"], r["ctx"], r["batch"]): r for r in rows}
-    arm_of = {role: key for key, role in roles.items() if role in ("full", "reconstruct", "kernel")}
+    gate_roles = ("full", "reconstruct", "kernel")
+    dup = {role for role in gate_roles if sum(1 for r in roles.values() if r == role) > 1}
+    arm_of = {role: key for key, role in roles.items() if role in gate_roles and role not in dup}
     lines: list[str] = []
     refusals: list[str] = []
+    for role in sorted(dup):
+        keys = [key for key, r in roles.items() if r == role]
+        refusals.append(f"two arms play the {role} role: {keys}")
     if n_errors:
         refusals.append(
             f"{n_errors} error row(s) in the manifest -- any `[error]` refuses the verdict (§4)"
@@ -1215,26 +1224,33 @@ def week3_gate(
             "PRECONDITION: not recorded on this pod -- the launch entry must name its"
             " evidence path (§4)"
         )
+        if "kernel" in arm_of:
+            refusals.append(
+                "the correctness precondition was not recorded on this pod (no kernel_check.jsonl)"
+            )
     else:
         lines.append(f"PRECONDITION: {precondition}")
         if precondition.startswith("NOT"):
             refusals.append(
                 "the correctness precondition is not met: a fast wrong kernel is not a result (§4)"
             )
-    for role in ("full", "reconstruct", "kernel"):
-        if role not in arm_of:
+    for role in gate_roles:
+        if role not in arm_of and role not in dup:
             refusals.append(f"no {role} arm in the pod")
+    for r in sorted(rows, key=lambda r: (r["arm"], r["ctx"], r["batch"])):
+        if r["spikes"] > SPIKES_MAX:
+            lines.append(
+                f"NOT STEADY STATE: {r['arm']} ctx={r['ctx']} batch={r['batch']} spikes="
+                f"{r['spikes']}/56 (ms_mean={r['ms_mean']:.2f}, ms_max={r['ms_max']:.2f})"
+                " — p50 not read as a steady-state number"
+            )
     batches = sorted({r["batch"] for r in rows}) or [1]
     for batch in batches:
-        if any(role not in arm_of for role in ("full", "reconstruct", "kernel")):
-            continue  # the refusal above already names the missing role
+        if any(role not in arm_of for role in gate_roles):
+            continue  # the refusal above already names the missing/ambiguous role
         tag = f"@32K b{batch}"
         cells = {role: by.get((arm_of[role], GATE_CTX, batch)) for role in arm_of}
-        missing = [
-            role
-            for role in ("full", "reconstruct", "kernel")
-            if role in arm_of and cells.get(role) is None
-        ]
+        missing = [role for role in gate_roles if role in arm_of and cells.get(role) is None]
         if missing:
             (refusals if batch == 1 else lines).append(
                 f"batch {batch}: no 32K record for {missing}"

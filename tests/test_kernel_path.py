@@ -15,19 +15,21 @@ module's CPU budget); the 16-prompt precondition itself is pinned by the `plain`
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import torch
 from transformers import LlamaForCausalLM
 from transformers.masking_utils import ALL_MASK_ATTENTION_FUNCTIONS
 from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding, rotate_half
 
 from kvdlra.cache import BugStreamingCache
 from kvdlra.eval.config import arm_kwargs, load_arm
 from kvdlra.eval.frontier import _prefill_chunked, build_arm
 from kvdlra.kernel.attention import KERNEL_ATTN
 from kvdlra.kernel.prompts import TINY_N_NEW, TINY_PROMPT_TOKENS, tiny_prompts
+from kvdlra.kernel.reference import rope_cos_sin
 from tests.conftest import tiny_cache
 
 TINY_SDPA = True
@@ -120,6 +122,46 @@ def test_kernel_step_returns_dense_only_and_the_scope_registers(
         fn(None, None, None, None, None)
 
 
+def test_kernel_middle_positions_match_reconstruct_under_fifo_with_an_exact_tier(
+    tiny_model: LlamaForCausalLM,
+) -> None:
+    """R-L4-18: `_factored_middle` must position the kernel's middle exactly as
+    `_ensure_mid_cache` positions the reconstruct path's -- both must leave room for
+    `_hh_attended_len()` columns ahead of the low-rank block, not just the block's own
+    length, or a live exact tier under fifo retention shifts the kernel middle off the
+    reconstruct path's (the bug this test pins: unfixed, K differed by 0.75 max abs; V,
+    never RoPE'd, was already identical). Rebuilds the kernel's middle by hand -- U @ C,
+    in-kernel RoPE via `rope_cos_sin` at `mid.positions` and the model's own
+    `inv_freq`/`attention_scaling` -- and checks it against `_mid_k_cache`/`_mid_v_cache`
+    after a plain `_decode_peek()` forces the reconstruct path to (re)build them."""
+    cache = tiny_cache(
+        tiny_model, retention="fifo", hh_budget=8, hh_select="surprise",
+        decode_attention="kernel", kernel_operand_dtype="float32",
+    )  # fmt: skip
+    _greedy(tiny_model, cache, tiny_prompts()[0][None], 1)
+    layer = cache._bug_layers()[0]
+    assert layer._hh_attended_len() > 0  # the tier must be live for R-L4-18 to bite
+    mids = layer.kernel_middles()
+    assert mids is not None
+    mid = mids[0]
+    assert mid is not None and mid.n_columns > 0
+    layer._decode_peek()  # off the kernel step: forces `_ensure_mid_cache` (reconstruct)
+    assert layer._mid_k_cache is not None and layer._mid_v_cache is not None
+    rotary = cast(LlamaRotaryEmbedding, tiny_model.model.rotary_emb)
+    inv_freq = rotary.inv_freq
+    scaling = float(getattr(rotary, "attention_scaling", 1.0))
+    h, d = layer.num_heads, layer.head_dim
+    k_pre = (mid.u_k[0] @ mid.c_k[0]).reshape(h, d, -1).permute(0, 2, 1)  # (H, T, D)
+    cos, sin = rope_cos_sin(mid.positions, inv_freq, scaling)
+    rot = rotate_half(k_pre)  # type: ignore[no-untyped-call]  # unannotated upstream
+    k_hat = (k_pre * cos[0] + rot * sin[0]).permute(0, 2, 1).reshape(h * d, -1)
+    v_hat = mid.u_v[0] @ mid.c_v[0]
+    k_diff = float((k_hat - layer._mid_k_cache.float()).abs().max())
+    v_diff = float((v_hat - layer._mid_v_cache.float()).abs().max())
+    assert k_diff < 1e-5, k_diff
+    assert v_diff < 1e-5, v_diff
+
+
 @pytest.mark.parametrize(
     ("extra", "prompts"),
     [({}, tiny_prompts()), (TIER, tiny_prompts()[:4])],
@@ -137,6 +179,8 @@ def test_the_16_prompts_are_token_exact_in_fp32(
         )
         recon = tiny_cache(tiny_model, decode_attention="reconstruct", **extra)
         toks_k, logits_k = _greedy(tiny_model, kern, ids, TINY_N_NEW)
+        if not extra:  # "plain": the kernel path never builds the reconstruct workspace --
+            assert kern.workspace_numel() == 0  # the observable proof it ran, uninstrumented
         toks_r, logits_r = _greedy(tiny_model, recon, ids, TINY_N_NEW)
         steps = enumerate(zip(toks_k, toks_r, strict=True))
         first = next((s for s, (a, b) in steps if a != b), None)

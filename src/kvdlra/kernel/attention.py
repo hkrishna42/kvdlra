@@ -95,22 +95,25 @@ def _unbound(*args: Any, **kwargs: Any) -> tuple[Tensor, None]:
 @contextmanager
 def attach_kernel(cache: Any, model: Any) -> Iterator[None]:
     """Bind `factored_attention_forward` to ``cache`` and the model's rotary constants under
-    ``KERNEL_ATTN``, switch ``model.config._attn_implementation`` to it, restore on exit."""
+    ``KERNEL_ATTN``, switch ``model.config._attn_implementation`` to it, restore on exit. Not
+    reentrant: nesting a second cache's attach inside this scope re-binds ``KERNEL_ATTN`` to
+    it, and that inner scope's exit re-binds the name to the raising stub, breaking this
+    scope's cache too."""
     base = getattr(model, "model", model)
     rotary = base.rotary_emb
-    AttentionInterface.register(
-        KERNEL_ATTN,
-        partial(
-            factored_attention_forward,
-            cache=cache,
-            inv_freq=rotary.inv_freq.to(torch.float32),
-            attention_scaling=float(getattr(rotary, "attention_scaling", 1.0)),
-        ),
-    )
-    AttentionMaskInterface.register(KERNEL_ATTN, sdpa_mask)
     previous = model.config._attn_implementation
-    model.config._attn_implementation = KERNEL_ATTN
     try:
+        AttentionInterface.register(
+            KERNEL_ATTN,
+            partial(
+                factored_attention_forward,
+                cache=cache,
+                inv_freq=rotary.inv_freq.to(torch.float32),
+                attention_scaling=float(getattr(rotary, "attention_scaling", 1.0)),
+            ),
+        )
+        AttentionMaskInterface.register(KERNEL_ATTN, sdpa_mask)
+        model.config._attn_implementation = KERNEL_ATTN
         yield
     finally:
         model.config._attn_implementation = previous

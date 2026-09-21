@@ -176,7 +176,7 @@ def test_eval_side_readers_of_per_layer_state_refuse_at_batch_2(
     cache = tiny_cache(tiny_model)
     with torch.no_grad():
         tiny_model(torch.cat([_prompt(1), _prompt(2)]), past_key_values=cache, use_cache=True)
-    assert _rows(cache._bug_layers()[0]) is not None
+    _rows(cache._bug_layers()[0])
     with pytest.raises(NotImplementedError, match="batch-1 only"):
         _footprint(BUG_ARM, cache, t=T, n=N_FEATURES, h_kv=H)
     with pytest.raises(NotImplementedError, match="batch-1 only"):

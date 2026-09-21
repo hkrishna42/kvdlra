@@ -1470,11 +1470,15 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         """True positions of the retained **low-rank** columns (assembly order
         ``[quant | fp32]``), for re-rotating their reconstruction. The exact
         heavy-hitter tier is stored verbatim post-RoPE and is not included here.
-        Contiguous by construction under FIFO."""
+        Contiguous by construction under FIFO -- the single source of truth for
+        ``mid_start`` that `_ensure_mid_cache` and `_factored_middle` both read
+        through (R-L4-18): it must leave room for `_hh_attended_len()` columns
+        ahead of this block, not just this block's own length, or a live exact
+        tier shifts the kernel middle's positions off the reconstruct path's."""
         device = self.c_k.device if self.c_k is not None else torch.device("cpu")
         if not self.track_positions:
             lr_len = self._q_len() + self._f_len()
-            mid_start = self.cumulative_length - self._recent_len() - lr_len
+            mid_start = self.cumulative_length - self._recent_len() - self._mid_len()
             return torch.arange(mid_start, mid_start + lr_len, dtype=torch.int64, device=device)
         parts = []
         if self._q_len() > 0:
@@ -1511,9 +1515,12 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         if self.track_positions:
             k_hat = self._mat_rope_at(k_pre_hat, self._mid_positions(), inverse=False)
         else:
-            # Contiguous middle: the memoized range path (bit-identical to Week 6).
-            mid_len = self._mid_len()
-            mid_start = self.cumulative_length - self._recent_len() - mid_len
+            # Contiguous middle: the memoized range path (bit-identical to Week 6). The
+            # start comes from `_mid_positions()` (R-L4-18: one source of truth for both
+            # this reconstruct path and the kernel path's `_factored_middle`) -- taken as
+            # a scalar rather than switching to `_mat_rope_at` so this hot path keeps
+            # `_mat_rope`'s per-(start, length) memo across layers.
+            mid_start = int(self._mid_positions()[0])
             k_hat = self._mat_rope(k_pre_hat, mid_start, inverse=False)
         self._mid_k_cache = k_hat.to(self.dtype)
         self._mid_v_cache = v_hat.to(self.dtype)
@@ -1858,7 +1865,9 @@ class BugStreamingCache(Cache):
             del model
             yield
             return
-        from kvdlra.kernel.attention import attach_kernel  # lazily: the glue imports a cache
+        # lazily: the glue imports transformers' attention integrations, kept off this
+        # module's import path.
+        from kvdlra.kernel.attention import attach_kernel
 
         with attach_kernel(self, model):
             yield

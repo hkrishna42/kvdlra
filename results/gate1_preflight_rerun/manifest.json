@@ -1,23 +1,49 @@
 {
+  "cell_elapsed_s": {
+    "bugSseed-r64-h256/niah_multikey/16384": 2822.0,
+    "bugSseed-r64-h256/niah_multiquery/16384": 2873.3,
+    "bugSseed-r64-h256/niah_multivalue/16384": 2819.4,
+    "bugSseed-r64-h256/niah_single/16384": 2740.9,
+    "bugSseed-r64-h256/vt/16384": 2933.5,
+    "frozen_r64_h256_seed/niah_multikey/16384": 1129.0,
+    "frozen_r64_h256_seed/niah_multiquery/16384": 1156.4,
+    "frozen_r64_h256_seed/niah_multivalue/16384": 1124.8,
+    "frozen_r64_h256_seed/niah_single/16384": 1125.1,
+    "frozen_r64_h256_seed/vt/16384": 1200.4,
+    "nogist_h2423/niah_multikey/16384": 2018.3,
+    "nogist_h2423/niah_multiquery/16384": 2025.3,
+    "nogist_h2423/niah_multivalue/16384": 2011.4,
+    "nogist_h2423/niah_single/16384": 2007.4,
+    "nogist_h2423/vt/16384": 2038.7
+  },
   "command_line": "vastai create instance 50895886 --image pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel --disk 80 --env '-e POD=gate1_preflight_rerun -e SHA=d4ed366dff81a91e947fa904275f5e58027a3f81 -e MODEL=unsloth/Meta-Llama-3.1-8B-Instruct -e DTYPE=bfloat16 -e MAX_HOURS=14' --onstart scripts/pod/boot.sh --label kvdlra-gate1_preflight_rerun",
   "config_hash": "5af93028c94a0e6fed1885febb8fad2ac0b13121c025541fc5a9d32025095f6e",
-  "cuda": "none",
-  "dataset_sha256": {},
+  "cuda": "12.8",
+  "dataset_sha256": {
+    "haystack:arxiv": "4c2b7e0312d3b47d8cd62298e2455f3779317abbacbb574147414ab4e602360e",
+    "haystack:essays": "12a16c81fc01036c2e359f78d446777101302370a98b1460619b67e66bf75de1",
+    "haystack:pg19": "7a9b488c3737e3081e57f8af2123313089bc94ef90665654d44826653505d77c",
+    "haystack:wikipedia": "6e37fe2ff6f7d8434fc5c030b140efbddedbeb8cef2cec3d85e550df9346e478"
+  },
+  "diag_skipped": 0,
   "dry_run": false,
   "errors": 0,
   "git_sha": "d4ed366dff81a91e947fa904275f5e58027a3f81",
-  "gpu": "none",
-  "harvested_at": null,
+  "gpu": "NVIDIA A100-SXM4-40GB",
+  "harvested_at": "2026-09-21T06:23:54+00:00",
   "kvpress": "0.5.1",
   "launched_at": "2026-09-20T21:53:36+00:00",
   "model": "unsloth/Meta-Llama-3.1-8B-Instruct",
-  "model_revision": null,
+  "model_revision": "a2856192dd7c25b842431f39c179a6c2c2f627d1",
   "pod": "gate1_preflight_rerun",
-  "records": {},
-  "status": null,
+  "records": {
+    "diag.jsonl": 74881,
+    "trials.jsonl": 180
+  },
+  "status": "ALL_DONE",
   "timeout": false,
-  "torch": "2.11.0",
+  "torch": "2.11.0+cu128",
   "transformers": "5.8.0",
   "triton": "none",
-  "wall_clock_s": null
+  "wall_clock_s": 30026.9
 }

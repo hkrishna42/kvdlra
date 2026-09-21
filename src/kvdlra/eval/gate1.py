@@ -56,7 +56,14 @@ Gate-1 p-value (that file's section 6), and its five clauses map as:
 - rule 2, the family's +/-0.02 perplexity TOST                    :func:`_bf16_family`
 - rule 3, pass / fail / REFUSED composed over the two families    :func:`bf16_verdict`
 - rule 4's refusals, read first: an error row on either arm, a broken pairing, a missing
-  cell, and section 6's ``not decidable`` TOST                    :func:`_bf16_refusals`
+  cell, section 6's ``not decidable`` TOST, and section 7 (c)'s stored-bits ratio outside
+  1 % of :func:`bf16_expected_sbits_ratio`                        :func:`_bf16_refusals`
+
+Two more of that file's clauses live here past the five above: section 6's "one stage per
+call" (a Stage-2 family's bf16 records beside the Stage-1 pair in one invocation would
+repool its own Holm family) is enforced, not merely documented, in :func:`bf16_contrasts`;
+and section 7 (c)'s expected ratio -- 0.566 / 0.539 -- comes from
+:func:`kvdlra.accounting.bug_footprint` rather than being typed in twice.
 """
 
 from __future__ import annotations
@@ -71,6 +78,7 @@ from typing import cast
 
 from scipy.stats import ttest_1samp
 
+from kvdlra.accounting import bug_footprint
 from kvdlra.eval.config import load_arm
 from kvdlra.eval.records import (
     PplRecord,
@@ -97,6 +105,35 @@ BF16_PREREG = "prereg/bf16_gist.md"  # the reading below is its section 4, and o
 BF16 = "bf16"  # arm 6, `isvd_r64_h256_seed_bf16`: the gist stored at 16 bits
 BF16_MARGIN = 0.03  # its section 4 (1), on `(a_favored - b_favored) / n_paired`
 BF16_FAMILIES = 2  # its section 6's two Stage-1 model families, and section 4 (3)'s "both"
+BF16_STAGE1_FAMILIES = frozenset({"llama", "qwen"})  # section 3's Stage-1 pair; a Stage-2
+# (Mistral) pod's bf16 members get their OWN Holm family (section 6) and must never enter
+# this one -- `bf16_contrasts` refuses to pool the two into one call.
+BF16_SBITS_TOL = 0.01  # section 7 (c): "within 1 %" of the expected stored-bits ratio
+# The r64 16K configuration section 2 (a)'s snippet and section 7 (c) both solve --
+# t=16384, 256 exact-tier tokens, 4 sinks, ring 32 -- so `bf16_expected_sbits_ratio`
+# reproduces their 0.566 / 0.539 instead of typing them in as literals.
+BF16_T, BF16_HH, BF16_SINK, BF16_RING = 16384, 256, 4, 32
+BF16_LAYER_WIDTH = {  # num_key_value_heads x head_dim, section 2 (a)'s two widths
+    "llama": 1024, "qwen": 512, "mistral": 1024,
+}  # fmt: skip
+
+
+def bf16_expected_sbits_ratio(n: int) -> float:
+    """Section 7 (c)'s expected ``sbits(bf16) / sbits(isvd)`` at 16K on the r64
+    configuration, at layer width ``n`` -- from :func:`kvdlra.accounting.bug_footprint`'s
+    own ``stored_bits()``, the way section 2 (a)'s snippet computes it, not a hand-typed
+    copy of the result: 0.566 at n=1024 (Llama, Mistral), 0.539 at n=512 (Qwen)."""
+    coord_count = BF16_T - BF16_HH - BF16_SINK - BF16_RING
+    fp32 = bug_footprint(
+        n, 64, coord_count, BF16_RING, n_sink=BF16_SINK, retention="lowrank_surprise",
+        hh_count=BF16_HH, gist_bits=32,
+    ).stored_bits()  # fmt: skip
+    fp16 = bug_footprint(
+        n, 64, coord_count, BF16_RING, n_sink=BF16_SINK, retention="lowrank_surprise",
+        hh_count=BF16_HH, gist_bits=16,
+    ).stored_bits()  # fmt: skip
+    return fp16 / fp32
+
 
 # Arm stem -> tracker label, in the prereg's section 3 arm order (which is also the order
 # the table's rows take). Two no-gist stems, one per KV width: one H cannot serve both.
@@ -400,15 +437,23 @@ def _holm_by_group(
     """Holm inside each group of eligible members, ``None`` for every other member.
 
     ``group`` maps a member's index to its family key (absent = in no family); the
-    realised m is how many indices share a key, which the table prints. A member with an
+    realised m is how many indices share a key, which the table prints. For its two
+    Gate-1 callers (``retrieval_contrasts``, ``ppl_contrasts``), a member with an
     ``error`` row, and every member of a refused family, is absent -- R-L3-16, header.
+    ``bf16_contrasts`` is a third caller with its OWN eligibility
+    (``prereg/bf16_gist.md`` section 4's snippet, by that file's design): only a
+    member's OWN error row or OWN broken pairing removes it there, so a refused
+    family's clean members stay in -- see that function's docstring, not this one.
     The key is the caller's, and it is the INVOCATION and never the model family:
     section 6's primary retrieval family is 16 POOLED across Llama and Qwen, so grouping
     by (family, ctx) would split it into two 8s.
     """
-    # ponytail: one stage per call is the caller's contract, not a check here -- a
-    # caller that passed Stage 1 and Stage 2 in one invocation would pool them. Take the
-    # stage as an explicit input if `make gate1` ever grows a multi-stage mode.
+    # ponytail: one stage per call is the caller's contract, not a check here, for
+    # `retrieval_contrasts` and `ppl_contrasts` -- a caller that passed Stage 1 and
+    # Stage 2 in one invocation would pool them. Take the stage as an explicit input if
+    # `make gate1` ever grows a multi-stage mode. `bf16_contrasts` is the exception: it
+    # guards its own input at the call boundary rather than leaving this the same open
+    # contract (prereg/bf16_gist.md section 6 is explicit that Stage 2 is never pooled).
     out: list[float | None] = [None] * len(draft)
     members: dict[object, list[int]] = defaultdict(list)
     for i, key in group.items():
@@ -792,12 +837,27 @@ def bf16_contrasts(data: Gate1Data) -> list[Contrast]:
     else, so a refused family's clean members stay in and the realised m shrinks by the
     member rather than by the family. The snippet is the registered statistic, and this
     reproduces it.
+
+    Holm here groups by context length alone, which is only correct for a single stage's
+    call: **one stage per call is enforced, not merely documented** (contrast
+    :func:`_holm_by_group`'s own note, which leaves the contract to the caller) --
+    because a caller that loaded a Stage-2 (Mistral) pod beside the Stage-1 pair would
+    silently repool an m=4 family into the registered m=8 and recompute its adjusted
+    p-values, exactly what section 6 forbids. A family outside the Stage-1 pair with bf16
+    records in the input raises rather than guessing which Holm family it belongs to.
     """
     draft = [
         _member(data, f, c, t, BF16)
         for f, c, t in _reference_cells(data)
         if (f, c, t, BF16) in data.hits
     ]
+    extra = sorted({c.family for c in draft} - BF16_STAGE1_FAMILIES)
+    if extra:
+        raise ValueError(
+            f"bf16_contrasts: {extra[0]!r} carries bf16 records beside the Stage-1 pair"
+            f" {sorted(BF16_STAGE1_FAMILIES)} -- one stage per call ({BF16_PREREG} section"
+            " 6); read a Stage-2 family's bf16 reading from its own gate1.load call"
+        )
     eligible = {
         i: x.ctx
         for i, x in enumerate(draft)
@@ -835,13 +895,18 @@ def _bf16_refusals(
 
     An ``error`` row on either arm; a member with no pairing left; a cell or a perplexity
     sweep the pod never wrote ("a pod that stopped inside arm 6 leaves ``not run``, never
-    a partial reading"); and section 6's ``not decidable`` TOST, which is "never ... a
-    pass, never a quiet fail". Gate 1's own frozen-dispatch and byte-match refusals are
-    not read here: they are that gate's, and this arm is outside it.
+    a partial reading"); section 6's ``not decidable`` TOST, which is "never ... a pass,
+    never a quiet fail"; and section 7 (c)'s stored-bits ratio outside 1 % of
+    :func:`bf16_expected_sbits_ratio`, "read before section 4's rule, never after". Gate
+    1's own frozen-dispatch and byte-match refusals are not read here: they are that
+    gate's, and this arm is outside it -- but the "stored bits not measured" case below
+    mirrors Gate 1's own byte-match refusal (this module's refusal 4, in ``_refusals``)
+    for the same reason it refuses there: section 7 (c) itself is silent on a pod that
+    never wrote the field, and a check with nothing to read is a refusal, not a pass by
+    default.
 
-    Presence is all this guards, as in the header: whether a cell holds its full n = 24 is
-    ``scripts/pod.py check``'s job, and section 7 (c)'s stored-bits check is read off the
-    table's own descriptive column rather than refused here.
+    Presence is all this guards otherwise, as in the header: whether a cell holds its
+    full n = 24 is ``scripts/pod.py check``'s job.
     """
     out: list[tuple[str, str]] = []
     for t in tasks:
@@ -874,6 +939,22 @@ def _bf16_refusals(
         for t in ppl
         if not t.equivalent and not t.decidable
     ]
+    # Section 7 (c), read BEFORE section 4's rule (its own wording): the measured
+    # median-sbits ratio against the expected one for this family's layer width, within
+    # 1 % (`BF16_SBITS_TOL`) or the family did not store what the prereg says it does.
+    bf16_sbits, isvd_sbits = data.sbits.get((family, BF16)), data.sbits.get((family, REFERENCE))
+    if bf16_sbits is None or isvd_sbits is None:
+        out.append(("sbits", f"{family}: stored bits not measured (no sbits on the records)"))
+    else:
+        ratio = bf16_sbits / isvd_sbits
+        expected = bf16_expected_sbits_ratio(BF16_LAYER_WIDTH[family])
+        if abs(ratio / expected - 1.0) > BF16_SBITS_TOL:
+            out.append(
+                (
+                    "sbits",
+                    f"{family}: stored-bits ratio {ratio:.4f} outside 1 % of {expected:.4f}",
+                )
+            )
     return out
 
 
@@ -923,10 +1004,14 @@ def bf16_verdict(contrasts: list[Contrast], ppl: list[PplContrast], data: Gate1D
     """``prereg/bf16_gist.md`` section 4's reading, over the 16K members only.
 
     Read per family (section 4 (4) before the rule), then composed by section 4 (3): a
-    refusal anywhere is ``REFUSED``, a fail with no refusal is ``fail``, and a pass has to
-    be bought on both families -- "there is no partial pass and no per-family pass" -- so
-    a single-family input reads ``REFUSED`` rather than a pass off half the design. A
-    fail off one family stays a fail: the cost it reports was measured.
+    refusal anywhere is ``REFUSED``, and a pass or a fail has to be bought on BOTH
+    families -- "there is no partial pass and no per-family pass ... bought on both
+    families or not at all" -- so a single-family input reads ``REFUSED`` regardless of
+    whether its one family passed or failed. Only once both families' readings actually
+    ran does a fail carry its "measured cost" consequence; the ``partial`` check below is
+    therefore read BEFORE ``FAIL`` is, not after it -- reading it after (as an earlier
+    version of this function did) let a partial input's fail escape as a costed ``fail``
+    rather than the refusal section 4 (3) fixes for it.
     """
     tasks = [t for t in TASK_ORDER if t not in EXCLUDED_TASKS]
     read = sorted({f for f, ctx, _, k in data.hits if ctx == VERDICT_CTX and k == BF16})
@@ -954,16 +1039,19 @@ def bf16_verdict(contrasts: list[Contrast], ppl: list[PplContrast], data: Gate1D
         members.append(
             f"{len(read)} of {BF16_FAMILIES} Stage-1 families in the records"
             f" ({', '.join(read)}) -- section 4 (3) buys the reading on both or not at all,"
-            " so a pass here is REFUSED"
+            " so neither a pass nor a fail is read off it -- REFUSED"
         )
     refused = [f for f, s in families.items() if s.startswith("REFUSED")]
+    # `partial` is read before `"FAIL" in families.values()` on purpose (the docstring):
+    # a fail off a family that ran ALONE is not the costed `fail` section 4 (3) means --
+    # that state needs both families' readings to have actually run.
     overall = (
         "REFUSED"
         if refused
-        else "fail"
-        if "FAIL" in families.values()
         else "REFUSED"
         if partial
+        else "fail"
+        if "FAIL" in families.values()
         else "pass"
     )
     realised = sum(1 for c in contrasts if c.ctx == VERDICT_CTX and c.p_holm is not None)

@@ -21,22 +21,45 @@ import pytest
 import tables
 
 from kvdlra.eval import gate1
-from tests.test_gate1_table import ARM, N_TRIALS, write_pod
+from tests.test_gate1_table import ARM, N_TRIALS
+from tests.test_gate1_table import write_pod as _write_pod
 
 # The pair section 4 reads, at the floor-against-floor shape section 5 predicts, and the
 # bf16 arm fractionally WORSE on perplexity (section 5: "nothing in the construction makes
 # bf16 better") but well inside the +/-0.02 margin.
 PAIR = {"isvd": 20, "bf16": 20}
 TIGHT = {"bf16": 0.005}
-# Section 2 (a)'s two at-rest bills on a 1024-wide layer, whose ratio section 7 (c) pins
-# at 0.566 -- the descriptive column, not a refusal here.
+# Section 2 (a)'s two at-rest bills, whose ratio section 7 (c) pins: 0.566 on a
+# 1024-wide layer (Llama), 0.539 on a 512-wide one (Qwen). Used only where a test wants
+# the exact printed digits on the table; every other test gets a fixture sbits pair from
+# `_bf16_sbits` below, whose ratio clears the pin by construction.
 SBITS = {"isvd": 0.150348, "bf16": 0.085056}
+# Qwen's own bill (section 2 (a)'s second row) -- ratio 0.539. Before this fix round this
+# test file only ever had Llama's numbers, reused for Qwen through `both()`, so the Qwen
+# pin was never exercised at its own ratio (Minor 7).
+SBITS_QWEN = {"isvd": 0.275062, "bf16": 0.148383}
+
+
+def _bf16_sbits(family: str) -> dict[str, float]:
+    """A stored-bits pair at `family`'s layer width whose ratio is EXACTLY section 7
+    (c)'s expected one (`gate1.bf16_expected_sbits_ratio`) -- so a fixture that does not
+    care about the pin clears it by construction rather than falling back to
+    `write_pod`'s every-tracker 0.15 default, a ratio of 1.0 that the pin refuses."""
+    return {"isvd": 1.0, "bf16": gate1.bf16_expected_sbits_ratio(gate1.BF16_LAYER_WIDTH[family])}
+
+
+def write_pod(root: Path, family: str, **kw: object) -> Path:
+    """`test_gate1_table.write_pod`, defaulting `sbits` to `family`'s real stored-bits
+    ratio (`_bf16_sbits`) instead of the 0.15/0.15 every-tracker default -- a caller that
+    passes its own `sbits=` (to exercise section 7 (c) itself) is left alone."""
+    kw.setdefault("sbits", _bf16_sbits(family))
+    return _write_pod(root, family, **kw)  # type: ignore[arg-type]
 
 
 def read(
     root: Path, **pods: dict[str, object]
 ) -> tuple[gate1.Bf16Verdict, list[gate1.Contrast], gate1.Gate1Data, list[Path]]:
-    dirs = [write_pod(root, f, **kw) for f, kw in pods.items()]  # type: ignore[arg-type]
+    dirs = [write_pod(root, f, **kw) for f, kw in pods.items()]
     data = gate1.load(dirs)
     contrasts = gate1.bf16_contrasts(data)
     verdict = gate1.bf16_verdict(contrasts, gate1.ppl_contrasts(data), data)
@@ -74,7 +97,11 @@ def test_a_tie_on_every_task_is_non_inferior_in_both_families(tmp_path: Path) ->
     discordant pair at all, so every member is p = 1.0 -- which section 4 (4) says is
     "never read as evidence of equivalence" and this reading duly reports as a
     non-separation, not as a measured equality."""
-    v, members, _, dirs = both(tmp_path, hits=PAIR, delta=TIGHT, sbits=SBITS)
+    v, members, _, dirs = read(
+        tmp_path,
+        llama={"hits": PAIR, "delta": TIGHT, "sbits": SBITS},
+        qwen={"hits": PAIR, "delta": TIGHT, "sbits": SBITS_QWEN},
+    )
     assert v.overall == "pass", v.reason
     assert v.families == {"llama": "PASS", "qwen": "PASS"}
     assert len(members) == gate1.bf16_family_size() == 8
@@ -85,7 +112,8 @@ def test_a_tie_on_every_task_is_non_inferior_in_both_families(tmp_path: Path) ->
     assert "+0.000 [0/0 of 24] 1" in md
     assert "- llama: PASS" in md and "- qwen: PASS" in md
     assert "BF16: pass — llama PASS, qwen PASS" in md
-    assert "0.5657" in md, "section 7 (c)'s descriptive stored-bits ratio, from ppl.jsonl"
+    assert "0.5657" in md, "section 7 (c)'s pin, from ppl.jsonl -- Llama at 1024-wide"
+    assert "0.5395" in md, "section 7 (c)'s pin, from ppl.jsonl -- Qwen at 512-wide (Minor 7)"
     md_verdict = next(x for x in md.splitlines() if x.startswith("VERDICT: "))
     assert md.index("BF16: ") < md.index(md_verdict), "the reading sits before the branch"
 
@@ -253,6 +281,28 @@ def test_one_family_alone_never_buys_a_pass(tmp_path: Path) -> None:
     assert any(f"1 of {gate1.BF16_FAMILIES} Stage-1 families" in m for m in v.members), v.members
 
 
+def test_a_missing_family_composes_to_refused_even_if_the_present_one_fails(
+    tmp_path: Path,
+) -> None:
+    """Section 4 (3)'s "whenever any family is refused, whatever the other family
+    shows" reaches a missing family too -- a llama-only pod whose one family FAILS must
+    not surface as `fail`, "the measured cost of halving the gist's at-rest bytes",
+    when qwen's reading never ran at all. Before this fix `bf16_verdict`'s `"fail" if
+    "FAIL" in families.values()` branch was tested BEFORE `partial`, so this exact shape
+    -- partial + FAIL -- read `fail` instead of `REFUSED` ("no cost figure is
+    recorded"); `test_one_family_alone_never_buys_a_pass` above only ever covered
+    partial + PASS."""
+    d = rewrite_hits(
+        write_pod(tmp_path, "llama", hits=PAIR, delta=TIGHT), "bf16", "niah_multikey", 11
+    )
+    data = gate1.load([d])
+    v = gate1.bf16_verdict(gate1.bf16_contrasts(data), gate1.ppl_contrasts(data), data)
+    assert v.families == {"llama": "FAIL"}
+    assert v.overall == "REFUSED", v.reason
+    assert "no cost figure is recorded" in v.reason
+    assert any(f"1 of {gate1.BF16_FAMILIES} Stage-1 families" in m for m in v.members), v.members
+
+
 # --- section 4 (2): the perplexity member -------------------------------------------
 
 
@@ -312,3 +362,101 @@ def test_an_excluded_task_leaves_the_family_and_decides_nothing(
     header = next(x for x in md.splitlines() if x.startswith("| family |"))
     assert "niah_single" in header and "vt" not in header
     assert "(11/24)" in md, "the excluded task's bf16 cell still renders in the Gate-1 block"
+
+
+# --- section 7 (c): the stored-bits ratio is a refusal, not a descriptive column ----
+
+
+def test_a_stored_bits_ratio_inside_one_percent_does_not_refuse(tmp_path: Path) -> None:
+    """Section 7 (c): "outside it ... the reading is refused" -- inside it, nothing
+    happens. Every fixture in this file clears the pin by construction (`_bf16_sbits`),
+    so this pins that no "sbits" refusal is hiding behind a `pass` for the wrong reason."""
+    v, _, _, _ = both(tmp_path, hits=PAIR, delta=TIGHT)
+    assert v.overall == "pass", v.reason
+    assert not any("sbits" in m or "stored-bits" in m for m in v.members), v.members
+
+
+def test_a_stored_bits_ratio_outside_one_percent_refuses_naming_the_numbers(
+    tmp_path: Path,
+) -> None:
+    """Section 7 (c): the bf16 arm stored like fp32 -- its `sbits` barely below the fp32
+    arm's rather than near half of it, a ratio of ~0.9944 against an expected ~0.566 --
+    is "outside it", and "the reading is refused pending a dated amendment", read
+    BEFORE section 4's rule (so an otherwise-tied retrieval table still refuses)."""
+    isvd_sbits = 0.150348
+    bf16_sbits = isvd_sbits * 0.9944  # "bf16 stored like fp32": near 1x, not near 0.566x
+    v, _, _, _ = read(
+        tmp_path,
+        llama={"hits": PAIR, "delta": TIGHT, "sbits": {"isvd": isvd_sbits, "bf16": bf16_sbits}},
+        qwen={"hits": PAIR, "delta": TIGHT},
+    )
+    ratio = bf16_sbits / isvd_sbits
+    expected = gate1.bf16_expected_sbits_ratio(gate1.BF16_LAYER_WIDTH["llama"])
+    assert v.families["llama"] == "REFUSED (sbits)"
+    assert v.overall == "REFUSED", v.reason
+    assert any(
+        f"stored-bits ratio {ratio:.4f}" in m and f"outside 1 % of {expected:.4f}" in m
+        for m in v.members
+    ), v.members
+
+
+def test_missing_stored_bits_on_either_arm_refuses(tmp_path: Path) -> None:
+    """Section 7 (c) is silent on a pod that never wrote `sbits` at all; `_bf16_refusals`
+    reads that the way Gate 1's own byte-match refusal does (that function's docstring):
+    a check with nothing to read refuses rather than passing by default."""
+    d = write_pod(tmp_path, "llama", hits=PAIR, delta=TIGHT)
+    rows = [json.loads(x) for x in (d / "ppl.jsonl").read_text().splitlines()]
+    for r in rows:
+        if r["arm"] == ARM["bf16"]:
+            r["sbits"] = None
+    (d / "ppl.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    data = gate1.load([d, write_pod(tmp_path, "qwen", hits=PAIR, delta=TIGHT)])
+    v = gate1.bf16_verdict(gate1.bf16_contrasts(data), gate1.ppl_contrasts(data), data)
+    assert v.families["llama"] == "REFUSED (sbits)"
+    assert v.overall == "REFUSED", v.reason
+    assert any("stored bits not measured" in m for m in v.members), v.members
+
+
+# --- section 6: one stage per call, enforced rather than only documented ------------
+
+
+def test_a_third_familys_bf16_records_in_one_call_raise_rather_than_pool(
+    tmp_path: Path,
+) -> None:
+    """Section 6: "No Stage-2 member is pooled with a Stage-1 member and no Stage-1
+    p-value is recomputed when Stage 2 lands." `bf16_contrasts` groups Holm by context
+    length alone (one family per Stage, prereg section 3), so a Mistral pod loaded
+    beside the Stage-1 pair in the SAME call would silently repool the registered
+    8-member family into 12 rather than correcting Mistral's 4 on their own (section 6:
+    "Holm inside its own retrieval family"). Raising is chosen over guessing a stage from
+    family membership -- the smaller of the two fixes the review offered, and the
+    louder: a silent repool is exactly the failure section 6 forbids, and a wrong guess
+    would be undetectable from outside this function."""
+    dirs = [
+        write_pod(tmp_path, "llama", hits=PAIR, delta=TIGHT),
+        write_pod(tmp_path, "qwen", hits=PAIR, delta=TIGHT),
+        write_pod(tmp_path, "mistral", hits=PAIR, delta=TIGHT),
+    ]
+    data = gate1.load(dirs)
+    with pytest.raises(ValueError, match="mistral"):
+        gate1.bf16_contrasts(data)
+
+
+# --- rendering: a reading at another context length is descriptive, not nothing ----
+
+
+def test_a_32k_only_bf16_reading_renders_descriptively_not_nothing(tmp_path: Path) -> None:
+    """Sections 3 and 6: 32K is reachable only by a future amendment and is descriptive
+    there, never a verdict -- so a pod carrying ONLY 32K bf16 records (no 16K reading
+    ran at all, `bf16_verdict` reads `not run`) must still render those rows, the way
+    the per-row loop already labels any non-16384 ctx as descriptive; before this fix
+    the block's early return keyed off the verdict rather than off whether there was
+    anything to render, so this exact shape rendered nothing."""
+    dirs = [write_pod(tmp_path, f, hits=PAIR, delta=TIGHT, ctx=32768) for f in ("llama", "qwen")]
+    data = gate1.load(dirs)
+    v = gate1.bf16_verdict(gate1.bf16_contrasts(data), gate1.ppl_contrasts(data), data)
+    assert v.overall == "not run", v.reason
+    md = table(dirs, tmp_path)
+    assert "## bf16 non-inferiority" in md
+    assert "descriptive (§4 reads ctx 16384)" in md
+    assert "BF16: not run" in md

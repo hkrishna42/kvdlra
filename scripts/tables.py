@@ -893,8 +893,8 @@ BF16_LEGEND = (
     "Legend (bf16): cell = `delta [a_favored/b_favored of n_paired] Holm p`, with"
     " a = `isvd_r64_h256_seed` and b = `isvd_r64_h256_seed_bf16`, so `delta > 0` is the"
     " bf16 arm losing pairs; a task is non-inferior unless `delta` > 0.03 AND its Holm p <"
-    " 0.05, both (§4 (1)). `sbits` is §7 (c)'s descriptive stored-bits ratio, no refusal"
-    " here."
+    " 0.05, both (§4 (1)). `sbits` is §7 (c)'s pin: outside 1 % of the expected ratio"
+    " refuses the family."
 )
 
 
@@ -909,8 +909,11 @@ def _bf16_cell(c: gate1.Contrast | None) -> str:
     if c.p is None or not c.n_paired:
         return f"no pairing ({len(c.dropped_keys)} keys dropped)"
     delta = (c.a_favored - c.b_favored) / c.n_paired
-    p = f"{c.p_holm:.3g}" if c.p_holm is not None else "no adjusted p (left the family)"
-    return f"{delta:+.3f} [{c.a_favored}/{c.b_favored} of {c.n_paired}] {p}"
+    # `bf16_contrasts`'s own eligibility is exactly the three conditions already ruled
+    # out above (no error, a pairing, n_paired > 0), so a member reaching here always
+    # carries an adjusted p -- there is no fourth state left to print.
+    assert c.p_holm is not None, "an eligible bf16 member always carries an adjusted p"
+    return f"{delta:+.3f} [{c.a_favored}/{c.b_favored} of {c.n_paired}] {c.p_holm:.3g}"
 
 
 def _gate1_bf16_block(
@@ -927,8 +930,13 @@ def _gate1_bf16_block(
     TOST (§4 (2)), §7 (c)'s stored-bits ratio and the family's verdict. Only the ctx
     §4 reads carries a verdict; any other context length is descriptive (§6), and the
     arm's own cells are already in the Gate-1 retrieval block above at every ctx.
+
+    The guard below is "no bf16 records at all", not "the verdict is `not run`": a pod
+    that carries ONLY a 32K bf16 reading (no 16K arm 6 at all, so the verdict reads
+    `not run` -- §4 scopes it to 16K) still has rows to print, descriptively, and must
+    not render nothing beside a `BF16: not run` line that says otherwise.
     """
-    if verdict.overall == "not run":
+    if not contrasts:
         return []
     idx = {(c.family, c.ctx, c.task): c for c in contrasts}
     seen = {c.task for c in contrasts}
@@ -1049,9 +1057,9 @@ def gate1_table(pod_dirs: Sequence[Path], out: Path) -> None:
         )
         # Section 7 (e): "A key that disagrees is dropped from every paired statistic in
         # that pod and the drop is reported with the key and the arms." One line per
-        # member that lost keys, with all of them -- a count alone is not a report.
-        # One blank line ahead of the list, and nothing at all for a block that has
-        # neither kind of line.
+        # Gate-1 or bf16 member that lost keys, with all of them -- a count alone is not
+        # a report. One blank line ahead of the list, and nothing at all for a block
+        # that has neither kind of line.
         bullets = [
             f"- `{data.arms[(family, tracker)]}` / {task}: {len(errs)} error records,"
             f" first `{errs[0]}`"

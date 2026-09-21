@@ -18,12 +18,15 @@ shrank a cell's n; `scripts/pod.py check` now requires every configured cell to 
 exactly ``n_trials x len(seeds)`` records, so a dropped trial would fail the run
 instead of quietly weakening it.
 
-The ``[trial]``, ``[<task> ctx<T>]``, ``[pplw]``, ``[latency ctx<T>]`` and ``ppl=``
-lines are printed as well as written: they are the pod's stdout contract, and `pod.py
-harvest` can rebuild the same records from a `vastai logs` capture when the results
-directory never made it off the instance. A ``[trial]`` line carries the generator's
-pairing fields (``hay= depth= code= sha=``, ``-`` where the generator set none), so a
-harvested pod can still show that two arms of one cell were fed byte-identical prompts.
+The ``[trial]``, ``[<task> ctx<T>]``, ``[pplw]``, ``[latency ctx<T>]``,
+``[kernel_check prompt=<i>]`` and ``ppl=`` lines are printed as well as written: they are
+the pod's stdout contract, and `pod.py harvest` can rebuild the same records from a
+`vastai logs` capture when the results directory never made it off the instance. (The
+other two ``[kernel_check ...]`` lines `kvdlra.eval.kernel_check` prints -- the per-layer
+diffs and a token mismatch -- are log-only: they match no record pattern and are read by
+people, not by the harvest.) A ``[trial]`` line carries the generator's pairing fields
+(``hay= depth= code= sha=``, ``-`` where the generator set none), so a harvested pod can
+still show that two arms of one cell were fed byte-identical prompts.
 ``[stage] <what> (<s> s)`` lines time the loads (model, corpora, haystacks) and a
 ``[stage] cell ... elapsed_s=`` line times each completed cell on all three axes -- the
 only clock a harvest carries, and why, at ``scripts/pod.py``'s ``CELL_S_RE``.

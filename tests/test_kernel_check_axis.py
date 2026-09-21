@@ -20,7 +20,7 @@ from kvdlra.eval import kernel_check
 from kvdlra.eval.config import PodCfg, TaskKernelCheckCfg, load_task
 from kvdlra.eval.records import KERNEL_CHECK_RE, parse_kernel_check_lines, replayable
 from kvdlra.eval.runner import run_pod
-from kvdlra.kernel.prompts import TINY_N_NEW, tiny_prompts
+from kvdlra.kernel.prompts import PROMPT_TOKENS, TINY_N_NEW, tiny_prompts
 from tests.conftest import tiny_cache
 
 TINY_SDPA = True
@@ -75,6 +75,35 @@ def test_failed_row_and_its_line() -> None:
     (back,) = parse_kernel_check_lines(line, model="M", source="s")
     assert back["match"] == 0 and back["max_abs_diff"] is None and back["worst_layer"] is None
     assert back["first_mismatch"] is None and back["error"] == "RuntimeError: boom"
+
+
+def test_the_log_only_companion_lines_are_not_records() -> None:
+    """`check_prompt` prints two more `[kernel_check ...]` lines for a reader of the log:
+    prompt 0's per-layer diffs, and the step a mismatched prompt first diverged at. Neither
+    matches `KERNEL_CHECK_RE`, so neither can be parsed back as a 17th record -- the count
+    `scripts/pod.py check` enforces is one record per (arm, prompt) and nothing else."""
+    companions = [
+        "[kernel_check layers prompt=0 arm=isvd_r64_h256_seed_kernel diffs=1.0e-03,2.0e-03",
+        "[kernel_check mismatch prompt=3 step=7 kernel=11 reconstruct=12",
+    ]
+    assert not any(KERNEL_CHECK_RE.match(x) for x in companions)
+    assert parse_kernel_check_lines("\n".join(companions), model="M", source="log") == []
+
+
+def test_a_kernel_check_task_at_another_ctx_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 16 prompts are committed at `PROMPT_TOKENS` tokens (`kvdlra.kernel.prompts`), so
+    a `kernel_check` task naming any other context length asks for a check nobody can run.
+    Refused at load time, where the file can still be named."""
+    (tmp_path / "tasks").mkdir()
+    (tmp_path / "tasks" / "kc_2048.yaml").write_text(
+        "name: kc_2048\ngenerator: kernel_check\nctx: 2048\nchunk: 1024\nn_new: 32\n"
+    )
+    monkeypatch.setattr("kvdlra.eval.config.ROOT", tmp_path)
+    with pytest.raises(ValueError, match=f"ctx=2048 must equal .* {PROMPT_TOKENS}") as e:
+        load_task("kc_2048")
+    assert "kc_2048.yaml" in str(e.value)
 
 
 def test_the_task_config_loads_and_is_validated() -> None:

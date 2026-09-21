@@ -639,7 +639,7 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
         return 1
 
     # `trials.jsonl` is written even when it is empty: it is the file `check` reads to
-    # tell a pod that produced nothing from one that was never harvested. The other four
+    # tell a pod that produced nothing from one that was never harvested. The other five
     # are written only when the log carried rows -- an absent file is not a short one.
     write_jsonl(out / "trials.jsonl", trials)
     records = {"trials.jsonl": len(trials)}
@@ -899,7 +899,7 @@ def check(d: Path, log: Path | None = None) -> int:
     # pod whose every trial failed. So the count is its own rule, with no tolerance knob.
     if n_err:
         fails.append(f"errors: {n_err} trial(s) raised (see the error field in trials.jsonl)")
-    # The manifest counts all three axes; a perplexity or decode point that raised leaves
+    # The manifest counts all four axes; a perplexity or decode point that raised leaves
     # an `[error]` log line and no record at all, so the excess over the trial rows is the
     # non-trial count, not a disagreement -- name it instead of reporting a mismatch.
     # FEWER than the rows is a real one: the manifest cannot have counted what it has not

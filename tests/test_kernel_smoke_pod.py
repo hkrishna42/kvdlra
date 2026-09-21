@@ -37,6 +37,13 @@ def _lines(n_prompts: int = 16) -> list[str]:
     names = [load_arm(a).legacy_name or a for a in cfg.arms]
     lat = load_task(cfg.tasks[1])
     out = [
+        # The pre_run hook (L4.10): `check` refuses this pod without a recorded, zero
+        # exit code -- boot.sh runs the measurement whatever the kernel's gpu tests said.
+        "===PRE_RUN_BEGIN_kernel_smoke===",
+        "[pre_run] 8 passed in 41.2s",
+        "===PRE_RUN_END_kernel_smoke_rc=0===",
+    ]
+    out += [
         f"[kernel_check prompt={i} arm=isvd_r64_h256_seed_kernel ctx=4096 n_new=32 match=1"
         f" first_mismatch=- max_abs_diff=3.100e-03 worst_layer=17 sha={'a' * 64}"
         for i in range(n_prompts)

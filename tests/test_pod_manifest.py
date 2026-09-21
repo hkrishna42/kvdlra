@@ -6,17 +6,21 @@ through its refusals and `--dry-run`, which print the command instead of running
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
 import signal
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pod
 import pytest
 
+from kvdlra.eval import config
 from kvdlra.eval.config import (
+    PodCfg,
     TaskKernelCheckCfg,
     TaskV2Cfg,
     config_hash,
@@ -689,6 +693,11 @@ def test_the_watchdog_keeps_the_env_block_rows() -> None:
         # the rows below them are a repeat and not a second pod (D-011 addendum 10).
         "===RECORDS_REPLAY_BEGIN===",
         "===RECORDS_REPLAY_END===",
+        # L4.10: the pre_run hook's markers (the harvest reads the exit code off the END
+        # one) and its prefixed rows, which become results/<pod>/pre_run.txt.
+        "===PRE_RUN_BEGIN_kernel_smoke===",
+        "===PRE_RUN_END_kernel_smoke_rc=0===",
+        "[pre_run] 8 passed in 41.2s",
     ]
     r = subprocess.run(
         ["grep", "-aE", rows],
@@ -1379,3 +1388,114 @@ def test_the_kernel_smoke_pod_is_its_prereg_design() -> None:
 def test_the_postrope_pod_hash_is_distinct() -> None:
     every = [*L2_PODS, *GATE1_PODS, "kernel_smoke", "postrope_r128"]
     assert len({config_hash(load_pod(n)) for n in every}) == len(every)
+
+
+# --- L4.10: the `pre_run` hook (prereg/kernel_smoke.md Amendment 1, corrected) ---------
+#
+# A pod may declare one shell command that `scripts/pod/boot.sh` runs from the SHA-pinned
+# clone BEFORE the `timeout`-bounded entrypoint. Only `kernel_smoke` declares one (its
+# Triton kernel's gpu tests, the correctness gate A1.2 promised and no script performed).
+# The pod is NOT aborted when the command fails -- the measurement still runs and is still
+# recorded; `check` is what refuses the numbers.
+
+KERNEL_SMOKE_HASH = config_hash(load_pod("kernel_smoke"))
+PRE_RUN_LOG = [
+    "===PRE_RUN_BEGIN_kernel_smoke===",
+    "[pre_run] PASSED tests/test_kernel_triton.py::test_triton_matches_the_reference[tight]",
+    "[pre_run] max|d|=1.7e-03 rms=1.1e-05 (bars 2e-03 / 1e-04)",
+    "[pre_run] 8 passed in 41.2s",
+    "===PRE_RUN_END_kernel_smoke_rc=0===",
+]
+
+
+def _kernel_smoke_harvest(d: Path, lines: list[str]) -> Path:
+    """`lines` harvested into a `results/kernel_smoke/`-shaped directory.
+
+    The manifest is written here rather than by `pod.run(..., dry_run=True)`: this module
+    has a CPU budget and `manifest()` reads `versions()`, which imports torch. The SHA is
+    deliberately unresolvable, which costs `check` one `CHECK FAIL git_sha:` line and saves
+    the `git log --reverse` walk of the prereg's history on every call -- these directories
+    hold no records either, and the rule under test is the only one read off them."""
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "manifest.json").write_text(
+        json.dumps(
+            {
+                "pod": "kernel_smoke",
+                "git_sha": "0" * 40,
+                "config_hash": KERNEL_SMOKE_HASH,
+                "dry_run": False,
+            }
+        )
+    )
+    log = d / "kernel_smoke-1.log"
+    log.write_text("\n".join(lines) + "\n")
+    assert pod.harvest("kernel_smoke", log, d, force=False) == 0
+    return d
+
+
+def test_the_launch_hands_a_declared_pre_run_command_to_the_pod() -> None:
+    """boot.sh reads the command from `$PRE_RUN`, so it rides in the one `--env` string
+    beside POD/SHA/MODEL/DTYPE/MAX_HOURS -- shell-quoted whole, since the command carries
+    spaces and a pipe. A pod that declares none sends none: the hook is skipped there."""
+    cmd = pod.launch_command("kernel_smoke", "12345678", "deadbeef")
+    env = cmd[cmd.index("--env") + 1]
+    want = load_pod("kernel_smoke").pre_run
+    assert want and env.count("-e PRE_RUN=") == 1
+    assert env.endswith(f" -e PRE_RUN={shlex.quote(want)}")
+    assert shlex.split(shlex.join(cmd)) == cmd  # what `--dry-run` prints, parsed back
+    assert load_pod("gate1_v2_stage1_llama").pre_run is None
+    assert "PRE_RUN" not in " ".join(pod.launch_command("gate1_v2_stage1_llama", "1", "deadbeef"))
+
+
+def test_only_a_declared_pre_run_enters_the_config_hash() -> None:
+    """`config_hash` flattens every PodCfg field, so a new field with a default would move
+    the hash of every pod on disk -- and of every committed manifest (`make check`, and
+    `test_the_live_filler_manifests_still_hash_to_their_configs` above, which is the other
+    half of this rule). A pod that declares the key hashes it."""
+    plain = load_pod("postrope_r128")  # the smallest pod on disk: one arm, two tasks
+    assert config_hash(replace(plain, pre_run="python -m pytest -m gpu -q")) != config_hash(plain)
+
+
+def test_a_declared_pre_run_must_be_a_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A blank `pre_run:` is a hook boot.sh skips and `check` then refuses as unrecorded --
+    a pod that dies on its own gate hours after a typo. Refused at load instead."""
+
+    def _blank(kind: str, name: str, schema: type) -> PodCfg:
+        return PodCfg(name=name, model="m", arms=[], tasks=[], pre_run="   ")
+
+    monkeypatch.setattr(config, "_load", _blank)
+    with pytest.raises(ValueError, match="pre_run"):
+        config.load_pod("whatever")
+
+
+def test_harvest_records_the_pre_run_rows_and_its_exit_code(tmp_path: Path) -> None:
+    """The rows travel prefixed (`sed 's/^/[pre_run] /'`, a kind the watchdog keeps) and
+    land prefix-stripped in `pre_run.txt`; the exit code lands in the manifest. A log
+    without the markers records neither -- an absent file, not an invented one."""
+    d = _kernel_smoke_harvest(tmp_path / "ok", PRE_RUN_LOG)
+    assert json.loads((d / "manifest.json").read_text())["pre_run_rc"] == 0
+    assert (d / "pre_run.txt").read_text().splitlines() == [
+        x[len("[pre_run] ") :] for x in PRE_RUN_LOG[1:4]
+    ]
+    bare = _kernel_smoke_harvest(tmp_path / "bare", ["[stage] wall_clock_s 1.0"])
+    assert json.loads((bare / "manifest.json").read_text())["pre_run_rc"] is None
+    assert not (bare / "pre_run.txt").exists()
+
+
+def test_check_refuses_a_pod_whose_pre_run_did_not_pass(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """boot.sh runs the measurement whatever the hook returned, so this is the only place a
+    failed correctness gate stops the numbers being cited. Both ways to not have passed
+    refuse: a non-zero code, and no code at all."""
+
+    def checked(name: str, lines: list[str]) -> str:
+        pod.check(_kernel_smoke_harvest(tmp_path / name, lines))
+        return capsys.readouterr().out
+
+    # These directories hold no records at all, so every other rule fails too; the
+    # pre_run gate is the one read here.
+    assert "CHECK FAIL pre_run" not in checked("pass", PRE_RUN_LOG)
+    rc1 = [x.replace("_rc=0===", "_rc=1===") for x in PRE_RUN_LOG]
+    assert "CHECK FAIL pre_run: rc=1" in checked("rc1", rc1)
+    assert "CHECK FAIL pre_run: not recorded" in checked("absent", ["[stage] wall_clock_s 1.0"])

@@ -604,3 +604,56 @@ statistic), the KIVI-2 deviation of §7, cell list B's conditions (§3; the batc
 landed — L4.1 — so its condition (i) is met; condition (ii), the card, is still the owner's
 D-002/H100 decision), and §11. The 8B rank-sweep dumps (`GATES.md` §G1 line 6) stay open:
 this pod does not produce them.
+
+### Amendment 1 — correction (2026-09-21 06:07 EDT, before the launch commit)
+
+A1.2's last paragraph says the Triton kernel's own tests "are run on the pod before `pod.py run`,
+from the same clone; their output is pasted into the launch entry". No script performed that step:
+`scripts/pod/boot.sh` cloned at `$SHA`, installed the evaluation stack (not the `[dev]` extras — the
+pod had no pytest) and handed off to the entrypoint. As worded, the sentence described an intention,
+not a mechanism, and a pod launched under it would have run the check axis and the nine latency
+cells without ever executing the kernel's correctness gate. This section narrows the sentence to the
+mechanism now in the repository. It changes no reading, no threshold and no bar.
+
+- **The command.** `configs/pods/kernel_smoke.yaml` gains one key, `pre_run`, whose value is
+  verbatim:
+
+  ```
+  python -m pytest -m gpu -q -rA -p no:cacheprovider tests/test_kernel_triton.py tests/test_kernel_reference.py 2>&1 | sed 's/^/[pre_run] /'
+  ```
+
+  `-m gpu` selects exactly the items A1.2 names (`tests/test_kernel_triton.py`, whose module is
+  gpu-marked whole, and the `triton` parametrization of `tests/test_kernel_reference.py`), and
+  `-rA` prints the per-item summary so each one's measured max|Δ| and rms(Δ) — the values those
+  tests print into their assert messages — ride the pod log. `import kvdlra` resolves from the
+  clone with no install: `pyproject.toml`'s `[tool.pytest.ini_options] pythonpath = ["src",
+  "scripts", "."]`. The 1B-dump item stays skipped on the pod as it is in CI (the dump tree is
+  gitignored and absent from the clone); `-rA` names it and its reason.
+- **Where it runs.** `scripts/pod/boot.sh` executes it after the environment block
+  (`===ENV_END===`) and before the `timeout`-bounded entrypoint, from the same clone at the same
+  `$SHA`, as `bash -o pipefail -c "$PRE_RUN"` — so the recorded code is pytest's and not the
+  `sed`'s — bounded by `===PRE_RUN_BEGIN_kernel_smoke===` and
+  `===PRE_RUN_END_kernel_smoke_rc=<rc>===`. It is **not** under the `timeout`: that bar is the
+  measurement's (A1.4). A non-zero code does **not** abort the pod — the check axis and the
+  latency cells still run and are still recorded, which is deliberate: a kernel that fails this
+  gate still produces rows worth reading, and they are simply not citable.
+- **How it is recorded.** `scripts/pod.py harvest` writes every `[pre_run] `-prefixed row,
+  prefix stripped, to `results/kernel_smoke/pre_run.txt`, and the exit code to
+  `manifest.pre_run_rc` (null when the markers are absent). The rows are a kind
+  `scripts/pod/watchdog.sh` keeps, so they reach the deduped `<label>.log` the harvest parses;
+  that per-poll `sort -u` orders them lexically, so `pre_run.txt` is the set of lines the command
+  printed, not their sequence.
+- **What refuses.** `scripts/pod.py check` fails the pod with `CHECK FAIL pre_run: rc=<n>` on a
+  non-zero code and `CHECK FAIL pre_run: not recorded` when none was harvested (a pod that never
+  ran the command, or a log fetch that lost the marker). Since a number of this pod is citable
+  only through a manifest that passes `check`, a failed or unrecorded gate blocks §4's reading
+  exactly as the pre-registration intended.
+- **The launch entry** cites `results/kernel_smoke/pre_run.txt` — its pytest summary line and the
+  per-item max/rms prints — instead of pasting the output. The bars themselves are unchanged and
+  are the ones A1.2 states (`max|Δ| ≤ 2e-3` **and** `rms(Δ) ≤ 1e-4` at `n_splits == 1`,
+  `max|Δ| ≤ 4e-3` across splits and for batch independence, the pre-registered `max|Δ| < 1e-2`
+  against reconstruct-then-attend); no number from them enters §4 or §7.
+- **`config_hash` moves** because the pod YAML gained a key (and its `doc:`, which is inside the
+  hash, gained a sentence naming the hook). No manifest for this pod exists, so nothing that has
+  already been recorded is invalidated; `make check` over the committed manifests is unaffected,
+  because a pod that declares no `pre_run` does not carry the key into its hash.

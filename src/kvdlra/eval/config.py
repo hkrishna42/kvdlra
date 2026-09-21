@@ -147,6 +147,10 @@ class PodCfg:
     prereg: str | None = None
     gpu_budget_h: float = 0.0
     image: str = "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+    # One shell command `scripts/pod/boot.sh` runs from the SHA-pinned clone BEFORE the
+    # `timeout`-bounded entrypoint, and whose exit code `scripts/pod.py check` refuses the
+    # pod on (`kernel_smoke` declares its kernel's gpu tests). None = no hook.
+    pre_run: str | None = None
 
 
 def _load(kind: str, name: str, schema: type) -> Any:
@@ -235,6 +239,11 @@ def load_pod(name: str) -> PodCfg:
     here, at load time, naming both task files.
     """
     p: PodCfg = _load("pods", name, PodCfg)
+    if p.pre_run is not None and not p.pre_run.strip():
+        raise ValueError(
+            f"{ROOT / 'pods' / f'{name}.yaml'}: pre_run is blank -- give it the command to"
+            " run before the entrypoint, or drop the key"
+        )
     seen: dict[int, tuple[str, str]] = {}
     for task_name in p.tasks:
         t = load_task(task_name)
@@ -269,7 +278,12 @@ def arm_kwargs(arm: ArmCfg, t: int) -> dict[str, Any]:
 
 def config_hash(pod: PodCfg) -> str:
     """sha256 of the pod together with every arm and task it names."""
-    flat = OmegaConf.to_container(OmegaConf.structured(pod))
+    flat = cast(dict[str, Any], OmegaConf.to_container(OmegaConf.structured(pod)))
+    # A field every pod carries by default would move every pod's hash the day it is added
+    # -- and with it every committed manifest (`make check`). An undeclared `pre_run` is
+    # therefore absent from the hash, exactly as it is from the YAML.
+    if flat.get("pre_run") is None:
+        flat.pop("pre_run", None)
     arms = {a: OmegaConf.to_container(OmegaConf.structured(load_arm(a))) for a in pod.arms}
     tasks = {t: OmegaConf.to_container(OmegaConf.structured(load_task(t))) for t in pod.tasks}
     blob: DictConfig = OmegaConf.create({"pod": flat, "arms": arms, "tasks": tasks})

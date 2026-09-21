@@ -23,6 +23,20 @@ import tables
 
 from kvdlra.eval import gate1
 
+
+@pytest.fixture(autouse=True)
+def _no_task_exclusion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test here exercises the Holm-family mechanics on the full 4-task set, so it
+    pins ``EXCLUDED_TASKS`` empty: the sizes (primary 16, secondary 24, bf16 8) and the
+    completeness/refusal arithmetic are the no-exclusion math, independent of the shipped
+    default. The ``vt`` exclusion Amendment 1b (D-018) ships is tested behaviorally by
+    ``test_an_excluded_task_leaves_every_family_and_blocks_nothing`` (12/18/4) and, for
+    the bf16 family, by ``bf16_family_size() == 6``; the two tests that set ``{"vt"}``
+    themselves run after this fixture and override it. The default constant is pinned in
+    ``tests/test_gate1_arms.py``."""
+    monkeypatch.setattr(gate1, "EXCLUDED_TASKS", frozenset())
+
+
 MODELS = {
     "llama": "unsloth/Meta-Llama-3.1-8B-Instruct",
     "qwen": "Qwen/Qwen2.5-7B-Instruct",

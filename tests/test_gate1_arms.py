@@ -196,3 +196,16 @@ def test_a_nogist_arm_runs_as_tier_plus_ring(tiny_model: LlamaForCausalLM) -> No
     for layer in cache._bug_layers():
         assert layer.hh_pos is not None and int(layer.hh_pos.shape[0]) == 64
         assert layer.c_k is not None and layer.c_k.shape == (1, 1)
+
+
+def test_vt_is_excluded_from_the_gate1_families_by_default() -> None:
+    """Amendment 1b (D-018) sets the shipped ``EXCLUDED_TASKS`` default to ``{"vt"}``: the
+    pre-flight ``full`` ceiling on generator v2's ``vt`` was 9/12 = 0.75 < 0.9, a generator
+    finding attributed to ``kvdlra.eval.gen`` (docs/plan/reports/vt-template-comparison.md),
+    not the checkpoint. The behaviour -- primary retrieval 12, secondary 18, perplexity 4,
+    bf16 6 -- is tested in ``test_gate1_table``/``test_gate1_bf16``, both of which pin the
+    constant empty for their full-family mechanics; this is the only test that reads the
+    shipped default, so a revert of the module constant fails here."""
+    from kvdlra.eval import gate1
+
+    assert frozenset({"vt"}) == gate1.EXCLUDED_TASKS

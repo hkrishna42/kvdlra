@@ -24,6 +24,18 @@ from kvdlra.eval import gate1
 from tests.test_gate1_table import ARM, N_TRIALS
 from tests.test_gate1_table import write_pod as _write_pod
 
+
+@pytest.fixture(autouse=True)
+def _no_task_exclusion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The bf16 mechanics here read an 8-member family (2 families x 4 tasks) and its
+    7/4-member refusal arithmetic, so they pin ``EXCLUDED_TASKS`` empty. The shipped
+    default excludes ``vt`` (Amendment 1b, D-018) -> ``bf16_family_size() == 6``, tested
+    at ``test_an_excluded_task_leaves_the_family_and_decides_nothing``; that test sets
+    ``{"vt"}`` itself and overrides this fixture. The default constant is pinned in
+    ``tests/test_gate1_arms.py``."""
+    monkeypatch.setattr(gate1, "EXCLUDED_TASKS", frozenset())
+
+
 # The pair section 4 reads, at the floor-against-floor shape section 5 predicts, and the
 # bf16 arm fractionally WORSE on perplexity (section 5: "nothing in the construction makes
 # bf16 better") but well inside the +/-0.02 margin.

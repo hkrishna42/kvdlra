@@ -1476,3 +1476,138 @@ the paragraph below the table enumerates the population as **0.0010 to 0.0563** 
 smallest paired SD among the contrasts where a knob that *changes the subspace* is the difference
 — and nothing downstream reads "floor" as a quantity: §6's bounds are computed from the stated
 range, not from that label. The body is not edited; this note is the correction.
+
+## Amendment 1b (2026-09-21, before the Stage-1 launch commit; after `gate1_preflight_rerun` harvested)
+
+The return Amendment 1a and `prereg/gate1_preflight.md` A1.5 promised: the pre-flight's three
+returns to this file — the §2 measured baseline rows, the `vt` exclusion, and the §9 re-size — plus
+the `EXCLUDED_TASKS` value A1a.8 left to this amendment and the A1a.9 attribution correction. It is
+read off the two committed pre-flight pods and **changes no rule, threshold or branch**: §4 stands
+branch for branch, §6's three families keep their composition (now at the smaller size the `vt`
+exclusion sets), §9's bars do not move. No number here is cited as a result; `make tables` reads
+neither directory; the Gate-1 verdict is Stage 1's, at n = 24 over two families.
+
+Evidence, both `scripts/pod.py check` = OK: `results/gate1_preflight/` (instance 51722149, the
+**complete** `full` arm; the partial capture is D-011 addendum 10) and `results/gate1_preflight_rerun/`
+(instance 51815080, the complete `isvd`/`nogist`/`frozen` arms; harvested and committed at **07c4f8d**).
+
+### A1b.1 The measured real-text baseline (the §2 (a) rows Amendment 1 promised)
+
+`ruler_v2_16k` (generator v2, real documents), Llama-3.1-8B, 16 384 ctx, seed 0, n = 12, 0 errors.
+`full` from `results/gate1_preflight/`; the three compressed arms from `results/gate1_preflight_rerun/`,
+which **supersede cell by cell** the two partial `isvd` cells and the one `frozen` cell that survived
+the first pod. `niah_multiquery` is run by the pod but is **not** in `TASK_ORDER` (`gate1.py:158`:
+`niah_single`, `niah_multikey`, `niah_multivalue`, `vt`); it is descriptive, listed for completeness:
+
+| arm (record key) | niah_single | niah_multikey | niah_multivalue | (niah_multiquery) | vt |
+| --- | --- | --- | --- | --- | --- |
+| `full` (ceiling) | 1.00 (12/12) | 1.00 (12/12) | 0.92 (11/12) | 0.92 (11/12) | 0.75 (9/12) |
+| `nogist_h2423` (byte-matched no-gist twin, (e)) | 1.00 (12/12) | 1.00 (12/12) | 0.92 (11/12) | 0.92 (11/12) | 0.83 (10/12) |
+| `bugSseed-r64-h256` (`isvd_r64_h256_seed`, the reference (a)) | 0.83 (10/12) | 0.25 (3/12) | 0.25 (3/12) | 0.25 (3/12) | 0.42 (5/12) |
+| `frozen_r64_h256_seed` (learn-then-freeze, (d)) | 0.42 (5/12) | 0.33 (4/12) | 0.25 (3/12) | 0.08 (1/12) | 0.33 (4/12) |
+
+**What it predicts, stated as §2's header asks (and it is a prediction, not the verdict).** On the
+three operative tasks that survive the `vt` exclusion (A1b.4): (i) **`nogist` ≈ `full`** — the
+byte-matched no-gist twin retrieves at the ceiling (1.00 / 1.00 / 0.92), so on real text the **exact
+tier, not the gist, is what retrieves** (the Week-12 mechanism, `docs/plan/DECISIONS.md`; consistent
+with D-005's retirement of the cycled filler, under which `isvd` had read 1.00). (ii) **`isvd` ≪
+`nogist` at matched stored bytes** on every task (0.83 / 0.25 / 0.25 vs 1.00 / 1.00 / 0.92): the
+online-tracked gist adds nothing over the tier-only twin. (iii) `isvd` beats `frozen` on
+`niah_single` only (0.83 vs 0.42), ties `niah_multivalue` (0.25) and loses `niah_multikey`
+(0.25 vs 0.33) — so **no task separates `isvd` from *both* controls**, which is what §4 rule 1
+requires for A/B. This pre-flight — one family, one seed, n = 12, and no perplexity or `fd` axis —
+therefore points toward **Branch C or the perplexity route, not A/B on retrieval**. It is a baseline
+and a power check, not a reading of §4: Stage 1 decides the branch at n = 24 over Llama **and** Qwen,
+with the perplexity TOST and the `fd` control that this pod did not run (`gate1_verdict`, §4).
+
+### A1b.2 Reading (i) completeness and (iii) the pairing invariant, across the two pods
+
+**(i) Complete.** `gate1_preflight_rerun` carries all 15 cells × 12 = **180** records, 0 errors,
+`scripts/pod.py check results/gate1_preflight_rerun` = OK; with the complete `full` arm surviving in
+`results/gate1_preflight/`, the four-arm baseline above is complete on every operative task. (The
+first pod's reading (i) **failed** on capture, D-011 addendum 10; this is the repair A1.4 pod's job,
+done.)
+
+**(iii) The pairing invariant holds across the two pods.** By `prereg/gate1_preflight.md` A1.4's
+snippet, over the 60 `(task, seed, trial)` keys each arm shares with the first pod's `full`:
+`bugSseed-r64-h256` **60/60**, `nogist_h2423` **60/60**, `frozen_r64_h256_seed` **60/60** identical
+`prompt_sha256`, **0 disagree**, and **0 null** digests across both pods. The seeded generator
+produced byte-identical prompts on the two hosts; the pods are **one experiment** and poolable, so
+the surviving `full` arm is the ceiling the re-run's arms are read against (A1.4).
+
+### A1b.3 Reading (iv): the measured rates, no trigger fires, §9 is not re-sized
+
+From `results/gate1_preflight_rerun/manifest.json` `cell_elapsed_s` by `prereg/gate1_preflight.md`
+§4 (iv)'s formula (Σ of an arm's five cell seconds ÷ 60 s/min ÷ 60 samples):
+
+| arm | Σ cell_elapsed_s | min/sample | trigger | outcome |
+| --- | --- | --- | --- | --- |
+| `bugSseed-r64-h256` (`isvd`) | 14 189.1 s | **3.94** | > 4.7 | **not fired** |
+| `nogist_h2423` | 10 101.1 s | **2.81** | > 3.1 | **not fired** |
+| `frozen_r64_h256_seed` | 5 735.7 s | **1.59** | > 3.1 | **not fired** |
+
+No trigger fires, so **§9's per-pod bar stays 82 h and Stage 1 is not re-sized.** Two caveats.
+The `isvd` anchor, 3.94, is above §9's stated 3.7 sensitivity top (the D-005 bracket was 2.9–3.7):
+the point estimate per pod rises to ≈ 50 h (the `isvd`-proportional arms scale by 3.94 / 3.1), still
+≈ 1.6× inside the 82 h bar and well under the 4.7 trigger (1.5 × 3.1) that would re-size it. And
+`nogist` at 2.81 — the rate §7 named reading (iv)'s "first suspect" because its 2 423-token tier is
+re-scored every absorb — sits comfortably under its 3.1 trigger; it is *not* the anomaly the caveat
+anticipated. `frozen` at 1.59 is faster than its derived 2.1.
+
+### A1b.4 §6 task exclusion: `vt` leaves the primary and secondary families (D-018)
+
+The pre-flight's `full` ceiling on generator v2's `vt` was **9/12 = 0.75 < 0.9**
+(`prereg/gate1_preflight.md` §4 (ii); reading (ii) is **decided** and not re-read on the re-run), and
+§4 (ii) pre-committed that a task below the ceiling is a generator finding, not a compression one.
+`docs/plan/reports/vt-template-comparison.md` (Verdict B) attributes the shortfall to
+`kvdlra.eval.gen`, not the checkpoint. Quoting its §7:
+
+> `vt` leaves the Gate-1 primary retrieval family (16 → 12) and the secondary family (24 → 18) under
+> `prereg/gate1_preflight.md` §4 (ii), because the pre-flight `full` ceiling was 9/12 = 0.75
+> (RULER-comparable `string_match_all` 0.867, Wilson 95 % [0.758, 0.931]) against third-party
+> official-RULER runs that put full-attention Llama-3.1-8B at vt ≈ 99.6 at 16K (arXiv:2602.05191
+> Table 4; arXiv:2510.05688 Table 4 gives 97.4 at 32K).
+>
+> v2's mod-1 depth wrap presents the assignment chain out of order at depths 0.40 and 0.95 — where
+> official RULER is always definition-first — and v2 additionally omits RULER's mandatory one-shot
+> example, may draw the value from the `words` family, and ends each chain statement without a
+> period; the repair required by §4 (ii) is scoped to those items and validated by one `full`-arm
+> `vt` cell at ≈ 1 GPU-h.
+>
+> Until that repair lands and is measured, Stage 1 runs `vt` on the unrepaired generator and reports
+> it descriptively (D-018); its rows are read only against the pre-flight ceiling, and no `vt` row
+> from before the repair is pooled with one from after it.
+
+**The mechanism, in code.** `EXCLUDED_TASKS` — the `frozenset()` A1a.8 shipped empty — is set to
+`frozenset({"vt"})` in `src/kvdlra/eval/gate1.py`, in the commit that lands this amendment. `vt`
+then leaves the primary retrieval family, the secondary family and both of C's per-task readings,
+and the realised Holm sizes are **primary retrieval 12, secondary 18, perplexity 4** (the perplexity
+family has no task axis and is untouched; `bf16` non-inferiority, `prereg/bf16_gist.md`, drops from 8
+to 6 the same way). `vt`'s cells are still run, still scored and still **rendered descriptively** in
+the Gate-1 table, and a separation on `vt` blocks nothing (`test_an_excluded_task_leaves_every_family_and_blocks_nothing`,
+`test_vt_is_excluded_from_the_gate1_families_by_default`).
+
+### A1b.5 The A1a.9 attribution correction
+
+A1a.9 named the §2 (b) population minimum (paired arm-vs-arm per-window SD, 0.0010 bits/token) as
+**Llama `isvd_r256_tol` − `isvd_r256_qr64`**. That contrast's SD is **0.0016**, not 0.0010 — it is
+§2 (b)'s own named row (l. 176). Recomputing every guard-on compression-arm-vs-compression-arm
+contrast from the three Table-4 pods' `pplw.jsonl` by §2 (b)'s snippet, the true minimum **0.0010**
+is **Qwen `isvd_r256_f0.01_qr64` − `isvd_r256_f0.01_tol`** on `hygiene_table4_qwen_r256` (mean
+−0.0003, 16 windows; both arms guard-on, differing only in the repair schedule). The population
+**range 0.0010 – 0.0563** and the §6 bound it feeds (a ±0.02 TOST at n = 32 decidable for SD <
+0.0667, margin 1.18 at the 0.0563 maximum) are **unchanged**: only A1a.9's parenthetical attribution
+of the minimum moves, from a Llama row that is 0.0016 to the Qwen row that is 0.0010.
+
+### A1b.6 What does not change
+
+§4's rule and its precedence (A/B, C, REFUSED, UNDECIDED), the ±0.02 margin and the exclusive
+A/B-vs-C construction; §6's composition (now realised at 12 / 18 / 4 with `vt` excluded, and the
+per-family refusal rulings R-L3-15/16); §9's 82 h bar and its cut ladder; the verdict signature
+(A1a.2), the per-member `prompt_sha256` drop (A1a.1) and the completeness/`NO_MEMBERS` blockers
+(A1a.5). The two pre-flight pods enter Stage 1's reading as the **measured baseline only** — the
+ceiling the descriptive rows and the byte match are read against — and no statistic in §4 or §6
+crosses from them into a Stage-1 pod.
+
+**STATUS: committed before the Stage-1 launch commit. Stage 1 (`gate1_v2_stage1_llama`,
+`gate1_v2_stage1_qwen`) launches from `main` after this branch merges, under D-003.**

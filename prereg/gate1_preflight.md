@@ -898,3 +898,35 @@ have printed no replay block at all, the same loss A1.3 exists to repair. Fixed 
 **4a5f71e** (`L3.4c`, this branch): `scripts/pod.py run` now installs
 `signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))` before `run_pod` starts, turning
 `SIGTERM` into `SystemExit` so `replayed()`'s `finally` runs inside the 60 s kill grace.
+
+### Amendment 1 — re-run harvested COMPLETE (2026-09-21, before the Stage-1 launch commit)
+
+`gate1_preflight_rerun` (instance 51815080, launch SHA d4ed366) ran to `ALL_DONE` on AC power and
+harvested **complete**; its records are committed at **07c4f8d** (`results/gate1_preflight_rerun/`:
+`manifest.json` with 15 `cell_elapsed_s` entries, `trials.jsonl` 180 rows, `diag.jsonl`, `env.txt`).
+The end-of-run replay (A1.3) and the SIGTERM handler held: no capture gap this time. §4's readings,
+as A1.4 pre-registered them:
+
+- **(i) completeness:** `scripts/pod.py check results/gate1_preflight_rerun` = **OK (180 trials, 0
+  errors)**; 15 cells × 12. Passes.
+- **(iii) pairing:** the A1.4 snippet reads **60 keys; 0 disagree** across the two pods — each of
+  `bugSseed-r64-h256`, `nogist_h2423`, `frozen_r64_h256_seed` matches the first pod's `full`
+  `prompt_sha256` on all 60 `(task, seed, trial)` keys, 0 null. Passes; the pods are one experiment.
+- **(iv) rates** (Σ of five cells ÷ 3600): `isvd` **3.94**, `nogist` **2.81**, `frozen` **1.59**
+  min/sample. Triggers `isvd` > 4.7 / `nogist` > 3.1 / `frozen` > 3.1: **none fires.** §9 of
+  `prereg/gate1_tracker_swap_v2.md` is **not re-sized**; the `nogist` rate the gap swallowed is now
+  measured and is under its trigger.
+- **(ii)** is **not** re-read — it is decided on the first pod's complete `full` arm (`vt` 0.75).
+
+**§5 descriptive rows (16K, real text, n = 12):** `full` 1.00 / 1.00 / 0.92 / 0.92 / vt 0.75 (first
+pod); `nogist_h2423` 1.00 / 1.00 / 0.92 / 0.92 / vt 0.83; `bugSseed-r64-h256` 0.83 / 0.25 / 0.25 /
+0.25 / vt 0.42; `frozen_r64_h256_seed` 0.42 / 0.33 / 0.25 / 0.08 / vt 0.33 (tasks in `TASK_ORDER`
+order, then the descriptive `niah_multiquery` folded in as the 4th column, then `vt`). None is cited
+as a result.
+
+**The three returns to `prereg/gate1_tracker_swap_v2.md` — the §2 baseline rows, the `vt` exclusion
+(16 → 12 / 24 → 18) and the §9 re-size (not triggered), plus the A1a.9 attribution correction — are
+landed in that file's Amendment 1b**, committed on this branch before the Stage-1 launch commit.
+
+**STATUS: both pre-flight instances harvested (`gate1_preflight` PARTIAL, `full` complete;
+`gate1_preflight_rerun` COMPLETE); this pod's job is done; Stage 1 launches under D-003.**

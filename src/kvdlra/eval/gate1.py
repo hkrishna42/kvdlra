@@ -161,7 +161,10 @@ TASK_ORDER = ("niah_single", "niah_multikey", "niah_multivalue", "vt")
 # family, the secondary family and both of C's per-task readings (16 - 4 = 12 and
 # 24 - 6 = 18); the perplexity family has no task axis and is untouched. Its cells are
 # still run, still scored and still rendered -- descriptively, in no family.
-EXCLUDED_TASKS: frozenset[str] = frozenset()
+# `vt` set by prereg/gate1_tracker_swap_v2.md Amendment 1b (D-018): the pre-flight `full`
+# ceiling on generator v2's `vt` was 9/12 = 0.75 < 0.9, a generator finding attributed to
+# `kvdlra.eval.gen` (docs/plan/reports/vt-template-comparison.md), not the checkpoint.
+EXCLUDED_TASKS: frozenset[str] = frozenset({"vt"})
 
 CellKey = tuple[str, int, str, str]  # family, ctx, task, tracker
 # The corpus is part of the perplexity key, exactly as in `tables.ppl_stats`: two ppl

@@ -9,8 +9,11 @@ against the live cache.
 
 This module also owns the two pieces every other eval axis shares: the prefill
 helpers (``_prefill_chunked`` for a streaming cache, ``_prefill_plain`` for a
-QuantizedCache, ``_prefill_faithful`` for the KIVI arm that quantizes post hoc) and
-``_footprint``, which maps an arm plus its post-prefill cache to a ``Footprint``.
+QuantizedCache, ``_prefill_faithful`` for the KIVI arm that quantizes post hoc,
+``_prefill_press`` for a kvpress press) and ``_footprint``, which maps an arm plus its
+post-prefill cache to a ``Footprint`` -- post-prefill on every axis: `run_ppl` bills
+these arms between the prefill and the scored window, as `ruler.retrieve` does between
+the prefill and the decode.
 
 The ``[pplw]`` and ``ppl=`` lines this module prints are the pod's stdout contract:
 ``kvdlra.eval.records`` parses them back out of a harvested log, so their format is
@@ -20,6 +23,7 @@ frozen (``tests/test_w15_pplw.py``).
 from __future__ import annotations
 
 import gc
+import time
 from contextlib import nullcontext
 from typing import Any, cast
 
@@ -115,12 +119,10 @@ def score_streaming(
 
 
 @torch.no_grad()
-def score_press(
-    model: Any, press: Any, ctx_ids: torch.Tensor, win_ids: torch.Tensor, chunk: int = 0
-) -> tuple[float, int, DynamicCache]:
+def _prefill_press(model: Any, press: Any, ctx_ids: torch.Tensor, chunk: int = 0) -> DynamicCache:
     """Single-shot (or ChunkPress-chunked) prefill through a kvpress prefill press
-    (or None=full), then score. Returns the (compressed) DynamicCache so its kept
-    memory is measured."""
+    (or None=full). Returns the (compressed) DynamicCache UNSCORED, so its kept memory
+    can be measured before the window is pushed into it (`_prefill_scored`)."""
     cache = DynamicCache()
     ctx = ctx_ids.unsqueeze(0)
     ctx_len = int(ctx_ids.shape[0])
@@ -131,8 +133,7 @@ def score_press(
         active = ChunkPress(press=press, chunk_length=chunk)
     with active(model) if active is not None else nullcontext():
         model(ctx, past_key_values=cache, use_cache=True, logits_to_keep=1)
-    nll, ntok = _score_window(model, cache, ctx_len, win_ids)
-    return nll, ntok, cache
+    return cache
 
 
 @torch.no_grad()
@@ -167,16 +168,29 @@ def _prefill_faithful(model: Any, cache: Any, ctx: torch.Tensor) -> None:
     quantize_after_prefill(cache, dyn)
 
 
-@torch.no_grad()
-def score_quant(
-    model: Any, cache: Any, ctx_ids: torch.Tensor, win_ids: torch.Tensor, chunk: int = 0
-) -> tuple[float, int]:
-    """Prefill into a caller-supplied QuantizedCache (KIVI baseline; chunked when
-    ``chunk`` > 0) then score the window; returns nll + token count."""
+@torch.no_grad()  # as every branch below is: an undecorated prefill cost 38 GB (W19)
+def _prefill_scored(model: Any, arm: dict[str, Any], ctx_ids: torch.Tensor, chunk: int) -> Any:
+    """Prefill a non-streaming arm's cache and hand it back UNSCORED.
+
+    These arms' footprints are measured off the cache, and `_score_window` pushes the
+    window's tokens into it -- an eviction press was billed ``k*T + W`` tokens, i.e.
+    ``(k*T + W)/T`` rather than its kept fraction. The faithful-KIVI branch already
+    split its prefill out for exactly that reason (the window grows its fp16 residual);
+    this is the same split for the other three kinds, so `run_ppl` bills every arm the
+    post-prefill state -- what `ruler.retrieve` has always measured. The streaming arms
+    do not come through here: their window is scored under ``frozen_scoring()``, which
+    leaves ``stored_state_numel`` unchanged (`tests/test_w10_score_mode.py`).
+    """
     ctx = ctx_ids.unsqueeze(0)
-    ctx_len = int(ctx_ids.shape[0])
-    _prefill_plain(model, cache, ctx, chunk)
-    return _score_window(model, cache, ctx_len, win_ids)
+    if arm["kind"] == "quant":  # the QuantizedCache baseline, chunked when asked
+        cache = arm["make"]()
+        _prefill_plain(model, cache, ctx, chunk)
+        return cache
+    if arm["kind"] == "quant_faithful":  # KIVI's own protocol: quantized post hoc
+        cache = arm["make"]()
+        _prefill_faithful(model, cache, ctx)
+        return cache
+    return _prefill_press(model, arm["make"](), ctx_ids, chunk)  # press, or full (None)
 
 
 # ------------------------------------------------------------------- the arms
@@ -378,6 +392,9 @@ def _footprint(arm: dict[str, Any], cache: Cache, t: int, n: int, h_kv: int) -> 
             u_present=layer.u_k is not None,
             quant_count=q_len,
             quant_bits=layer.quant_bits if q_len else None,
+            # L5.1: a bf16-gist arm stores U and C at 16 bits, so they leave the
+            # fp32-at-rest subset of `stored_bits`. Read off the live layer, like the rank.
+            gist_bits=acc.FP16_BITS if layer.gist_dtype == torch.bfloat16 else acc.FP32_BITS,
         )
     if kind == "shadow":
         from kvdlra.cache import ShadowKVLayer
@@ -489,6 +506,7 @@ def run_ppl(
     """
     rows: list[dict[str, Any]] = []
     for arm in arms:
+        t_arm = time.perf_counter()
         peak_ctx = acc.measure_peak_gpu(device)
         try:
             if arm.get("per_layer_budget"):
@@ -508,16 +526,13 @@ def run_ppl(
                 eff_rank: int | None = None  # bug arms only: the live tracked rank
                 arm_chunk = chunk if arm.get("chunkable", True) else 0
                 for sample_idx, (ctx_ids, win_ids) in enumerate(samples):
-                    if arm["kind"] == "press" or arm["kind"] == "full":
-                        press = arm["make"]()
-                        nll, ntok, cache = score_press(model, press, ctx_ids, win_ids, arm_chunk)
-                    elif arm["kind"] == "quant":
-                        cache = arm["make"]()
-                        nll, ntok = score_quant(model, cache, ctx_ids, win_ids, arm_chunk)
-                    elif arm["kind"] == "quant_faithful":
-                        cache = arm["make"]()
-                        _prefill_faithful(model, cache, ctx_ids.unsqueeze(0))
-                        if fp is None:  # the post-prefill state: the window grows the residual
+                    if arm["kind"] in ("press", "full", "quant", "quant_faithful"):
+                        cache = _prefill_scored(model, arm, ctx_ids, arm_chunk)
+                        # Billed BETWEEN the prefill and the window: `_score_window`
+                        # pushes the window's tokens into these caches (an eviction
+                        # press's survivors, a quant arm's fp16 residual), and the
+                        # stored state is the prefill's -- what every other axis bills.
+                        if fp is None:
                             fp = _footprint(arm, cache, t, n, h_kv)
                         nll, ntok = _score_window(model, cache, int(ctx_ids.shape[0]), win_ids)
                     else:
@@ -592,6 +607,10 @@ def run_ppl(
                     flush=True,
                 )
             print(f"  {arm['name']:14s} [T={t}] {row['status']}: {row['error'][:110]}")
+        # Outside both branches: an arm that failed burned the seconds too, and the next
+        # pod is sized against what the last one actually cost. `runner._ppl_rows` prints
+        # it as this axis's `[stage] cell` line (the one clock a harvest carries).
+        row["elapsed_s"] = time.perf_counter() - t_arm
         rows.append(row)
         _log_row(row)
     return rows

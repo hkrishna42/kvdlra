@@ -19,11 +19,17 @@ import torch
 from transformers import LlamaConfig, LlamaForCausalLM
 
 from kvdlra.cache import BugStreamingCache
-from kvdlra.tracker.isvd import augmented_bug_step, fd_step, oja_step
+from kvdlra.tracker.isvd import augmented_bug_step, fd_step, frozen_step, oja_step
+from tests.conftest import tiny_cache
 
 # The Week-2 validated pre-RoPE schedule, which the arm config names. ``oja_step`` has no
 # defaults to fall back on, so every call site states the schedule it is testing.
 OJA = partial(oja_step, eta0=20.0, decay=0.03)
+# L3.1's Gate-1 control, in its TRACKING phase (a freeze the stream never reaches), which
+# is where it has a contract to honor at all -- past the freeze it returns its input. Its
+# sibling ``random_step`` is not here: its basis is rank_cap-wide from the seeding call, so
+# it cannot honor the seeding shape below by design (pinned in tests/test_gate1_arms.py).
+FROZEN = partial(frozen_step, n_seen=0, freeze_after=1 << 30)
 
 N, R, B = 32, 6, 5  # features, rank cap, block columns
 
@@ -42,7 +48,7 @@ def _stream(seed: int, t: int = 40, true_rank: int = 4) -> torch.Tensor:
     return out
 
 
-@pytest.mark.parametrize("step", [OJA, fd_step], ids=["oja", "fd"])
+@pytest.mark.parametrize("step", [OJA, fd_step, FROZEN], ids=["oja", "fd", "frozen"])
 def test_swapped_trackers_honor_the_step_contract(step: Any) -> None:
     m = _stream(0)
     u, b, rot = step(None, None, m[:, :B], R)  # seeding = reduced QR, like the isvd step
@@ -113,25 +119,17 @@ def _model() -> LlamaForCausalLM:
 
 
 def _cache(model: LlamaForCausalLM, **kw: Any) -> BugStreamingCache:
-    return BugStreamingCache(
-        model,
-        rank=R,
-        coord_budget=64,
-        recent_window=4,
-        absorb_block=4,
-        n_sink=1,
-        retention="lowrank_surprise",
-        hh_budget=2,
-        # The 48-token prefill must take MORE THAN ONE augmented step: every tracker keeps
-        # the same ``u_aug @ u_loc[:, :k]`` on a seeding block, so what distinguishes FD --
-        # the shrinkage, which only touches the core -- reaches the basis on the next step
-        # or not at all. At the default 128 the prefill is one block and the "must change
-        # the gist" pin below passes only while FD's seeding differs, which it no longer
-        # does (it shares ``_augment``/``_svd_core`` with the incremental-SVD step).
-        prefill_block_size=16,
-        hh_select="surprise",
-        **kw,
-    )
+    # `prefill_block_size=16`: the 48-token prefill must take MORE THAN ONE augmented
+    # step, because every tracker keeps the same ``u_aug @ u_loc[:, :k]`` on a seeding
+    # block, so what distinguishes FD -- the shrinkage, which only touches the core --
+    # reaches the basis on the next step or not at all. At the default 128 the prefill is
+    # one block and the "must change the gist" pin below passes only while FD's seeding
+    # differs, which it no longer does (it shares ``_augment``/``_svd_core`` with the
+    # incremental-SVD step).
+    return tiny_cache(
+        model, rank=R, retention="lowrank_surprise", hh_budget=2,
+        prefill_block_size=16, hh_select="surprise", **kw,
+    )  # fmt: skip
 
 
 def _prefill_then_decode(model: LlamaForCausalLM, cache: BugStreamingCache) -> torch.Tensor:

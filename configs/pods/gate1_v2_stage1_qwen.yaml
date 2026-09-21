@@ -1,0 +1,22 @@
+name: gate1_v2_stage1_qwen
+model: "Qwen/Qwen2.5-7B-Instruct"
+dtype: bfloat16
+doc: >-
+  Gate 1, Stage 1, the Qwen half (lane L3): the Llama half's design, arm for arm and
+  task for task, on Qwen2.5-7B with the 1024-wide no-gist twin `nogist_h4460`. The
+  question, the arms, the pairing, the branch rule, the Holm families, the ordered loss
+  and the sizing are `prereg/gate1_tracker_swap_v2.md` sections 1, 3, 4, 6 and 9; the
+  Llama pod's `doc:` is the same text. Launch = DECISIONS D-003 under D-011.
+prereg: prereg/gate1_tracker_swap_v2.md
+arms:
+  - full
+  - isvd_r64_h256_seed
+  - nogist_h4460
+  - frozen_r64_h256_seed
+  - fd_r64_h256_seed
+  - isvd_r64_h256_seed_bf16
+  - oja_r64_h256_seed_tuned
+  - random_r64_h256_seed
+tasks: ["ruler_v2_16k_g1", "ppl_16k_pg19val"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+gpu_budget_h: 82.0

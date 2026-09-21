@@ -36,7 +36,7 @@ G2  generator v2 + baselines
     ✔ G2 2026-09-19: lines 1, 2, 3, 8 met; 5 met as amended; 4 and 6 pre-registered, open until launched; 7 open (D-017). Evidence: docs/plan/STATE.md, docs/plan/DECISIONS.md D-004/D-005/D-006/D-017, docs/plan/cleanup/l2-ledger.md.
 
 G3  gate 1 v2
-    [ ] prereg SHA precedes launch SHA; ≤ 50 GPU-h in manifest
+    [ ] prereg SHA precedes launch SHA; the PRE-REGISTERED bar (prereg/gate1_tracker_swap_v2.md §9: 41.0 h point, 82.0 h bar per Stage-1 pod at the L2-measured rates) in the manifest — the plan's "≤ 50 GPU-h" was a sizing estimate written before those rates (2× low) and is retired by D-003 (2026-09-20)
     [ ] 6 trackers × 3 families × 2 ctx × 4 tasks × n=24 harvested; 0 arms with error > budget
     [ ] make tables renders Holm-corrected retrieval + TOST perplexity
     [ ] DECISIONS.md names the branch with the rule from ICML2027_PLAN.md
@@ -49,8 +49,8 @@ G4  kernel
 
 G5  bf16 gist + prereg
     [ ] bf16 run harvested under prereg; non-inferiority result in DECISIONS.md
-    [ ] all seven prereg files committed before their pods; SHA-order check passes
-    [ ] tampered-manifest rejection test passes
+    [x] all eight prereg files committed before their pods; SHA-order check passes — prereg/{bf16_gist,filler_realism,gate1_preflight,gate1_tracker_swap_v2,hygiene_table4,kernel_smoke,l2_smoke,ss2_families}.md; `pod.py launch` refuses a non-ancestor (scripts/pod.py `prereg_error`), tests/test_pod_manifest.py::test_prereg_commit_order_against_real_history + ::test_prereg_refusal_reasons
+    [x] tampered-manifest rejection test passes — tests/test_pod_manifest.py::test_check_rejects_tampered_config_hash (lane/L3-gate1-tracker-swap-v2)
 
 G6  verifier
     [ ] every STATE.md "done" entry carries a verifier signature with commands + output paths

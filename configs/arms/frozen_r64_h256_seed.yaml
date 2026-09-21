@@ -1,0 +1,27 @@
+name: frozen_r64_h256_seed
+kind: bug
+chunkable: true
+doc: >-
+  Gate-1 control (L3.1). xKV/ShadowKV-style: incremental SVD over the first 4096 tokens,
+  then the basis is frozen; coordinates of later tokens are plain projections. Everything
+  else is isvd_r64_h256_seed verbatim -- same rank, same 256-token exact tier, same
+  warm-up seed, same bytes -- so a cell against that arm measures the ONLINE tracking and
+  nothing else.
+cache:
+  rank: 64
+  coord_budget: null
+  recent_window: 32
+  absorb_block: 16
+  n_sink: 4
+  retention: "lowrank_surprise"
+  hh_budget: 256
+  hh_select: "surprise"
+  hh_neighbor: 1
+  hh_retain: true
+  seed_hh_warmup: true
+  score_rank: null
+  min_sv_frac: 0.0
+  tracker: "frozen"
+  freeze_after: 4096
+  quant_bits: null
+  quant_budget: 0

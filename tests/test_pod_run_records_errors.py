@@ -13,6 +13,7 @@ Hermetic: the generator is substituted, so no model is loaded and no prompt is b
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -21,8 +22,16 @@ import pytest
 import torch
 
 from kvdlra.eval.config import PodCfg, load_pod, load_task
-from kvdlra.eval.records import parse_cell_lines, parse_error_lines
+from kvdlra.eval.records import (
+    parse_cell_lines,
+    parse_error_lines,
+    parse_trial_lines,
+    replayed,
+)
 from kvdlra.eval.runner import run_pod
+
+# What the replay keeps: the compact record kinds, `[diag]` excluded.
+RE_KEPT = re.compile(r"^(\[trial\]|\[stage\]|\[error\]|\[pplw\]|\[[A-Za-z0-9_]+ ctx\d+\])")
 
 
 def _cfg(task: str) -> PodCfg:
@@ -142,7 +151,12 @@ def test_a_perplexity_arm_that_raises_is_logged_and_counted(
     harvest of the log alone rebuild the manifest the run wrote."""
     from kvdlra.eval import frontier
 
-    failed = [{"method": "full", "T": 16384, "status": "error", "error": "RuntimeError: boom"}]
+    failed = [
+        {
+            "method": "full", "T": 16384, "status": "error", "error": "RuntimeError: boom",
+            "elapsed_s": 3.0,  # every run_ppl row carries its arm's wall clock, ok or not
+        }
+    ]  # fmt: skip
     # A tensor, not a sentinel: the runner digests the ids into the manifest's
     # dataset_sha256 before it cuts windows out of them.
     monkeypatch.setattr("kvdlra.eval.runner.load_corpus_ids", lambda *a, **k: torch.arange(4))
@@ -154,6 +168,12 @@ def test_a_perplexity_arm_that_raises_is_logged_and_counted(
     out = capsys.readouterr().out
     assert "[error] axis=ppl arm=full ctx=16384 error=RuntimeError: boom" in out
     assert "[stage] load_corpus_ids wikitext-103 (" in out  # the corpus load is timed
+    # L3.3a: the perplexity axis prints `_cell`'s timing line too -- one per (arm, ctx),
+    # keyed by the PPL TASK name and carrying the window count, so Stage 1's per-arm rate
+    # is read off the harvested manifest the way the retrieval cells' is. A failed arm
+    # still prints it: the seconds it burned are what the next pod is sized against.
+    assert pod.CELL_S_RE.findall(out) == [("full", "ppl_16k", "16384", "3.0")]
+    assert "[stage] cell arm=full task=ppl_16k ctx=16384 elapsed_s=3.0 n=1" in out
     (err,) = parse_error_lines(out, "log")
     assert err["axis"] == "ppl" and err["arm"] == "full" and err["ctx"] == 16384
     assert err["error"] == "RuntimeError: boom" and str(err["source"]).startswith("log:")
@@ -196,5 +216,44 @@ def test_trial_rows_stream_out_and_carry_the_generators_metadata(
 
     assert len(parse_trial_lines(out, "m", "log")) == len(rows)
     cells = parse_cell_lines(out, "m", "log")
-    assert len(cells) == len(load_task("ruler_inhouse_16k").tasks)
+    subs = load_task("ruler_inhouse_16k").tasks
+    assert len(cells) == len(subs)
     assert all(c["n"] == 12 and c["acc"] == 1.0 and c["ratio"] == 0.15 for c in cells)
+
+    # One `[stage] cell` line per cell, carrying its own elapsed seconds: no other row
+    # the harvest keeps has a clock, and a per-arm rate is what sizes the next pod.
+    timings = pod.CELL_S_RE.findall(out)
+    assert [(a, t, c) for a, t, c, _ in timings] == [("full", sub, "16384") for sub in subs]
+    assert out.count(" n=12\n") >= len(subs)  # the cell's record count rides the line
+
+
+def test_the_run_replays_its_record_lines_after_the_pod(
+    tmp_path: Path, monkeypatch: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """D-011 addendum 10: the pre-flight's log endpoint returned only its ~4 MB tail, and
+    the `[diag]` rows (15,381 of the 15,519 lines that came back) had pushed 143 of the 240
+    `[trial]` rows out of it. `replayed()` tees the compact record lines and prints them
+    again between the two markers, at the end of the run -- so a fetch that keeps only the
+    tail still carries every reading. The block is exactly the lines a harvest parses, in
+    the order they were printed, and `[diag]` -- the bulk, and diagnostic -- is not in it."""
+
+    def fake_trial(*a: Any, **k: Any) -> tuple[int, float, dict[str, Any]]:
+        print('[diag] {"layer": 0, "rank": 64}', flush=True)  # the rows the replay omits
+        return 1, 1.0, {"ratio": 0.15, "sbits": 0.14}
+
+    monkeypatch.setattr("kvdlra.eval.ruler.run_trial", fake_trial)
+    with replayed():
+        # `pod.py run` prints these before it hands over; they are in the block too.
+        print(f"[stage] dataset_sha256 haystack:pg19 {'a' * 64}", flush=True)
+        run_pod(_cfg("ruler_inhouse_16k"), out=tmp_path, model=None, dry_model=True)
+
+    head, _, rest = capsys.readouterr().out.partition("===RECORDS_REPLAY_BEGIN===\n")
+    body, _, tail = rest.partition("===RECORDS_REPLAY_END===\n")
+    assert head and not tail
+    kept = [x for x in head.splitlines() if RE_KEPT.match(x)]
+    assert body.splitlines() == kept
+    assert len(parse_trial_lines(body, "m", "log")) == 48
+    assert len(parse_cell_lines(body, "m", "log")) == 4
+    assert f"[stage] dataset_sha256 haystack:pg19 {'a' * 64}" in kept
+    assert len(pod.CELL_S_RE.findall(body)) == 4
+    assert "[diag]" not in body and head.count("[diag]") == 48

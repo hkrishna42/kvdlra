@@ -1,0 +1,36 @@
+name: nogist_h4460
+kind: bug
+chunkable: true
+doc: >-
+  Gate-1 no-gist control (L3.1) for a 512-wide layer (Qwen2.5-7B: 4 KV heads x 128) --
+  nogist_h2423's twin, because the exact tier's bytes scale with the layer width n while
+  the r64 arm's coordinate bytes do not, so one H cannot match both. Tier + ring only:
+  rank 1 and coord_budget 1, so the middle is a surprise-selected exact tier of
+  H = 4460 tokens, the sinks and the recent ring, and the gist stores one column rather
+  than reconstructing ~16K near-junk keys into attention. The tier still selects by
+  residual, but against a rank-1 basis -- which is approximately norm-ordering, and that
+  is what "no gist" means for a surprise tier.
+  H is solved on STORED bits (the at-rest billing, kvdlra.accounting.Footprint.stored_bits)
+  at t=16384 against isvd_r64_h256_seed: the reference (rank 64, 16092 coordinate columns,
+  32-token ring, 4 sinks, 256 exact) bills 73,836,288 bits/layer, and this arm bills
+  622,784 + 16,416*H (2*n*16 = 16,384 fp16 K+V bits per exact token, +32 for its position
+  word), so H = 73,213,504 / 16,416 = 4459.89 -> 4460, a 1.00003x match. That is 4.4x the
+  ICML plan's "h ~ 1024", which was an fp16-equivalent estimate; the fp16-equivalent solve
+  on the same inputs gives H = 2389.
+cache:
+  rank: 1
+  coord_budget: 1
+  recent_window: 32
+  absorb_block: 16
+  n_sink: 4
+  retention: "lowrank_surprise"
+  hh_budget: 4460
+  hh_select: "surprise"
+  hh_neighbor: 1
+  hh_retain: true
+  seed_hh_warmup: true
+  score_rank: null
+  min_sv_frac: 0.0
+  tracker: "isvd"
+  quant_bits: null
+  quant_budget: 0

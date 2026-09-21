@@ -15,11 +15,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import re
 import shutil
 import subprocess
-from collections import defaultdict
 from collections.abc import Callable, Sequence
 from functools import cache
 from pathlib import Path
@@ -27,15 +25,18 @@ from typing import Literal, TypedDict, cast
 
 import _paths  # noqa: F401
 
+from kvdlra.eval import gate1
 from kvdlra.eval.records import (
     CellRecord,
     PplRecord,
     PplwRecord,
     TrialRecord,
+    paired_window_bits,
     parse_cell_lines,
     parse_ppl_lines,
     parse_trial_lines,
     read_jsonl,
+    window_bits,
     write_jsonl,
 )
 from kvdlra.eval.stats import Key, McNemar, mcnemar_exact, paired_bootstrap, tost, wilson
@@ -325,6 +326,18 @@ def _tex(s: str) -> str:
     return re.sub(r"\*\*(.+?)\*\*", r"\\textbf{\1}", s.replace("_", r"\_"))
 
 
+def _md_rows(header: Sequence[str], body: Sequence[Sequence[str]]) -> list[str]:
+    """A markdown table -- a blank line, the header, the rule, one line per row. The one
+    emitter: every table this file writes (the numbered ones, the perplexity table and
+    Gate 1's blocks) is this shape, and the paper-v1 golden pins it byte for byte."""
+    return [
+        "",
+        "| " + " | ".join(header) + " |",
+        "|" + " --- |" * len(header),
+        *["| " + " | ".join(r) + " |" for r in body],
+    ]
+
+
 def _table(
     n: int | str,
     title: str,
@@ -337,8 +350,7 @@ def _table(
     follows the last row directly, so `cat table*.md` is valid markdown."""
     md = [f"## Table {n} — {title}"]
     md += [f"<!-- {x} -->" for x in notes]
-    md += ["", "| " + " | ".join(header) + " |", "|" + " --- |" * len(header)]
-    md += ["| " + " | ".join(r) + " |" for r in rows]
+    md += _md_rows(header, rows)
     tex = [f"% Table {n} -- {title}"] + [f"% {x}" for x in notes]
     tex += [
         "\\begin{tabular}{" + "l" + "c" * (len(header) - 1) + "}",
@@ -708,19 +720,12 @@ def ppl_stats(
     task), and pairing across them would average two different texts' perplexity into
     one number instead of keeping each corpus's own comparison intact.
     """
-    bits: dict[tuple[str, int, str | None], dict[int, float]] = defaultdict(dict)
-    for r in rows:
-        key = (r["arm"], r["ctx"], r.get("corpus"))
-        # A window scored twice would overwrite its own entry and shrink the mean's
-        # denominator without shrinking the window SET -- so the pairing check below,
-        # which compares the two arms' sets, cannot see it. The usual cause is a second
-        # harvest appended to an existing `pplw.jsonl`.
-        if r["window_idx"] in bits[key]:
-            raise SystemExit(
-                f"ppl: {r['arm']} ctx={r['ctx']} corpus={r.get('corpus')} carries"
-                f" window_idx={r['window_idx']} twice -- the records are duplicated"
-            )
-        bits[key][r["window_idx"]] = r["nll_sum_nats"] / (r["ntok"] * math.log(2))
+    # `kvdlra.eval.gate1` starts from the same two functions, so both refuse the same
+    # records. This entrypoint reports a bad file as a SystemExit, not a traceback.
+    try:
+        bits = window_bits(rows, lambda r: (r["arm"], r["ctx"], r.get("corpus")), "ppl")
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
     out: list[PplStat] = []
     groups = sorted({(c, corpus) for _, c, corpus in bits}, key=lambda x: (x[0], x[1] or ""))
@@ -748,13 +753,12 @@ def ppl_stats(
                 "equivalent": None,
             }
             if arm != baseline:
-                if set(w) != set(base):
-                    raise SystemExit(
-                        f"ppl: {arm} ctx={ctx} corpus={corpus} scored windows"
-                        f" {sorted(set(w) ^ set(base))} that {baseline} did not (or the reverse)"
-                        " -- the pairing is broken"
+                try:
+                    d = paired_window_bits(
+                        w, base, f"ppl: {arm} ctx={ctx} corpus={corpus}", baseline
                     )
-                d = [w[i] - base[i] for i in sorted(w)]
+                except ValueError as exc:
+                    raise SystemExit(str(exc)) from exc
                 mean_d, lo, hi = paired_bootstrap(d)
                 p_lo, p_hi, equivalent = tost(d, delta)
                 stat |= {
@@ -822,8 +826,295 @@ def ppl_table(results: Path, out: Path, baseline: str = "full", delta: float = 0
         )
     md = [f"## Perplexity — {results.name}"]
     md += [f"<!-- {x} -->" for x in notes]
-    md += ["", "| " + " | ".join(header) + " |", "|" + " --- |" * len(header)]
-    md += ["| " + " | ".join(r) + " |" for r in body]
+    md += _md_rows(header, body)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(md) + "\n")
+
+
+# ---------------------------------------------------------------------- Gate 1
+
+GATE1_PREREG = "prereg/gate1_tracker_swap_v2.md"
+
+
+GATE1_LEGEND = (
+    "Legend: `*` = Holm-significant primary contrast favouring isvd; `‡` = one favouring"
+    " the control (rule 3 (i) reads a separation in either direction); a cell with error"
+    " rows reads `FAILED (k errors)` and an arm that never ran that cell says so -- no"
+    " arm is ever printed as `--`."
+)
+
+
+def _gate1_cell(data: gate1.Gate1Data, key: gate1.CellKey, mark: str) -> str:
+    """One retrieval cell: `acc [Wilson 95%] (hits/n)`, or the failure that replaced it.
+
+    "No arm is ever printed as `--`" (prereg section 4): a cell with error rows prints
+    `FAILED (k errors)` and a cell that never ran prints `not run` WITH what is missing
+    -- "an arm that never ran reads `not run` with the reason". `mark` is `*` or `‡`.
+    """
+    family, ctx, _, tracker = key
+    if errs := data.errors.get(key):
+        return f"FAILED ({len(errs)} errors)"
+    outcomes = data.hits.get(key)
+    if not outcomes:
+        return f"not run (no records for {data.arms[(family, tracker)]} at ctx {ctx})"
+    h, n = sum(outcomes.values()), len(outcomes)
+    lo, hi = wilson(h, n)
+    return f"{h / n:.2f} [{lo:.2f},{hi:.2f}] ({h}/{n})" + (f" {mark}" if mark else "")
+
+
+def _gate1_md(title: str, header: Sequence[str], body: Sequence[Sequence[str]]) -> list[str]:
+    """One Gate-1 block: its heading, then :func:`_md_rows`."""
+    return ["", title, *_md_rows(header, body)]
+
+
+def _gate1_ppl_cells(c: gate1.PplContrast) -> list[str]:
+    """One perplexity contrast's five comparison cells.
+
+    The TOST has three states, not two (prereg section 6): a member whose realised
+    spread cannot fit inside the margin even at delta = 0 "is recorded as `not
+    decidable` -- never as a pass, never as a quiet fail". The Holm p of an arm outside
+    the 4-member primary family is not missing either: that family is the two contrasts
+    the rule reads, and the rest are "uncorrected and descriptive" (section 7 (a)). A
+    PRIMARY member without one is the other case: its family was refused, so it left
+    the correction before Holm ran (ruling R-L3-16) and is printed as excluded rather
+    than with an adjusted p it never had.
+    """
+    excluded = "refused (excluded from the Holm family)" if c.primary else "n/a (secondary)"
+    return [
+        f"{c.d_bits:+.4f}",
+        f"[{c.lo:+.4f}, {c.hi:+.4f}]",
+        "passes" if c.equivalent else ("fails" if c.decidable else "not decidable"),
+        f"{c.p_holm:.3g}" if c.p_holm is not None else excluded,
+        f"{c.p:.3g}",
+    ]
+
+
+BF16_LEGEND = (
+    "Legend (bf16): cell = `delta [a_favored/b_favored of n_paired] Holm p`, with"
+    " a = `isvd_r64_h256_seed` and b = `isvd_r64_h256_seed_bf16`, so `delta > 0` is the"
+    " bf16 arm losing pairs; a task is non-inferior unless `delta` > 0.03 AND its Holm p <"
+    " 0.05, both (§4 (1)). `sbits` is §7 (c)'s pin: outside 1 % of the expected ratio"
+    " refuses the family."
+)
+
+
+def _bf16_cell(c: gate1.Contrast | None) -> str:
+    """One bf16 member, or the state that replaced it. Nothing prints as `--` here
+    either: a cell the pod never wrote says `not run` and one with error rows says so,
+    because both are refusals of the family and the block is read alone."""
+    if c is None:
+        return "not run"
+    if c.errors_a or c.errors_b:
+        return f"FAILED ({c.errors_a + c.errors_b} errors)"
+    if c.p is None or not c.n_paired:
+        return f"no pairing ({len(c.dropped_keys)} keys dropped)"
+    delta = (c.a_favored - c.b_favored) / c.n_paired
+    # `bf16_contrasts`'s own eligibility is exactly the three conditions already ruled
+    # out above (no error, a pairing, n_paired > 0), so a member reaching here always
+    # carries an adjusted p -- there is no fourth state left to print.
+    assert c.p_holm is not None, "an eligible bf16 member always carries an adjusted p"
+    return f"{delta:+.3f} [{c.a_favored}/{c.b_favored} of {c.n_paired}] {c.p_holm:.3g}"
+
+
+def _gate1_bf16_block(
+    data: gate1.Gate1Data,
+    contrasts: Sequence[gate1.Contrast],
+    ppl: Sequence[gate1.PplContrast],
+    verdict: gate1.Bf16Verdict,
+) -> list[str]:
+    """`prereg/bf16_gist.md` §4's retrieval reading, rendered by the code that renders
+    the gate -- the reason it exists: §4 pre-registered it as a snippet run by hand, and
+    a reading run by hand is a reading a harvest can skip.
+
+    One row per (ctx, family): the four per-task members, the family's ±0.02 perplexity
+    TOST (§4 (2)), §7 (c)'s stored-bits ratio and the family's verdict. Only the ctx
+    §4 reads carries a verdict; any other context length is descriptive (§6), and the
+    arm's own cells are already in the Gate-1 retrieval block above at every ctx.
+
+    The guard below is "no bf16 records at all", not "the verdict is `not run`": a pod
+    that carries ONLY a 32K bf16 reading (no 16K arm 6 at all, so the verdict reads
+    `not run` -- §4 scopes it to 16K) still has rows to print, descriptively, and must
+    not render nothing beside a `BF16: not run` line that says otherwise.
+    """
+    if not contrasts:
+        return []
+    idx = {(c.family, c.ctx, c.task): c for c in contrasts}
+    seen = {c.task for c in contrasts}
+    tasks = [t for t in gate1.TASK_ORDER if t in seen] + sorted(seen - set(gate1.TASK_ORDER))
+    rows = []
+    for ctx, family in sorted({(c.ctx, c.family) for c in contrasts}):
+        tosts = [t for t in ppl if (t.family, t.ctx, t.b) == (family, ctx, gate1.BF16)]
+        a_s, b_s = data.sbits.get((family, gate1.REFERENCE)), data.sbits.get((family, gate1.BF16))
+        rows.append(
+            [family, str(ctx)]
+            + [_bf16_cell(idx.get((family, ctx, t))) for t in tasks]
+            + [
+                "; ".join(
+                    ("passes" if t.equivalent else "fails" if t.decidable else "not decidable")
+                    + f" ({t.d_bits:+.4f})"
+                    for t in tosts
+                )
+                or "not run",
+                f"{b_s / a_s:.4f}" if a_s and b_s else "not measured",
+                verdict.families.get(family, "not run")
+                if ctx == gate1.VERDICT_CTX
+                else f"descriptive (§4 reads ctx {gate1.VERDICT_CTX})",
+            ]
+        )
+    realised = sum(1 for c in contrasts if c.ctx == gate1.VERDICT_CTX and c.p_holm is not None)
+    md = [
+        "",
+        "## bf16 non-inferiority — the gist stored at 16 bits",
+        f"<!-- pre-registration: {gate1.BF16_PREREG}; the reading is its §4, and no member"
+        " of it enters a Gate-1 family or moves a Gate-1 p-value (its §6) -->",
+        f"<!-- Holm at alpha={gate1.ALPHA} inside this file's own retrieval family, at the"
+        f" realised m={realised} of the {gate1.bf16_family_size()} members §6 fixes"
+        " (2 model families x the tasks left after the pre-flight's exclusions) -->",
+        f"<!-- delta: {gate1.REFERENCE} MINUS bf16, so delta > 0 is the bf16 arm losing;"
+        f" the TOST is the same +/-{gate1.PPL_DELTA_BITS} bits/token one, per family -->",
+    ]
+    md += _md_rows(["family", "ctx", *tasks, "TOST", "sbits bf16/isvd", "verdict"], rows)
+    md += ["", BF16_LEGEND, "", *[f"- {line}" for line in verdict.members]]
+    return md
+
+
+def gate1_table(pod_dirs: Sequence[Path], out: Path) -> None:
+    """The Gate-1 table: one retrieval block per family x ctx, a perplexity block per
+    family x ctx and corpus, then `gate1_verdict`'s branch and the members it was
+    decided from.
+
+    Written outside the `table*.md` glob `make tables` diffs against the paper-v1
+    golden, exactly as `ppl_table` is: this is a new pod's reading, not a v1 table.
+    `make gate1` is its entrypoint, and a number from it is citable only once
+    `scripts/pod.py check` passes on the directories it read (prereg section 10).
+    """
+    data = gate1.load(list(pod_dirs))
+    retr = gate1.retrieval_contrasts(data)
+    ppl = gate1.ppl_contrasts(data)
+    verdict = gate1.gate1_verdict(retr, ppl, data)
+    # The bf16 arm rides these pods and is read by its own file (prereg/bf16_gist.md §4),
+    # here rather than by hand so that a harvest cannot skip it.
+    bf16 = gate1.bf16_contrasts(data)
+    bf16_verdict = gate1.bf16_verdict(bf16, ppl, data)
+    marks = {
+        (c.family, c.ctx, c.task, c.b): ("*" if c.a_favored > c.b_favored else "‡")
+        for c in retr
+        if c.primary and c.p_holm is not None and c.p_holm < gate1.ALPHA
+    }
+    m = {  # the realised Holm family sizes section 6 asks the table to print
+        "primary retrieval": sum(1 for c in retr if c.primary and c.p_holm is not None),
+        "secondary retrieval": sum(1 for c in retr if not c.primary and c.p_holm is not None),
+        "primary perplexity": sum(1 for c in ppl if c.p_holm is not None),
+    }
+    md = [
+        "# Gate 1 — the tracker swap",
+        "",
+        f"<!-- pre-registration: {GATE1_PREREG}; the rule is its section 4 -->",
+        "<!-- source: " + ", ".join(f"{f}={p}" for f, p in sorted(data.pods.items())) + " -->",
+        "<!-- cell: acc [Wilson 95% lo,hi] (hits/n), marked per the legend below each block -->",
+        "<!-- Holm at alpha=0.05 over each family's raw p-values, at the realised m: "
+        + ", ".join(f"{k} m={v}" for k, v in m.items())
+        + " -->",
+        "<!-- delta: isvd MINUS the row's tracker, paired per window; delta < 0 is the"
+        " r64 arm ahead -->",
+        f"<!-- TOST: two one-sided t-tests at +/-{gate1.PPL_DELTA_BITS} bits/token on the"
+        " per-window differences, alpha=0.05 uncorrected (intersection-union) -->",
+        f"<!-- the verdict reads the ctx {gate1.VERDICT_CTX} contrasts only; any other"
+        " context length is descriptive -->",
+    ]
+    for ctx, family in sorted({(k[1], k[0]) for k in data.hits}):
+        present = [t for t in gate1.TRACKERS if (family, t) in data.arms]
+        seen = {k[2] for k in data.hits if k[0] == family and k[1] == ctx}
+        tasks = [t for t in gate1.TASK_ORDER if t in seen] + sorted(seen - set(gate1.TASK_ORDER))
+        md += [
+            "",
+            "<!-- arms: " + ", ".join(f"{t}={data.arms[(family, t)]}" for t in present) + " -->",
+        ]
+        md += _gate1_md(
+            f"## {family} — ctx {ctx}",
+            ["tracker", *tasks],
+            [
+                [
+                    tracker,
+                    *[
+                        _gate1_cell(
+                            data,
+                            (family, ctx, task, tracker),
+                            marks.get((family, ctx, task, tracker), ""),
+                        )
+                        for task in tasks
+                    ],
+                ]
+                for tracker in present
+            ],
+        )
+        md += ["", GATE1_LEGEND]
+        # "Every arm in the Gate-1 table carries either its cells or the exception text
+        # that replaced them" (prereg section 4): the FAILED cell says how many, this says
+        # what raised.
+        failures = sorted(
+            (k[3], k[2], errs) for k, errs in data.errors.items() if k[:2] == (family, ctx) and errs
+        )
+        # Section 7 (e): "A key that disagrees is dropped from every paired statistic in
+        # that pod and the drop is reported with the key and the arms." One line per
+        # Gate-1 or bf16 member that lost keys, with all of them -- a count alone is not
+        # a report. One blank line ahead of the list, and nothing at all for a block
+        # that has neither kind of line.
+        bullets = [
+            f"- `{data.arms[(family, tracker)]}` / {task}: {len(errs)} error records,"
+            f" first `{errs[0]}`"
+            for tracker, task, errs in failures
+        ] + [
+            f"- pairing: {len(c.dropped_keys)} key{'' if len(c.dropped_keys) == 1 else 's'}"
+            f" dropped ({c.family}/{c.task}: {gate1.key_list(c.dropped_keys)})"
+            f" -- {c.a} vs {c.b}, n_paired {c.n_paired}"
+            for c in [*retr, *bf16]  # the bf16 members lose keys to the same invariant
+            if c.dropped_keys and (c.family, c.ctx) == (family, ctx)
+        ]
+        md += ["", *bullets] if bullets else []
+        for corpus in sorted(
+            {k[2] for k in data.bits if (k[0], k[1]) == (family, ctx)}, key=lambda x: x or ""
+        ):
+            # Every contrast in the block is taken against the reference arm, so a
+            # corpus it scored no window of has none. That is a labelled row, not a
+            # dropped block: a block that silently vanishes hides a sweep that DID run
+            # more thoroughly than the `--` prereg section 4 forbids.
+            no_ref = f"reference arm has no windows for corpus {corpus}"
+            sweeps = {c.b: c for c in ppl if (c.family, c.ctx, c.corpus) == (family, ctx, corpus)}
+            rows = []
+            for tracker in present:
+                w = data.bits.get((family, ctx, corpus, tracker))
+                if not w:
+                    continue
+                c = sweeps.get(tracker)
+                # `c is None` is the reference arm itself, which has no contrast with
+                # itself -- or, where the reference is the arm missing, every row in the
+                # block. "No arm is ever printed as `--`" (prereg section 4), so the
+                # cells say which it is instead of going blank.
+                label = "reference" if tracker == gate1.REFERENCE else no_ref
+                rows.append(
+                    [tracker, f"{sum(w.values()) / len(w):.4f}"]
+                    + ([label] * 5 if c is None else _gate1_ppl_cells(c))
+                )
+            md += _gate1_md(
+                f"### {family} — perplexity, ctx {ctx}" + (f", {corpus}" if corpus else ""),
+                [
+                    "tracker",
+                    "bits/token",
+                    "delta (isvd - tracker)",
+                    "95% CI",
+                    f"TOST +/-{gate1.PPL_DELTA_BITS}",
+                    "Holm p",
+                    "paired t p",
+                ],
+                rows,
+            )
+    md += _gate1_bf16_block(data, bf16, ppl, bf16_verdict)
+    md += ["", f"BF16: {bf16_verdict.overall} — {bf16_verdict.reason}"]
+    # The members the branch was decided from, in full: the five-reviewer simulation
+    # reads this table alone, so nothing the verdict weighed is left in the objects.
+    md += ["", f"VERDICT: {verdict.branch} — {verdict.reason}", "", "members:"]
+    md += [f"- {line}" for line in verdict.members]
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(md) + "\n")
 
@@ -849,6 +1140,16 @@ def main() -> None:
     p.add_argument("--out", default=None, help="default: docs/paper/tables/ppl_<pod>.md")
     p.add_argument("--baseline", default="full", help="the arm every other is paired against")
     p.add_argument("--delta", type=float, default=0.05, help="TOST margin, bits/token")
+    g = sub.add_parser(
+        "gate1",
+        help=f"the Gate-1 table ({GATE1_PREREG}): Holm-corrected retrieval contrasts, the"
+        " perplexity TOSTs, and the branch the rule selects; written outside the"
+        " `table*.md` set `build` pins",
+    )
+    g.add_argument(
+        "--pods", nargs="+", required=True, help="results/<pod> directories, one per model family"
+    )
+    g.add_argument("--out", default="docs/paper/tables/gate1.md")
     a = ap.parse_args()
     if a.cmd == "convert-v1":
         out = Path(a.out) if a.out else REPO_ROOT / "results" / "paper-v1"
@@ -856,6 +1157,8 @@ def main() -> None:
     elif a.cmd == "ppl":
         out = Path(a.out) if a.out else REPO_ROOT / "docs/paper/tables" / f"ppl_{a.pod}.md"
         ppl_table(REPO_ROOT / "results" / a.pod, out, a.baseline, a.delta)
+    elif a.cmd == "gate1":
+        gate1_table([Path(p) for p in a.pods], Path(a.out))
     else:
         build(Path(a.out))
 

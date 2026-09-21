@@ -27,11 +27,16 @@ unless the generator separates them (``scripts/pod.py``'s ``_expected_cells``).
 from __future__ import annotations
 
 import json
+import math
 import re
-from collections.abc import Iterator
-from contextlib import contextmanager
+import sys
+from collections import defaultdict
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, TypedDict, TypeVar
+
+K = TypeVar("K")  # a `window_bits` bin key: the caller chooses what identifies a sweep
 
 # `generator=`, the four pairing fields `hay= depth= code= sha=` (L2.3b) and `error=`
 # are appended by `kvdlra.eval.runner`, in that order; no v1 log has any of them, so all
@@ -361,6 +366,48 @@ def parse_pplw_lines(text: str, model: str, source: str) -> list[PplwRecord]:
     return out
 
 
+def window_bits(
+    rows: Iterable[PplwRecord], key: Callable[[PplwRecord], K], where: str
+) -> dict[K, dict[int, float]]:
+    """Per-window bits/token (``nll_sum_nats / (ntok * ln 2)``), binned by ``key``.
+
+    The one implementation of the pairing every perplexity statistic starts from:
+    ``scripts/tables.ppl_stats`` bins by ``(arm, ctx, corpus)`` and ``kvdlra.eval.gate1``
+    by ``(family, ctx, corpus, tracker)``, and both must refuse the same records.
+
+    A window scored twice would overwrite its own entry and shrink the mean's
+    denominator without shrinking the window SET, so the set comparison in
+    :func:`paired_window_bits` cannot see it. The usual cause is a second harvest
+    appended to an existing ``pplw.jsonl``. ``where`` prefixes the message with the
+    caller's location (``"ppl"``, or the pod directory).
+    """
+    out: dict[K, dict[int, float]] = defaultdict(dict)
+    for r in rows:
+        k = key(r)
+        if r["window_idx"] in out[k]:
+            raise ValueError(
+                f"{where}: {r['arm']} ctx={r['ctx']} corpus={r.get('corpus')} carries"
+                f" window_idx={r['window_idx']} twice -- the records are duplicated"
+            )
+        out[k][r["window_idx"]] = r["nll_sum_nats"] / (r["ntok"] * math.log(2))
+    return dict(out)
+
+
+def paired_window_bits(
+    a: dict[int, float], b: dict[int, float], where: str, other: str
+) -> list[float]:
+    """``a - b`` per shared window, in ``window_idx`` order -- and a pairing that is not
+    exact is refused, never silently intersected: an unpaired comparison of pooled
+    numbers hides the effect it is measuring. ``where`` carries the caller's own
+    identification of the ``a`` side, ``other`` names the ``b`` arm."""
+    if set(a) != set(b):
+        raise ValueError(
+            f"{where} scored windows {sorted(set(a) ^ set(b))} that {other} did not"
+            " (or the reverse) -- the pairing is broken"
+        )
+    return [a[i] - b[i] for i in sorted(a)]
+
+
 def parse_latency_lines(text: str, model: str, source: str) -> list[LatencyRecord]:
     """Every ``[latency ctx<T>]`` decode-measurement line
     (``kvdlra.eval.latency.run_latency``) as a record -- the harvest-side counterpart
@@ -422,6 +469,79 @@ def parse_diag_lines(text: str, model: str, source: str) -> tuple[list[dict[str,
             continue
         out.append({"model": model, **payload, "source": f"{source}:{i}"})
     return out, skipped
+
+
+# --- the replay: the same lines a second time, at the end of the log -------------------
+
+REPLAY_BEGIN, REPLAY_END = "===RECORDS_REPLAY_BEGIN===", "===RECORDS_REPLAY_END==="
+# Which printed lines the replay repeats: the ones a parser above reads back, plus every
+# `[stage]` line (the digests, the pod's card, the per-cell clock). `[diag]` is left out on
+# purpose -- it is the volume, not the reading: the pre-flight's 4 MB tail came back as
+# 15,381 diag rows and 138 of everything else, which is why 143 of its 240 `[trial]` rows
+# were lost with the instance (D-011 addendum 10). ~1,000 lines for a Stage-1 pod.
+_REPLAY_RES = (TRIAL_RE, CELL_RE, ERROR_RE, PPL_RE, PPLW_RE, LATENCY_RE)
+
+
+def replayable(line: str) -> bool:
+    """Is this a line the replay repeats?"""
+    if line.startswith("[diag] "):
+        return False
+    return line.startswith("[stage] ") or any(r.match(line) for r in _REPLAY_RES)
+
+
+class _Tee:
+    """A stdout stand-in: writes through, and keeps the lines :func:`replayable` accepts.
+
+    A filter on the stream rather than a call at each print site -- the record lines come
+    from five modules (`scripts/pod.py`, this package's `runner`, `frontier`, `gen`,
+    `latency`), and a print site added later would silently not be replayed. Attribute
+    lookups fall through to the real stream, which is what a library asking stdout whether
+    it is a tty gets.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self.inner = inner
+        self.rows: list[str] = []
+        self._buf = ""
+
+    def write(self, s: str) -> int:
+        self._buf += s
+        while "\n" in self._buf:
+            line, _, self._buf = self._buf.partition("\n")
+            if replayable(line):
+                self.rows.append(line)
+        if len(self._buf) > 65_536:  # a `\r`-only writer (a progress bar) never sends
+            self._buf = ""  # a newline -- discard rather than grow this forever
+        return int(self.inner.write(s))
+
+    def flush(self) -> None:
+        self.inner.flush()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+
+@contextmanager
+def replayed() -> Iterator[list[str]]:
+    """Run a pod with its record lines teed, and print them again between the markers.
+
+    `vastai logs` returns a ~4 MB TAIL, and the log dies with the instance: the pre-flight
+    pod reached ALL_DONE with every trial recorded and 143 of its 240 `[trial]` rows never
+    reached the laptop (D-011 addendum 10). Repeating the compact lines at the end puts
+    every reading inside any tail that holds the last ~1,000 record lines. The block is
+    printed on the way out of a raised run too -- a pod that crashed is exactly the one
+    whose rows are worth keeping -- and `scripts/pod.py harvest` dedupes exact-duplicate
+    lines before parsing, so the repeat is not a second set of records.
+    """
+    tee = _Tee(sys.stdout)
+    try:
+        with redirect_stdout(tee):
+            yield tee.rows
+    finally:
+        print(REPLAY_BEGIN, flush=True)
+        for line in tee.rows:
+            print(line)
+        print(REPLAY_END, flush=True)
 
 
 # The diagnostic rows the eval axes have drained from the caches of THIS process, each

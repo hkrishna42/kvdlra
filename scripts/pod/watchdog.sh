@@ -43,8 +43,11 @@ BUDGET_ITERS="${BUDGET_ITERS:-$(cat "configs/pods/$POD.yaml" 2>/dev/null | awk -
 # `===ENV_` markers alone are not enough: `sort -u` scatters the block's contents, so
 # every line the harvest needs has to match on its own. `[stage]` rows are the runner's
 # load timings (model, corpora, haystacks): kept so a slow pod's log says where the
-# hours went.
-ROWS='^\[(niah|vt|persist|latency)[^]]*\] +[^ ].* (acc=|SKIP|bytes=|ms/tok=)|^ +[^ ].* \[T=[0-9]+\] (ppl=|OOM|error|mem alloc)|^\[pplw|^\[diag|^\[stage|^\[trial\]|^\[error\]|^===(ALL_DONE|RUN_FAILED|RUN_TIMEOUT|SELF_DESTRUCT|CLONE_FAILED|CHECKOUT_FAILED|DEPS_FAILED|MODEL_FAILED|POD_|RUN_SHA|ENV_|QUANTO|HQQ|MODEL_)|^run_sha=|^device=|^python=|^torch=|^triton=|^transformers=|NVIDIA'
+# hours went. The RECORDS_REPLAY markers bound the repeat of the record lines `pod.py run`
+# prints at the end of the pod (L3.4a): the rows between them are already in the set above
+# and `sort -u` collapses them into the originals, so the markers are kept for the reader --
+# `pod.py harvest` dedupes the repeat itself, for the dumps fetched without this script.
+ROWS='^\[(niah|vt|persist|latency)[^]]*\] +[^ ].* (acc=|SKIP|bytes=|ms/tok=)|^ +[^ ].* \[T=[0-9]+\] (ppl=|OOM|error|mem alloc)|^\[pplw|^\[diag|^\[stage|^\[trial\]|^\[error\]|^===(ALL_DONE|RUN_FAILED|RUN_TIMEOUT|SELF_DESTRUCT|RECORDS_REPLAY_BEGIN|RECORDS_REPLAY_END|CLONE_FAILED|CHECKOUT_FAILED|DEPS_FAILED|MODEL_FAILED|POD_|RUN_SHA|ENV_|QUANTO|HQQ|MODEL_)|^run_sha=|^device=|^python=|^torch=|^triton=|^transformers=|NVIDIA'
 # boot.sh's pre-run failures. The instance is destroyed on any of them exactly as on
 # ALL_DONE -- a pod that could not clone, check out, install, load the model or import
 # its quant backend has nothing left to do but bill. `pod.py harvest` reads the same

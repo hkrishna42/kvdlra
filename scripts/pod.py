@@ -35,6 +35,7 @@ import json
 import math
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import time
@@ -57,6 +58,7 @@ from kvdlra.eval.records import (
     parse_pplw_lines,
     parse_trial_lines,
     read_jsonl,
+    replayed,
     write_jsonl,
 )
 
@@ -187,6 +189,23 @@ def prepare(name: str) -> int:
     return 0
 
 
+# The manifest fields only the POD can fill in: `launch` writes the laptop's own
+# (`gpu: none`, `cuda: none`, `model_revision: null`), and the manifest `run` writes with
+# the real ones dies with the instance. `_stage_lines` is how they reach the log, and
+# `STAGE_RE` reads them back -- one tuple, so the two cannot drift apart.
+STAGE_KEYS = ("gpu", "cuda", "torch", "model_revision")
+
+
+def _stage_lines(m: dict[str, Any]) -> list[str]:
+    """The pod's own environment as `[stage] <key> <value>` lines, in the digest lines'
+    pattern. A value the run has none of -- a model with no resolved revision (`None`),
+    or a gpu/cuda/torch read that fell back to `versions()`'s "none" sentinel (never
+    `None` there, so it needs its own check) -- prints NO line: the string "None"/"none"
+    in the manifest would read as a real value, and a missing line correctly leaves the
+    launch-time value standing."""
+    return [f"[stage] {k} {m[k]}" for k in STAGE_KEYS if m.get(k) not in (None, "none")]
+
+
 def run(name: str, out: Path, dry_run: bool) -> int:
     # The manifest first: it is what loads the pod config, so an unknown pod name raises
     # before a half-written directory exists on disk.
@@ -200,6 +219,13 @@ def run(name: str, out: Path, dry_run: bool) -> int:
         print(f"{out}: manifest.json, env.txt, empty trials.jsonl (dry run)")
         return 0
 
+    # boot.sh's `timeout --signal=TERM --kill-after=60` sends TERM at the MAX_HOURS bar.
+    # Python's default TERM disposition kills the process outright -- no `finally` runs,
+    # so `replayed()`'s replay (L3.4a) never prints and a run killed at the bar loses every
+    # reading it had, not just the ones after the last poll. Turning TERM into `SystemExit`
+    # lets `finally` run inside the 60 s kill grace instead.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+
     # Imported here, not at module scope: `--dry-run` and `check` must work on a laptop
     # without pulling in the eval stack (and, through it, kvpress).
     import torch
@@ -207,21 +233,35 @@ def run(name: str, out: Path, dry_run: bool) -> int:
     from kvdlra.eval.data import load_model
     from kvdlra.eval.runner import run_pod
 
-    # The haystacks before the weights: a source that will not download fails the pod
-    # in seconds, not after the model load; their digests are evidence, so the manifest
-    # carries them from here on -- and the log too: this manifest dies with the instance,
-    # and `harvest` rebuilds `dataset_sha256` from these lines (`DIGEST_RE`).
-    m["dataset_sha256"] = {**m["dataset_sha256"], **_haystack_sha256(pod)}
-    for key, sha in m["dataset_sha256"].items():
-        print(f"[stage] dataset_sha256 {key} {sha}", flush=True)
-    _write_manifest(out, m)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    t0 = time.perf_counter()
-    loaded = load_model(pod.model, device, pod.dtype)
-    print(f"[stage] load_model {pod.model} ({time.perf_counter() - t0:.1f} s)", flush=True)
-    m["model_revision"] = getattr(loaded[0].config, "_commit_hash", None)
-    _write_manifest(out, m)
-    run_pod(pod, out, loaded)
+    # Everything from here to the end of the pod prints inside `replayed`, which repeats
+    # the compact record lines between its markers when the block exits (L3.4a): the log
+    # dies with the instance and `vastai logs` returns only its tail, so the digests and
+    # the rows have to be at the END of the log as well as where they happened. The
+    # digest lines are the reason the block starts here rather than at `run_pod`: nothing
+    # else carries `dataset_sha256` off the pod.
+    with replayed():
+        # The haystacks before the weights: a source that will not download fails the pod
+        # in seconds, not after the model load; their digests are evidence, so the manifest
+        # carries them from here on -- and the log too: this manifest dies with the
+        # instance, and `harvest` rebuilds `dataset_sha256` from these lines (`DIGEST_RE`).
+        m["dataset_sha256"] = {**m["dataset_sha256"], **_haystack_sha256(pod)}
+        for key, sha in m["dataset_sha256"].items():
+            print(f"[stage] dataset_sha256 {key} {sha}", flush=True)
+        _write_manifest(out, m)
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        t0 = time.perf_counter()
+        loaded = load_model(pod.model, device, pod.dtype)
+        print(f"[stage] load_model {pod.model} ({time.perf_counter() - t0:.1f} s)", flush=True)
+        m["model_revision"] = getattr(loaded[0].config, "_commit_hash", None)
+        _write_manifest(out, m)
+        for line in _stage_lines(m):
+            print(line, flush=True)
+        t_run = time.perf_counter()
+        run_pod(pod, out, loaded)
+    # The run's OWN span, printed for the same reason as the lines above: `_finish` puts
+    # it in the manifest on the pod, and boot.sh's timestamps (which `_wall_clock_s`
+    # reads, and which cover the boot too) are not always in the fetched log.
+    print(f"[stage] wall_clock_s {time.perf_counter() - t_run:.1f}", flush=True)
     return 0
 
 
@@ -372,9 +412,21 @@ def launch(name: str, offer: str, dry_run: bool, max_hours: float | None = None)
 # --- harvest ------------------------------------------------------------------
 
 
-def _jsonl(path: Path, rows: list[dict[str, Any]]) -> int:
-    path.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
-    return len(rows)
+def _shrink_refusal(out: Path, name: str, n_new: int) -> str | None:
+    """Why writing `n_new` rows over `out/name` is a harvest to redo, or None.
+
+    A re-harvest whose parse came back SHORTER than what is on disk is the 5000-line
+    fallback fetch, a truncated log, or a `[pplw]` group whose fragments did not all
+    arrive -- never a pod that produced less. The rule covered `trials.jsonl` alone,
+    so a fetch carrying every `[trial]` line but half a sweep silently replaced a good
+    `pplw.jsonl`; it covers every record file the harvest writes now. `--force` is the
+    override, as before.
+    """
+    p = out / name
+    n_old = len(read_jsonl(p)) if p.is_file() else 0
+    if n_old <= n_new:
+        return None
+    return f"REFUSE: {name} would shrink from {n_old} to {n_new} rows; pass --force to overwrite"
 
 
 # `run` (the haystack sources) and `runner._ppl_rows` (the perplexity corpora) print one
@@ -382,6 +434,23 @@ def _jsonl(path: Path, rows: list[dict[str, Any]]) -> int:
 # it into stays on the destroyed instance: every harvested manifest carried
 # `dataset_sha256: {}`. The watchdog keeps `[stage]` rows; the last line for a key wins.
 DIGEST_RE = re.compile(r"^\[stage\] dataset_sha256 (\S+) ([0-9a-f]{64})\s*$", re.M)
+# THE rationale for the `[stage] cell` line, in one place (every emitter in
+# `kvdlra.eval.runner` points here). One line per completed cell, on all three axes:
+# retrieval (`_cell`, per arm x sub-task), perplexity (`_ppl_rows`, per arm x ctx sweep,
+# keyed by the ppl TASK name so the two axes share one namespace without pooling) and
+# latency (per arm x ctx). It is the ONLY clock a harvest carries -- `[trial]` and cell
+# rows have no timestamp, a harvested `wall_clock_s` is null, and the watchdog's per-poll
+# `sort -u` destroys arrival order -- so the per-arm min/sample that sizes the next pod
+# is read from here. The seconds ride the line, so the dedupe cannot hurt it; an arm that
+# failed still prints the seconds it burned; last line for a key wins.
+CELL_S_RE = re.compile(
+    r"^\[stage\] cell arm=(\S+) task=(\S+) ctx=(\d+) elapsed_s=([0-9.]+) n=\d+\s*$", re.M
+)
+# `run`'s `_stage_lines` (the GPU name carries spaces, so the value runs to end of line)
+# and its post-`run_pod` span. Last line for a key wins; an absent key leaves the
+# launch-time value, which is the laptop's and says so (`gpu: none`).
+STAGE_RE = re.compile(rf"^\[stage\] ({'|'.join(STAGE_KEYS)}) (\S.*?)\s*$", re.M)
+WALL_S_RE = re.compile(r"^\[stage\] wall_clock_s ([0-9.]+)\s*$", re.M)
 
 
 def _env_from_log(text: str) -> list[str] | None:
@@ -522,6 +591,13 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     out.mkdir(parents=True, exist_ok=True)
     text = log.read_text() if log else _fetch_log(out, name)
     source = str(log) if log else f"vastai logs ({_now()})"
+    # Exact-duplicate lines, dropped in place (L3.4a). The pod repeats its record lines at
+    # the end of the run (`records.replayed`), and a fetch of the pod's own stdout carries
+    # both copies -- the watchdog's `sort -u` collapses them in `<label>.raw`, a hand-fetched
+    # dump does not. Order-preserving, so the `source:<line>` a record cites is still the
+    # line it was first printed on. A `[diag]` row this drops is a row printed twice
+    # byte-for-byte, which is what the watchdog path has always kept one of.
+    text = "\n".join(dict.fromkeys(text.splitlines()))
 
     # Parse EVERY artifact before writing ANY of them. An incomplete [pplw] part set
     # raises SystemExit, and the 5000-line fallback fetch returns a shorter log than the
@@ -536,39 +612,51 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     lat = parse_latency_lines(text, model, source)
     diag, diag_skipped = parse_diag_lines(text, model, source)
 
-    tpath = out / "trials.jsonl"
-    n_old = len(read_jsonl(tpath)) if tpath.is_file() else 0
-    if n_old > len(trials) and not force:
-        print(
-            f"REFUSE: trials.jsonl would shrink from {n_old} to {len(trials)} rows;"
-            " pass --force to overwrite"
-        )
+    # Every file this harvest is about to write, checked against what is on disk BEFORE
+    # any of them is written -- the same all-or-nothing rule the parse above follows.
+    parsed: dict[str, list[Any]] = {
+        "trials.jsonl": trials,
+        "pplw.jsonl": pplw,
+        "ppl.jsonl": ppl,
+        "latency.jsonl": lat,
+        "diag.jsonl": diag,
+    }
+    refusals = [r for r in (_shrink_refusal(out, f, len(x)) for f, x in parsed.items()) if r]
+    if refusals and not force:
+        for r in refusals:
+            print(r)
         return 1
 
-    write_jsonl(tpath, trials)
+    # `trials.jsonl` is written even when it is empty: it is the file `check` reads to
+    # tell a pod that produced nothing from one that was never harvested. The other four
+    # are written only when the log carried rows -- an absent file is not a short one.
+    write_jsonl(out / "trials.jsonl", trials)
     records = {"trials.jsonl": len(trials)}
-    if pplw:
-        write_jsonl(out / "pplw.jsonl", pplw)
-        records["pplw.jsonl"] = len(pplw)
-    if ppl:
-        write_jsonl(out / "ppl.jsonl", ppl)
-        records["ppl.jsonl"] = len(ppl)
-    if lat:
-        write_jsonl(out / "latency.jsonl", lat)
-        records["latency.jsonl"] = len(lat)
-    if diag:
-        records["diag.jsonl"] = _jsonl(out / "diag.jsonl", diag)
+    for fname, rows in parsed.items():
+        if fname != "trials.jsonl" and rows:
+            write_jsonl(out / fname, rows)
+            records[fname] = len(rows)
 
     m = _read_manifest(out) or manifest(name, _head(), source, False)
     m["harvested_at"] = _now()
     m["dataset_sha256"] = {**m.get("dataset_sha256", {}), **dict(DIGEST_RE.findall(text))}
+    cells_s = {f"{a}/{t}/{c}": float(s) for a, t, c, s in CELL_S_RE.findall(text)}
+    if cells_s:  # a log printed before L3.1c leaves the key absent, not empty
+        m["cell_elapsed_s"] = {**m.get("cell_elapsed_s", {}), **cells_s}
+    m.update(dict(STAGE_RE.findall(text)))  # the pod's card, CUDA build, torch, revision
     m["records"] = records
     # Both axes: a perplexity arm that raised has no record to carry the failure, only
     # the `[error]` line, so counting trial rows alone called such a pod clean.
     m["errors"] = sum(1 for t in trials if t["error"] is not None) + len(
         parse_error_lines(text, source)
     )
-    m["wall_clock_s"] = _wall_clock_s(text) or m.get("wall_clock_s")
+    # boot.sh's timestamps first (they span the boot too, and are the billable clock);
+    # `run`'s own printed span is the fallback for the logs that come back without them,
+    # which is every log `vastai logs` has returned so far.
+    ran = WALL_S_RE.findall(text)
+    m["wall_clock_s"] = (
+        _wall_clock_s(text) or (float(ran[-1]) if ran else None) or m.get("wall_clock_s")
+    )
     m["status"] = _status(text)
     m["timeout"] = "===RUN_TIMEOUT_" in text  # the RUN_FAILED was boot.sh's `timeout`
     # A `[diag]` line the fetch cut in half parses into nothing. Counted in the manifest

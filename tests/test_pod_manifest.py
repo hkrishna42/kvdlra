@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import json
 import shutil
+import signal
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pod
 import pytest
@@ -240,6 +242,35 @@ def test_harvest_refuses_to_shrink_an_existing_trials_file(dry_pod: Path, tmp_pa
     )
     assert forced.returncode == 0, forced.stderr
     assert len(_rows(tmp_path, "trials.jsonl")) == 1
+
+
+def test_harvest_refuses_to_shrink_any_record_file(
+    dry_pod: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The guard covered `trials.jsonl` alone. A fetch that came back with every
+    `[trial]` line but a `[pplw]` group short -- the 5000-line fallback, a truncated
+    fetch -- passed it and silently replaced a good `pplw.jsonl` with the shorter parse,
+    beside a `trials.jsonl` that had not shrunk at all. Every record file the harvest
+    writes is guarded now, the refusal names the file and both counts, `--force` still
+    overrides, and the all-or-nothing rule holds: a refused harvest writes NOTHING --
+    not the records that did not shrink, and not the manifest."""
+    d = _copy(dry_pod, tmp_path)
+    log = d / "pod.log"
+    log.write_text(LOG)
+    assert pod.harvest("w18_g1", log, d, force=False) == 0
+    before = {p.name: p.read_text() for p in d.glob("*.jsonl")}
+    before_manifest = (d / "manifest.json").read_text()
+
+    short = d / "short.log"  # both [trial] lines, the 32K [pplw] group gone: 7 rows -> 2
+    short.write_text("\n".join(x for x in LOG.splitlines() if "T=32768" not in x) + "\n")
+    capsys.readouterr()
+    assert pod.harvest("w18_g1", short, d, force=False) == 1
+    assert "REFUSE: pplw.jsonl would shrink from 7 to 2 rows" in capsys.readouterr().out
+    assert {p.name: p.read_text() for p in d.glob("*.jsonl")} == before
+    assert (d / "manifest.json").read_text() == before_manifest
+
+    assert pod.harvest("w18_g1", short, d, force=True) == 0
+    assert len(_rows(d, "pplw.jsonl")) == 2
 
 
 def test_harvest_writes_nothing_when_a_pplw_part_set_is_incomplete(
@@ -637,6 +668,16 @@ def test_the_watchdog_keeps_the_env_block_rows() -> None:
         "===SELF_DESTRUCT_FAILED_w18_g1===",  # markers reach the harvested log
         "[stage] load_model unsloth/Meta-Llama-3.1-8B-Instruct (61.3 s)",  # L2.3b timings
         f"[stage] dataset_sha256 haystack:pg19 {'a' * 64}",  # L2.9a: the digests' only way back
+        "[stage] cell arm=full task=vt ctx=16384 elapsed_s=41.5 n=12",  # L3.1c: the per-cell clock
+        # L3.3a: the pod's own environment and the run's span, the manifest fields the
+        # laptop cannot fill in. `wall_clock_s` matches on `^\[stage` alone (the GPU
+        # name would also match the pattern's bare NVIDIA alternative).
+        "[stage] gpu NVIDIA H100 80GB HBM3",
+        "[stage] wall_clock_s 4213.7",
+        # L3.4a: the replay block's markers, so a reader of the deduped log can see that
+        # the rows below them are a repeat and not a second pod (D-011 addendum 10).
+        "===RECORDS_REPLAY_BEGIN===",
+        "===RECORDS_REPLAY_END===",
     ]
     r = subprocess.run(
         ["grep", "-aE", rows],
@@ -693,6 +734,82 @@ def test_harvest_records_the_dataset_digests_the_run_printed(dry_pod: Path, tmp_
     assert pod.harvest("w18_g1", log, d, force=False) == 0
     m = json.loads((d / "manifest.json").read_text())
     assert m["dataset_sha256"] == {"haystack:pg19": "a" * 64, "pg19val": "c" * 64}
+
+
+def test_harvest_records_the_pod_environment_the_run_printed(dry_pod: Path, tmp_path: Path) -> None:
+    """The laptop cannot know the pod's card, CUDA build or model revision, and the
+    manifest `run` writes with them ON THE POD dies with the instance -- every harvested
+    manifest on disk shows the gap (`results/filler_realism/manifest.json`: gpu none,
+    cuda none, model_revision null, wall_clock_s null). They travel as `[stage] <key>
+    <value>` lines, exactly as the digests do; the emitter is `pod._stage_lines`, so the
+    format cannot drift from the regex that reads it back. A key the log does not carry
+    keeps the launch-time value rather than being overwritten with a guess."""
+    d = _copy(dry_pod, tmp_path)
+    log = d / "pod.log"
+    log.write_text(LOG)
+    launched = json.loads((d / "manifest.json").read_text())
+    assert pod.harvest("w18_g1", log, d, force=False) == 0
+    m = json.loads((d / "manifest.json").read_text())
+    kept = ("gpu", "cuda", "torch")
+    assert [m[k] for k in kept] == [launched[k] for k in kept]
+    assert m["model_revision"] is None and m["wall_clock_s"] is None
+
+    # The lines the run prints, through the emitter itself -- a copy of the format here
+    # would pass while `run` printed something the harvest cannot read.
+    printed = pod._stage_lines(
+        {"gpu": "NVIDIA H100 80GB HBM3", "cuda": "12.8", "torch": "2.11.0+cu128",
+         "model_revision": "0e9e39f"}
+    )  # fmt: skip
+    log.write_text(LOG + "".join(x + "\n" for x in [*printed, "[stage] wall_clock_s 4213.7"]))
+    assert pod.harvest("w18_g1", log, d, force=False) == 0
+    m = json.loads((d / "manifest.json").read_text())
+    assert m["gpu"] == "NVIDIA H100 80GB HBM3"  # the card's name carries spaces
+    assert (m["cuda"], m["torch"], m["model_revision"]) == ("12.8", "2.11.0+cu128", "0e9e39f")
+    assert m["wall_clock_s"] == 4213.7
+    # A value the run has none of (a model with no resolved revision) prints no line at
+    # all: "None" written into the manifest as a string would read as a real revision.
+    assert pod._stage_lines({"gpu": "x", "cuda": "y", "torch": "z", "model_revision": None}) == [
+        "[stage] gpu x",
+        "[stage] cuda y",
+        "[stage] torch z",
+    ]
+    # `versions()` never returns Python `None` for gpu/cuda/torch -- a CPU host (or a
+    # torch-less one) reports the string "none" instead, and that sentinel gets the same
+    # no-line treatment: a harvest must never clobber a real launch-time value with it.
+    assert pod._stage_lines(
+        {"gpu": "none", "cuda": "none", "torch": "z", "model_revision": None}
+    ) == ["[stage] torch z"]
+
+
+def test_harvest_records_the_cell_timings_the_run_printed(dry_pod: Path, tmp_path: Path) -> None:
+    """The per-arm min/sample a pre-flight pod is read for (`prereg/gate1_preflight.md`
+    reading (iv)) has no other source: `[trial]` and cell rows carry no clock,
+    `wall_clock_s` is null in every harvested manifest, and the watchdog `sort -u`s
+    `<label>.raw` in place every poll, so arrival order is gone. `runner._cell` prints the
+    seconds into the line itself; the last line for a key wins, and a log without them
+    leaves the key absent rather than empty."""
+    d = _copy(dry_pod, tmp_path)
+    log = d / "pod.log"
+    log.write_text(LOG)
+    assert pod.harvest("w18_g1", log, d, force=False) == 0
+    assert "cell_elapsed_s" not in json.loads((d / "manifest.json").read_text())
+    log.write_text(
+        LOG
+        + "[stage] cell arm=full task=niah_single ctx=16384 elapsed_s=41.5 n=12\n"
+        + "[stage] cell arm=bugSseed-r64-h256 task=vt ctx=16384 elapsed_s=180.0 n=12\n"
+        + "[stage] cell arm=bugSseed-r64-h256 task=vt ctx=16384 elapsed_s=186.3 n=12\n"
+        # The perplexity axis prints the same line (L3.3a), keyed by the PPL TASK name --
+        # a name no retrieval sub-task can take (`ppl_*` / `latency_*` vs niah_*/vt/the
+        # LongBench sets), so one manifest carries both axes' clocks without collision.
+        + "[stage] cell arm=full task=ppl_16k ctx=16384 elapsed_s=305.0 n=4\n"
+    )
+    assert pod.harvest("w18_g1", log, d, force=False) == 0
+    m = json.loads((d / "manifest.json").read_text())
+    assert m["cell_elapsed_s"] == {
+        "full/niah_single/16384": 41.5,
+        "bugSseed-r64-h256/vt/16384": 186.3,
+        "full/ppl_16k/16384": 305.0,
+    }
 
 
 def _git(*args: str) -> str:
@@ -859,7 +976,8 @@ def test_the_table4_arms_equal_the_plain_cache_outside_the_named_knobs() -> None
             assert cache["min_sv_frac"] == 0.01, f"{arm}: not the floor its name claims"
 
 
-# --- The L2 pods: prereg/filler_realism.md, prereg/ss2_families.md, prereg/l2_smoke.md --
+# --- The L2 pods: prereg/filler_realism.md, prereg/ss2_families.md, prereg/l2_smoke.md,
+# --- and L3's pre-flight pod: prereg/gate1_preflight.md ----------------------------------
 
 FILLER_ARMS = [
     "full",
@@ -874,12 +992,17 @@ INHOUSE_SUBTASKS = ["niah_single", "niah_multikey", "niah_multivalue", "vt"]
 # Each pod as its prereg designs it: the prereg, the arm ORDER, the task list, and the
 # arms the runner prefills in one shot (`chunkable: false`) -- what a YAML edit could
 # drift from the prereg without any manifest noticing. The order is load-bearing: the
-# cheap ceiling control (filler) or the paired r64 reference (cycle, ss2) comes first, so
-# a pod that dies early still lands an interpretable result. The smoke pod's arm set is a
-# rule, not a list (`test_the_smoke_pod_names_every_arm_but_the_table4_variants`), and
-# its single-shot arms are each arm's own protocol. `gpu_budget_h` and the v2 design are
-# not echoed here: the launch manifest's config_hash and the prereg pin those.
+# cheap ceiling control (filler, pre-flight) or the paired r64 reference (cycle, ss2)
+# comes first, so a pod that dies early still lands an interpretable result -- for the
+# pre-flight pod, the ceiling plus both Gate-1 primary-contrast arms by arm 3
+# (`prereg/gate1_preflight.md` §3, §7); its re-run keeps that order with the ceiling
+# dropped, the arm whose cells survived the first instance. The smoke pod's arm set is a
+# rule, not a list
+# (`test_the_smoke_pod_names_every_arm_but_the_table4_variants`), and its single-shot arms
+# are each arm's own protocol. `gpu_budget_h` and the v2 design are not echoed here: the
+# launch manifest's config_hash and the prereg pin those.
 FILLER, SS2 = "prereg/filler_realism.md", "prereg/ss2_families.md"
+PREFLIGHT_ARMS = ["full", "isvd_r64_h256_seed", "nogist_h2423", "frozen_r64_h256_seed"]
 L2_PODS: dict[str, tuple[str, list[str] | None, list[str], list[str] | None]] = {
     "filler_realism": (FILLER, FILLER_ARMS, ["ruler_inhouse_16k_wikitext"], ["kivi2_singleshot"]),
     "filler_realism_cycle": (FILLER, ["isvd_r64_h256_seed", "full"], INHOUSE[:1], []),
@@ -887,6 +1010,16 @@ L2_PODS: dict[str, tuple[str, list[str] | None, list[str], list[str] | None]] = 
     "ss2_families_qwen": (SS2, SS2_ARMS, INHOUSE, SS2_ARMS[1:]),
     "ss2_families_llama": (SS2, SS2_ARMS, INHOUSE, SS2_ARMS[1:]),
     "l2_smoke": ("prereg/l2_smoke.md", None, ["ruler_v2_16k"], None),
+    "gate1_preflight": ("prereg/gate1_preflight.md", PREFLIGHT_ARMS, ["ruler_v2_16k"], []),
+    # The re-run of the three compressed arms, under the SAME prereg by its Amendment 1: the
+    # `full` arm's five cells came back whole from the first instance and its reading is
+    # decided, so the ceiling is not paid for twice (D-011 addendum 10).
+    "gate1_preflight_rerun": (
+        "prereg/gate1_preflight.md",
+        PREFLIGHT_ARMS[1:],
+        ["ruler_v2_16k"],
+        [],
+    ),
 }
 
 
@@ -915,10 +1048,11 @@ def test_the_l2_pods_are_their_prereg_designs() -> None:
     """Row by row against `L2_PODS`: arm order, task list, the single-shot arms; every task
     at n = 12 (6 trials x 2 seeds, or the v2 design's 12 from one seed) and chunk 4096,
     the in-house pods on the four archived sub-tasks with generator-drawn depths and the
-    cycled filler (`wikitext` on the real-text pod), the smoke pod on generator v2's five
-    at 16K on the paper's model; bf16 on the -devel image (quanto JIT-builds its kernel);
-    six pods, six hashes (one arm list against another, one filler or model against
-    another keeps them apart)."""
+    cycled filler (`wikitext` on the real-text pod), the three v2 pods (smoke, pre-flight,
+    its re-run) on generator v2's five at 16K on the paper's model; bf16 on the -devel image
+    (quanto JIT-builds its kernel); eight pods, eight hashes (one arm list against another,
+    one filler or model against another keeps them apart -- the re-run's dropped `full` arm
+    is what separates it from the pre-flight it repeats)."""
     for name, (_, arms, tasks, single_shot) in L2_PODS.items():
         p = load_pod(name)
         assert p.tasks == tasks, f"{name}: tasks {p.tasks}"
@@ -930,14 +1064,18 @@ def test_the_l2_pods_are_their_prereg_designs() -> None:
         for tname in p.tasks:
             t = load_task(tname)
             assert t.n_trials * len(t.seeds) == 12 and t.chunk == 4096, tname
-            if name == "l2_smoke":
-                assert isinstance(t, TaskV2Cfg) and t.generator == "v2" and t.ctx == 16384
+            if t.generator == "v2":
+                assert isinstance(t, TaskV2Cfg) and t.ctx == 16384
                 assert t.tasks == [*INHOUSE_SUBTASKS[:3], "niah_multiquery", "vt"]
             else:
                 assert t.generator == "inhouse" and t.tasks == INHOUSE_SUBTASKS, tname
                 filler = "wikitext" if name == "filler_realism" else "cycle"
                 assert t.depths is None and t.filler == filler, tname
-    assert load_pod("l2_smoke").model == "unsloth/Meta-Llama-3.1-8B-Instruct"
+    for name in ("l2_smoke", "gate1_preflight", "gate1_preflight_rerun"):
+        assert load_pod(name).model == "unsloth/Meta-Llama-3.1-8B-Instruct", name
+    # The re-run's bar, pre-registered by `prereg/gate1_preflight.md` Amendment 1 (A1.4):
+    # 2x the 6.8 h point estimate at the rates the first instance measured.
+    assert load_pod("gate1_preflight_rerun").gpu_budget_h == 14.0
     assert len({config_hash(load_pod(n)) for n in L2_PODS}) == len(L2_PODS)
 
 
@@ -970,6 +1108,85 @@ def test_the_live_filler_manifests_still_hash_to_their_configs() -> None:
         assert config_hash(load_pod(name)) == m["config_hash"], name
 
 
+# --- L3.2: Gate 1, Stage 1 (prereg/gate1_tracker_swap_v2.md) -----------------------------
+
+# The arm ORDER is that file's section 3 and it is load-bearing: it buys an ordered loss --
+# both primary contrasts have landed at 15.7 h of compute and the C branch is decidable at
+# 22.3 h (section 9) -- so a pod killed at its bar still holds every cell the decision rule
+# reads, and section 9's cut ladder drops the last two arms in the order they are listed.
+# The no-gist twin is per KV width (1024 channels on Llama, 512 on Qwen), so one H cannot
+# serve both pods and the two lists differ in exactly that arm.
+GATE1_PREREG = "prereg/gate1_tracker_swap_v2.md"
+GATE1_STAGE1_ARMS = [
+    "full",
+    "isvd_r64_h256_seed",
+    "nogist_h2423",
+    "frozen_r64_h256_seed",
+    "fd_r64_h256_seed",
+    "isvd_r64_h256_seed_bf16",
+    "oja_r64_h256_seed_tuned",
+    "random_r64_h256_seed",
+]
+GATE1_STAGE1_TASKS = ["ruler_v2_16k_g1", "ppl_16k_pg19val"]
+GATE1_SUBTASKS = ["niah_single", "niah_multikey", "niah_multivalue", "vt"]
+GATE1_PODS: dict[str, tuple[str, list[str]]] = {
+    "gate1_v2_stage1_llama": ("unsloth/Meta-Llama-3.1-8B-Instruct", GATE1_STAGE1_ARMS),
+    "gate1_v2_stage1_qwen": (
+        "Qwen/Qwen2.5-7B-Instruct",
+        ["nogist_h4460" if a == "nogist_h2423" else a for a in GATE1_STAGE1_ARMS],
+    ),
+}
+
+
+@pytest.mark.parametrize("name", list(GATE1_PODS))
+def test_the_gate1_stage1_pods_resolve_end_to_end(name: str) -> None:
+    """Each pod loads, hashes, names the prereg that must precede its launch commit (and
+    that file is in the tree, so `pod.py launch`'s ancestry check has something to check),
+    carries a budget to enforce, and builds every arm at the task's context exactly as the
+    runner builds it before the first trial (`frontier.build_arm`)."""
+    p = load_pod(name)
+    model, arms = GATE1_PODS[name]
+    assert p.model == model and p.prereg == GATE1_PREREG
+    assert (REPO_ROOT / GATE1_PREREG).is_file(), "the prereg must be in the launch's ancestry"
+    # Section 9's bar exactly, not just "some budget": 41.0 h point x the 2x factor
+    # `pod.py launch --max-hours` enforces. "The pods are never launched over their
+    # pre-registered bar", and a silent edit here is a pod that outspends the prereg.
+    assert p.gpu_budget_h == 82.0, f"{name}: prereg section 9 bars this pod at 82.0 h"
+    assert config_hash(p)
+    for a in arms:
+        cfg = load_arm(a)
+        assert cfg.name == a
+        assert build_arm(cfg, model=None, t=16384)["name"] == (cfg.legacy_name or a)
+
+
+def test_the_gate1_stage1_pods_are_their_prereg_design() -> None:
+    """Section 3 row by row: the arm order, the two tasks, the four Gate-1 sub-tasks at
+    n = 24 from one seed on the 2 x 3 x 4 design, the 32-window perplexity sweep on PG-19
+    validation (16 would leave the +/-0.02 TOST undecidable at the spread section 2 (b)
+    measured), bfloat16 on the -devel image, and a hash distinct from every other pinned
+    pod's. `niah_multiquery` is not a Gate-1 task and no contrast in that file reads it.
+
+    128 samples per arm is also what section 8 sizes the log for: at 32 windows a `[pplw]`
+    line is ~447 characters and splits into FOUR `part=i/N` fragments per arm, which
+    `records.parse_pplw_lines` reassembles -- so no reader here may assume one line per arm.
+    """
+    for name, (_, arms) in GATE1_PODS.items():
+        p = load_pod(name)
+        assert p.arms == arms, f"{name}: not the pre-registered arm order"
+        assert p.tasks == GATE1_STAGE1_TASKS, f"{name}: tasks {p.tasks}"
+        assert p.dtype == "bfloat16" and "-devel" in p.image, f"{name}: {p.dtype} {p.image}"
+        ruler = load_task(p.tasks[0])
+        assert isinstance(ruler, TaskV2Cfg) and ruler.ctx == 16384 and ruler.chunk == 4096
+        assert ruler.tasks == GATE1_SUBTASKS and ruler.seeds == [0]
+        assert ruler.n_trials * len(ruler.seeds) == 24, f"{name}: not the pre-registered n"
+        assert ruler.design == {"haystacks": 2, "depths": 3, "codes": 4}
+        ppl = load_task(p.tasks[1])
+        assert (ppl.generator, ppl.corpus, ppl.window) == ("ppl", "pg19-val", 2048)
+        assert ppl.n_samples == 32, f"{name}: not the pre-registered window count"
+    every = [*L2_PODS, *GATE1_PODS]
+    assert len({config_hash(load_pod(n)) for n in every}) == len(every)
+
+
 # Gate G2 line 6: the k in {0.10, 0.15, 0.25} eviction grid + ThinK composed as its paper
 # intends -- ticked by the smoke pod's harvest, so the pod has to carry all nine.
 SMOKE_GATE_ARMS = [
@@ -984,6 +1201,20 @@ SMOKE_GATE_ARMS = [
     "think_c0.5_snapkv_k0.15",
 ]
 
+# L3.1's Gate-1 controls (tests/test_gate1_arms.py): the learn-then-freeze and fixed-random
+# tracker arms and the two byte-matched no-gist arms. Their pods are `gate1_preflight` (the
+# 1024-wide no-gist arm and the frozen arm) and Stage 1's `gate1_tracker_swap_v2`, not the
+# smoke pod -- see the exclusion note in the test below. L5.1's bf16-gist arm rides Stage 1
+# beside the r64 arm (`prereg/gate1_tracker_swap_v2.md` arm 6, read by `prereg/bf16_gist.md`),
+# so it is excluded for the same reason.
+GATE1 = {
+    "frozen_r64_h256_seed",
+    "random_r64_h256_seed",
+    "nogist_h2423",
+    "nogist_h4460",
+    "isvd_r64_h256_seed_bf16",
+}
+
 
 def test_the_smoke_pod_names_every_arm_but_the_table4_variants() -> None:
     """The arm set is a rule, not a list: every stem under configs/arms/ that is not a Table-4
@@ -993,13 +1224,21 @@ def test_the_smoke_pod_names_every_arm_but_the_table4_variants() -> None:
     same rule, and a change in the variants' count is a change to decide, not to inherit.
     Order is cheap -> expensive: `full` first, the twelve gist arms last (a pod that dies early
     still lands whole classes, and the pre-registered cheap first half is everything before the
-    first gist arm). The nine arms gate G2 line 6 names are in; no OjaKV stem is (D-017)."""
+    first gist arm). The nine arms gate G2 line 6 names are in; no OjaKV stem is (D-017).
+
+    `GATE1` is the second exclusion, and it is named rather than derived because its pods are
+    L3's: `prereg/l2_smoke.md` prices this pod at 40 arms x 5 tasks = 200 cells and 12 gist
+    arms, while the Gate-1 controls belong to `gate1_preflight` (two of them, pre-registered)
+    and to Stage 1's `gate1_tracker_swap_v2` pods (L5's prereg), so putting them here would
+    amend a committed pre-registration rather than add a smoke reading. Listing them keeps the
+    rule's point: nothing is left out silently."""
     p = load_pod("l2_smoke")
     table4 = {a for n in TABLE4 for a in load_pod(n).arms if load_arm(a).kind == "bug"}
     assert len(table4) == 10, sorted(table4)
     stems = {q.stem for q in (REPO_ROOT / "configs" / "arms").glob("*.yaml")}
+    assert stems >= GATE1, sorted(GATE1 - stems)
     assert len(p.arms) == len(set(p.arms)), "an arm listed twice would double its cells"
-    assert set(p.arms) == stems - table4
+    assert set(p.arms) == stems - table4 - GATE1
     assert p.arms[0] == "full"
     kinds = [load_arm(a).kind for a in p.arms]
     n_gist = kinds.count("bug")
@@ -1007,3 +1246,82 @@ def test_the_smoke_pod_names_every_arm_but_the_table4_variants() -> None:
     assert kinds[-n_gist:] == ["bug"] * n_gist, kinds
     assert set(SMOKE_GATE_ARMS) <= set(p.arms)
     assert not [a for a in p.arms if a.startswith("ojakv")]
+
+
+# --- L3.4a: the records replay (D-011 addendum 10) ---------------------------------------
+
+REPLAY = ("===RECORDS_REPLAY_BEGIN===", "===RECORDS_REPLAY_END===")
+
+
+def test_the_run_replays_its_records_before_the_wall_clock_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`run` wraps everything it and the runner print, so the digest lines it prints before
+    the model load -- the only way `dataset_sha256` survives the instance -- are replayed
+    too, not just the runner's rows. The block lands before the final `[stage] wall_clock_s`
+    line and before boot.sh's `===ALL_DONE_...===`, at the end of the log where a tail fetch
+    keeps it. The model load and the pod itself are substituted: this test is about the
+    wiring, and `run`'s real body needs a GPU."""
+    model = SimpleNamespace(config=SimpleNamespace())
+    trial = "[trial] task=niah_single ctx=16384 arm=full seed=0 trial=0 hit=1 frac=1.000"
+    monkeypatch.setattr(pod, "_haystack_sha256", lambda p: {"haystack:pg19": "a" * 64})
+    monkeypatch.setattr("kvdlra.eval.data.load_model", lambda *a, **k: (model, None))
+    monkeypatch.setattr("kvdlra.eval.runner.run_pod", lambda *a, **k: print(trial, flush=True))
+
+    assert pod.run("w18_g1", tmp_path, dry_run=False) == 0
+
+    out = capsys.readouterr().out
+    begin, end = (out.index(m) for m in REPLAY)
+    assert begin < end < out.index("[stage] wall_clock_s ")
+    body = out[begin:end]
+    assert trial in body and out.count(trial) == 2
+    digest = f"[stage] dataset_sha256 haystack:pg19 {'a' * 64}"
+    assert digest in body and out.count(digest) == 2
+
+
+# --- L3.4c: SIGTERM -> the replay survives the MAX_HOURS bar ---------------------------
+
+
+def test_run_installs_a_sigterm_handler_before_run_pod(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """boot.sh's `timeout --signal=TERM --kill-after=60` sends TERM at the MAX_HOURS bar;
+    Python's default TERM disposition kills the process outright, so a run killed at the
+    bar would print no replay (L3.4a) at all. `run` installs a handler that turns TERM into
+    `SystemExit` before `run_pod` starts, so the 60 s kill grace is enough for `replayed()`'s
+    `finally` to run. `signal.signal` itself is substituted, so this test sets no real
+    process-wide disposition."""
+    model = SimpleNamespace(config=SimpleNamespace())
+    calls = []
+    monkeypatch.setattr(pod, "_haystack_sha256", lambda p: {})
+    monkeypatch.setattr("kvdlra.eval.data.load_model", lambda *a, **k: (model, None))
+    monkeypatch.setattr("kvdlra.eval.runner.run_pod", lambda *a, **k: None)
+    monkeypatch.setattr(signal, "signal", lambda sig, handler: calls.append(sig))
+
+    assert pod.run("w18_g1", tmp_path, dry_run=False) == 0
+    assert calls == [signal.SIGTERM]
+
+
+def test_harvest_reads_a_log_with_the_replay_as_one_without_it(
+    dry_pod: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The watchdog's `sort -u` already collapses the replay into the rows it repeats, but a
+    log fetched by hand (`pod.py harvest` with no watchdog, the recovery path a lost harvest
+    runs) carries both copies. Every record line is deduped before parsing, so the harvest of
+    a log with the replay is the harvest of the same log without it -- byte for byte, the
+    `source:line` citations included."""
+    tmp_path = _copy(dry_pod, tmp_path)
+    log = tmp_path / "pod.log"
+    files = ("trials.jsonl", "ppl.jsonl", "pplw.jsonl", "diag.jsonl")
+
+    log.write_text(LOG)
+    assert pod.harvest("w18_g1", log, tmp_path, force=False) == 0
+    plain = {f: (tmp_path / f).read_text() for f in files}
+    records = json.loads((tmp_path / "manifest.json").read_text())["records"]
+
+    repeat = [x for x in LOG.splitlines() if not x.startswith(("===", "[diag]"))]
+    log.write_text(LOG + "\n".join([REPLAY[0], *repeat, REPLAY[1], ""]))
+    assert pod.harvest("w18_g1", log, tmp_path, force=False) == 0
+    assert {f: (tmp_path / f).read_text() for f in files} == plain
+    assert json.loads((tmp_path / "manifest.json").read_text())["records"] == records
+    capsys.readouterr()

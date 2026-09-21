@@ -16,16 +16,10 @@ import pytest
 import torch
 from transformers import LlamaForCausalLM
 
-from kvdlra.cache import BugStreamingCache
 from kvdlra.eval.config import arm_kwargs, load_arm
 from kvdlra.tracker import TRACKERS  # the same dict object the cache dispatches through
+from tests.conftest import tiny_cache
 from tests.test_w20_tracker_swap import _prefill_then_decode
-
-
-def _cache(model: LlamaForCausalLM, **kw: Any) -> BugStreamingCache:
-    return BugStreamingCache(
-        model, **{"rank": 8, "coord_budget": 64, **kw}, recent_window=4, absorb_block=4, n_sink=1
-    )
 
 
 def test_config_schedule_reaches_oja_step(
@@ -41,7 +35,7 @@ def test_config_schedule_reaches_oja_step(
     monkeypatch.setitem(TRACKERS, "oja", spy)
     kw = arm_kwargs(load_arm("oja_r64_h256_seed"), t=1024)
     assert kw["tracker"] == "oja" and kw["oja_eta0"] == 20.0 and kw["oja_decay"] == 0.03
-    cache = _cache(tiny_model, tracker="oja", oja_eta0=20.0, oja_decay=0.03)
+    cache = tiny_cache(tiny_model, tracker="oja", oja_eta0=20.0, oja_decay=0.03)
     _prefill_then_decode(tiny_model, cache)
     assert seen and all(s == (20.0, 0.03) for s in seen)
 
@@ -83,7 +77,7 @@ def test_oja_n_seen_keeps_growing_after_the_tiers_saturate(
         return real(u, b, block, cap, n_seen=n_seen, **kw)
 
     monkeypatch.setitem(TRACKERS, "oja", spy)
-    cache = _cache(
+    cache = tiny_cache(
         tiny_model,
         coord_budget=budget,
         prefill_block_size=2,
@@ -114,5 +108,5 @@ def test_oja_step_has_no_default_schedule() -> None:
 
 def test_bug_alias_warns_and_maps_to_isvd(tiny_model: LlamaForCausalLM) -> None:
     with pytest.warns(DeprecationWarning):
-        cache = _cache(tiny_model, tracker="bug")
+        cache = tiny_cache(tiny_model, tracker="bug")
     assert cache._bug_layers()[0].tracker == "isvd"

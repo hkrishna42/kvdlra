@@ -253,6 +253,12 @@ def test_run_ppl_refuses_a_pyramidkv_arm_as_a_recorded_error(
     )
     (row,) = rows
     assert row["method"] == "pyramidkv_k0.15" and row["status"] == "error"
+    # Burned real seconds before it failed (dict.get + f-string + raise/except, no
+    # sleep) -- measured 5-22 us over 20 runs on this exact path, never 0.0.
+    # `runner.py` reads `r["elapsed_s"]` unguarded from `run_pod`; a regression that
+    # moves the assignment inside the try (so an error row never gets the key) would
+    # raise a bare KeyError out of a paid pod's sweep instead of failing here.
+    assert row["elapsed_s"] > 0.0
     assert row["error"].startswith(
         "ValueError: pyramidkv_k0.15: PyramidKV's per-layer budgets cannot be scored through"
         " transformers' single causal mask (a 512-token window in one forward)"

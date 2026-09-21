@@ -28,6 +28,7 @@ import pytest
 import torch
 from transformers import LlamaConfig, LlamaForCausalLM
 
+from kvdlra.baselines.compat import install_kvpress_prefill_compat
 from kvdlra.eval import frontier, records
 from kvdlra.eval.config import ArmCfg
 
@@ -64,6 +65,9 @@ def _tiny_model() -> LlamaForCausalLM:
 
 ARMS = {
     "full": ArmCfg(name="full", kind="full"),
+    "snapkv_k0.25": ArmCfg(
+        name="snapkv_k0.25", kind="press", press={"family": "snapkv", "keep": 0.25}
+    ),
     "bug-r8": ArmCfg(
         name="bug-r8",
         kind="bug",
@@ -99,11 +103,14 @@ def _ok_rows(rows: list[dict[str, Any]], t: int) -> list[dict[str, Any]]:
 
 
 def test_window_nll_consistency() -> None:
-    # full exercises score_press(None); bug (rank 8) exercises score_streaming.
+    # full exercises _prefill_press(None); bug (rank 8) exercises score_streaming.
     rows = _ok_rows(_run(methods=["full", "bug-r8"], n_samples=3), 64)
     assert {r["method"] for r in rows} == {"full", "bug-r8"}
     for row in rows:
         nlls, toks = row["window_nlls"], row["window_toks"]
+        # The arm's own wall clock rides the row (L3.3a): `runner._ppl_rows` turns it
+        # into this axis's `[stage] cell` line, the only clock a harvest carries.
+        assert row["elapsed_s"] > 0.0
         assert len(nlls) == len(toks) == 3
         assert all(tok == 16 - 1 for tok in toks)  # scored tokens = window - 1
         assert all(math.isfinite(v) and v > 0 for v in nlls)
@@ -141,10 +148,17 @@ def test_pplw_line_format(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_pplw_line_splits_when_long(capsys: pytest.CaptureFixture[str]) -> None:
-    # 48 windows -> single line would be ~460 chars > 400 -> 6 part-lines of 8.
-    (row,) = _ok_rows(_run(methods=["full"], t=32, window=8, n_samples=48), 32)
+    """48 windows -> a single line would be ~460 chars > 400 -> 6 part-lines of 8.
+
+    The emitter is driven directly. The split is a pure function of the value list;
+    `test_pplw_line_format` above already pins that `run_ppl` calls it with the row's
+    own per-window NLLs, and `test_window_nll_consistency` that the pooled number is
+    those values summed. Reaching the 400-character boundary through the real loop
+    needs 40+ windows, which is 40 forward passes and was 5 s of the suite's 90 s.
+    """
+    nlls = [5.5 + 0.01 * ((i * 7) % 13) for i in range(48)]
+    frontier._log_pplw(32, "full", nlls, ntok=7, corpus="wikitext-103")
     out = capsys.readouterr().out
-    assert len(row["window_nlls"]) == 48
 
     parts = [m for m in PPLW_RE.finditer(out) if m.group(2) == "full"]
     assert [(m.group(4), m.group(5)) for m in parts] == [(str(i), "6") for i in range(1, 7)]
@@ -154,18 +168,40 @@ def test_pplw_line_splits_when_long(capsys: pytest.CaptureFixture[str]) -> None:
         vals = m.group(6).split(",")
         assert len(vals) <= 8
         joined += vals
-    assert joined == [f"{v:.6f}" for v in row["window_nlls"]]
+    assert joined == [f"{v:.6f}" for v in nlls]
     # The harvest reads exactly these fragments, through kvdlra.eval.records.PPLW_RE --
     # `scripts/pod.py` dropped them until the L0.5 fix round. Reassembled, they are the
-    # row's own per-window NLLs again (nll_sum_nats / ntok undoes the sum).
+    # sweep's per-window NLLs again (nll_sum_nats / ntok undoes the sum).
     assert all(records.PPLW_RE.match(m.group(0)) for m in parts)
     back = records.parse_pplw_lines(out, model="M", source="log")
-    assert [r["nll_sum_nats"] / r["ntok"] for r in back] == pytest.approx(
-        row["window_nlls"], rel=1e-5
-    )
-    # Equal-weight recompute from the PRINTED values (uniform windows) matches.
-    printed_pooled = math.exp(sum(float(v) for v in joined) / len(joined))
-    assert row["ppl"] == pytest.approx(printed_pooled, rel=1e-4)
+    assert [r["nll_sum_nats"] / r["ntok"] for r in back] == pytest.approx(nlls, rel=1e-5)
+
+
+def test_a_press_arm_is_billed_its_kept_fraction_not_the_scored_window() -> None:
+    """The kept fraction, measured between the prefill and the window.
+
+    `score_press` handed back the DynamicCache only after `_score_window` had pushed
+    the continuation into it, so `_footprint` measured ``k*T + W`` tokens and every
+    press row published ``(k*T + W)/T``: at T=128, W=16 and k=0.25 the arm was billed
+    0.375x for a cache holding 0.25x. The prefill is split out now, exactly as the
+    faithful-KIVI branch already split its own, so the footprint is the post-prefill
+    state on both axes (the retrieval path, `ruler.retrieve`, always took it there).
+
+    `full` is the control: its footprint is analytic (`accounting.full_cache_footprint`
+    reads ``t``, never the cache), so it reported 1.0 before and after.
+    """
+    install_kvpress_prefill_compat()  # transformers 5.8: kvpress needs the prefill shim
+    t, keep = 128, 0.25
+    rows = {
+        r["method"]: r
+        for r in _ok_rows(_run(methods=["full", "snapkv_k0.25"], t=t, window=16, n_samples=2), t)
+    }
+    assert rows["full"]["ratio_fp16"] == 1.0
+    # One token of slack for where a press rounds its budget (`evict_footprint`'s
+    # ratio_fp16 IS the kept fraction; the count comes off the compressed cache). The
+    # window's 16 tokens would be 8x that.
+    assert rows["snapkv_k0.25"]["ratio_fp16"] == pytest.approx(keep, abs=1.0 / t)
+    assert rows["snapkv_k0.25"]["ratio_stored_bits"] == pytest.approx(keep, abs=1.0 / t)
 
 
 def test_window_nll_is_accumulated_in_fp32() -> None:

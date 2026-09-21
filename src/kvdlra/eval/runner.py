@@ -24,8 +24,9 @@ harvest` can rebuild the same records from a `vastai logs` capture when the resu
 directory never made it off the instance. A ``[trial]`` line carries the generator's
 pairing fields (``hay= depth= code= sha=``, ``-`` where the generator set none), so a
 harvested pod can still show that two arms of one cell were fed byte-identical prompts.
-``[stage] <what> (<s> s)`` lines time the loads (model, corpora, haystacks); the watchdog
-keeps them, so a slow pod's log says where the hours went.
+``[stage] <what> (<s> s)`` lines time the loads (model, corpora, haystacks) and a
+``[stage] cell ... elapsed_s=`` line times each completed cell on all three axes -- the
+only clock a harvest carries, and why, at ``scripts/pod.py``'s ``CELL_S_RE``.
 """
 
 from __future__ import annotations
@@ -168,6 +169,7 @@ def _latency_rows(
     for ctx in task.ctxs or [task.ctx]:
         for name in pod.arms:
             arm = _build(name, model, ctx)
+            t_cell = time.perf_counter()
             for batch in task.batch_sizes:
                 try:
                     (row,) = latency.run_latency(
@@ -199,6 +201,12 @@ def _latency_rows(
                         "source": f"{pod.name}:run",
                     }
                 )
+            # The latency axis's cell clock (CELL_S_RE); `n` is the points attempted.
+            print(
+                f"[stage] cell arm={arm['name']} task={task.name} ctx={ctx}"
+                f" elapsed_s={time.perf_counter() - t_cell:.1f} n={len(task.batch_sizes)}",
+                flush=True,
+            )
     return errors
 
 
@@ -238,6 +246,7 @@ def _cell(
         dt = time.perf_counter() - t0
         print(f"[stage] load_corpus_sentences {task.filler} ({dt:.1f} s)", flush=True)
     hits, fracs, ratios, sbits, errors = 0, [], [], [], 0
+    t_cell = time.perf_counter()
     for seed in task.seeds:
         for trial in range(task.n_trials):
             try:
@@ -304,6 +313,12 @@ def _cell(
     if ratios:
         head += f" ratio={sum(ratios) / len(ratios):.3f} sbits={sum(sbits) / len(sbits):.3f}"
     print(head + f" n={total}" + ("" if ratios else f" errors={errors}"), flush=True)
+    # The retrieval axis's cell clock (see `pod.py`'s CELL_S_RE for why it exists).
+    print(
+        f"[stage] cell arm={arm['name']} task={sub} ctx={task.ctx}"
+        f" elapsed_s={time.perf_counter() - t_cell:.1f} n={total}",
+        flush=True,
+    )
     return errors
 
 
@@ -339,7 +354,7 @@ def _ppl_rows(
         f"[T={task.ctx}] {len(samples)} window(s) of {task.ctx}+{task.window} on {task.corpus}",
         flush=True,
     )
-    return frontier.run_ppl(
+    rows = frontier.run_ppl(
         arms,
         model,
         samples,
@@ -350,6 +365,14 @@ def _ppl_rows(
         device=device,
         corpus=task.corpus,
     )
+    # The perplexity axis's cell clock (CELL_S_RE); `n` is the windows attempted.
+    for r in rows:
+        print(
+            f"[stage] cell arm={r['method']} task={task.name} ctx={task.ctx}"
+            f" elapsed_s={r['elapsed_s']:.1f} n={len(samples)}",
+            flush=True,
+        )
+    return rows
 
 
 def _ppl_record(pod: PodCfg, row: dict[str, Any]) -> PplRecord:

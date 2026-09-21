@@ -1,0 +1,34 @@
+name: nogist_h2423
+kind: bug
+chunkable: true
+doc: >-
+  Gate-1 no-gist control (L3.1) for a 1024-wide layer (Llama-3.1-8B, Mistral-7B: 8 KV
+  heads x 128). Tier + ring only: rank 1 and coord_budget 1, so the middle is a
+  surprise-selected exact tier of H = 2423 tokens, the sinks and the recent ring, and
+  the gist stores one column rather than reconstructing ~16K near-junk keys into
+  attention. The tier still selects by residual, but against a rank-1 basis -- which is
+  approximately norm-ordering, and that is what "no gist" means for a surprise tier.
+  H is solved on STORED bits (the at-rest billing, kvdlra.accounting.Footprint.stored_bits)
+  at t=16384 against isvd_r64_h256_seed: the reference (rank 64, 16092 coordinate columns,
+  32-token ring, 4 sinks, 256 exact) bills 80,717,568 bits/layer, and this arm bills
+  1,245,376 + 32,800*H (2*n*16 = 32,768 fp16 K+V bits per exact token, +32 for its
+  position word), so H = 79,472,192 / 32,800 = 2422.93 -> 2423, a 1.00003x match. That is
+  2.4x the ICML plan's "h ~ 1024", which was an fp16-equivalent estimate; the
+  fp16-equivalent solve on the same inputs gives H = 1355.
+cache:
+  rank: 1
+  coord_budget: 1
+  recent_window: 32
+  absorb_block: 16
+  n_sink: 4
+  retention: "lowrank_surprise"
+  hh_budget: 2423
+  hh_select: "surprise"
+  hh_neighbor: 1
+  hh_retain: true
+  seed_hh_warmup: true
+  score_rank: null
+  min_sv_frac: 0.0
+  tracker: "isvd"
+  quant_bits: null
+  quant_budget: 0

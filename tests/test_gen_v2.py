@@ -37,7 +37,11 @@ from kvdlra.eval.gen import (
 REPO = Path(__file__).resolve().parents[1]
 FIX = Path(__file__).parent / "fixtures" / "haystacks_tiny.jsonl"
 TASKS = ["niah_single", "niah_multikey", "niah_multivalue", "niah_multiquery", "vt"]
-V2_TASKS = ["ruler_v2_16k", "ruler_v2_32k", "ruler_v2_16k_g1", "ruler_v2_16k_g2"]
+V2_TASKS = ["ruler_v2_16k", "ruler_v2_32k", "ruler_v2_16k_g1", "ruler_v2_16k_g2", "ruler_v2_32k_g1"]
+# The Gate-1 task files carry the FOUR tasks GATES.md G3 and ICML2027_PLAN section 2 item 1.1
+# name (prereg/gate1_tracker_swap_v2.md section 3, L3.2); niah_multiquery is not a Gate-1 task
+# and stays in ruler_v2_16k / _32k / _16k_g2, which no Gate-1 contrast reads.
+GATE1_TASKS = [t for t in TASKS if t != "niah_multiquery"]
 CFG = TaskV2Cfg(
     name="t",
     generator="v2",
@@ -342,14 +346,16 @@ def test_v2_task_yamls_load_and_hash() -> None:
         t = load_task(name)
         assert isinstance(t, TaskV2Cfg) and t.generator == "v2"
         assert t.n_trials == math.prod(t.design.values())
-        assert t.tasks == TASKS and t.chunk == 4096
+        assert t.tasks == (GATE1_TASKS if name.endswith("_g1") else TASKS) and t.chunk == 4096
         assert t.haystacks == CFG.haystacks and t.code_families == CFG.code_families
         hashes.add(config_hash(PodCfg(name="p", model="m", arms=["full"], tasks=[name])))
-    assert len(hashes) == 4
+    assert len(hashes) == len(V2_TASKS)
     assert load_task("ruler_v2_16k").n_trials == 12 and load_task("ruler_v2_32k").ctx == 32768
     assert (
         load_task("ruler_v2_16k_g1").n_trials == 24 and load_task("ruler_v2_16k_g2").n_trials == 48
     )
+    g32 = load_task("ruler_v2_32k_g1")  # Stage 2's task file, committed with the Stage-1 pods
+    assert g32.n_trials == 24 and g32.ctx == 32768 and g32.seeds == [0]
     assert not isinstance(load_task("ruler_inhouse_16k"), TaskV2Cfg)
 
 

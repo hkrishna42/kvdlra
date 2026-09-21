@@ -2,13 +2,16 @@ name: ruler_v2_16k_g1
 generator: v2
 ctx: 16384
 doc: >-
-  The Gate-1 v2 design at 16K (docs/plan/lanes/GATES.md, lane L3's tracker-swap pods): five tasks,
-  four sources, design haystacks x depths x codes = 2 x 3 x 4 = 24 trials per seed -- every
-  (depth, code family) cell holds two haystacks from two sources, each source appears six times,
-  two code draws per family per (haystack, depth). One seed, chunked prefill.
+  The Gate-1 v2 design at 16K (docs/plan/lanes/GATES.md G3, docs/plan/ICML2027_PLAN.md section 2
+  item 1.1, prereg/gate1_tracker_swap_v2.md section 3): the FOUR Gate-1 tasks, four sources,
+  design haystacks x depths x codes = 2 x 3 x 4 = 24 trials per seed -- every (depth, code family)
+  cell holds two haystacks from two sources, each source appears six times, two code draws per
+  family per (haystack, depth). One seed, chunked prefill.
+  niah_multiquery is not a Gate-1 task and no contrast in that prereg reads it; it stays in
+  ruler_v2_16k, which the pre-flight and the smoke pod run at n = 12.
   vt's value takes the cell's code family -- a deviation from official RULER's numbers-only vt,
   kept so code_family is truthful per row (ruling R-L2-4).
-tasks: ["niah_single", "niah_multikey", "niah_multivalue", "niah_multiquery", "vt"]
+tasks: ["niah_single", "niah_multikey", "niah_multivalue", "vt"]
 n_trials: 24
 seeds: [0]
 design: {haystacks: 2, depths: 3, codes: 4}

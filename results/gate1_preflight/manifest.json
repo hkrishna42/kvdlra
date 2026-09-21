@@ -1,0 +1,42 @@
+{
+  "cell_elapsed_s": {
+    "bugSseed-r64-h256/niah_multikey/16384": 2464.4,
+    "bugSseed-r64-h256/niah_single/16384": 2351.6,
+    "frozen_r64_h256_seed/vt/16384": 1137.8,
+    "full/niah_multikey/16384": 38.5,
+    "full/niah_multiquery/16384": 38.5,
+    "full/niah_multivalue/16384": 38.4,
+    "full/niah_single/16384": 38.9,
+    "full/vt/16384": 43.0
+  },
+  "command_line": "vastai create instance 31632919 --image pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel --disk 80 --env '-e POD=gate1_preflight -e SHA=9e77314b5805369c78cecbb587bb806c76d00dfe -e MODEL=unsloth/Meta-Llama-3.1-8B-Instruct -e DTYPE=bfloat16 -e MAX_HOURS=17' --onstart scripts/pod/boot.sh --label kvdlra-gate1_preflight",
+  "config_hash": "d342a79274c4d48a2c1adcf300bf276b74706462560e267ca88dd9c12749aa02",
+  "cuda": "none",
+  "dataset_sha256": {
+    "haystack:arxiv": "4c2b7e0312d3b47d8cd62298e2455f3779317abbacbb574147414ab4e602360e",
+    "haystack:essays": "12a16c81fc01036c2e359f78d446777101302370a98b1460619b67e66bf75de1",
+    "haystack:pg19": "7a9b488c3737e3081e57f8af2123313089bc94ef90665654d44826653505d77c",
+    "haystack:wikipedia": "6e37fe2ff6f7d8434fc5c030b140efbddedbeb8cef2cec3d85e550df9346e478"
+  },
+  "diag_skipped": 0,
+  "dry_run": false,
+  "errors": 0,
+  "git_sha": "9e77314b5805369c78cecbb587bb806c76d00dfe",
+  "gpu": "none",
+  "harvested_at": "2026-09-20T18:11:09+00:00",
+  "kvpress": "0.5.1",
+  "launched_at": "2026-09-20T08:44:33+00:00",
+  "model": "unsloth/Meta-Llama-3.1-8B-Instruct",
+  "model_revision": null,
+  "pod": "gate1_preflight",
+  "records": {
+    "diag.jsonl": 15381,
+    "trials.jsonl": 97
+  },
+  "status": "ALL_DONE",
+  "timeout": false,
+  "torch": "2.11.0",
+  "transformers": "5.8.0",
+  "triton": "none",
+  "wall_clock_s": null
+}

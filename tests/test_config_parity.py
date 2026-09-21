@@ -81,6 +81,16 @@ POST_V1 = {
     "ea_k0.10",
     "ea_k0.15",
     "think_c0.5_snapkv_k0.15",
+    # L3.1: the Gate-1 tracker controls at the r64 operating point (learn-then-freeze,
+    # fixed random basis) and the two byte-matched no-gist arms, one per layer width
+    # (`tests/test_gate1_arms.py`). New arms, no legacy counterpart.
+    "frozen_r64_h256_seed",
+    "random_r64_h256_seed",
+    "nogist_h2423",
+    "nogist_h4460",
+    # L5.1: the r64 arm with the gist stored in bf16 (`tests/test_bf16_gist.py`), read by
+    # `prereg/bf16_gist.md`. New arm, no legacy counterpart.
+    "isvd_r64_h256_seed_bf16",
 }
 
 

@@ -31,6 +31,7 @@ from torch import Tensor
 from transformers import LlamaForCausalLM
 
 from kvdlra.cache import BugStreamingCache, OrthonormalityError
+from kvdlra.eval.recon import _drift_stream
 from kvdlra.tracker import isvd
 from kvdlra.tracker.isvd import eff_rank, isvd_step, orth_error, reorthonormalize
 from tests.conftest import N_FEATURES
@@ -56,13 +57,11 @@ DIAG_KEYS = {
 
 
 def ratchet_stream(n: int = 512, t: int = 200 * 16, seed: int = 0) -> Tensor:
-    g = torch.Generator().manual_seed(seed)
-    q = torch.linalg.qr(torch.randn(n, 40, generator=g))[0]
-    sig = q @ (torch.randn(40, t, generator=g) * torch.linspace(3.0, 0.5, 40).unsqueeze(1))
-    m = sig + 1e-2 * torch.randn(n, t, generator=g)
-    m[:4] *= 1e3  # four massive-activation channels
-    out: Tensor = m.to(torch.bfloat16).to(torch.float32)  # bf16-rounded, fp32 core (pod path)
-    return out
+    """`recon._drift_stream`'s benign rank-40 bf16-rounded stream (one implementation),
+    plus the four massive-activation channels that drive the ratchet."""
+    m = _drift_stream(n, t, seed).clone()
+    m[:4] *= 1e3
+    return m
 
 
 def rank_deficient_block(cols: int = 24, rank: int = 10, seed: int = 5) -> Tensor:

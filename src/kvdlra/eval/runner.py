@@ -28,7 +28,7 @@ people, not by the harvest.) A ``[trial]`` line carries the generator's pairing 
 (``hay= depth= code= sha=``, ``-`` where the generator set none), so a harvested pod can
 still show that two arms of one cell were fed byte-identical prompts.
 ``[stage] <what> (<s> s)`` lines time the loads (model, corpora, haystacks) and a
-``[stage] cell ... elapsed_s=`` line times each completed cell on all three axes -- the
+``[stage] cell ... elapsed_s=`` line times each completed cell on all four axes -- the
 only clock a harvest carries, and why, at ``scripts/pod.py``'s ``CELL_S_RE``.
 """
 

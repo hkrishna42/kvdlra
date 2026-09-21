@@ -444,7 +444,7 @@ def _shrink_refusal(out: Path, name: str, n_new: int) -> str | None:
 # `dataset_sha256: {}`. The watchdog keeps `[stage]` rows; the last line for a key wins.
 DIGEST_RE = re.compile(r"^\[stage\] dataset_sha256 (\S+) ([0-9a-f]{64})\s*$", re.M)
 # THE rationale for the `[stage] cell` line, in one place (every emitter in
-# `kvdlra.eval.runner` points here). One line per completed cell, on all three axes:
+# `kvdlra.eval.runner` points here). One line per completed cell, on all four axes:
 # retrieval (`_cell`, per arm x sub-task), perplexity (`_ppl_rows`, per arm x ctx sweep,
 # keyed by the ppl TASK name so the two axes share one namespace without pooling) and
 # latency (per arm x ctx). It is the ONLY clock a harvest carries -- `[trial]` and cell

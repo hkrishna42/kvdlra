@@ -693,3 +693,53 @@ reads only a row of pytest's counts shape; `-rA`'s per-item `FAILED`/`ERROR` row
 command row are evidence, not verdicts. No reading, no threshold and no bar moves. `config_hash`
 moves again, because the pod YAML's `pre_run` value and `doc:` changed; no manifest for this pod
 exists, so nothing recorded is invalidated.
+
+### Amendment 1 — correction 3 (2026-09-21 08:20 EDT, the pod running; no reading, threshold or bar moves)
+
+Instance 51903816 has been running from `a691d44` since the launch commit. Nothing here moves a
+reading, a threshold or a bar, and no number is re-read; these are five corrections of record, so
+that the harvest reads this file as it was meant and the outcome entry can be written against it.
+
+(i) **"below it" reads "above it".** Amendment 1's preamble (§ "Amendment 1", third sentence)
+says "Read it before reading §3, §4, §7, §8 and §9 below it". The amendment sits at the END of
+this file; those sections are **above** it.
+
+(ii) **A1.2's "met when" carries a third conjunct.** A1.2 states the precondition as "**met**
+when ≥ 14 of 16 prompts match AND the worst `max_abs_diff` < 1e-2". The renderer
+(`scripts/tables.py::precondition_line`) applies a third: **and `errors == 0`**, i.e. no prompt
+recorded as an error row. This is not a new condition and does not change any outcome: §10's R29
+already fails the whole pod on any counted error, and A1.2 already says a prompt that raises is a
+counted error. The sentence simply did not spell out what the code reads.
+
+(iii) **The record carries the backend that attended, from commit `32b9a0a`.** `backend="auto"`
+can degrade from the Triton kernel to the torch reference on a live rank the kernel refuses
+(R-L4-22), which a ms/token alone cannot show. From `32b9a0a` the choice is made once per cache
+(`kvdlra.kernel.select_backend`, `BugStreamingCache.kernel_backend`) and recorded: a ` backend=`
+field on the `[kernel_check prompt=…]` and `[latency …]` lines, a `backend` key on
+`KernelCheckRecord` / `LatencyRecord`, and a `backend` column in the §7 table. **The running
+pod's records predate all of it** and carry no such field; both regexes make it optional, so
+those rows harvest with `backend: null` and every count, threshold and bar is untouched. The
+launch entry names the backend from the pre_run evidence (`results/kernel_smoke/pre_run.txt`,
+whose Triton-vs-reference items ran the kernel at exactly this pod's shapes) instead.
+
+(iv) **The running pod's kernel arm carries a one-row copy of the factored middle, removed from
+commit `32b9a0a`.** At batch 1 the attention glue built `FactoredMiddle.cat([m])` from the single
+row, and `torch.cat` of one tensor allocates: ≈ 17 MB of U/C/positions copied per layer per
+decode step at 32K, r64 (≈ 0.55 GB of writes and ≈ 160 extra launches per token over 32 layers),
+estimated ≈ 1–1.5 ms/token at 32K and ≈ 2–3 ms/token at 64K. It is **conservative** — it burdens
+the kernel arm only, ≈ 2 % of the 62.8 ms/token bar, and cannot manufacture a pass — and its
+transient is invisible in `kv_peak_gb`. It is therefore reported as part of this pod's kernel-arm
+p50, not corrected out of it; `32b9a0a` hands the row's own middle to the kernel instead
+(numerically identical), so a later pod's p50 is not comparable to this one at that precision.
+
+(v) **The 1e-2 precondition bar is absolute and is read on a bf16 output.** `kernel_compare`
+subtracts an fp32 reference from the kernel's **bf16** output, so the difference includes that
+output's own quantization (≤ 2⁻⁹·|out|) on top of the operand roundings, and therefore scales
+with |out|. Prompt 0's reading on this pod — worst layer 8.2e-3 — is ≈ one bf16 ulp at |out| ≈ 2,
+consistent with the CPU calibration (2.75e-3 at |out| ≤ 0.84). A **correct** kernel can thus
+exceed 1e-2 at a layer whose outputs reach ≈ 2.5–3 while every prompt is still token-exact. The
+rule is unchanged: if the 16-prompt worst crosses 1e-2 the precondition reads **NOT met**, the
+Week-3 gate reads **REFUSED** under §4, and the number is reported as measured — never repaired,
+re-run or re-scaled on this pod. Only a **relative** bar (max|Δ| / max|out| per layer, or
+ulp-normalised), pre-registered by a further amendment committed **before** any re-run and still
+reporting the absolute number beside it, could read such a case differently.

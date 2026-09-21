@@ -237,7 +237,8 @@ if missing_postrope:
 
 # REFUSED (section 11) is a state collected as reasons, not a bool: an error row, a broken
 # pairing (`mcnemar_exact` -> None, no shared key), a missing Stage-1/postrope record, or
-# (below, once the perplexity axis runs) a TOST that is not decidable.
+# (below, once the perplexity axis runs) a broken window pairing or a TOST that is not
+# decidable. Every one of them PRINTS; none of them raises.
 p_holm = {} if refused else dict(zip(TASKS, holm([members[t]["p_value"] for t in TASKS])))
 lost = {t for t in p_holm      # section 4's two conditions; at n = 24 the Holm term is binding
         if (members[t]["a_favored"] - members[t]["b_favored"]) / members[t]["n_paired"] > 0.03
@@ -257,18 +258,28 @@ print("lost:", sorted(lost) or "none")
 # --- Perplexity: the 32 paired windows' bits/token, never the pooled `ppl=` number ----------
 # `window_bits` refuses a window scored twice; `paired_window_bits` refuses a window set that
 # is not exactly Stage 1's.
-bits = window_bits([r for d in DIRS for r in read_jsonl(d / "pplw.jsonl")],
-                   key=lambda r: (r["arm"], r["ctx"], r["corpus"]),
-                   where="postrope_r128 x gate1_v2_stage1_llama")
-d_bits = paired_window_bits(bits[A, CTX, CORPUS], bits[B, CTX, CORPUS], f"{A} @ {CTX}", B)
-p_lo, p_hi, equivalent = tost(d_bits, 0.02)      # d = r64 - post; d < 0 means post is worse
-decidable = tost_decidable(d_bits, 0.02)  # not decidable is REFUSED (section 11), never fail
-if not decidable:
-    refused.append("TOST not decidable")
-mean_d, ci_lo, ci_hi = paired_bootstrap(d_bits)  # the effect size, printed beside the TOST
-print(f"ppl: n={len(d_bits)} mean_d={mean_d:+.4f} bits/token, 95% CI"
-      f" [{ci_lo:+.4f}, {ci_hi:+.4f}], TOST p_lo={p_lo:.3g} p_hi={p_hi:.3g}"
-      f" equivalent={equivalent} decidable={decidable}")
+# Both helpers RAISE on the pairing faults they exist to catch, and a raise here would take
+# the whole reading down before a single refusal reached the terminal -- including the four
+# collected above. Caught, named and printed: a refusal is a reading, not a traceback.
+equivalent = False
+try:
+    bits = window_bits([r for d in DIRS for r in read_jsonl(d / "pplw.jsonl")],
+                       key=lambda r: (r["arm"], r["ctx"], r["corpus"]),
+                       where="postrope_r128 x gate1_v2_stage1_llama")
+    d_bits = paired_window_bits(bits[A, CTX, CORPUS], bits[B, CTX, CORPUS], f"{A} @ {CTX}", B)
+except (ValueError, KeyError) as exc:  # scored twice / not Stage 1's window set / no ppl rows
+    d_bits = []
+    refused.append("broken window pairing")
+    print("ppl: REFUSED — broken window pairing:", exc)
+if d_bits:
+    p_lo, p_hi, equivalent = tost(d_bits, 0.02)  # d = r64 - post; d < 0 means post is worse
+    decidable = tost_decidable(d_bits, 0.02)  # not decidable is REFUSED (section 11), never fail
+    if not decidable:
+        refused.append("TOST not decidable")
+    mean_d, ci_lo, ci_hi = paired_bootstrap(d_bits)  # the effect size, beside the TOST
+    print(f"ppl: n={len(d_bits)} mean_d={mean_d:+.4f} bits/token, 95% CI"
+          f" [{ci_lo:+.4f}, {ci_hi:+.4f}], TOST p_lo={p_lo:.3g} p_hi={p_hi:.3g}"
+          f" equivalent={equivalent} decidable={decidable}")
 print("VERDICT:", f"REFUSED — {', '.join(refused)}" if refused
       else ("non-inferior" if not lost and equivalent else "fail"))
 ```
@@ -282,8 +293,10 @@ dry-run-shaped directories** — the shape `scripts/pod.py run --pod <name> --dr
 (`manifest.json`, `env.txt`, an empty `trials.jsonl`), filled with hand-written rows, one row
 per arm per key and per window — it must print a reading for a clean pair; drop and report a
 `prompt_sha256` disagreement with its key; suppress Holm when an `error` row is present; and
-raise on a window set that is not exactly Stage 1's. A snippet that does not run is not a
-pre-registration, and this one is run before the pod is.
+print `REFUSED — broken window pairing` on a window set that is not exactly Stage 1's (the
+helper raises; the snippet catches it, so the four refusals collected before the perplexity
+axis still reach the terminal). A snippet that does not run is not a pre-registration, and
+this one is run before the pod is.
 
 ### Launch
 

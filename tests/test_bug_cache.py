@@ -291,13 +291,6 @@ def test_chunked_prefill_raises(tiny_model: LlamaForCausalLM) -> None:
             tiny_model(_prompt(8, seed=2), past_key_values=cache, use_cache=True)
 
 
-def test_batch_size_one_enforced(tiny_model: LlamaForCausalLM) -> None:
-    cache = BugStreamingCache(tiny_model, rank=8, coord_budget=16)
-    ids = torch.randint(0, 256, (2, 10))
-    with torch.no_grad(), pytest.raises(NotImplementedError, match="batch size 1"):
-        tiny_model(ids, past_key_values=cache, use_cache=True)
-
-
 def test_constructor_validation(tiny_model: LlamaForCausalLM) -> None:
     with pytest.raises(ValueError, match="recent_window"):
         BugStreamingCache(tiny_model, rank=8, coord_budget=16, recent_window=0)

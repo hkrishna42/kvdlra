@@ -104,9 +104,13 @@ reports exactly the length ``update()`` will return this step, with ``kv_offset
 = cumulative + q - length`` so the causal mask sees every returned (strictly
 past) token as visible.
 
-Scope guards: batch size 1; single-shot pre-fill (chunked pre-fill raises, as
-in ``BUGPress``); pre-fill attention is full/standard (the same protocol as all
-Axis-B baselines -- compression bounds what is *retained for decode*).
+Scope guards: single-shot pre-fill (chunked pre-fill raises, as in ``BUGPress``); pre-fill
+attention is full/standard (the same protocol as all Axis-B baselines -- compression bounds
+what is *retained for decode*). Batch > 1 is served by composition: at the first ``update``
+with B rows the layer builds B independent row layers from its own constructor kwargs and
+drives each through the batch-1 path on its ``(1, H, T, D)`` slice (``_update_rows``); every
+reader fans out over the rows. Rows must stay equal-length (the latency task's random
+tensor is the only batched input); a ragged result raises instead of padding.
 
 ``rank=0`` or ``coord_budget=0`` disables the low-rank middle entirely:
 graduating tokens are simply dropped and the cache degenerates to **sinks +
@@ -127,7 +131,7 @@ import warnings
 from collections import OrderedDict
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import cast
+from typing import Any, cast
 
 import torch
 from torch import Tensor, nn
@@ -307,6 +311,12 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         layer_idx: int = 0,
     ) -> None:
         super().__init__()  # type: ignore[no-untyped-call]
+        # The kwargs this layer was built with, so a batch > 1 update can build one
+        # independent row layer per batch element (`_update_rows`). `locals()` here is
+        # exactly the parameter list (plus `self` and the zero-arg-super `__class__` cell).
+        self._ctor_kwargs: dict[str, Any] = {
+            k: v for k, v in locals().items() if k not in ("self", "__class__")
+        }
         if rank < 0 or coord_budget < 0:
             raise ValueError("rank and coord_budget must be >= 0")
         if recent_window < 1:
@@ -414,6 +424,7 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
                 stacklevel=2,
             )
             tracker = "isvd"
+        self._ctor_kwargs["tracker"] = tracker  # rows must not re-trigger the alias warning
         if tracker not in TRACKERS:
             raise ValueError(f"tracker must be one of {sorted(TRACKERS)}, got {tracker!r}")
         # The gist tracker (Week-20 swap ablation, extended by the L3 Gate-1 controls).
@@ -515,6 +526,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
 
     def _reset_state(self) -> None:
         self.cumulative_length = 0
+        # Batch > 1: one independent layer per row, built at the first batched update.
+        self._rows: list[BugStreamingLayer] | None = None
         self.sink_k: Tensor | None = None  # (n, <=n_sink) post-RoPE, verbatim
         self.sink_v: Tensor | None = None
         self.recent_k: Tensor | None = None  # (n, <recent_window+absorb_block) verbatim
@@ -570,10 +583,6 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         self._mode = "normal"
 
     def lazy_initialization(self, key_states: Tensor, value_states: Tensor) -> None:
-        if key_states.shape[0] != 1:
-            raise NotImplementedError(
-                f"BugStreamingLayer supports batch size 1, got {key_states.shape[0]}"
-            )
         self.dtype, self.device = key_states.dtype, key_states.device
         self.num_heads = int(key_states.shape[1])
         self.head_dim = int(key_states.shape[3])
@@ -1242,6 +1251,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
     ) -> tuple[Tensor, Tensor]:
         if not self.is_initialized:
             self.lazy_initialization(key_states, value_states)
+        if self._rows is not None or int(key_states.shape[0]) != 1:
+            return self._update_rows(key_states, value_states)
         q_len = int(key_states.shape[2])
         if self.cumulative_length == 0:
             return self._prefill(key_states, value_states)
@@ -1256,6 +1267,35 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
                 "tokens (chunked/continued pre-fill would desync the streaming state)."
             )
         return self._decode_step(key_states, value_states)
+
+    def _update_rows(self, key_states: Tensor, value_states: Tensor) -> tuple[Tensor, Tensor]:
+        """Batch > 1: one independent ``BugStreamingLayer`` per row, built from this layer's
+        own constructor kwargs at the first update (when B is known) and each driven through
+        the unchanged batch-1 path on its ``(1, H, T, D)`` slice; the returned K/V are the
+        rows' outputs concatenated on dim 0. Rows share the quant bank (side information by
+        design) and nothing else. Every row sees the same token count, so their returned
+        lengths agree by construction; a disagreement is a bug and raises rather than pads."""
+        b = int(key_states.shape[0])
+        if self._rows is None:
+            self._rows = [BugStreamingLayer(**self._ctor_kwargs) for _ in range(b)]
+            for row in self._rows:
+                row._mode = self._mode
+        if b != len(self._rows):
+            raise NotImplementedError(
+                f"BugStreamingLayer was built for batch {len(self._rows)}, got batch {b}: "
+                "a cache serves one batch of equal-length rows for its whole life"
+            )
+        outs = [
+            row.update(key_states[i : i + 1], value_states[i : i + 1])
+            for i, row in enumerate(self._rows)
+        ]
+        lengths = [int(k.shape[2]) for k, _ in outs]
+        if len(set(lengths)) != 1:
+            raise NotImplementedError(
+                f"ragged rows: the per-row returned lengths differ ({lengths}); equal-length "
+                "rows are the only batched input this cache serves"
+            )
+        return torch.cat([k for k, _ in outs]), torch.cat([v for _, v in outs])
 
     def _score_forward(self, key_states: Tensor, value_states: Tensor) -> tuple[Tensor, Tensor]:
         """Week-10 frozen continuation scoring (non-mutating): attend the ``q_len``
@@ -1292,6 +1332,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
     def consolidate(self) -> None:
         """Run the deferred absorb for an over-full recent ring after a chunked
         :meth:`_ingest_chunk` (same block schedule / loop as :meth:`_decode_step`)."""
+        for row in self._rows or ():
+            row.consolidate()
         while self._recent_len() >= self.recent_window + self.absorb_block:
             self._absorb_block_into_stream(self.absorb_block)
 
@@ -1435,6 +1477,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         """Report exactly the K/V length ``update()`` will return this step; the
         offset places the (strictly past) returned block right below the query's
         true position so the causal mask sees it all as visible."""
+        if self._rows:  # every row reports the same sizes (they share a token count)
+            return self._rows[0].get_mask_sizes(query_length)
         if self._mode in ("score", "ingest"):
             # score: returns [retained | window] (non-mutating). ingest: returns
             # [retained | chunk] then defers absorb. Both: the returned block is
@@ -1451,12 +1495,14 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
 
     def get_seq_length(self) -> int:
         """*Cumulative* token count -- keeps true positions advancing."""
-        return self.cumulative_length
+        return self._rows[0].cumulative_length if self._rows else self.cumulative_length
 
     def get_max_cache_shape(self) -> int:
         return -1
 
     def reset(self) -> None:
+        for row in self._rows or ():  # the drained-once contract survives a reset
+            self.diag.extend(row.drain_diag())
         self._reset_state()
 
     # ---------------------------------------------------------- accounting
@@ -1467,6 +1513,8 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
         each (bit-packable) + their fp32 norms; retention positions (int32) and
         surprise snapshots at 1 each. Shared quantizer side info is counted once
         at the cache level (:meth:`BugStreamingCache.stored_state_numel`)."""
+        if self._rows:
+            return sum(row.stored_state_numel() for row in self._rows)
         tensors = (
             self.sink_k,
             self.sink_v,
@@ -1516,12 +1564,28 @@ class BugStreamingLayer(CacheLayerMixin):  # type: ignore[no-untyped-call]
     def workspace_numel(self) -> int:
         """Float entries of the cached middle reconstruction (bounded derived
         state, avoidable by recomputing each step; reported separately)."""
+        if self._rows:
+            return sum(row.workspace_numel() for row in self._rows)
         tensors = (self._mid_k_cache, self._mid_v_cache)
         return sum(t.numel() for t in tensors if t is not None)
 
     def attended_length(self) -> int:
         """Tokens attention currently sees (sinks + middle + recent)."""
+        if self._rows:
+            return self._rows[0].attended_length()
         return self._sink_len() + self._mid_len() + self._recent_len()
+
+    def drain_diag(self) -> list[dict[str, object]]:
+        """This layer's diagnostic rows (its rows' first, in row order), the open window
+        flushed first; the rows are cleared. The cache's ``drain_diag`` calls this."""
+        rows: list[dict[str, object]] = []
+        for row in self._rows or ():
+            rows.extend(row.drain_diag())
+        if self._diag_window:
+            self._flush_diag_window()
+        rows.extend(self.diag)
+        self.diag.clear()
+        return rows
 
 
 class BugStreamingCache(Cache):
@@ -1686,6 +1750,8 @@ class BugStreamingCache(Cache):
     def _set_mode(self, mode: str) -> None:
         for layer in self._bug_layers():
             layer._mode = mode
+            for row in layer._rows or ():
+                row._mode = mode
 
     @contextmanager
     def frozen_scoring(self) -> Iterator[None]:
@@ -1734,10 +1800,7 @@ class BugStreamingCache(Cache):
         64 the tail of every sample is dropped (fix1 PR-29 A/D)."""
         rows: list[dict[str, object]] = []
         for layer in self._bug_layers():
-            if layer._diag_window:
-                layer._flush_diag_window()
-            rows.extend(layer.diag)
-            layer.diag.clear()
+            rows.extend(layer.drain_diag())
         return rows
 
     def stored_state_numel(self) -> int:

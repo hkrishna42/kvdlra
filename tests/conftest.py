@@ -112,3 +112,15 @@ class WhitespaceTok:
 @pytest.fixture(scope="module")
 def tok() -> WhitespaceTok:
     return WhitespaceTok()
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """``@pytest.mark.gpu`` tests need a CUDA device (and the triton the pod image ships);
+    the CI gate is CPU-only, so they skip rather than fail where there is none."""
+    del config
+    if torch.cuda.is_available():
+        return
+    skip = pytest.mark.skip(reason="needs CUDA (gpu-marked; the CI gate is CPU-only)")
+    for item in items:
+        if "gpu" in item.keywords:
+            item.add_marker(skip)

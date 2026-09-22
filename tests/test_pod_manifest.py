@@ -5,18 +5,31 @@ through its refusals and `--dry-run`, which print the command instead of running
 
 from __future__ import annotations
 
+import base64
 import json
+import shlex
 import shutil
 import signal
 import subprocess
 import sys
+import tomllib
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pod
 import pytest
 
-from kvdlra.eval.config import TaskV2Cfg, config_hash, load_arm, load_pod, load_task
+from kvdlra.eval import config
+from kvdlra.eval.config import (
+    PodCfg,
+    TaskKernelCheckCfg,
+    TaskV2Cfg,
+    config_hash,
+    load_arm,
+    load_pod,
+    load_task,
+)
 from kvdlra.eval.frontier import build_arm
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -674,10 +687,22 @@ def test_the_watchdog_keeps_the_env_block_rows() -> None:
         # name would also match the pattern's bare NVIDIA alternative).
         "[stage] gpu NVIDIA H100 80GB HBM3",
         "[stage] wall_clock_s 4213.7",
+        # L4.6: the kernel-check axis's record line, and its log-only companions
+        "[kernel_check prompt=0 arm=isvd_r64_h256_seed_kernel ctx=4096 n_new=32 match=1 "
+        "first_mismatch=- max_abs_diff=3.100e-03 worst_layer=17 sha=" + "b" * 64,
+        "[kernel_check layers prompt=0 arm=isvd_r64_h256_seed_kernel diffs=1.0e-03,2.0e-03",
+        # A2.4 / L4b: the latency spike-diagnostic companion line, dropped before this fix
+        # because `ROWS` only admitted `[latency ...]` rows carrying `ms/tok=`.
+        "[latency spikes ctx=16384 arm=isvd_r64_h256_seed_kernel steps=0,3]",
         # L3.4a: the replay block's markers, so a reader of the deduped log can see that
         # the rows below them are a repeat and not a second pod (D-011 addendum 10).
         "===RECORDS_REPLAY_BEGIN===",
         "===RECORDS_REPLAY_END===",
+        # L4.10: the pre_run hook's markers (the harvest reads the exit code off the END
+        # one) and its prefixed rows, which become results/<pod>/pre_run.txt.
+        "===PRE_RUN_BEGIN_kernel_smoke===",
+        "===PRE_RUN_END_kernel_smoke_rc=0===",
+        "[pre_run] 8 passed in 41.2s",
     ]
     r = subprocess.run(
         ["grep", "-aE", rows],
@@ -1215,6 +1240,10 @@ GATE1 = {
     "isvd_r64_h256_seed_bf16",
 }
 
+# L4: the kernel-smoke pod's arm (prereg/kernel_smoke.md) and the post-RoPE accuracy row
+# (prereg/postrope_r128.md). Their pods are L4's, pinned below; not the smoke pod's.
+L4 = {"isvd_r64_h256_seed_kernel", "isvd_postrope_r128"}
+
 
 def test_the_smoke_pod_names_every_arm_but_the_table4_variants() -> None:
     """The arm set is a rule, not a list: every stem under configs/arms/ that is not a Table-4
@@ -1236,9 +1265,9 @@ def test_the_smoke_pod_names_every_arm_but_the_table4_variants() -> None:
     table4 = {a for n in TABLE4 for a in load_pod(n).arms if load_arm(a).kind == "bug"}
     assert len(table4) == 10, sorted(table4)
     stems = {q.stem for q in (REPO_ROOT / "configs" / "arms").glob("*.yaml")}
-    assert stems >= GATE1, sorted(GATE1 - stems)
+    assert stems >= GATE1 | L4, sorted((GATE1 | L4) - stems)
     assert len(p.arms) == len(set(p.arms)), "an arm listed twice would double its cells"
-    assert set(p.arms) == stems - table4 - GATE1
+    assert set(p.arms) == stems - table4 - GATE1 - L4
     assert p.arms[0] == "full"
     kinds = [load_arm(a).kind for a in p.arms]
     n_gist = kinds.count("bug")
@@ -1325,3 +1354,196 @@ def test_harvest_reads_a_log_with_the_replay_as_one_without_it(
     assert {f: (tmp_path / f).read_text() for f in files} == plain
     assert json.loads((tmp_path / "manifest.json").read_text())["records"] == records
     capsys.readouterr()
+
+
+# --- L4.8: the kernel-smoke pod (prereg/kernel_smoke.md, Amendment 1) -----------------------
+
+KERNEL_SMOKE_ARMS = ["full", "isvd_r64_h256_seed", "isvd_r64_h256_seed_kernel"]
+KERNEL_SMOKE_TASKS = ["kernel_check_16", "latency_16k_32k_64k"]
+
+
+def test_the_kernel_smoke_pod_is_its_prereg_design() -> None:
+    """Section 3's three arms in its order (the two reference arms first, untouched files), the
+    correctness check BEFORE the measurement (section 4: no speed reading without it), cell
+    list A (batch 1, three contexts, 64 steps / 8 warm-up, chunk 4096) on the shipped task
+    file, and the Amendment-1 bar. Its hash's distinctness is the sweep in
+    `test_the_postrope_pod_hash_is_distinct` below, which covers this pod too."""
+    p = load_pod("kernel_smoke")
+    assert p.prereg == "prereg/kernel_smoke.md" and (REPO_ROOT / p.prereg).is_file()
+    assert p.model == "unsloth/Meta-Llama-3.1-8B-Instruct"
+    assert p.dtype == "bfloat16" and "-devel" in p.image
+    assert p.arms == KERNEL_SMOKE_ARMS and p.tasks == KERNEL_SMOKE_TASKS
+    assert p.gpu_budget_h == 5.0
+    for a in p.arms:
+        cfg = load_arm(a)
+        assert cfg.name == a
+        assert build_arm(cfg, model=None, t=65536)["name"] == (cfg.legacy_name or a)
+    base, kern = load_arm(KERNEL_SMOKE_ARMS[1]), load_arm(KERNEL_SMOKE_ARMS[2])
+    assert kern.cache == {**base.cache, "decode_attention": "kernel"}
+    lat = load_task("latency_16k_32k_64k")
+    assert (lat.ctxs, lat.batch_sizes, lat.n_steps, lat.warmup, lat.chunk) == (
+        [16384, 32768, 65536], [1], 64, 8, 4096
+    )  # fmt: skip
+    kc = load_task("kernel_check_16")
+    assert isinstance(kc, TaskKernelCheckCfg)
+    assert (kc.ctx, kc.chunk, kc.n_new, kc.n_prompts) == (4096, 1024, 32, 16)
+
+
+def test_the_postrope_pod_hash_is_distinct() -> None:
+    """One sweep for the L4 pods: every pinned pod, plus `kernel_smoke`, `kernel_smoke2`
+    (the re-run label -- the smoke YAML byte-for-byte but its `name:`, so a distinct hash
+    that writes its own results dir and cannot re-read instance 51903816) and
+    `postrope_r128`, hashes to a value of its own."""
+    every = [*L2_PODS, *GATE1_PODS, "kernel_smoke", "kernel_smoke2", "postrope_r128"]
+    assert len({config_hash(load_pod(n)) for n in every}) == len(every)
+
+
+# --- L4.10: the `pre_run` hook (prereg/kernel_smoke.md Amendment 1, corrected) ---------
+#
+# A pod may declare one shell command that `scripts/pod/boot.sh` runs from the SHA-pinned
+# clone BEFORE the `timeout`-bounded entrypoint. Only `kernel_smoke` declares one (its
+# Triton kernel's gpu tests, the correctness gate A1.2 promised and no script performed).
+# The pod is NOT aborted when the command fails -- the measurement still runs and is still
+# recorded; `check` is what refuses the numbers.
+
+KERNEL_SMOKE_HASH = config_hash(load_pod("kernel_smoke"))
+# The shape boot.sh produces: the decoded command echoed first, then pytest's own output
+# through the `| sed`. The `$ ...` row and the `-rA` per-item row both carry words the
+# failure gate looks for and must not trip it (R-L4-30).
+PRE_RUN_ROWS = [
+    f"[pre_run] $ {load_pod('kernel_smoke').pre_run}",  # boot.sh echoes what it decoded
+    "[pre_run] pytest 9.0.3",
+    "[pre_run] PASSED tests/test_kernel_triton.py::test_triton_matches_the_reference[tight]",
+    "[pre_run] max|d|=1.7e-03 rms=1.1e-05 (bars 2e-03 / 1e-04)",
+    "[pre_run] 7 passed, 1 skipped in 41.2s",
+]
+PRE_RUN_LOG = [
+    "===PRE_RUN_BEGIN_kernel_smoke===",
+    *PRE_RUN_ROWS,
+    "===PRE_RUN_END_kernel_smoke_rc=0===",
+]
+
+
+def _kernel_smoke_harvest(d: Path, lines: list[str]) -> Path:
+    """`lines` harvested into a `results/kernel_smoke/`-shaped directory.
+
+    The manifest is written here rather than by `pod.run(..., dry_run=True)`: this module
+    has a CPU budget and `manifest()` reads `versions()`, which imports torch. The SHA is
+    deliberately unresolvable, which costs `check` one `CHECK FAIL git_sha:` line and saves
+    the `git log --reverse` walk of the prereg's history on every call -- these directories
+    hold no records either, and the rule under test is the only one read off them."""
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "manifest.json").write_text(
+        json.dumps(
+            {
+                "pod": "kernel_smoke",
+                "git_sha": "0" * 40,
+                "config_hash": KERNEL_SMOKE_HASH,
+                "dry_run": False,
+            }
+        )
+    )
+    log = d / "kernel_smoke-1.log"
+    log.write_text("\n".join(lines) + "\n")
+    assert pod.harvest("kernel_smoke", log, d, force=False) == 0
+    return d
+
+
+def test_the_launch_hands_a_declared_pre_run_command_to_the_pod() -> None:
+    """The command rides in the one `--env` string beside POD/SHA/MODEL/DTYPE/MAX_HOURS --
+    base64-encoded, not shell-quoted (R-L4-29): vast.ai's parser splits that string on
+    spaces outside quotes and toggles quoting on every `'`, so the command's inner
+    `'s/^/[pre_run] /'` would reach the pod truncated however it was quoted. Base64 is one
+    space-free, quote-free token, which is also why `shlex.quote` leaves it alone. A pod
+    that declares none sends neither variable: the hook is skipped there."""
+    cmd = pod.launch_command("kernel_smoke", "12345678", "deadbeef")
+    env = cmd[cmd.index("--env") + 1]
+    want = load_pod("kernel_smoke").pre_run
+    assert want and env.count("-e PRE_RUN_B64=") == 1
+    assert "-e PRE_RUN=" not in env  # the quoted hand-off is gone, not merely duplicated
+    b64 = env.split("-e PRE_RUN_B64=", 1)[1].split(" ")[0]
+    assert base64.b64decode(b64.encode(), validate=True).decode() == want
+    assert shlex.quote(b64) == b64  # a bare token: nothing for a shell to eat
+    assert shlex.split(shlex.join(cmd)) == cmd  # what `--dry-run` prints, parsed back
+    assert load_pod("gate1_v2_stage1_llama").pre_run is None
+    assert "PRE_RUN" not in " ".join(pod.launch_command("gate1_v2_stage1_llama", "1", "deadbeef"))
+
+
+def test_the_pre_run_gate_leaves_pytest_one_quiet_flag() -> None:
+    """`check` reads the `N passed` count off pytest's counts row (R-L4-30) -- and pytest
+    prints that row only above verbosity -2 (`_pytest/terminal.py::summary_stats` returns
+    first below it). pyproject's `addopts` already carries one `-q`, so a second on the
+    command line silences the row and the gate would then refuse every run, passing or
+    failing, two hours into a paid boot. Measured, not assumed: with both, the whole gate
+    command prints no counts row; with one, `8 passed, 3 skipped, ... in 1.04s`."""
+    cmd = load_pod("kernel_smoke").pre_run
+    assert cmd and "-q" not in cmd.split()
+    addopts = tomllib.loads((REPO_ROOT / "pyproject.toml").read_bytes().decode())["tool"]["pytest"][
+        "ini_options"
+    ]["addopts"]
+    assert "-q" in addopts.split()  # the one that stays; the command adds no second
+
+
+def test_only_a_declared_pre_run_enters_the_config_hash() -> None:
+    """`config_hash` flattens every PodCfg field, so a new field with a default would move
+    the hash of every pod on disk -- and of every committed manifest (`make check`, and
+    `test_the_live_filler_manifests_still_hash_to_their_configs` above, which is the other
+    half of this rule). A pod that declares the key hashes it."""
+    plain = load_pod("postrope_r128")  # the smallest pod on disk: one arm, two tasks
+    assert config_hash(replace(plain, pre_run="python -m pytest -m gpu -q")) != config_hash(plain)
+
+
+def test_a_declared_pre_run_must_be_a_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A blank `pre_run:` is a hook boot.sh skips and `check` then refuses as unrecorded --
+    a pod that dies on its own gate hours after a typo. Refused at load instead."""
+
+    def _blank(kind: str, name: str, schema: type) -> PodCfg:
+        return PodCfg(name=name, model="m", arms=[], tasks=[], pre_run="   ")
+
+    monkeypatch.setattr(config, "_load", _blank)
+    with pytest.raises(ValueError, match="pre_run"):
+        config.load_pod("whatever")
+
+
+def test_harvest_records_the_pre_run_rows_and_its_exit_code(tmp_path: Path) -> None:
+    """The rows travel prefixed (`sed 's/^/[pre_run] /'`, a kind the watchdog keeps) and
+    land prefix-stripped in `pre_run.txt`; the exit code lands in the manifest. A log
+    without the markers records neither -- an absent file, not an invented one."""
+    d = _kernel_smoke_harvest(tmp_path / "ok", PRE_RUN_LOG)
+    assert json.loads((d / "manifest.json").read_text())["pre_run_rc"] == 0
+    assert (d / "pre_run.txt").read_text().splitlines() == [
+        x[len("[pre_run] ") :] for x in PRE_RUN_ROWS
+    ]
+    bare = _kernel_smoke_harvest(tmp_path / "bare", ["[stage] wall_clock_s 1.0"])
+    assert json.loads((bare / "manifest.json").read_text())["pre_run_rc"] is None
+    assert not (bare / "pre_run.txt").exists()
+
+
+def test_check_refuses_a_pod_whose_pre_run_did_not_pass(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """boot.sh runs the measurement whatever the hook returned, so this is the only place a
+    failed correctness gate stops the numbers being cited. Both ways to not have passed
+    refuse: a non-zero code, and no code at all."""
+
+    def checked(name: str, lines: list[str]) -> str:
+        pod.check(_kernel_smoke_harvest(tmp_path / name, lines))
+        return capsys.readouterr().out
+
+    # These directories hold no records at all, so every other rule fails too; the
+    # pre_run gate is the one read here.
+    assert "CHECK FAIL pre_run" not in checked("pass", PRE_RUN_LOG)
+    rc1 = [x.replace("_rc=0===", "_rc=1===") for x in PRE_RUN_LOG]
+    assert "CHECK FAIL pre_run: rc=1" in checked("rc1", rc1)
+    assert "CHECK FAIL pre_run: not recorded" in checked("absent", ["[stage] wall_clock_s 1.0"])
+    # R-L4-30. A card without a working CUDA skips every `gpu` item and pytest still exits
+    # 0, so the code alone would have passed the correctness precondition on a run of
+    # nothing; and a failing item is a failing gate whatever the counts row's first word.
+    skipped = [x.replace("7 passed, 1 skipped", "8 skipped") for x in PRE_RUN_LOG]
+    skipped.insert(-1, "[pre_run] ssssssss")
+    assert "CHECK FAIL pre_run: no passed row" in checked("skipped", skipped)
+    failed = [x.replace("7 passed, 1 skipped", "1 failed, 7 passed") for x in PRE_RUN_LOG]
+    failed.insert(-1, "[pre_run] FAILED tests/test_kernel_triton.py::test_batch_independence")
+    out = checked("failed", failed)
+    assert "CHECK FAIL pre_run: failures in the summary" in out
+    assert "CHECK FAIL pre_run: no passed row" not in out  # 7 of them did pass

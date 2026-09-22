@@ -1,0 +1,32 @@
+
+    warnings.warn(
+  /usr/local/lib/python3.12/dist-packages/huggingface_hub/constants.py:301: FutureWarning: The `HF_HUB_ENABLE_HF_TRANSFER` environment variable is deprecated as 'hf_transfer' is not used anymore. Please use `HF_XET_HIGH_PERFORMANCE` instead to enable high performance transfer with Xet. Visit https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables#hfxethighperformance for more details.
+  /usr/local/lib/python3.12/dist-packages/torch/jit/_script.py:365: DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`.
+$ python -m pytest --version 2>&1 | sed 's/^/[pre_run] /'; python -m pytest -m gpu -rA -p no:cacheprovider tests/test_kernel_triton.py tests/test_kernel_reference.py 2>&1 | sed 's/^/[pre_run] /'
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+----------------------------- Captured stdout call -----------------------------
+.......s                                                                 [100%]
+../../usr/local/lib/python3.12/dist-packages/huggingface_hub/constants.py:301
+../../usr/local/lib/python3.12/dist-packages/torch/jit/_script.py:365: 14 warnings
+7 passed, 1 skipped, 8 deselected, 15 warnings in 20.08s
+=========================== short test summary info ============================
+=============================== warnings summary ===============================
+==================================== PASSES ====================================
+PASSED tests/test_kernel_reference.py::test_random_8b_shapes_within_tolerance[contiguous-triton]
+PASSED tests/test_kernel_reference.py::test_random_8b_shapes_within_tolerance[scattered_to_64k-triton]
+PASSED tests/test_kernel_triton.py::test_kernel_arm_decodes_on_a_cuda_model
+PASSED tests/test_kernel_triton.py::test_triton_batch_rows_and_splits_are_independent
+PASSED tests/test_kernel_triton.py::test_triton_matches_the_reference[False]
+PASSED tests/test_kernel_triton.py::test_triton_matches_the_reference[True]
+PASSED tests/test_kernel_triton.py::test_triton_no_middle_and_refusals
+SKIPPED [1] tests/test_kernel_reference.py:212: 1B dumps absent (gitignored)
+______________ test_triton_batch_rows_and_splits_are_independent _______________
+___________________ test_triton_matches_the_reference[False] ___________________
+___________________ test_triton_matches_the_reference[True] ____________________
+pytest 9.1.1
+triton B=2 row 0 vs its own B=1 call: max|d| = 1.092e-03
+triton B=2 row 1 vs its own B=1 call: max|d| = 1.065e-03
+triton vs reference, 1 split (contiguous=False): max|d| = 9.172e-04 rms = 2.584e-05
+triton vs reference, 1 split (contiguous=True): max|d| = 3.673e-04 rms = 1.318e-05
+triton vs reference, 16 splits (contiguous=False): max|d| = 1.927e-03
+triton vs reference, 16 splits (contiguous=True): max|d| = 1.760e-03

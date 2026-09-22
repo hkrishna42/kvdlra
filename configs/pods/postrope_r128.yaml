@@ -1,0 +1,19 @@
+name: postrope_r128
+model: "unsloth/Meta-Llama-3.1-8B-Instruct"
+dtype: bfloat16
+doc: >-
+  ADR 0001 section 4's parallel accuracy row (prereg/postrope_r128.md): post-RoPE tracking at
+  rank 128 against the pre-RoPE r64 configuration, one Gate-1-style row on Llama 16K -- the
+  four Gate-1 tasks at n = 24 (generator v2, the 2 x 3 x 4 design) and 32 paired PG-19 windows,
+  the same task files, seed and model as gate1_v2_stage1_llama, so every prompt and window is
+  byte-identical and the reading pairs this pod's single arm against that pod's `full` and
+  `isvd_r64_h256_seed` rows by prompt_sha256 and window_idx (the pre-flight re-run's pairing,
+  D-011 addendum 10). Sizing: 128 samples at <= 5.0 min/sample (the r128 rate bounded by the
+  measured r256 5.2 and r64 3.3 min) = 10.7 h + 60 min boot = 11.7 h point; gpu_budget_h is the
+  2.05x bar. Launch only after Stage 1's Llama harvest is committed (nothing to pair against
+  before it) and only by DECISIONS under D-011; not launched by lane L4.
+prereg: prereg/postrope_r128.md
+arms: ["isvd_postrope_r128"]
+tasks: ["ruler_v2_16k_g1", "ppl_16k_pg19val"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+gpu_budget_h: 24.0

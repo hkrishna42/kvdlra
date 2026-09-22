@@ -85,14 +85,33 @@ PPLW_RE = re.compile(
     r"^\[pplw\] T=(\d+) (\S+) ntok=(\d+)(?: part=(\d+)/(\d+))? nlls=([0-9.,]+)"
     r"(?: corpus=(\S+))?$"
 )
-# `kvdlra.eval.latency.run_latency`'s own print. `weights_gb=` sits between `peak_gb=`
-# and `kv_peak_gb=` but is not part of `LatencyRecord` -- it is the subtrahend the
-# kv_*_gb figures already removed, not a KV-attributable number of its own -- so it is
-# matched, not captured.
+# `kvdlra.eval.latency.run_latency`'s own print. `weights_gb=` sits between `peak_gb=` and
+# `kv_peak_gb=` but is not part of `LatencyRecord` -- it is the subtrahend the kv_*_gb
+# figures already removed -- so it is matched, not captured. `batch=` is OPTIONAL: the nine
+# archived Week-20 lines (results/paper-v1/w19-sysfix-llama/raw/) predate it and were batch
+# 1, and `make kernel_smoke` prints them beside the re-measured rows (prereg §2 (a)).
+# `kv_resident_gb=` (L4.7) and `backend=` (L4.fw1) are appended LAST, in that order, and
+# are optional for the same reason -- `backend=` is printed only by a bug arm that ran the
+# factored kernel, so every other row (and every row logged before it existed) has none.
 LATENCY_RE = re.compile(
     r"^\[latency ctx(\d+)\] (\S+)\s+ms/tok=([0-9.]+) mean=([0-9.]+) max=([0-9.]+) "
     r"spikes=(\d+) resident_gb=([0-9.]+) peak_gb=([0-9.]+) weights_gb=[0-9.]+"
-    r" kv_peak_gb=([0-9.]+) batch=(\d+)"
+    r" kv_peak_gb=([0-9.]+)(?: batch=(\d+))?(?: kv_resident_gb=([0-9.]+))?"
+    r"(?: backend=(\S+))?"
+)
+# `kvdlra.eval.kernel_check.format_line`'s own print. `-` stands for an absent number (an
+# errored prompt has no diff and no mismatch step); `error=` stays last and unanchored.
+# `backend=` (L4.fw1) sits between `sha=` and the tail and is OPTIONAL: the kernel_smoke
+# pod's own records were logged before the field existed and must keep parsing (as None).
+# The five Amendment-2 fields (A2.5) follow `backend=`, each OPTIONAL for the same reason --
+# instance 51903816's rows predate them and must keep parsing (as None). A field may hold a
+# negative logit (`kernel_logit_for_ref_argmax`), so `(\S+)` matches it and `-` alone is None.
+KERNEL_CHECK_RE = re.compile(
+    r"^\[kernel_check prompt=(\d+) arm=(\S+) ctx=(\d+) n_new=(\d+) match=([01])"
+    r" first_mismatch=(\S+) max_abs_diff=(\S+) worst_layer=(\S+) sha=(\S+)"
+    r"(?: backend=(\S+))?(?: rel_max_diff=(\S+))?(?: rel_worst_layer=(\S+))?"
+    r"(?: ref_max=(\S+))?(?: gap_at_mismatch=(\S+))?(?: kernel_logit_for_ref_argmax=(\S+))?"
+    r"(?: error=(.*))?"
 )
 # The payload is matched loosely and `json.loads` is the arbiter: a `\{.*\}` regex
 # could not see a row `vastai logs` cut in half at all, so a truncated diagnostic
@@ -172,6 +191,12 @@ class LatencyRecord(TypedDict):
     ``spikes`` counts the steps above twice that median (the absorb-event rebuild and
     KIVI's per-step dequantize show up there). ``kv_peak_gb`` has the model weights
     subtracted, so it is the KV-attributable contrast, not process VRAM.
+
+    ``kv_resident_gb`` is the post-prefill resident allocation minus the weights -- the
+    Week-5 target's resident ratio (prereg §3, §4) -- ``None`` on a line printed before
+    L4.7. ``backend`` is which factored-attention backend attended
+    (`kvdlra.kernel.select_backend`): ``None`` for every arm that did not run the kernel,
+    and for a kernel row logged before L4.fw1.
     """
 
     model: str
@@ -185,6 +210,47 @@ class LatencyRecord(TypedDict):
     resident_gb: float
     peak_gb: float
     kv_peak_gb: float
+    kv_resident_gb: float | None
+    backend: str | None
+    source: str
+
+
+class KernelCheckRecord(TypedDict):
+    """One prompt of the kernel correctness check (prereg/kernel_smoke.md §4): whether the
+    kernel's greedy decode matched the reconstruct path's token for token, the first step
+    that did not, and the worst per-layer max|Δ| of the first kernel decode step.
+
+    ``backend`` is which factored-attention backend attended
+    (`kvdlra.kernel.select_backend`); ``None`` on an errored prompt and on a record logged
+    before L4.fw1 -- the kernel_smoke pod's own rows among them.
+
+    The five Amendment-2 fields (A2.5) make §4's precondition computable in the units the
+    quantity is measured in: ``rel_max_diff`` = ``max_l(max|Δ_l| / max|ref_l|)`` (the relative
+    per-layer bar), ``rel_worst_layer`` the layer achieving it, ``ref_max`` = ``max|ref|`` there
+    (the denominator, so the ratio is auditable), ``gap_at_mismatch`` the reconstruct path's
+    top-1 minus top-2 logit at the first mismatching step, and ``kernel_logit_for_ref_argmax``
+    the kernel's logit for the token the reconstruct path chose there. All ``None`` on an
+    errored prompt, on a prompt that matched (``gap``/``kernel_logit``), and on every record
+    logged before Amendment 2 -- instance 51903816's rows among them, which is why the renderer
+    reports a row missing them as not computable rather than passing it silently."""
+
+    model: str
+    arm: str
+    ctx: int
+    prompt: int
+    n_new: int
+    match: int
+    first_mismatch: int | None
+    max_abs_diff: float | None
+    worst_layer: int | None
+    rel_max_diff: float | None
+    rel_worst_layer: int | None
+    ref_max: float | None
+    gap_at_mismatch: float | None
+    kernel_logit_for_ref_argmax: float | None
+    prompt_sha256: str
+    backend: str | None
+    error: str | None
     source: str
 
 
@@ -417,13 +483,14 @@ def parse_latency_lines(text: str, model: str, source: str) -> list[LatencyRecor
         m = LATENCY_RE.match(line)
         if not m:
             continue
-        ctx, arm, p50, mean, mx, spikes, resident_gb, peak_gb, kv_peak_gb, batch = m.groups()
+        (ctx, arm, p50, mean, mx, spikes, resident_gb, peak_gb, kv_peak_gb, batch,
+         kv_resident, backend) = m.groups()  # fmt: skip
         out.append(
             {
                 "model": model,
                 "arm": arm,
                 "ctx": int(ctx),
-                "batch": int(batch),
+                "batch": int(batch) if batch is not None else 1,
                 "ms_per_token_p50": float(p50),
                 "ms_mean": float(mean),
                 "ms_max": float(mx),
@@ -431,6 +498,46 @@ def parse_latency_lines(text: str, model: str, source: str) -> list[LatencyRecor
                 "resident_gb": float(resident_gb),
                 "peak_gb": float(peak_gb),
                 "kv_peak_gb": float(kv_peak_gb),
+                "kv_resident_gb": float(kv_resident) if kv_resident is not None else None,
+                "backend": _field(backend),
+                "source": f"{source}:{i}",
+            }
+        )
+    return out
+
+
+def parse_kernel_check_lines(text: str, model: str, source: str) -> list[KernelCheckRecord]:
+    """Every ``[kernel_check prompt=...]`` line as a record (the harvest-side counterpart to
+    `kernel_check.format_line`). The log-only `[kernel_check layers ...]` and
+    `[kernel_check mismatch ...]` lines do not match and are not records."""
+    out: list[KernelCheckRecord] = []
+    for i, line in enumerate(text.splitlines(), 1):
+        m = KERNEL_CHECK_RE.match(line)
+        if not m:
+            continue
+        (prompt, arm, ctx, n_new, match, first, diff, worst, sha, backend,
+         rel_max, rel_layer, ref_max, gap, klogit, error) = m.groups()  # fmt: skip
+        out.append(
+            {
+                "model": model,
+                "arm": arm,
+                "ctx": int(ctx),
+                "prompt": int(prompt),
+                "n_new": int(n_new),
+                "match": int(match),
+                "first_mismatch": None if first == "-" else int(first),
+                "max_abs_diff": None if diff == "-" else float(diff),
+                "worst_layer": None if worst == "-" else int(worst),
+                # Amendment 2 (A2.5): absent (an archived row) or `-` (a matched prompt, or an
+                # error row) is None; a present value parses, negatives included.
+                "rel_max_diff": None if rel_max in (None, "-") else float(rel_max),
+                "rel_worst_layer": None if rel_layer in (None, "-") else int(rel_layer),
+                "ref_max": None if ref_max in (None, "-") else float(ref_max),
+                "gap_at_mismatch": None if gap in (None, "-") else float(gap),
+                "kernel_logit_for_ref_argmax": None if klogit in (None, "-") else float(klogit),
+                "prompt_sha256": sha,
+                "backend": _field(backend),
+                "error": error,
                 "source": f"{source}:{i}",
             }
         )
@@ -479,7 +586,7 @@ REPLAY_BEGIN, REPLAY_END = "===RECORDS_REPLAY_BEGIN===", "===RECORDS_REPLAY_END=
 # purpose -- it is the volume, not the reading: the pre-flight's 4 MB tail came back as
 # 15,381 diag rows and 138 of everything else, which is why 143 of its 240 `[trial]` rows
 # were lost with the instance (D-011 addendum 10). ~1,000 lines for a Stage-1 pod.
-_REPLAY_RES = (TRIAL_RE, CELL_RE, ERROR_RE, PPL_RE, PPLW_RE, LATENCY_RE)
+_REPLAY_RES = (TRIAL_RE, CELL_RE, ERROR_RE, PPL_RE, PPLW_RE, LATENCY_RE, KERNEL_CHECK_RE)
 
 
 def replayable(line: str) -> bool:
@@ -633,6 +740,7 @@ def write_jsonl(
     | list[PplRecord]
     | list[PplwRecord]
     | list[LatencyRecord]
+    | list[KernelCheckRecord]
     | list[dict[str, object]],  # the diagnostics, carried through unparsed
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -43,6 +43,17 @@ ROOT = Path(__file__).resolve().parents[3] / "configs"
 
 CORPUS_TOKENS = {"wikitext-103-test": 288_937, "pg19-val": 2_968_224}
 
+# The 16-prompt full-model correctness precondition (prereg/kernel_smoke.md §4): a fixed
+# window over the same pg19-val stream CORPUS_TOKENS already bounds, at strides wide enough
+# to land in different books. kvdlra.kernel.prompts re-exports these -- they live here,
+# torch-free, because scripts/pod.py check imports this module in a torch-free subprocess,
+# while kvdlra.kernel (after Task 3) imports torch and transformers.
+PROMPT_CORPUS = "pg19-val"
+PROMPT_TOKENS = 4096
+N_NEW = 32
+PROMPT_STRIDE = 131_072
+PROMPT_STARTS: tuple[int, ...] = tuple(i * PROMPT_STRIDE for i in range(16))
+
 
 @dataclass
 class ArmCfg:
@@ -112,6 +123,18 @@ class TaskV2Cfg(TaskCfg):
 
 
 @dataclass
+class TaskKernelCheckCfg(TaskCfg):
+    """A ``generator: kernel_check`` task (`kvdlra.eval.kernel_check`): the full-model
+    correctness check of prereg/kernel_smoke.md §4 on the pod's own model. A subclass for
+    the reason `TaskV2Cfg` is one: a field on ``TaskCfg`` would move every live manifest's
+    hash. ``ctx`` must be the committed prompt length (`kvdlra.kernel.prompts.PROMPT_TOKENS`)
+    and ``n_prompts`` at most the committed list's length."""
+
+    n_new: int = 32
+    n_prompts: int = 16
+
+
+@dataclass
 class PodCfg:
     """One GPU run: a model, a set of arms, a set of tasks."""
 
@@ -124,6 +147,10 @@ class PodCfg:
     prereg: str | None = None
     gpu_budget_h: float = 0.0
     image: str = "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+    # One shell command `scripts/pod/boot.sh` runs from the SHA-pinned clone BEFORE the
+    # `timeout`-bounded entrypoint, and whose exit code `scripts/pod.py check` refuses the
+    # pod on (`kernel_smoke` declares its kernel's gpu tests). None = no hook.
+    pre_run: str | None = None
 
 
 def _load(kind: str, name: str, schema: type) -> Any:
@@ -160,7 +187,9 @@ def load_task(name: str) -> TaskCfg:
     """
     p = ROOT / "tasks" / f"{name}.yaml"
     raw = cast(DictConfig, OmegaConf.load(p))  # a task file is a mapping, never a list
-    t: TaskCfg = _load("tasks", name, TaskV2Cfg if raw.get("generator") == "v2" else TaskCfg)
+    gen = raw.get("generator")
+    schema = TaskV2Cfg if gen == "v2" else TaskKernelCheckCfg if gen == "kernel_check" else TaskCfg
+    t: TaskCfg = _load("tasks", name, schema)
     bad = []
     if isinstance(t, TaskV2Cfg):
         for k in sorted(set(t.design) - {"haystacks", "depths", "codes"}):
@@ -186,6 +215,13 @@ def load_task(name: str) -> TaskCfg:
                 f"n_samples={t.n_samples} exceeds the {ceiling} non-overlapping "
                 f"{t.ctx}+{t.window} windows {t.corpus} supplies"
             )
+    if isinstance(t, TaskKernelCheckCfg):
+        if t.ctx != PROMPT_TOKENS:
+            bad.append(f"ctx={t.ctx} must equal the committed prompt length {PROMPT_TOKENS}")
+        if not 1 <= t.n_prompts <= len(PROMPT_STARTS):
+            bad.append(f"n_prompts={t.n_prompts} must be within 1..{len(PROMPT_STARTS)}")
+        if t.n_new < 1:
+            bad.append(f"n_new={t.n_new} must be >= 1")
     if bad:
         raise ValueError(f"{ROOT / 'tasks' / f'{name}.yaml'}: " + "; ".join(bad))
     return t
@@ -203,6 +239,11 @@ def load_pod(name: str) -> PodCfg:
     here, at load time, naming both task files.
     """
     p: PodCfg = _load("pods", name, PodCfg)
+    if p.pre_run is not None and not p.pre_run.strip():
+        raise ValueError(
+            f"{ROOT / 'pods' / f'{name}.yaml'}: pre_run is blank -- give it the command to"
+            " run before the entrypoint, or drop the key"
+        )
     seen: dict[int, tuple[str, str]] = {}
     for task_name in p.tasks:
         t = load_task(task_name)
@@ -235,9 +276,26 @@ def arm_kwargs(arm: ArmCfg, t: int) -> dict[str, Any]:
     return kw
 
 
+def role_of(arm: ArmCfg) -> str:
+    """The arm's role in a kernel-smoke reading: ``kernel`` (a bug arm carrying
+    ``decode_attention: kernel``), ``reconstruct`` (a bug arm on the default decode path),
+    else the arm's own kind. The one definition -- `scripts/tables.py` keys the section-7
+    table and the section-4 gate by it, `scripts/pod.py` picks the arms whose
+    `kernel_check` records it requires (`kvdlra.eval.kernel_check.is_kernel_arm` is the
+    same test on a BUILT arm dict, which is a different shape)."""
+    if arm.kind != "bug":
+        return arm.kind
+    return "kernel" if arm.cache.get("decode_attention") == "kernel" else "reconstruct"
+
+
 def config_hash(pod: PodCfg) -> str:
     """sha256 of the pod together with every arm and task it names."""
-    flat = OmegaConf.to_container(OmegaConf.structured(pod))
+    flat = cast(dict[str, Any], OmegaConf.to_container(OmegaConf.structured(pod)))
+    # A field every pod carries by default would move every pod's hash the day it is added
+    # -- and with it every committed manifest (`make check`). An undeclared `pre_run` is
+    # therefore absent from the hash, exactly as it is from the YAML.
+    if flat.get("pre_run") is None:
+        flat.pop("pre_run", None)
     arms = {a: OmegaConf.to_container(OmegaConf.structured(load_arm(a))) for a in pod.arms}
     tasks = {t: OmegaConf.to_container(OmegaConf.structured(load_task(t))) for t in pod.tasks}
     blob: DictConfig = OmegaConf.create({"pod": flat, "arms": arms, "tasks": tasks})

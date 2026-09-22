@@ -1,0 +1,29 @@
+name: isvd_postrope_r128
+kind: bug
+chunkable: true
+doc: >-
+  ADR 0001 section 3 option (i), the parallel accuracy row: the r64 configuration's exact tier,
+  sinks, ring and warm-up seed with a rank-128 gist tracked on POST-RoPE keys (`rope_basis:
+  post` -- no un-rotation at ingest, no re-rotation at reconstruct; V unchanged), so scores would
+  be an r x T product in a post-RoPE kernel. Stores twice the coordinate bytes of the r64 arm
+  (0.282x vs 0.151x of the fp16 cache at 16K, ADR section 3); the surprise selection scores
+  against the post-RoPE basis, which is the ADR's stated risk. Read by prereg/postrope_r128.md
+  against the Gate-1 Stage-1 Llama rows of `full` and `isvd_r64_h256_seed`.
+cache:
+  rank: 128
+  coord_budget: null
+  recent_window: 32
+  absorb_block: 16
+  n_sink: 4
+  retention: "lowrank_surprise"
+  hh_budget: 256
+  hh_select: "surprise"
+  hh_neighbor: 1
+  hh_retain: true
+  seed_hh_warmup: true
+  score_rank: null
+  min_sv_frac: 0.0
+  tracker: "isvd"
+  quant_bits: null
+  quant_budget: 0
+  rope_basis: "post"

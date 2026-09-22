@@ -6,12 +6,16 @@ model, library versions, GPU, wall clock, command line), `env.txt` (the pinned s
 `name==version`), and the records a harvest parsed out of the log: `trials.jsonl`,
 `ppl.jsonl` (aggregate perplexity), `pplw.jsonl` (the per-window NLLs behind it -- a
 different schema, hence a different file), `latency.jsonl` (measured decode cost, one row
-per arm x ctx x batch), `diag.jsonl`. `check` is the gate every citable number passes: it
-re-derives the config hash from `configs/pods/<pod>.yaml`, resolves the SHA, enforces the
-pre-registration commit order, and requires EVERY cell the config calls for -- arm x
-generator x sub-task x ctx -- to hold exactly `n_trials x len(seeds)` records, plus one
-perplexity record AND `n_samples` per-window records per (arm, ctx) for every `ppl` task,
-and one decode record per (arm, ctx, batch) for every `latency` task. A trial that raised
+per arm x ctx x batch), `diag.jsonl` -- plus `pre_run.txt`, the output of the command a
+pod's `pre_run:` declares, for the pods that declare one. `check` is the gate every citable
+number passes: it re-derives the config hash from `configs/pods/<pod>.yaml`, resolves the
+SHA, enforces the pre-registration commit order, and requires EVERY cell the config calls
+for -- arm x generator x sub-task x ctx -- to hold exactly `n_trials x len(seeds)` records,
+plus one perplexity record AND `n_samples` per-window records per (arm, ctx) for every
+`ppl` task, and one decode record per (arm, ctx, batch) for every `latency` task. A pod
+that declares `pre_run` must also hold a zero exit code from it AND a pytest counts row in
+`pre_run.txt` that passed something and failed nothing (rc 0 on an all-skipped run is a
+gate that did not run). A trial that raised
 is recorded with `error` and still counted, so a cell can never silently shrink; a cell
 with no records at all is the loudest failure there is, which is what makes a pod that
 produced nothing impossible to pass off as a clean run. And because recording rather than
@@ -30,6 +34,7 @@ entrypoint existed.
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import json
 import math
@@ -48,11 +53,21 @@ from typing import Any, cast
 
 import _paths  # noqa: F401
 
-from kvdlra.eval.config import PodCfg, TaskV2Cfg, config_hash, load_arm, load_pod, load_task
+from kvdlra.eval.config import (
+    PodCfg,
+    TaskKernelCheckCfg,
+    TaskV2Cfg,
+    config_hash,
+    load_arm,
+    load_pod,
+    load_task,
+    role_of,
+)
 from kvdlra.eval.records import (
     TrialRecord,
     parse_diag_lines,
     parse_error_lines,
+    parse_kernel_check_lines,
     parse_latency_lines,
     parse_ppl_lines,
     parse_pplw_lines,
@@ -274,9 +289,11 @@ def launch_command(name: str, offer: str, sha: str, max_hours: float | None = No
     `boot.sh` needs five things from the environment: which pod config to run, which
     commit to check out, which weights to pull and in what dtype, and the bar in hours
     it enforces on the run with `timeout` (default: the pod's pre-registered
-    `gpu_budget_h`). Everything else it reads from the SHA-pinned clone. A bar of zero is
-    refused, not passed on: `timeout 0h` disables the limit, and every v1 pod config
-    carries `gpu_budget_h: 0.0`.
+    `gpu_budget_h`) -- plus `PRE_RUN_B64`, the base64 of the command the pod runs before
+    the entrypoint, for the pods that declare one. Everything else it reads from the
+    SHA-pinned clone.
+    A bar of zero is refused, not passed on: `timeout 0h` disables the limit, and every
+    v1 pod config carries `gpu_budget_h: 0.0`.
     """
     pod = load_pod(name)
     hours = pod.gpu_budget_h if max_hours is None else max_hours
@@ -286,6 +303,22 @@ def launch_command(name: str, offer: str, sha: str, max_hours: float | None = No
             f"--max-hours {hours:g} is no bar: pre-register a finite gpu_budget_h > 0 in"
             f" configs/pods/{name}.yaml or pass --max-hours"
         )
+    env = (
+        f"-e POD={name} -e SHA={sha} -e MODEL={pod.model} -e DTYPE={pod.dtype}"
+        f" -e MAX_HOURS={hours:g}"
+    )
+    if pod.pre_run:
+        # The sixth thing, and the only one that is not a bare token -- so it does not
+        # travel as one. vast.ai's own `--env` parser (`vastai/utils.py`: `smart_split`
+        # splits on spaces outside quotes, toggling the quote state on EVERY `'`, and
+        # `parse_env` then `.strip("'\"")`s the value) tears a quoted shell command apart:
+        # the inner `'s/^/[pre_run] /'` closes the outer quote, the space inside the
+        # bracket ends the token, and the pod gets a truncated, unterminated command --
+        # a `bash -c` syntax error two hours into a paid boot, whatever the quoting here.
+        # Base64 (standard alphabet, padding kept) has no space and no quote, survives
+        # that parser byte-intact, and `shlex.quote` leaves it unquoted; boot.sh decodes
+        # it back into `$PRE_RUN` before the hook.
+        env += " -e PRE_RUN_B64=" + base64.b64encode(pod.pre_run.encode()).decode()
     return [
         "vastai",
         "create",
@@ -296,8 +329,7 @@ def launch_command(name: str, offer: str, sha: str, max_hours: float | None = No
         "--disk",
         "80",
         "--env",
-        f"-e POD={name} -e SHA={sha} -e MODEL={pod.model} -e DTYPE={pod.dtype}"
-        f" -e MAX_HOURS={hours:g}",
+        env,
         "--onstart",
         "scripts/pod/boot.sh",
         "--label",
@@ -423,7 +455,10 @@ def _shrink_refusal(out: Path, name: str, n_new: int) -> str | None:
     override, as before.
     """
     p = out / name
-    n_old = len(read_jsonl(p)) if p.is_file() else 0
+    # `pre_run.txt` is the one non-JSONL file this guard covers: its rows are log lines.
+    n_old = 0
+    if p.is_file():
+        n_old = len(p.read_text().splitlines()) if p.suffix == ".txt" else len(read_jsonl(p))
     if n_old <= n_new:
         return None
     return f"REFUSE: {name} would shrink from {n_old} to {n_new} rows; pass --force to overwrite"
@@ -435,7 +470,7 @@ def _shrink_refusal(out: Path, name: str, n_new: int) -> str | None:
 # `dataset_sha256: {}`. The watchdog keeps `[stage]` rows; the last line for a key wins.
 DIGEST_RE = re.compile(r"^\[stage\] dataset_sha256 (\S+) ([0-9a-f]{64})\s*$", re.M)
 # THE rationale for the `[stage] cell` line, in one place (every emitter in
-# `kvdlra.eval.runner` points here). One line per completed cell, on all three axes:
+# `kvdlra.eval.runner` points here). One line per completed cell, on all four axes:
 # retrieval (`_cell`, per arm x sub-task), perplexity (`_ppl_rows`, per arm x ctx sweep,
 # keyed by the ppl TASK name so the two axes share one namespace without pooling) and
 # latency (per arm x ctx). It is the ONLY clock a harvest carries -- `[trial]` and cell
@@ -451,6 +486,22 @@ CELL_S_RE = re.compile(
 # launch-time value, which is the laptop's and says so (`gpu: none`).
 STAGE_RE = re.compile(rf"^\[stage\] ({'|'.join(STAGE_KEYS)}) (\S.*?)\s*$", re.M)
 WALL_S_RE = re.compile(r"^\[stage\] wall_clock_s ([0-9.]+)\s*$", re.M)
+# boot.sh's `pre_run` hook (the pod YAML's `pre_run:`), which runs before the entrypoint:
+# its exit code rides the END marker, and the command's own output rides `[pre_run] `-
+# prefixed rows -- a prefix the command adds (`| sed`), so that the watchdog's row filter
+# can keep arbitrary output without a rule per tool. Both are read back here: the code into
+# `manifest["pre_run_rc"]` (what `check` refuses on), the rows into `pre_run.txt` (the
+# evidence the launch entry cites). The marker carries the pod name, as every marker of
+# boot.sh's does, so another pod's log cannot be read as this one's.
+PRE_RUN_ROW_RE = re.compile(r"^\[pre_run\] ?(.*?)\s*$", re.M)
+# pytest's counts row -- the ONLY row of `pre_run.txt` that is a verdict. `-q` prints it
+# bare (`1 failed, 7 passed in 4.2s`); a non-quiet run wraps it in a `=` banner. The gate
+# below reads failed/error out of a row of this shape and nothing else, because `-rA`'s
+# per-item rows (`FAILED tests/x.py::test_y`, `ERROR ...`) and boot.sh's echo of the
+# command itself (`$ python -m pytest -m gpu ...`) carry the same words without being
+# verdicts -- and because pytest orders the counts failed, passed, skipped, ..., errors,
+# so neither word is reliably at the start of the row.
+PRE_RUN_COUNTS_RE = re.compile(r"^(?:=+ )?\d+ [a-z]+\b[^\n]*", re.M)
 
 
 def _env_from_log(text: str) -> list[str] | None:
@@ -610,7 +661,9 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     pplw = parse_pplw_lines(text, model, source)
     ppl = parse_ppl_lines(text, model, source)
     lat = parse_latency_lines(text, model, source)
+    kc = parse_kernel_check_lines(text, model, source)
     diag, diag_skipped = parse_diag_lines(text, model, source)
+    pre_run = PRE_RUN_ROW_RE.findall(text)
 
     # Every file this harvest is about to write, checked against what is on disk BEFORE
     # any of them is written -- the same all-or-nothing rule the parse above follows.
@@ -619,16 +672,20 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
         "pplw.jsonl": pplw,
         "ppl.jsonl": ppl,
         "latency.jsonl": lat,
+        "kernel_check.jsonl": kc,
         "diag.jsonl": diag,
     }
-    refusals = [r for r in (_shrink_refusal(out, f, len(x)) for f, x in parsed.items()) if r]
+    # `pre_run.txt` rides beside `parsed` -- through the same guard, but written as text
+    # rather than records, so it is not in the dict the write loop below iterates.
+    files = [*parsed.items(), ("pre_run.txt", pre_run)]
+    refusals = [r for r in (_shrink_refusal(out, f, len(x)) for f, x in files) if r]
     if refusals and not force:
         for r in refusals:
             print(r)
         return 1
 
     # `trials.jsonl` is written even when it is empty: it is the file `check` reads to
-    # tell a pod that produced nothing from one that was never harvested. The other four
+    # tell a pod that produced nothing from one that was never harvested. The other five
     # are written only when the log carried rows -- an absent file is not a short one.
     write_jsonl(out / "trials.jsonl", trials)
     records = {"trials.jsonl": len(trials)}
@@ -663,6 +720,10 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     # (and failed by `check`) rather than dropped: the skip is evidence the log came back
     # truncated, which is a harvest to redo, not a pod that printed no diagnostics.
     m["diag_skipped"] = diag_skipped
+    # None when the log carries no END marker: a pod that never ran the command, which
+    # `check` refuses for a pod that declares one -- never a silent zero.
+    rc = re.search(rf"===PRE_RUN_END_{re.escape(name)}_rc=(\d+)===", text)
+    m["pre_run_rc"] = int(rc.group(1)) if rc else None
     _write_manifest(out, m)
     print(f"{out}: " + ", ".join(f"{k}={v}" for k, v in records.items()))
     # Never written over an env.txt `run` left on the pod: that file is the environment,
@@ -673,6 +734,10 @@ def harvest(name: str, log: Path | None, out: Path, force: bool) -> int:
     if env:
         epath.write_text("\n".join(env) + "\n")
         print(f"harvest: wrote {epath} from the log's ENV block")
+    if pre_run:  # the hook's own output, prefix stripped; the rows are the evidence
+        ppath = out / "pre_run.txt"
+        ppath.write_text("\n".join(pre_run) + "\n")
+        print(f"harvest: wrote {ppath} from {len(pre_run)} [pre_run] row(s), rc={m['pre_run_rc']}")
     if diag_skipped:
         print(
             f"harvest: {diag_skipped} [diag] line(s) skipped"
@@ -809,6 +874,62 @@ def _latency_fails(pod: PodCfg, d: Path) -> list[str]:
     ]
 
 
+def _kernel_check_fails(pod: PodCfg, d: Path) -> list[str]:
+    """Every `kernel_check` task holds `n_prompts` records per kernel arm (a `bug` arm with
+    `decode_attention: kernel`) in `kernel_check.jsonl` -- the precondition's evidence
+    (prereg/kernel_smoke.md §4), which a pod that skipped it must not pass without."""
+    p = d / "kernel_check.jsonl"
+    got = Counter((r["arm"], r["ctx"]) for r in read_jsonl(p)) if p.is_file() else Counter()
+    fails = []
+    for t in (load_task(x) for x in pod.tasks):
+        if not isinstance(t, TaskKernelCheckCfg):
+            continue
+        for stem in pod.arms:
+            cfg = load_arm(stem)
+            if role_of(cfg) != "kernel":
+                continue
+            key = cfg.legacy_name or cfg.name
+            if got[(key, t.ctx)] != t.n_prompts:
+                fails.append(
+                    f"kernel_check: {key} ctx={t.ctx} has {got[(key, t.ctx)]}"
+                    f" of {t.n_prompts} prompt records"
+                )
+    return fails
+
+
+def _pre_run_fails(pod: PodCfg, m: dict[str, Any], d: Path) -> list[str]:
+    """A pod that declares `pre_run` holds its exit code, that code is zero, AND the rows
+    it recorded are a pytest run that passed something.
+
+    boot.sh does NOT abort on a failing hook -- the tasks still run and are still recorded,
+    which is the point (a kernel that fails its correctness gate still produces the latency
+    rows, and the rows are worth having) -- so this is the only place a failed gate stops
+    the numbers being cited. A missing code is the same refusal: a log with no
+    `===PRE_RUN_END_<pod>_rc=` marker is a pod that never ran the command, or one whose
+    marker the fetch lost, and neither is a gate that passed.
+
+    Ruling R-L4-30: `rc == 0` alone is not that gate. `conftest` skips every `gpu` item on a
+    pod without CUDA and pytest exits 0 on an all-skipped run (`ssssssss`, rc 0), so a card
+    that came up without a working CUDA would have passed the correctness precondition by
+    running none of it. The rows therefore have to show a `N passed` count and no failure
+    in the counts row -- read only out of a row of pytest's counts shape, never out of
+    `-rA`'s per-item lines or the echoed command.
+    """
+    if not pod.pre_run:
+        return []
+    rc = m.get("pre_run_rc")
+    if rc is None:
+        return ["pre_run: not recorded"]
+    fails = [] if int(rc) == 0 else [f"pre_run: rc={rc}"]
+    p = d / "pre_run.txt"
+    counts = PRE_RUN_COUNTS_RE.findall(p.read_text() if p.is_file() else "")
+    if not any(re.search(r"\b\d+ passed\b", c) for c in counts):
+        fails.append("pre_run: no passed row")
+    if any(re.search(r"\b\d+ (?:failed|error)", c) for c in counts):
+        fails.append("pre_run: failures in the summary")
+    return fails
+
+
 def _env_fails(d: Path) -> list[str]:
     p = d / "env.txt"
     if not p.is_file():
@@ -865,7 +986,7 @@ def check(d: Path, log: Path | None = None) -> int:
     # pod whose every trial failed. So the count is its own rule, with no tolerance knob.
     if n_err:
         fails.append(f"errors: {n_err} trial(s) raised (see the error field in trials.jsonl)")
-    # The manifest counts all three axes; a perplexity or decode point that raised leaves
+    # The manifest counts all four axes; a perplexity or decode point that raised leaves
     # an `[error]` log line and no record at all, so the excess over the trial rows is the
     # non-trial count, not a disagreement -- name it instead of reporting a mismatch.
     # FEWER than the rows is a real one: the manifest cannot have counted what it has not
@@ -875,7 +996,8 @@ def check(d: Path, log: Path | None = None) -> int:
     # cross-check is skipped.
     if m_err > n_err:
         fails.append(
-            f"errors: {n_err} trial error(s) + {m_err - n_err} perplexity/latency error(s)"
+            f"errors: {n_err} trial error(s) + {m_err - n_err}"
+            " perplexity/latency/kernel_check error(s)"
         )
         if log and log.is_file():
             lines = log.read_text().splitlines()
@@ -897,6 +1019,8 @@ def check(d: Path, log: Path | None = None) -> int:
         fails += _ppl_fails(pod, d)
         fails += _pplw_fails(pod, d)
         fails += _latency_fails(pod, d)
+        fails += _kernel_check_fails(pod, d)
+        fails += _pre_run_fails(pod, m, d)
     fails += _env_fails(d)
 
     for f in fails:

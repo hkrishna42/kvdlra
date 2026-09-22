@@ -17,7 +17,11 @@ arm's decode peak was never measured. This measures both, per arm x context x ba
 Rows (harvested by ``records.parse_latency_lines``)::
 
     [latency ctx16384] full  ms/tok=.. mean=.. max=.. spikes=.. resident_gb=.. peak_gb=..
-        weights_gb=.. kv_peak_gb=.. batch=..
+        weights_gb=.. kv_peak_gb=.. batch=.. kv_resident_gb=.. [backend=..]
+
+``backend=`` closes the row only on an arm that ran the factored kernel: which backend
+attended is not decidable from the config (``"auto"`` degrades to the torch reference on a
+live rank the Triton kernel refuses, R-L4-22), so a ms/token that is the reference's says so.
 """
 
 from __future__ import annotations
@@ -96,9 +100,13 @@ def run_latency(
                 tok_id = out.logits[:, -1].argmax(-1).view(batch, 1)
                 start += 1
         _, peak_gb = _mem(device)
+        # `None` unless a factored-kernel decode ran on this cache (`attention.py` records
+        # the one backend it selected); a full/quant arm and the reconstruct path have none.
+        backend = getattr(cache, "kernel_backend", None) if kind == "bug" else None
         steady = times_ms[warmup:] if len(times_ms) > warmup else times_ms
         p50 = statistics.median(steady)
-        spikes = sum(1 for t in steady if t > 2.0 * p50)
+        spike_steps = [i for i, t in enumerate(steady) if t > 2.0 * p50]
+        spikes = len(spike_steps)
         row: dict[str, Any] = {
             "method": arm["name"],
             "kind": kind,
@@ -114,6 +122,7 @@ def run_latency(
             "weights_gb": weights_gb,
             "kv_resident_gb": max(resident_gb - weights_gb, 0.0),
             "kv_peak_gb": max(peak_gb - weights_gb, 0.0),
+            "backend": backend,
             "per_step_ms": times_ms,
         }
         rows.append(row)
@@ -122,8 +131,19 @@ def run_latency(
             f"mean={row['ms_per_tok_mean']:.2f} "
             f"max={row['ms_per_tok_max']:.2f} spikes={spikes} resident_gb={resident_gb:.2f} "
             f"peak_gb={peak_gb:.2f} weights_gb={weights_gb:.2f} kv_peak_gb={row['kv_peak_gb']:.2f}"
-            # Appended last so the archived-line format keeps matching unchanged.
-            f" batch={batch}",
+            # Appended last so the archived-line format keeps matching unchanged;
+            # `kv_resident_gb` is the resident reading §3 of the kernel prereg asked the
+            # record to carry.
+            f" batch={batch} kv_resident_gb={row['kv_resident_gb']:.2f}"
+            + (f" backend={backend}" if backend else ""),
+            flush=True,
+        )
+        # Amendment 2 (A2.4): a log-only companion line naming WHICH steady-window steps spiked,
+        # from the `times_ms` already held -- no record field, no regex, no change to the arm
+        # under measurement. First-touch JIT clusters in the first few steps and never recurs;
+        # the block-16 absorb recurs on a 16-step lattice: the indices separate the two causes.
+        print(
+            f"[latency spikes ctx={ctx} arm={arm['name']} steps={','.join(map(str, spike_steps))}]",
             flush=True,
         )
         del cache, out

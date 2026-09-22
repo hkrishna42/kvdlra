@@ -1,0 +1,1 @@
+{"err": 0.3004976511001587, "event": "svd_nonorthonormal", "model": "unsloth/Meta-Llama-3.1-8B-Instruct", "shape": [128, 128], "source": "results/kernel_smoke/kernel_smoke-51903816.log:14"}

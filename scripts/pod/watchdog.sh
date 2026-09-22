@@ -26,6 +26,8 @@
 #   caffeinate -s -i scripts/pod/watchdog.sh <pod>
 # boot.sh's own budget markers (RUN_TIMEOUT, SELF_DESTRUCT_FAILED) are kept in ROWS so
 # they reach the harvested log; the pod also self-destructs GRACE_S after its final marker.
+# So are the `pre_run` hook's PRE_RUN markers and its `[pre_run] ` rows: the exit code on
+# the END marker is what `pod.py check` refuses the pod on, and the rows are its evidence.
 POD="${1:?usage: watchdog.sh <pod>}"
 cd "$(dirname "$0")/../.." || exit 1
 export PATH="$HOME/.local/bin:$PATH"
@@ -47,7 +49,7 @@ BUDGET_ITERS="${BUDGET_ITERS:-$(cat "configs/pods/$POD.yaml" 2>/dev/null | awk -
 # prints at the end of the pod (L3.4a): the rows between them are already in the set above
 # and `sort -u` collapses them into the originals, so the markers are kept for the reader --
 # `pod.py harvest` dedupes the repeat itself, for the dumps fetched without this script.
-ROWS='^\[(niah|vt|persist|latency)[^]]*\] +[^ ].* (acc=|SKIP|bytes=|ms/tok=)|^ +[^ ].* \[T=[0-9]+\] (ppl=|OOM|error|mem alloc)|^\[pplw|^\[diag|^\[stage|^\[trial\]|^\[error\]|^===(ALL_DONE|RUN_FAILED|RUN_TIMEOUT|SELF_DESTRUCT|RECORDS_REPLAY_BEGIN|RECORDS_REPLAY_END|CLONE_FAILED|CHECKOUT_FAILED|DEPS_FAILED|MODEL_FAILED|POD_|RUN_SHA|ENV_|QUANTO|HQQ|MODEL_)|^run_sha=|^device=|^python=|^torch=|^triton=|^transformers=|NVIDIA'
+ROWS='^\[(niah|vt|persist|latency)[^]]*\] +[^ ].* (acc=|SKIP|bytes=|ms/tok=)|^ +[^ ].* \[T=[0-9]+\] (ppl=|OOM|error|mem alloc)|^\[pplw|^\[diag|^\[stage|^\[trial\]|^\[error\]|^\[kernel_check|^\[latency spikes|^\[pre_run\]|^===(ALL_DONE|RUN_FAILED|RUN_TIMEOUT|SELF_DESTRUCT|PRE_RUN|RECORDS_REPLAY_BEGIN|RECORDS_REPLAY_END|CLONE_FAILED|CHECKOUT_FAILED|DEPS_FAILED|MODEL_FAILED|POD_|RUN_SHA|ENV_|QUANTO|HQQ|MODEL_)|^run_sha=|^device=|^python=|^torch=|^triton=|^transformers=|NVIDIA'
 # boot.sh's pre-run failures. The instance is destroyed on any of them exactly as on
 # ALL_DONE -- a pod that could not clone, check out, install, load the model or import
 # its quant backend has nothing left to do but bill. `pod.py harvest` reads the same

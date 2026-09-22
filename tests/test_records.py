@@ -22,6 +22,7 @@ from kvdlra.eval.records import (
     parse_cell_lines,
     parse_diag_lines,
     parse_error_lines,
+    parse_kernel_check_lines,
     parse_latency_lines,
     parse_ppl_lines,
     parse_pplw_lines,
@@ -51,6 +52,59 @@ LATENCY = (
     "[latency ctx16384] bugSseed-r64-h256      ms/tok=103.25 mean=117.57 max=309.70 "
     "spikes=4 resident_gb=15.79 peak_gb=18.20 weights_gb=14.96 kv_peak_gb=3.25 batch=1\n"
 )
+# kvdlra.eval.kernel_check.format_line's own print, Amendment-2 complete (a mismatched prompt,
+# so `gap_at_mismatch`/`kernel_logit_for_ref_argmax` are numbers -- the logit may be negative).
+KERNEL_CHECK = (
+    "[kernel_check prompt=6 arm=isvd_r64_h256_seed_kernel ctx=4096 n_new=32 match=0 "
+    "first_mismatch=15 max_abs_diff=1.464e-02 worst_layer=26 sha=" + "c" * 64 + " backend=triton "
+    "rel_max_diff=9.500e-03 rel_worst_layer=26 ref_max=1.541e+00 gap_at_mismatch=8.200e-03 "
+    "kernel_logit_for_ref_argmax=-3.200e+00\n"
+)
+
+
+def test_parse_kernel_check_lines_schema() -> None:
+    """The harvest-side counterpart to `kernel_check.format_line` (prereg/kernel_smoke.md §4).
+    The five Amendment-2 fields parse, negative logit included."""
+    (row,) = parse_kernel_check_lines(KERNEL_CHECK, model="M", source="f.txt")
+    assert row == {
+        "model": "M",
+        "arm": "isvd_r64_h256_seed_kernel",
+        "ctx": 4096,
+        "prompt": 6,
+        "n_new": 32,
+        "match": 0,
+        "first_mismatch": 15,
+        "max_abs_diff": 1.464e-2,
+        "worst_layer": 26,
+        "rel_max_diff": 9.5e-3,
+        "rel_worst_layer": 26,
+        "ref_max": 1.541,
+        "gap_at_mismatch": 8.2e-3,
+        "kernel_logit_for_ref_argmax": -3.2,
+        "prompt_sha256": "c" * 64,
+        "backend": "triton",
+        "error": None,
+        "source": "f.txt:1",
+    }
+
+
+def test_parse_kernel_check_lines_archived_row_parses_with_none() -> None:
+    """An archived row (instance 51903816's among them) predates `backend=` and the five
+    Amendment-2 fields; it must keep parsing, every new field None, so the renderer can report
+    it as not-computable rather than lose it from the parse."""
+    archived = (
+        "[kernel_check prompt=0 arm=isvd_r64_h256_seed_kernel ctx=4096 n_new=32 match=1 "
+        "first_mismatch=- max_abs_diff=3.100e-03 worst_layer=17 sha=" + "b" * 64 + "\n"
+    )
+    (row,) = parse_kernel_check_lines(archived, model="M", source="a")
+    assert row["match"] == 1 and row["max_abs_diff"] == 3.1e-3 and row["backend"] is None
+    assert row["rel_max_diff"] is None and row["rel_worst_layer"] is None and row["ref_max"] is None
+    assert row["gap_at_mismatch"] is None and row["kernel_logit_for_ref_argmax"] is None
+    # a backend but no Amendment-2 fields (a row logged between L4.fw1 and Amendment 2) also parses
+    (row,) = parse_kernel_check_lines(
+        archived.rstrip("\n") + " backend=triton\n", model="M", source="a"
+    )
+    assert row["backend"] == "triton" and row["rel_max_diff"] is None
 
 
 def test_parse_trial_lines_schema() -> None:
@@ -241,9 +295,36 @@ def test_parse_latency_lines_schema() -> None:
             "resident_gb": 15.79,
             "peak_gb": 18.20,
             "kv_peak_gb": 3.25,
+            "kv_resident_gb": None,
+            "backend": None,
             "source": "f.txt:1",
         }
     ]
+
+
+def test_parse_latency_lines_reads_the_three_optional_fields() -> None:
+    """`batch=` is absent from the nine archived Week-20 lines (they predate the field and
+    were batch 1: prereg/kernel_smoke.md §2 (a)); `kv_resident_gb=` is appended last by the
+    L4.7 print and `backend=` after it by L4.fw1 (only a kernel arm has one). All three are
+    optional, so today's lines, the kernel_smoke pod's and the archive parse alike."""
+    archived = LATENCY.replace(" batch=1", "")
+    (row,) = parse_latency_lines(archived, model="M", source="f")
+    assert row["batch"] == 1 and row["kv_resident_gb"] is None and row["backend"] is None
+    (row,) = parse_latency_lines(
+        LATENCY.rstrip("\n") + " kv_resident_gb=0.83\n", model="M", source="f"
+    )
+    assert row["batch"] == 1 and row["kv_resident_gb"] == 0.83 and row["kv_peak_gb"] == 3.25
+    assert row["backend"] is None
+    (row,) = parse_latency_lines(
+        LATENCY.rstrip("\n") + " kv_resident_gb=0.83 backend=triton\n", model="M", source="f"
+    )
+    assert row["backend"] == "triton" and row["kv_resident_gb"] == 0.83
+    archive = ARCHIVE / "w19-sysfix-llama" / "raw" / "w19-sysfix-llama-lines.txt"
+    rows = parse_latency_lines(archive.read_text(), model="M", source="a")
+    assert len(rows) == 9 and {r["batch"] for r in rows} == {1}
+    assert [(r["arm"], r["ctx"], r["ms_per_token_p50"]) for r in rows][:2] == [
+        ("bugSseed-r64-h256", 16384, 103.25), ("full", 16384, 25.89),
+    ]  # fmt: skip
 
 
 def test_parse_latency_lines_ignores_trial_and_ppl_lines() -> None:

@@ -35,9 +35,12 @@ def test_distortion_within_2p7x_of_floor(bits: int) -> None:
 
 
 def test_distortion_monotone_in_bits() -> None:
+    # 30k fit samples: the monotonicity holds with a wide margin (errs ~0.114/0.033/0.009/0.003)
+    # and is deterministic (seed=1), so this sanity check needs no more -- the Thm-1 GUARANTEE is
+    # `test_distortion_within_2p7x_of_floor` above, untouched. Trimmed for the < 90 s CI budget.
     u = _unit_vectors(3000, DIM, seed=8)
     errs = [
-        PolarQuant(dim=DIM, bits=b, seed=1, n_fit_samples=80_000).distortion(u)
+        PolarQuant(dim=DIM, bits=b, seed=1, n_fit_samples=30_000).distortion(u)
         for b in (2, 3, 4, 5)
     ]
     assert all(errs[i] > errs[i + 1] for i in range(len(errs) - 1))
@@ -75,7 +78,9 @@ def test_roundtrip_shape_and_codes() -> None:
 
 
 def test_high_bits_low_error() -> None:
-    pq = PolarQuant(dim=DIM, bits=6, seed=1, n_fit_samples=120_000)
+    # 50k fit samples: rel ~0.0012 against the < 0.01 bar (an ~8x margin) and deterministic;
+    # trimmed from 120k for the < 90 s CI budget without loosening the assertion.
+    pq = PolarQuant(dim=DIM, bits=6, seed=1, n_fit_samples=50_000)
     x = torch.randn(500, DIM, generator=torch.Generator().manual_seed(3))
     c, n = pq.quantize(x)
     xh = pq.dequantize(c, n)

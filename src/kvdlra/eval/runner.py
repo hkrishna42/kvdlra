@@ -5,12 +5,12 @@ arm x (for a retrieval task) every sub-task x seed x trial. Each trial appends a
 ``TrialRecord`` to ``results/<pod>/trials.jsonl`` as it completes, so a pod killed
 halfway leaves a readable partial file rather than nothing.
 
-``trials.jsonl`` is the ONLY file that streams. The perplexity, per-window and decode
-rows are buffered in memory and written at the very end of the pod, so a run killed
-mid-sweep leaves no ``ppl.jsonl``, ``pplw.jsonl`` or ``latency.jsonl`` at all -- not a
-short one. The recovery path for a killed pod is `scripts/pod.py harvest` from its log:
-every row of all four files is printed as it is produced, which is what the stdout
-contract below is for.
+``trials.jsonl`` is the ONLY file that streams. The perplexity, per-window, decode and
+kernel-check rows are buffered in memory and written at the very end of the pod, so a run
+killed mid-sweep leaves no ``ppl.jsonl``, ``pplw.jsonl``, ``latency.jsonl`` or
+``kernel_check.jsonl`` at all -- not a short one. The recovery path for a killed pod is
+`scripts/pod.py harvest` from its log: every row of all five files is printed as it is
+produced, which is what the stdout contract below is for.
 
 A trial that raises is RECORDED -- ``error`` set, ``hit=0``, ``frac=0.0`` -- and the
 loop continues. The v1 harness printed SKIP and dropped the trial, which silently
@@ -18,14 +18,17 @@ shrank a cell's n; `scripts/pod.py check` now requires every configured cell to 
 exactly ``n_trials x len(seeds)`` records, so a dropped trial would fail the run
 instead of quietly weakening it.
 
-The ``[trial]``, ``[<task> ctx<T>]``, ``[pplw]``, ``[latency ctx<T>]`` and ``ppl=``
-lines are printed as well as written: they are the pod's stdout contract, and `pod.py
-harvest` can rebuild the same records from a `vastai logs` capture when the results
-directory never made it off the instance. A ``[trial]`` line carries the generator's
-pairing fields (``hay= depth= code= sha=``, ``-`` where the generator set none), so a
-harvested pod can still show that two arms of one cell were fed byte-identical prompts.
+The ``[trial]``, ``[<task> ctx<T>]``, ``[pplw]``, ``[latency ctx<T>]``,
+``[kernel_check prompt=<i>]`` and ``ppl=`` lines are printed as well as written: they are
+the pod's stdout contract, and `pod.py harvest` can rebuild the same records from a
+`vastai logs` capture when the results directory never made it off the instance. (The
+other two ``[kernel_check ...]`` lines `kvdlra.eval.kernel_check` prints -- the per-layer
+diffs and a token mismatch -- are log-only: they match no record pattern and are read by
+people, not by the harvest.) A ``[trial]`` line carries the generator's pairing fields
+(``hay= depth= code= sha=``, ``-`` where the generator set none), so a harvested pod can
+still show that two arms of one cell were fed byte-identical prompts.
 ``[stage] <what> (<s> s)`` lines time the loads (model, corpora, haystacks) and a
-``[stage] cell ... elapsed_s=`` line times each completed cell on all three axes -- the
+``[stage] cell ... elapsed_s=`` line times each completed cell on all four axes -- the
 only clock a harvest carries, and why, at ``scripts/pod.py``'s ``CELL_S_RE``.
 """
 
@@ -40,17 +43,19 @@ from typing import Any
 import torch
 
 from kvdlra.baselines.compat import install_kvpress_prefill_compat
-from kvdlra.eval import frontier, gen, latency, longbench, official_ruler, ruler
-from kvdlra.eval.config import PodCfg, TaskCfg, load_arm, load_task
+from kvdlra.eval import frontier, gen, kernel_check, latency, longbench, official_ruler, ruler
+from kvdlra.eval.config import PodCfg, TaskCfg, TaskKernelCheckCfg, load_arm, load_task
 from kvdlra.eval.data import load_corpus_ids, load_corpus_sentences
 from kvdlra.eval.records import (
     DIAG_ROWS,
+    KernelCheckRecord,
     LatencyRecord,
     PplRecord,
     PplwRecord,
     TrialRecord,
     write_jsonl,
 )
+from kvdlra.kernel.prompts import PROMPT_CORPUS, prompt_windows
 
 # Which module answers for a task config's `generator:`. Looked up as a module, not as
 # a function, so the attribute resolves at call time (a test can substitute one). The
@@ -100,6 +105,7 @@ def run_pod(pod: PodCfg, out: Path, model: Any, dry_model: bool = False) -> None
     ppl: list[PplRecord] = []
     pplw: list[PplwRecord] = []
     lat: list[LatencyRecord] = []
+    kc: list[KernelCheckRecord] = []
     corpora: dict[str, str] = {}  # corpus name -> sha256 of the exact token stream
     for tname in pod.tasks:
         task = load_task(tname)
@@ -107,6 +113,9 @@ def run_pod(pod: PodCfg, out: Path, model: Any, dry_model: bool = False) -> None
             # Its own loop: it sweeps context lengths within one task, so the arms are
             # rebuilt per context rather than once per task.
             n_err += _latency_rows(pod, task, mdl, lat, device=device)
+            continue
+        if isinstance(task, TaskKernelCheckCfg):
+            n_err += _kernel_check_rows(pod, task, mdl, tok, kc, device=device, sha=corpora)
             continue
         arms = [_build(a, mdl, task.ctx) for a in pod.arms]
         if task.generator == "ppl":
@@ -129,6 +138,9 @@ def run_pod(pod: PodCfg, out: Path, model: Any, dry_model: bool = False) -> None
     if lat:
         write_jsonl(out / "latency.jsonl", lat)
         records["latency.jsonl"] = len(lat)
+    if kc:
+        write_jsonl(out / "kernel_check.jsonl", kc)
+        records["kernel_check.jsonl"] = len(kc)
     _finish(out, records, n_err, time.perf_counter() - t0, corpora)
 
 
@@ -198,6 +210,8 @@ def _latency_rows(
                         "resident_gb": float(row["resident_gb"]),
                         "peak_gb": float(row["peak_gb"]),
                         "kv_peak_gb": float(row["kv_peak_gb"]),
+                        "kv_resident_gb": float(row["kv_resident_gb"]),
+                        "backend": row["backend"],
                         "source": f"{pod.name}:run",
                     }
                 )
@@ -207,6 +221,66 @@ def _latency_rows(
                 f" elapsed_s={time.perf_counter() - t_cell:.1f} n={len(task.batch_sizes)}",
                 flush=True,
             )
+    return errors
+
+
+def _corpus_ids(tok: Any, device: str, corpus: str, sha: dict[str, str]) -> torch.Tensor:
+    """Load one corpus's token ids, and record BOTH `[stage]` lines a harvest reads off the
+    log: how long the load took, and sha256 over the exact ids the windows are cut from
+    (which text was scored is half of what any number over it means). ``sha`` collects
+    ``corpus -> digest`` for `_finish` to write into `manifest.json`."""
+    t0 = time.perf_counter()
+    ids = load_corpus_ids(tok, device, corpus=corpus)
+    print(f"[stage] load_corpus_ids {corpus} ({time.perf_counter() - t0:.1f} s)", flush=True)
+    sha[corpus] = hashlib.sha256(ids.cpu().numpy().tobytes()).hexdigest()
+    print(f"[stage] dataset_sha256 {corpus} {sha[corpus]}", flush=True)
+    return ids
+
+
+def _kernel_check_rows(
+    pod: PodCfg,
+    task: TaskKernelCheckCfg,
+    model: Any,
+    tok: Any,
+    out: list[KernelCheckRecord],
+    *,
+    device: str,
+    sha: dict[str, str],
+) -> int:
+    """One `KernelCheckRecord` per (kernel arm, prompt): the greedy token-exact check and the
+    first-step per-layer max|Δ| on the pod's own model (prereg/kernel_smoke.md §4, Amendment
+    1). Arms on the reconstruct path are not checked -- the check IS the contrast against
+    them. A prompt that raises is an error row, an `[error] axis=kernel_check` line and a
+    counted error, never a dropped prompt."""
+    prompts = prompt_windows(_corpus_ids(tok, device, PROMPT_CORPUS, sha))[: task.n_prompts]
+    errors = 0
+    for name in pod.arms:
+        arm = _build(name, model, task.ctx)
+        if not kernel_check.is_kernel_arm(arm):
+            continue
+        t_cell = time.perf_counter()
+        for i, prompt in enumerate(prompts):
+            try:
+                row = kernel_check.check_prompt(
+                    model, arm, prompt, index=i, n_new=task.n_new, chunk=task.chunk
+                )
+            except Exception as exc:
+                err = f"{type(exc).__name__}: {exc}"
+                row = kernel_check.failed_row(arm, prompt, index=i, n_new=task.n_new, error=err)
+                errors += 1
+                print(
+                    f"[error] axis=kernel_check arm={arm['name']} ctx={task.ctx} error={err}",
+                    flush=True,
+                )
+                if device.startswith("cuda"):
+                    torch.cuda.empty_cache()
+            out.append({"model": pod.model, **row, "source": f"{pod.name}:run"})  # type: ignore[typeddict-item]
+            print(kernel_check.format_line(row), flush=True)
+        print(
+            f"[stage] cell arm={arm['name']} task={task.name} ctx={task.ctx}"
+            f" elapsed_s={time.perf_counter() - t_cell:.1f} n={len(prompts)}",
+            flush=True,
+        )
     return errors
 
 
@@ -335,17 +409,10 @@ def _ppl_rows(
 ) -> list[dict[str, Any]]:
     """One perplexity sweep, on the corpus the TASK names (`config.TaskCfg.corpus`).
 
-    ``sha`` collects ``corpus -> sha256(token ids)``: which text was scored is half of
-    what a perplexity number means, and the digest is over the exact ids the windows
-    were cut from, so a corpus that silently changed upstream cannot pass for the one
-    the manifest cites. `_finish` writes it to `manifest.json` on the pod; the
-    ``[stage] dataset_sha256`` line is how `pod.py harvest` gets it off the log.
+    ``sha`` collects ``corpus -> sha256(token ids)`` (`_corpus_ids`): a corpus that
+    silently changed upstream cannot pass for the one the manifest cites.
     """
-    t0 = time.perf_counter()
-    ids = load_corpus_ids(tok, device, corpus=task.corpus)
-    print(f"[stage] load_corpus_ids {task.corpus} ({time.perf_counter() - t0:.1f} s)", flush=True)
-    sha[task.corpus] = hashlib.sha256(ids.cpu().numpy().tobytes()).hexdigest()
-    print(f"[stage] dataset_sha256 {task.corpus} {sha[task.corpus]}", flush=True)
+    ids = _corpus_ids(tok, device, task.corpus, sha)
     samples = frontier.windows(ids, task.ctx, task.window, task.n_samples)
     if not samples:
         print(f"[T={task.ctx}] corpus too short for {task.n_samples} windows", flush=True)

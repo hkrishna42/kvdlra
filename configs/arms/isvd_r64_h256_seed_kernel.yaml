@@ -1,0 +1,29 @@
+name: isvd_r64_h256_seed_kernel
+kind: bug
+chunkable: true
+doc: >-
+  isvd_r64_h256_seed with decode attention through the fused factored-attention kernel of
+  ADR 0001 option (iii): every decode step returns only the dense tokens [sinks | exact tier |
+  recent] and attends the low-rank middle tile by tile from (U, C) inside attention, RoPE
+  applied in-kernel in fp32 at the true positions; the reconstruct path (`decode_attention:
+  reconstruct`, the default) is never entered at decode. Prefill, chunked ingest, the absorb
+  step, the exact tier and the stored state are the r64 arm's verbatim, so the footprint is
+  identical; only the decode-time work and workspace differ (prereg/kernel_smoke.md §3, arm 3).
+cache:
+  rank: 64
+  coord_budget: null
+  recent_window: 32
+  absorb_block: 16
+  n_sink: 4
+  retention: "lowrank_surprise"
+  hh_budget: 256
+  hh_select: "surprise"
+  hh_neighbor: 1
+  hh_retain: true
+  seed_hh_warmup: true
+  score_rank: null
+  min_sv_frac: 0.0
+  tracker: "isvd"
+  quant_bits: null
+  quant_budget: 0
+  decode_attention: "kernel"

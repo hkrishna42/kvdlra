@@ -17,7 +17,7 @@
 | bugSseed-r64-h256 | reconstruct | 65536 | 1 | 605.27 | 627.32 | 981.02 | 0 | 16.55 | 27.79 | 12.84 | 1.59 | 1.064 | 507.94 | 12.83 | archived 507.94 ms: differs by +19% | n/a |
 | isvd_r64_h256_seed_kernel | kernel | 65536 | 1 | 88.31 | 100.62 | 263.05 | 4 | 16.55 | 16.57 | 1.61 | 1.59 | 1.064 | none archived | none archived | n/a | n/a |
 
-PRECONDITION: NOT met (12/16 token-exact; worst max|d| 1.464e-02 at layer 26 >= 1e-2)
+PRECONDITION: NOT met (not computable: record predates Amendment 2 -- no rel_max_diff/max|ref| or logit fields; 16 rows, 0 error rows)
 memory @32K b1: kernel kv_peak_gb 1.08 vs full 4.08 -> PASS (margin 73.5%)
 speed @32K b1: reconstruct p50 248.30 ms / kernel p50 56.12 ms = 4.42x vs 3.0x -> PASS
 WEEK-3 GATE (batch 1): REFUSED -- the correctness precondition is not met: a fast wrong kernel is not a result (§4)

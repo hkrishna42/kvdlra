@@ -691,6 +691,9 @@ def test_the_watchdog_keeps_the_env_block_rows() -> None:
         "[kernel_check prompt=0 arm=isvd_r64_h256_seed_kernel ctx=4096 n_new=32 match=1 "
         "first_mismatch=- max_abs_diff=3.100e-03 worst_layer=17 sha=" + "b" * 64,
         "[kernel_check layers prompt=0 arm=isvd_r64_h256_seed_kernel diffs=1.0e-03,2.0e-03",
+        # A2.4 / L4b: the latency spike-diagnostic companion line, dropped before this fix
+        # because `ROWS` only admitted `[latency ...]` rows carrying `ms/tok=`.
+        "[latency spikes ctx=16384 arm=isvd_r64_h256_seed_kernel steps=0,3]",
         # L3.4a: the replay block's markers, so a reader of the deduped log can see that
         # the rows below them are a repeat and not a second pod (D-011 addendum 10).
         "===RECORDS_REPLAY_BEGIN===",

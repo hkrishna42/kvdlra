@@ -1,0 +1,23 @@
+{
+  "command_line": "vastai create instance 42079724 --image pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel --disk 80 --env '-e POD=gate1_v2_stage2_mistral -e SHA=017f98a56e33c187e1bfc58a4760864a6c409ebc -e MODEL=mistralai/Mistral-7B-Instruct-v0.3 -e DTYPE=bfloat16 -e MAX_HOURS=82' --onstart scripts/pod/boot.sh --label kvdlra-gate1_v2_stage2_mistral",
+  "config_hash": "4999a48f0db8623943ce7acd640bb17c3c01a9820c47b6e4a22647ad87aba35c",
+  "cuda": "none",
+  "dataset_sha256": {},
+  "dry_run": false,
+  "errors": 0,
+  "git_sha": "017f98a56e33c187e1bfc58a4760864a6c409ebc",
+  "gpu": "none",
+  "harvested_at": null,
+  "kvpress": "0.5.1",
+  "launched_at": "2026-09-24T13:35:53+00:00",
+  "model": "mistralai/Mistral-7B-Instruct-v0.3",
+  "model_revision": null,
+  "pod": "gate1_v2_stage2_mistral",
+  "records": {},
+  "status": null,
+  "timeout": false,
+  "torch": "2.11.0",
+  "transformers": "5.8.0",
+  "triton": "none",
+  "wall_clock_s": null
+}

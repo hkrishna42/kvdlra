@@ -1,0 +1,15 @@
+# Gate-1 Stage-1 panel — synthesis (2026-09-24)
+
+Five blind readers (R1 compliance · R2 mechanism · R3 validity · R4 claims · R5 chair), each given only the table + the prereg at 48d73c9 (pre-Amendment-3, so no verdict leak). Readings beside this file.
+
+**R1 compliance — PASS, no failure.** R1 recomputed the m=4 primary-perplexity Holm family (2.38e-07×4≈9.54e-07, monotone, bounds hold) and the Qwen isvd-vs-frozen TOST (s≈0.0255, half-width 0.0077 > 0.0063 → fails) by hand; both match the table. **All five agree `VERDICT: UNDECIDED` follows §4 member-for-member** — A/B needs ≥2 families separated (0 are: isvd never beats nogist); C is blocked by the Qwen fd/multikey separation (Holm p=0.027) + 3 failing fd/frozen TOSTs.
+
+**Objection raised by all five — UNDECIDED understates a tracker-null.** The byte-matched no-gist tier (`nogist`) ties or beats `isvd` on both axes in both families (‡ on Llama retrieval; ppl Holm p 9.54e-07 / 0.0435, isvd worse); `isvd ≈ frozen` (Llama TOST passes; Qwen edge −0.0137 sits inside ±0.02). C's only substantive block is isvd beating `fd`, an arm the prereg byte-cuts to ℓ=r and calls ~27% worse by construction. The science: the online-tracked gist earns none of its bytes — the tier, not the tracker, does the work. §4's asymmetry (C reads fd/frozen, not nogist) keeps this out of the letter.
+
+**R5 (area chair) structural flag — Stage 2 cannot change the verdict.** Stage 1 separated 0 of 2 families (both fail on the same fact), and Stage-1 letters are frozen (§4). A/B needs ≥2 separated → a fully-separated Mistral gives only 1 → still UNDECIDED. C is blocked by *decided* Qwen Stage-1 facts Mistral/32K cannot undo. So Stage 2 can only corroborate the tracker-null descriptively, not convert it. R5 confidence: gist-does-work **2/10**; table-follows-prereg **8/10**.
+
+**≥2-reader ask (R2/R3/R4/R5):** the DECISIONS entry must record the substantive tracker-null (nogist ≥ isvd; isvd ≈ frozen) beside the UNDECIDED letter, so it is not read as merely "inconclusive." Transparency gaps flagged by all: the nogist/isvd `sbits` byte-match ratio, the paired-key pairing report, and the frozen-dispatch/random-flat refusal checks are inferred from the *absence* of a refusal, not printed in the two blind files. R3/R5 add §6(ii): `qwen full/niah_multivalue` = 0.50 is a degraded ceiling not flagged on the table.
+
+**Disagreement (minor):** R5 notes nogist-beats-isvd on *retrieval* is Holm-significant on Llama only (Qwen retrieval descriptive); the direction is unanimous across all readers and both axes.
+
+**Process deviations, disclosed:** (1) the orchestrator read the `VERDICT:` line before the panel ran — to answer the owner's status query and launch Stage 2 per §9 — so §10's "table read only after the panel" was not held; the *readers* stayed blind (fixed pre-authored prompt, fresh agents, prereg at 48d73c9 without the verdict-stating Amendment 3). (2) Two readers' single use of a repo-vocabulary-forbidden word was normalized (one word each; meaning preserved).

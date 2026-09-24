@@ -52,6 +52,10 @@ results/*/*.raw
 results/*/watchdog.pid
 results/*/status.txt
 results/*/*.log
+# Stage-1 gate1_v2 diag.jsonl is ~150 MB (past the 100 MB push limit); its .gz is the
+# committed evidence (gate1.py reads either) and the plain file stays local.
+results/gate1_v2_stage1_llama/diag.jsonl
+results/gate1_v2_stage1_qwen/diag.jsonl
 paper/arxiv/
 paper/arxiv-v1.tar.gz
 paper/main.bbl

@@ -12,7 +12,7 @@ repos:
       - id: check-yaml
       - id: check-added-large-files
         args: ["--maxkb=1024"]
-        exclude: ^results/.*\.jsonl$   # records are the repo's data artifacts; tensors/checkpoints stay guarded
+        exclude: ^results/.*\.jsonl(\.gz)?$   # records are the repo's data artifacts (gz'd when large); tensors/checkpoints stay guarded
       - id: check-merge-conflict
       - id: debug-statements
   - repo: https://github.com/astral-sh/ruff-pre-commit

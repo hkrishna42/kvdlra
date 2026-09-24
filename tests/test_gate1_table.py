@@ -14,6 +14,7 @@ The four outcomes the lane plan names are (a) `test_identical_trackers_select_br
 
 from __future__ import annotations
 
+import gzip
 import json
 import math
 from pathlib import Path
@@ -372,6 +373,22 @@ def test_a_frozen_arm_still_repairing_after_the_freeze_refuses(tmp_path: Path) -
         qwen={"hits": FLAT, "delta": TIGHT},
     )
     assert bad.branch == "REFUSED" and "frozen dispatch" in bad.reason
+
+
+def test_frozen_defects_reads_a_gzipped_diag(tmp_path: Path) -> None:
+    """A Stage-1 `diag.jsonl` is committed gzip'd (it runs past the push limit), so the
+    frozen-dispatch reading has to find its rows in `diag.jsonl.gz`; an uncompressed file a
+    local run leaves on disk is preferred."""
+    p = tmp_path / "diag.jsonl"
+    assert gate1._open_diag(p) is None
+    row = '{{"arm": "frozen_r64_h256_seed", "task": "niah_single", "idx": 1, "layer": 0,'
+    row += ' "tokens_seen": {}, "fixed_k": true}}\n'
+    with gzip.open(tmp_path / "diag.jsonl.gz", "wt") as f:
+        f.write(row.format(4160))  # the straddle window past the freeze -- section 7 (c) exempt
+        f.write(row.format(8192))  # a later repair -- a real dispatch defect
+    assert len(gate1._frozen_defects(p, "frozen_r64_h256_seed", 4096)) == 1  # read from the .gz
+    p.write_text("")  # an empty uncompressed file wins over the .gz -> no rows
+    assert gate1._frozen_defects(p, "frozen_r64_h256_seed", 4096) == []
 
 
 def test_a_nogist_arm_off_its_byte_match_refuses(tmp_path: Path) -> None:

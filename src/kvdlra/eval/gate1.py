@@ -68,13 +68,14 @@ and section 7 (c)'s expected ratio -- 0.566 / 0.539 -- comes from
 
 from __future__ import annotations
 
+import gzip
 import json
 import statistics
 from collections import defaultdict
 from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
-from typing import cast
+from typing import TextIO, cast
 
 from scipy.stats import ttest_1samp
 
@@ -303,6 +304,20 @@ def _freeze_after() -> int:
     return int(load_arm(FROZEN_ARM).cache["freeze_after"])
 
 
+def _open_diag(path: Path) -> TextIO | None:
+    """The diag stream at ``path``, its committed ``.gz`` sibling, or None if neither exists.
+
+    A Stage-1 ``diag.jsonl`` runs to ~150 MB, past the repo's push limit, so it is committed
+    gzip'd (``diag.jsonl.gz``); an uncompressed file a local run leaves on disk is read first.
+    """
+    if path.is_file():
+        return path.open()
+    gz = path.with_name(path.name + ".gz")
+    if gz.is_file():
+        return cast("TextIO", gzip.open(gz, "rt"))
+    return None
+
+
 def _frozen_defects(path: Path, arm: str, freeze_after: int) -> list[dict[str, object]]:
     """The frozen arm's ``diag`` rows that repaired after its freeze, minus the exempt one.
 
@@ -321,11 +336,12 @@ def _frozen_defects(path: Path, arm: str, freeze_after: int) -> list[dict[str, o
     to the three fields the rows carry -- but a two-seed pod would otherwise merge trial
     ``idx`` 3 of both seeds into one sample and exempt a repair on the second.
     """
-    if not path.is_file():
+    diag = _open_diag(path)
+    if diag is None:
         return []
     first: dict[tuple[object, object, object, object], int] = {}
     repairs: list[dict[str, object]] = []
-    with path.open() as f:
+    with diag as f:
         for line in f:
             if not line.strip():
                 continue

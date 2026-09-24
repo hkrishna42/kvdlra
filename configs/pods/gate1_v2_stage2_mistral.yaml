@@ -1,0 +1,33 @@
+name: gate1_v2_stage2_mistral
+model: "mistralai/Mistral-7B-Instruct-v0.3"
+dtype: bfloat16
+doc: >-
+  Gate 1, Stage 2, the Mistral tie-breaker (prereg/gate1_tracker_swap_v2.md, Amendment 3):
+  Stage 1 returned UNDECIDED (docs/paper/tables/gate1.md -- isvd separates from fd/frozen on
+  perplexity so C is blocked, and the exact tier not the gist carries retrieval so A/B is not
+  reached), and section 4 rule 2 needs >= 2 model families separated at 16K. Stage 1 gave
+  exactly two (Llama, Qwen); this pod is the third family the design reserved for exactly this
+  outcome (section 9). Identical protocol to gate1_v2_stage1_llama: the same eight arms, only
+  the gist's tracker swapped, against the same no-gist control -- Mistral-7B stores 8 KV heads x
+  128 = a 1024-wide layer, the same geometry as Llama-3.1-8B, so nogist_h2423's stored-bits
+  byte-match at t=16384 holds unchanged (H = 79,472,192 / 32,800 = 2422.93 -> 2423, a 1.00003x
+  match; tests/test_gate1_arms.py::test_the_nogist_arms_are_byte_matched_to_isvd_r64_at_16k).
+  Four Gate-1 tasks at n = 24 plus 32 paired perplexity windows; the verdict re-reads over three
+  families (make gate1), with Stage 2 carrying its own Holm families (section 6) and no Stage-1
+  p-value recomputed. Arm order and the pre-committed cuts (random, then oja_tuned) are Stage 1's,
+  so a pod that dies at its bar still holds the cells the rule reads. Sizing (section 9): the
+  1024-wide arms cost as Llama's did, ~40.0 h + 60 min boot; gpu_budget_h is the 2x bar
+  pod.py launch --max-hours enforces. Launch under D-011 standing authorization.
+prereg: prereg/gate1_tracker_swap_v2.md
+arms:
+  - full
+  - isvd_r64_h256_seed
+  - nogist_h2423
+  - frozen_r64_h256_seed
+  - fd_r64_h256_seed
+  - isvd_r64_h256_seed_bf16
+  - oja_r64_h256_seed_tuned
+  - random_r64_h256_seed
+tasks: ["ruler_v2_16k_g1", "ppl_16k_pg19val"]
+image: "pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel"
+gpu_budget_h: 82.0

@@ -1612,3 +1612,54 @@ crosses from them into a Stage-1 pod.
 
 **STATUS: committed before the Stage-1 launch commit. Stage 1 (`gate1_v2_stage1_llama`,
 `gate1_v2_stage1_qwen`) launches from `main` after this branch merges, under D-003.**
+
+## Amendment 3 (2026-09-24, before the Stage-2 launch commit) — Stage 2, the Mistral family
+
+Stage 1 returned **UNDECIDED**. `make gate1` on the two committed Stage-1 harvests
+(`results/gate1_v2_stage1_llama`, `results/gate1_v2_stage1_qwen` → `docs/paper/tables/gate1.md`)
+reads, at ctx 16384:
+
+- **neither family selects Branch A/B** — the exact tier, not the gist, carries retrieval: `isvd`
+  loses every primary retrieval cell (`niah_single`, `niah_multikey`, `niah_multivalue`) to both
+  `full` and `nogist_h####` on both families, so the online-tracked gist is not shown load-bearing;
+- **Branch C is blocked** — `isvd` separates from `fd` (Llama d̄ = −0.074 bits/token, TOST p = 1;
+  Qwen d̄ = −0.094, p = 1; Qwen `niah_multikey` Holm p = 0.027) and from `frozen` (Qwen
+  d̄ = −0.014), so not every ±0.02 TOST passes and the tracker choice is not shown irrelevant.
+
+Per §4 rule 4 the members that blocked each branch are listed and the verdict is `UNDECIDED`; §9
+names Stage 2 as UNDECIDED's cost. `bf16` non-inferiority (`prereg/bf16_gist.md`) **PASSES** both
+families (its §4; the §7 (c) `sbits` pin held).
+
+### A3.1 The pod
+`gate1_v2_stage2_mistral` (`configs/pods/gate1_v2_stage2_mistral.yaml`), model
+`mistralai/Mistral-7B-Instruct-v0.3`, bfloat16, the same image, the **same eight arms** and the
+**same two tasks** (`ruler_v2_16k_g1`, `ppl_16k_pg19val`) as `gate1_v2_stage1_llama`. It is the
+third model family §4 rule 2 counts: A/B needs ≥ 2 families separated at 16K and Stage 1 gave
+exactly two, so this pod is the tie-breaker the design reserved (§9, l. 525).
+
+### A3.2 The no-gist control is unchanged — `nogist_h2423`, not a new arm
+Mistral-7B-Instruct-v0.3 stores 8 KV heads × 128 = a **1024-wide layer**, the geometry
+`nogist_h2423`'s stored-bits byte-match was solved for (§3; the arm's own doc names both
+Llama-3.1-8B and Mistral-7B). At t = 16384 the r64 reference bills 80,717,568 bits/layer and the
+no-gist arm 1,245,376 + 32,800·H, so **H = 79,472,192 / 32,800 = 2422.93 → 2423**, a 1.00003×
+match, and `tests/test_gate1_arms.py::test_the_nogist_arms_are_byte_matched_to_isvd_r64_at_16k`
+covers it. Stage 2 therefore **reuses `nogist_h2423`** — no new control is calibrated, and the Qwen
+`nogist_h4460` arm is not in this pod.
+
+### A3.3 Stage 2's Holm families are its own
+Stage 2 carries its **own** §6 families (primary retrieval, secondary retrieval, primary
+perplexity), realised on Mistral's cells with `vt` excluded as §4 (ii) / Amendment 1b fixed. **No
+Stage-2 member is pooled with a Stage-1 member and no Stage-1 p-value is recomputed when Stage 2
+lands** (§4 scope note, §6, l. 606). The verdict re-reads over the three families
+(`make gate1` on all three pods).
+
+### A3.4 What does not change
+§4's rule and its precedence (A/B, C, REFUSED, UNDECIDED), the ±0.02 bits/token margin and the
+exclusive A/B-vs-C construction; §6's composition (12 / 18 / 4 with `vt` excluded) applied to
+Stage 2's own cells; §9's 82 h bar and its cut ladder (`random`, then `oja_tuned`); the verdict
+signature. **Stage 1's p-values are frozen at their committed values.**
+
+**STATUS: committed before the Stage-2 launch commit. `gate1_v2_stage2_mistral` launches from a
+pushed `main` on a clean tree, under D-011; the launch is a D-011 addendum in `docs/plan/DECISIONS.md`
+naming this amendment's commit SHA, the launch SHA, the offer id, the hourly rate, the 82 h bar and
+the credit before launch.**
